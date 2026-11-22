@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { startBridge, startSchool, timeout, type Started } from "./testing/processes.ts";
 
 // Every test gets its own server, bridge, state and ports, and sets up what it needs: none
 // depends on another having run first.
@@ -11,8 +12,8 @@ let PORT = 0;
 let BRIDGE_PORT = 0;
 let base = "";
 const KEY = "bridge-token-NEVER-STORE-ME";
-let server: ReturnType<typeof Bun.spawn> | null = null;
-let bridge: ReturnType<typeof Bun.spawn> | null = null;
+let server: Started | null = null;
+let bridge: Started | null = null;
 
 const verdict = {
   insufficient_evidence: false,
@@ -24,14 +25,6 @@ const verdict = {
 };
 // The one fake in the chain: an agent CLI. It answers unless the file "down" exists.
 let agentPath = "";
-
-async function until(url: string, ok: (r: Response) => boolean) {
-  for (let i = 0; i < 100; i++) {
-    try { if (ok(await fetch(url))) return; } catch {}
-    await Bun.sleep(50);
-  }
-  throw new Error(`${url} did not come up`);
-}
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), "school-grading-"));
@@ -50,20 +43,12 @@ beforeEach(async () => {
       sources: [{ id: "readme", title: "README", text: "The unit of storage should be the transformation, not the state." }],
     }],
   }));
-  bridge = Bun.spawn(["bun", join(import.meta.dir, "..", "bridge", "bridge.ts")], {
-    env: { ...process.env, SCHOOL_BRIDGE_TOKEN: KEY, SCHOOL_BRIDGE_CONFIG: join(root, "bridge.json"), SCHOOL_BRIDGE_PORT: String(BRIDGE_PORT) },
-    stdout: "pipe", stderr: "pipe",
-  });
-  await until(`http://127.0.0.1:${BRIDGE_PORT}/health`, (r) => r.status === 401);
-  server = Bun.spawn(["bun", join(import.meta.dir, "server.ts")], {
-    env: { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), PORT: String(PORT), HOST: "127.0.0.1",
-      SCHOOL_BRIDGE_URL: `http://127.0.0.1:${BRIDGE_PORT}`, SCHOOL_BRIDGE_TOKEN: KEY },
-    stdout: "pipe", stderr: "pipe",
-  });
-  await until(base + "/api/courses", (r) => r.ok);
-});
+  bridge = await startBridge({ ...process.env, SCHOOL_BRIDGE_TOKEN: KEY, SCHOOL_BRIDGE_CONFIG: join(root, "bridge.json"), SCHOOL_BRIDGE_PORT: String(BRIDGE_PORT) });
+  server = await startSchool({ ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), PORT: String(PORT), HOST: "127.0.0.1",
+    SCHOOL_BRIDGE_URL: `http://127.0.0.1:${BRIDGE_PORT}`, SCHOOL_BRIDGE_TOKEN: KEY });
+}, timeout(2));
 afterEach(async () => {
-  for (const p of [server, bridge]) { p?.kill(); await p?.exited; }
+  for (const p of [server, bridge]) { p?.proc.kill(); await p?.proc.exited; }
   server = null;
   bridge = null;
   rmSync(root, { recursive: true, force: true });
@@ -137,9 +122,9 @@ test("the bridge token appears nowhere: not in the database, a page or the serve
     (() => { try { return readFileSync(join(root, "state", "progress.db-wal")).toString("latin1"); } catch { return ""; } })();
   expect(dbBytes).not.toContain(KEY);
   expect(JSON.stringify(await lesson())).not.toContain(KEY);
-  server!.kill();
-  await server!.exited;
-  const out = (await new Response(server!.stdout as ReadableStream).text()) + (await new Response(server!.stderr as ReadableStream).text());
+  server!.proc.kill();
+  const { stdout, stderr } = await server!.output();
+  const out = stdout + stderr;
   expect(out).not.toContain(KEY);
   server = null;
 });

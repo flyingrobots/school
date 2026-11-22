@@ -3,13 +3,14 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { startBridge, timeout, type Started } from "../server/testing/processes.ts";
 
 // Every test gets its own bridge, directory and port: none depends on another having run first.
 let dir = "";
 let PORT = 0;
 let base = "";
 const TOKEN = "test-token-0123456789";
-let proc: ReturnType<typeof Bun.spawn> | null = null;
+let bridge: Started | null = null;
 
 const schema = { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } };
 
@@ -24,20 +25,12 @@ beforeEach(async () => {
     { name: "missing", command: "no-such-cli-qqq {prompt}" },
     { name: "good", command: `${good} {prompt}` },
   ] }));
-  proc = Bun.spawn(["bun", join(import.meta.dir, "bridge.ts")], {
-    env: { ...process.env, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: join(dir, "bridge.json"), SCHOOL_BRIDGE_PORT: String(PORT) },
-    stdout: "pipe", stderr: "pipe",
-  });
-  for (let i = 0; i < 100; i++) {
-    try { if ((await fetch(base + "/health")).status === 401) return; } catch {}
-    await Bun.sleep(50);
-  }
-  throw new Error("bridge did not start");
-});
+  bridge = await startBridge({ ...process.env, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: join(dir, "bridge.json"), SCHOOL_BRIDGE_PORT: String(PORT) });
+}, timeout(1));
 afterEach(async () => {
-  proc?.kill();
-  await proc?.exited;
-  proc = null;
+  bridge?.proc.kill();
+  await bridge?.proc.exited;
+  bridge = null;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -70,10 +63,9 @@ test("bad requests are refused", async () => {
 
 test("logs are JSON Lines and never contain the prompt", async () => {
   await run({ prompt: "SECRET-LEARNER-TEXT", schema });
-  proc!.kill();
-  await proc!.exited;
-  const out = await new Response(proc!.stdout as ReadableStream).text();
-  proc = null;
+  bridge!.proc.kill();
+  const out = (await bridge!.output()).stdout;
+  bridge = null;
   const lines = out.trim().split("\n");
   for (const l of lines) expect(typeof JSON.parse(l).kind).toBe("string");
   expect(out).not.toContain("SECRET-LEARNER-TEXT");
@@ -86,15 +78,11 @@ test("a bridge with no configuration file starts, reports itself unconfigured, a
   const d = mkdtempSync(join(tmpdir(), "school-bridge-fresh-"));
   const port = PORT + 7;
   const file = join(d, "nested", "bridge.json");
-  const p = Bun.spawn(["bun", join(import.meta.dir, "bridge.ts")], {
-    env: { ...process.env, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: file, SCHOOL_BRIDGE_PORT: String(port) },
-    stdout: "ignore", stderr: "ignore",
-  });
-  const at = `http://127.0.0.1:${port}`;
+  const p = await startBridge({ ...process.env, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: file, SCHOOL_BRIDGE_PORT: String(port) });
+  const at = p.url;
   const send = (method: string, path: string, body?: unknown) =>
     fetch(at + path, { method, headers: { ...auth, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
   try {
-    for (let i = 0; i < 100; i++) { try { if ((await fetch(at + "/health")).status === 401) break; } catch {} await Bun.sleep(50); }
     expect(await (await send("GET", "/health")).json()).toMatchObject({ status: "unconfigured", agents: [] });
     expect(await (await send("GET", "/config")).json()).toMatchObject({ status: "unconfigured", raw: { agents: [] } });
     expect(await (await send("POST", "/run", { prompt: "p", schema })).json()).toMatchObject({ status: "failed", error: expect.stringContaining(file) });
@@ -137,8 +125,8 @@ test("a bridge with no configuration file starts, reports itself unconfigured, a
     expect((await send("POST", "/test", { agent: "nobody" })).status).toBe(404);
     expect((await fetch(at + "/config", { method: "PUT", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
   } finally {
-    p.kill();
-    await p.exited;
+    p.proc.kill();
+    await p.proc.exited;
     rmSync(d, { recursive: true, force: true });
   }
-});
+}, timeout(1));
