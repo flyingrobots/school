@@ -26,7 +26,7 @@ async function start(): Promise<void> {
   });
   for (let i = 0; i < 100; i++) {
     try {
-      if ((await fetch(base + "/")).ok) return;
+      if ((await fetch(base + "/api/courses")).ok) return;
     } catch {}
     await Bun.sleep(50);
   }

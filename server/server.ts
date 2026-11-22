@@ -221,12 +221,13 @@ async function lessonJson(c: Course, id: string, viewParam: string | null): Prom
 
 /** The built web app: a file from web/dist, or its index.html for any other page path. */
 async function serveApp(pathname: string): Promise<Response> {
-  const index = Bun.file(join(WEB, "index.html"));
-  if (!(await index.exists())) return json({ error: "the web app is not built; run `npm run build` in web/" }, 503);
+  // A malformed path is the request's fault whether or not the app is built, so it is checked first.
   if (pathname !== "/" && !pathname.startsWith("/api/")) {
     const asset = await serveFrom(WEB, pathname.split("/").slice(1));
     if (asset.status === 200 || asset.status === 400) return asset;
   }
+  const index = Bun.file(join(WEB, "index.html"));
+  if (!(await index.exists())) return json({ error: "the web app is not built; run `npm run build` in web/" }, 503);
   return new Response(index, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
 }
 
