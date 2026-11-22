@@ -1,27 +1,46 @@
 // The image's file allowlist broke the build twice (docs/working-notes.md): a new server module
-// was missing from .dockerignore or the Dockerfile COPY, and the server died on an import.
+// was missing from .dockerignore or the Dockerfile COPY, and the server died on an import. Now
+// modules sit in folders (the hexagon) and the server has dependencies, so this checks both.
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
 const dir = import.meta.dir;
+const dockerfile = readFileSync(join(dir, "Dockerfile"), "utf8");
 
-test("the image admits every server module by pattern, and no tests", () => {
+/** What the build context keeps, per .dockerignore: the manifest, the lockfile and every non-test module outside contract/. */
+const admitted = (path: string) => path === "package.json" || path === "bun.lock" ||
+  (path.endsWith(".ts") && !path.endsWith(".test.ts") && !path.startsWith("contract/") && !path.startsWith("node_modules/"));
+
+function modules(at = dir): string[] {
+  return readdirSync(at, { withFileTypes: true }).flatMap((e) => {
+    const p = join(at, e.name);
+    if (e.isDirectory()) return e.name === "node_modules" ? [] : modules(p);
+    return e.name.endsWith(".ts") ? [relative(dir, p)] : [];
+  });
+}
+const shipped = modules().filter(admitted);
+
+test("the image admits modules at any depth, the manifest and lockfile, and no tests or contract suites", () => {
   const rules = readFileSync(join(dir, ".dockerignore"), "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
-  expect(rules).toEqual(["*", "!*.ts", "*.test.ts"]);
-  expect(readFileSync(join(dir, "Dockerfile"), "utf8")).toMatch(/^COPY \*\.ts \.\/$/m);
+  expect(rules).toEqual(["*", "!package.json", "!bun.lock", "!**/*.ts", "**/*.test.ts", "contract/**"]);
+  expect(dockerfile).toMatch(/^COPY package\.json bun\.lock \.\/$/m);
+  expect(dockerfile).toMatch(/^RUN bun install --production --frozen-lockfile$/m);
+  expect(dockerfile).toMatch(/^COPY \. \.\/$/m);
 });
 
-test("every module the server imports is a .ts file beside it", () => {
-  const modules = readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"));
-  for (const f of modules) {
-    for (const m of readFileSync(join(dir, f), "utf8").matchAll(/from "\.\/([^"]+)"/g)) expect(modules).toContain(m[1]!);
+test("every relative import of a shipped module is shipped, and every package it imports is a dependency", () => {
+  const deps = Object.keys(JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).dependencies ?? {});
+  for (const f of shipped) {
+    for (const [, spec] of readFileSync(join(dir, f), "utf8").matchAll(/from "([^"]+)"/g)) {
+      if (spec!.startsWith(".")) expect(shipped).toContain(relative(dir, resolve(dir, dirname(f), spec!)));
+      else if (!/^(bun|node):/.test(spec!)) expect(deps).toContain(spec!);
+    }
   }
 });
 
 test("the image is Ubuntu LTS with the pinned Bun, run as a non-root user", () => {
-  const df = readFileSync(join(dir, "Dockerfile"), "utf8");
-  expect(df).toMatch(/^FROM oven\/bun:1\.4\.4 AS bun$/m); // the same Bun as CI
-  expect(df).toMatch(/^FROM ubuntu:\d\d\.04$/m); // an LTS release
-  expect(df).toMatch(/^USER school$/m);
+  expect(dockerfile).toMatch(/^FROM oven\/bun:1\.4\.4 AS bun$/m); // the same Bun as CI
+  expect(dockerfile).toMatch(/^FROM ubuntu:\d\d\.04$/m); // an LTS release
+  expect(dockerfile).toMatch(/^USER school$/m);
 });

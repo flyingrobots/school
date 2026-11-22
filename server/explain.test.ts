@@ -64,7 +64,7 @@ test("the explanation is stored before grading, and a failure is stored as faile
 test("a retry adds a new grading that names the one it supersedes, and none is overwritten", async () => {
   const { d, sub } = setup();
   saveExplanation(d, sub, now(1));
-  const first = await gradeExplanation(d, sub.submissionId, grader(down), now(2));
+  const first = (await gradeExplanation(d, sub.submissionId, grader(down), now(2)))!;
   const second = await gradeExplanation(d, sub.submissionId, grader(ok), now(3));
   expect(second).toMatchObject({ status: "succeeded", supersedes: first.id });
   expect(d.query("SELECT status FROM gradings ORDER BY id").all()).toEqual([{ status: "failed" }, { status: "succeeded" }]);
@@ -75,7 +75,7 @@ test("a retry adds a new grading that names the one it supersedes, and none is o
 test("the grading records what was sent, and checks each quote against its source", async () => {
   const { d, sub } = setup();
   saveExplanation(d, sub, now(1));
-  const g = await gradeExplanation(d, sub.submissionId, grader(ok), now(2));
+  const g = (await gradeExplanation(d, sub.submissionId, grader(ok), now(2)))!;
   expect(g.status).toBe("succeeded");
   if (g.status === "succeeded") expect(g.findings.contradictions.map((c) => c.quote_verified)).toEqual([true, false]);
   const row = d.query<{ sources: string; adapter: string; model: string; raw_response: string }, []>("SELECT sources, adapter, model, raw_response FROM gradings").get()!;

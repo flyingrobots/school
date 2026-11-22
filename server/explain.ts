@@ -8,6 +8,7 @@
 import type { Database } from "bun:sqlite";
 import type { Block, Source } from "./blocks.ts";
 import { PROMPT_VERSION, RUBRIC_VERSION, checkQuotes, type CheckedFindings, type GradingInput, type Outcome } from "./grade.ts";
+import type { GradingRecord } from "./core/model.ts";
 
 export type ExplanationSubmission = { submissionId: string; encounterId: string; blockId: string; text: string; ms: number };
 export type SaveResult = { status: "stored" | "duplicate" | "conflict" | "rejected" };
@@ -77,17 +78,25 @@ export async function gradeExplanation(db: Database, submissionId: string, grade
     ? { status: "failed", error: "no bridge is configured (set SCHOOL_BRIDGE_URL and SCHOOL_BRIDGE_TOKEN)" }
     : await grader.grade(input);
 
+  const findings = outcome.status === "succeeded"
+    ? { ...outcome.findings, contradictions: checkQuotes(outcome.findings.contradictions, sources, where.block.model) }
+    : null;
+  return recordGrading(db, {
+    submissionId, status: outcome.status, findings, error: outcome.status === "failed" ? outcome.error : null,
+    rubricVersion: RUBRIC_VERSION, promptVersion: PROMPT_VERSION, adapter: grader?.adapter ?? "none",
+    model: outcome.model ?? (grader?.model || null), sources, raw: outcome.raw ?? null,
+  } as GradingRecord, now);
+}
+
+/** Store one grading attempt, naming the submission's latest attempt as the one it supersedes. */
+export function recordGrading(db: Database, g: GradingRecord, now: string): Grading {
   return db.transaction((): Grading => {
-    const prev = db.query<{ id: number }, [string]>("SELECT max(id) AS id FROM gradings WHERE submission_id = ?").get(submissionId)?.id ?? null;
-    const findings = outcome.status === "succeeded"
-      ? JSON.stringify({ ...outcome.findings, contradictions: checkQuotes(outcome.findings.contradictions, sources, where.block.model) })
-      : null;
+    const prev = db.query<{ id: number }, [string]>("SELECT max(id) AS id FROM gradings WHERE submission_id = ?").get(g.submissionId)?.id ?? null;
     const row = db.query<GradingRow, (string | number | null)[]>(`INSERT INTO gradings
       (submission_id, status, rubric_version, prompt_version, adapter, model, sources, raw_response, findings, error, supersedes, at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, status, findings, error, model, supersedes, at`).get(
-      submissionId, outcome.status, RUBRIC_VERSION, PROMPT_VERSION, grader?.adapter ?? "none",
-      outcome.model ?? (grader?.model || null), JSON.stringify(sources), outcome.raw ?? null, findings,
-      outcome.status === "failed" ? outcome.error : null, prev, now)!;
+      g.submissionId, g.status, g.rubricVersion, g.promptVersion, g.adapter, g.model, JSON.stringify(g.sources), g.raw,
+      g.findings === null ? null : JSON.stringify(g.findings), g.error, prev, now)!;
     return toGrading(row);
   }).immediate();
 }
