@@ -1,5 +1,3 @@
-"use client"
-
 import * as React from "react"
 import { ArrowUpIcon, ChevronDownIcon, PlusIcon } from "lucide-react"
 
