@@ -1,0 +1,12 @@
+services:
+  school:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4747:4747"   # local only; tailscale serve publishes it to the tailnet
+    volumes:
+      - ../lessons:/school/lessons:ro
+      - ../reference:/school/reference:ro
+      - ../assets:/school/assets:ro
+      - ../progress:/school/progress
+      - ${HOME}/git/aion:/aion:ro

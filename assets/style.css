@@ -1,0 +1,19 @@
+:root{--bg:#fffff8;--fg:#111;--muted:#666;--accent:#7a2e1f;--rule:#ddd;--ok:#1f6f3a;--bad:#a12a2a;--card:#f6f4ea}
+@media (prefers-color-scheme:dark){:root{--bg:#151515;--fg:#ddd;--muted:#999;--accent:#e08a6a;--rule:#333;--ok:#6fcf8f;--bad:#ef7a7a;--card:#1e1e1e}}
+html{font-size:18px}
+body{background:var(--bg);color:var(--fg);font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;line-height:1.6;max-width:42rem;margin:0 auto;padding:3rem 1rem}
+h1{font-weight:400;font-size:2.1rem;line-height:1.2;margin-bottom:.2rem}
+h2{font-weight:400;font-style:italic;font-size:1.4rem;margin-top:2.5rem}
+.subtitle{color:var(--muted);font-style:italic;margin-top:0}
+a{color:var(--accent)}
+blockquote{border-left:3px solid var(--accent);margin:1.5rem 0;padding:.2rem 1rem;font-size:1.1rem}
+.aside{color:var(--muted);font-size:.85rem;border-top:1px solid var(--rule);padding-top:.5rem}
+.card{background:var(--card);padding:1rem 1.2rem;border-radius:4px;margin:1.2rem 0}
+code{font-size:.85em}
+table{border-collapse:collapse;width:100%;font-size:.9rem}td,th{border-bottom:1px solid var(--rule);padding:.4rem;text-align:left;vertical-align:top}
+.quiz .q{margin:1.5rem 0}.quiz button{display:block;width:100%;text-align:left;margin:.3rem 0;padding:.5rem .8rem;font:inherit;font-size:.95rem;background:var(--bg);color:var(--fg);border:1px solid var(--rule);border-radius:4px;cursor:pointer}
+.quiz button.ok{border-color:var(--ok);color:var(--ok)}.quiz button.bad{border-color:var(--bad);color:var(--bad)}
+.quiz .fb{font-size:.9rem;color:var(--muted);min-height:1.2em}
+details summary{cursor:pointer;color:var(--accent)}
+nav.course{font-size:.85rem;color:var(--muted);margin-bottom:2rem}
+@media print{.quiz button{border:none}body{max-width:none}}

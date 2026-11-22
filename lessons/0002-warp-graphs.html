@@ -1,0 +1,47 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Graphs of Graphs</title><link rel="stylesheet" href="../assets/style.css"><link rel="stylesheet" href="../assets/nest.css"></head><body>
+<nav class="course"><a href="/">Home</a> · <a href="0001-the-inversion.html">← Lesson 1</a> · Lesson 2 · <a href="../reference/glossary.html">Glossary</a></nav>
+<h1>Graphs of Graphs</h1>
+<p class="subtitle">Lesson 1 said: store transformations. Of <em>what</em>? This lesson gives you the thing AIΩN transforms, the WARP graph, and a picture of it you can draw from memory.</p>
+
+<h2>The problem it solves</h2>
+<p>Paper I opens: <a href="https://doi.org/10.5281/zenodo.17908005">“Many computational systems are best described as graphs of graphs of graphs.”</a> A program is a graph of functions calling each other. Each function is itself a tree of syntax. Each call might carry its own little record of how it was optimised. Normally these layers are glued together with “a pile of pointers and conventions” (Paper I, §1). A WARP makes the whole stack <em>one object</em>.</p>
+
+<h2>The definition, in two rules</h2>
+<p>A <strong>WARP</strong> (Worldline Algebra for Recursive Provenance) is either:</p>
+<div class="card">
+<p><strong>1. An atom.</strong> A piece of raw data we don't look inside: a number, a string, an ID.</p>
+<p><strong>2. A skeleton with attachments.</strong> An ordinary graph (dots and arrows), where <em>every dot and every arrow carries another WARP</em>.</p>
+</div>
+<p>That's it (Paper I, Definition 1). Rule 2 refers back to “WARP”, so the nesting can go as deep as you like, but always bottoms out in atoms after finitely many steps. The paper calls this <em>well-founded</em>: no infinite nesting, no loops of containment.</p>
+<p class="aside">The key word is <em>every arrow</em>. Many “nested graph” schemes only let nodes contain things. In a WARP, edges carry full WARPs too.</p>
+
+<h2>The picture</h2>
+<p>Paper I's own worked example: functions <code>f</code> and <code>g</code>, where <code>f</code> calls <code>g</code>.</p>
+<div class="nest"><span class="lbl">skeleton: call graph</span>
+  <div class="nest"><span class="lbl">dot f → syntax tree</span><span class="atom">"return"</span><span class="atom">x</span></div>
+  <span class="edge">——call——▶</span>
+  <div class="nest"><span class="lbl">dot g → syntax tree</span><span class="atom">"+"</span><span class="atom">1</span></div>
+  <div class="nest"><span class="lbl">arrow f→g → provenance graph</span><span class="atom">"inlined"</span><span class="atom">pass 3</span></div>
+</div>
+<p>On a whiteboard: draw a big box with two dots and an arrow. Then draw a smaller box hanging off <em>each dot and the arrow</em>. Put a mini-graph in each. That's the drawing you'll be asked for.</p>
+
+<h2>Depth</h2>
+<p>The <strong>depth</strong> of a WARP is how many boxes deep you can go. Atoms have depth 0. A skeleton is one more than its deepest attachment (Paper I, the “Depth” definition). Above: the attachments are skeletons of atoms (depth 1), so the whole thing has depth 2.</p>
+
+<h2>Check yourself</h2>
+<p>Answer from memory, without scrolling up.</p>
+<div class="quiz" data-quiz='[
+{"q":"What can a WARP skeleton attach a WARP to?","a":["Only to its dots","Dots and also arrows","Only to its arrows"],"c":1,"why":"Every vertex and every edge carries an attached WARP. Edges carrying structure is what sets WARPs apart."},
+{"q":"What is the smallest possible WARP?","a":["An empty skeleton graph","A single unlabeled arrow","A single atom of data"],"c":2,"why":"Rule 1: an atom on its own is a WARP, of depth 0."},
+{"q":"A skeleton whose dots carry atoms, and one dot carries a skeleton of atoms. Depth?","a":["Depth is two","Depth is one","Depth is three"],"c":0,"why":"The inner skeleton of atoms has depth 1, so the outer one is 1 + 1 = 2."},
+{"q":"Why does the paper insist nesting is well-founded?","a":["It makes graphs smaller","Nesting always bottoms out","It speeds up rewriting"],"c":1,"why":"Finite, well-founded nesting means every WARP is built from atoms in finitely many steps, so you can reason about it by recursion."}
+]'></div>
+
+<h2>Say it out loud</h2>
+<p>Explain a WARP to an imaginary engineer in under 45 seconds, without the words “category”, “algebra” or “recursive”. Use an example that isn't a call graph. Then draw the picture on paper from memory.</p>
+<details><summary>Model answer</summary><p>“It's a graph where everything in it, every node <em>and every link</em>, can contain another graph, which can contain another, until you hit plain data. Think of a city map: each building contains a floor plan, each road carries its own traffic-history graph. Instead of a map plus a folder of separate files linked by IDs, it's one object. That one object is what AIΩN records changes to.”</p></details>
+
+<h2>Read next</h2>
+<p><strong>Primary source:</strong> <a href="https://doi.org/10.5281/zenodo.17908005">Paper I</a>, §1 and §2 up to the worked example (10 minutes; skip the initial-algebra section for now). Lesson 3 will turn to Paper II: what one <em>transformation</em> of a WARP looks like, the <em>tick</em>.</p>
+<p class="aside">Anything unclear? Ask your teacher (the agent) a follow-up question. That's what it's for.</p>
+<script src="../assets/quiz.js"></script></body></html>
