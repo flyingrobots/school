@@ -1,4 +1,5 @@
-// The settings page (flyingrobots/school#13): connect the bridge and edit its agents from School,
+// The settings page (flyingrobots/school#13): connect the bridge and order, toggle and test its
+// agents from School (their commands are set only on the bridge's host, flyingrobots/school#18),
 // through the real server and a real bridge. The only fake is the agent CLI.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -71,10 +72,18 @@ const status = async () => (await fetch(base + "/api/settings/status")).json();
 const text = (r: Response) => r.text();
 /** Connect the bridge from the settings page, as the learner does. */
 const connect = async () => expect((await post("/api/settings/bridge", { url: BRIDGE_URL, token: TOKEN })).status).toBe(200);
+// The bridge's file on the host, as the learner writes it there: the only place an agent's command
+// is set (flyingrobots/school#18). School's page may reorder, toggle and test what it declares.
 const CHAIN = () => ({ timeout_seconds: 10, agents: [
   { name: "missing", command: "no-such-agent-cli {prompt}", output: "text" },
   { name: "fake", command: `${join(root, "agent")} -p {prompt}`, output: "text" },
 ] });
+const bridgeFile = () => join(root, "bridge", "bridge.json");
+const declare = (c: unknown = CHAIN()) => {
+  mkdirSync(join(root, "bridge"), { recursive: true });
+  writeFileSync(bridgeFile(), JSON.stringify(c, null, 2) + "\n");
+};
+const pwned = () => join(root, "pwned");
 
 
 test("with nothing configured, the status says so", async () => {
@@ -108,22 +117,69 @@ test("saving the bridge connects it; the token is stored privately and never sho
   expect(await status()).toMatchObject({ connection: "unconfigured" });
 });
 
-test("an invalid agent command is refused with its reason, and the bridge file is not written", async () => {
+test("no request can set an agent's command, and a refused one leaves the bridge's file as written", async () => {
+  declare();
   await connect();
-  const r = await post("/api/settings/agents", { timeout_seconds: 10, agents: [{ name: "x", command: 'oops "unbalanced', output: "text" }] });
-  expect(r.status).toBe(400);
-  expect((await r.json()).error).toMatch(/quote/);
-  expect(existsSync(join(root, "bridge", "bridge.json"))).toBe(false);
+  const before = readFileSync(bridgeFile(), "utf8");
+  const evil = `touch ${pwned()}`;
+  const bodies = [
+    // The old shape: a whole configuration, with a command rewritten.
+    { timeout_seconds: 10, agents: [{ name: "missing", command: evil, output: "text" }, { name: "fake", command: evil, output: "text" }] },
+    { agents: [{ name: "fake", command: evil }, { name: "missing" }] },
+    { agents: [{ name: "fake", enabled: true, output: "claude-json" }, { name: "missing" }] },
+    { agents: [{ name: "fake" }, { name: "missing" }], timeout_seconds: 900 },
+    { agents: [{ name: "fake" }, { name: "missing" }, { name: "evil", command: evil }] },
+    { agents: [{ name: "fake" }, { name: "missing" }], command: evil },
+  ];
+  for (const body of bodies) {
+    const r = await post("/api/settings/agents", body);
+    expect([JSON.stringify(body), r.status]).toEqual([JSON.stringify(body), 400]);
+    expect((await r.json()).error).toMatch(/bridge's own file|only/);
+  }
+  expect((await fetch(base + "/api/settings/agents", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(bodies[0]) })).status).toBe(405);
+  expect(readFileSync(bridgeFile(), "utf8")).toBe(before);
+  // Nothing was run either: testing is of a declared agent, as declared.
+  expect((await post("/api/settings/agents/test", { agent: "fake", command: evil })).status).toBe(400);
+  expect(existsSync(pwned())).toBe(false);
 });
 
-test("agents saved from the page reach the bridge, can be tested, and grading then works without a restart", async () => {
+test("a bridge with no file on its host cannot be given agents from the page", async () => {
   await connect();
-  const chain = CHAIN();
-  const saved = await post("/api/settings/agents", chain);
-  expect(saved.status).toBe(200);
-  expect(JSON.parse(readFileSync(join(root, "bridge", "bridge.json"), "utf8"))).toEqual(chain);
-  expect(await (await fetch(base + "/api/settings/agents")).json()).toMatchObject({ raw: chain });
+  const r = await post("/api/settings/agents", { agents: [] });
+  expect(r.status).toBe(409);
+  expect((await r.json()).error).toContain(bridgeFile());
+  expect(existsSync(bridgeFile())).toBe(false);
+});
+
+test("a reorder must name every declared agent exactly once", async () => {
+  declare();
+  await connect();
+  const before = readFileSync(bridgeFile(), "utf8");
+  for (const agents of [[{ name: "fake" }], [{ name: "fake" }, { name: "missing" }, { name: "other" }], [{ name: "fake" }, { name: "fake" }], [{ name: "fake" }, { name: "missing", enabled: "no" }]]) {
+    expect((await post("/api/settings/agents", { agents })).status).toBe(400);
+  }
+  expect(readFileSync(bridgeFile(), "utf8")).toBe(before);
+});
+
+test("testing an agent that is not declared on the host is refused", async () => {
+  declare();
+  await connect();
+  const r = await post("/api/settings/agents/test", { agent: "nobody" });
+  expect(r.status).toBe(404);
+  expect((await post("/api/settings/agents/test", { agent: 7 })).status).toBe(400);
+});
+
+test("the page reorders and toggles the declared agents, commands stay as written, and test and grading work without a restart", async () => {
+  declare();
+  await connect();
+  expect(await (await fetch(base + "/api/settings/agents")).json()).toMatchObject({ raw: CHAIN() });
   expect(await status()).toMatchObject({ connection: "ok", agents: [{ name: "missing", found: false }, { name: "fake", found: true }] });
+
+  const saved = await post("/api/settings/agents", { agents: [{ name: "fake", enabled: true }, { name: "missing", enabled: false }] });
+  expect(saved.status).toBe(200);
+  const [missing, fake] = CHAIN().agents;
+  expect(JSON.parse(readFileSync(bridgeFile(), "utf8"))).toEqual({ timeout_seconds: 10, agents: [{ ...fake, enabled: true }, { ...missing, enabled: false }] });
+  expect(await status()).toMatchObject({ connection: "ok", agents: [{ name: "fake", enabled: true, found: true }, { name: "missing", enabled: false, found: false }] });
 
   const tested = await (await post("/api/settings/agents/test", { agent: "fake" })).json();
   expect(tested.status).toBe("failed"); // the fake agent answers the rubric, not {"ok": true}, and the test says so
@@ -137,8 +193,9 @@ test("agents saved from the page reach the bridge, can be tested, and grading th
 });
 
 test("the token appears in no page, no API response and no server output", async () => {
+  declare();
   const everything = [await text(await post("/api/settings/bridge", { url: BRIDGE_URL, token: TOKEN }))];
-  everything.push(await text(await post("/api/settings/agents", CHAIN())));
+  everything.push(await text(await post("/api/settings/agents", { agents: [{ name: "missing" }, { name: "fake" }] })));
   everything.push(await text(await fetch(base + "/api/settings/bridge")), JSON.stringify(await status()), await text(await fetch(base + "/api/settings/agents")));
   const e = JSON.parse(await text(await fetch(base + "/api/courses/c/lessons/l1"))).encounterId;
   const id = crypto.randomUUID();
