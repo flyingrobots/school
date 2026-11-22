@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { lastValidLoader } from "./blocks.ts";
 import { isView, renderCourse, renderLanding, renderPage, renderReference } from "./render.ts";
 import { migrate, snapshot } from "./migrate.ts";
+import { encounterAnswers, lessonProgress, openEncounter, submit, type Submission } from "./record.ts";
 import { ConfigError, course, courseNames, mountTable, parseConfig, type Course } from "./config.ts";
 
 let config;
@@ -23,6 +24,12 @@ mkdirSync(dirname(DB_PATH), { recursive: true });
 
 const db = new Database(DB_PATH, { create: true, strict: true });
 db.exec("PRAGMA journal_mode = WAL;");
+// The learner must never lose progress. FULL syncs the WAL on every commit, so an answer the
+// server has acknowledged survives a power cut, not just a crash. Foreign keys tie every
+// answer to a real encounter and snapshot. Answering is a few writes a minute; the cost is nil.
+db.exec("PRAGMA synchronous = FULL;");
+db.exec("PRAGMA foreign_keys = ON;");
+db.exec("PRAGMA busy_timeout = 5000;");
 // Learner history is never dropped on upgrade. A snapshot is taken first, and only when
 // the migration actually has work to do (RFC 1, rollout increment 1).
 const migration = migrate(db, (from) => {
@@ -32,21 +39,22 @@ const migration = migrate(db, (from) => {
 });
 if (migration.copied > 0) console.log(`school: preserved ${migration.copied} answer(s)`);
 
-const insertAnswer = db.prepare(`INSERT INTO answers (origin, course, block_id, lesson, choice, correct, first_try, ms, at)
-  VALUES ('block', $course, $block_id, $lesson, $choice, $correct, $first_try, $ms, $at)`);
 const insertView = db.prepare(`INSERT INTO views (course, lesson, at) VALUES ($course, $lesson, $at)`);
 
-type Answer = { course: string; blockId: string; lesson: string; choice: string; correct: boolean; firstTry: boolean; ms: number };
 
 const isStr = (v: unknown, max = 500): v is string => typeof v === "string" && v.length > 0 && v.length <= max;
 const isInt = (v: unknown): v is number => Number.isInteger(v) && typeof v === "number" && v >= 0;
 
-function parseAnswer(v: unknown): Answer | null {
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A submission names only what the learner did. Correctness and first try are the database's to decide. */
+function parseSubmission(v: unknown): Submission | null {
   if (typeof v !== "object" || v === null) return null;
   const o: Record<string, unknown> = { ...v };
-  if (!isStr(o.course, 200) || !isStr(o.blockId, 200) || !isStr(o.lesson, 200) || !isStr(o.choice)) return null;
-  if (typeof o.correct !== "boolean" || typeof o.firstTry !== "boolean" || !isInt(o.ms)) return null;
-  return { course: o.course, blockId: o.blockId, lesson: o.lesson, choice: o.choice, correct: o.correct, firstTry: o.firstTry, ms: o.ms };
+  if (typeof o.submissionId !== "string" || !UUID.test(o.submissionId)) return null;
+  if (typeof o.encounterId !== "string" || !UUID.test(o.encounterId)) return null;
+  if (!isStr(o.blockId, 200) || !isStr(o.choiceId, 200) || !isInt(o.ms)) return null;
+  return { submissionId: o.submissionId.toLowerCase(), encounterId: o.encounterId.toLowerCase(), blockId: o.blockId, choiceId: o.choiceId, ms: o.ms };
 }
 
 function parseView(v: unknown): { course: string; lesson: string } | null {
@@ -99,7 +107,9 @@ async function serveMount(pathname: string): Promise<Response> {
   return serveFrom(base, rest);
 }
 
-const html = (body: string, status = 200) => new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8" } });
+const html = (body: string, status = 200, headers: Record<string, string> = {}) =>
+  new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", ...headers } });
+const json = (body: unknown, status = 200) => Response.json(body, { status });
 
 function lessonResponse(c: Course, id: string | undefined, viewParam: string | null): Response {
   const view = isView(viewParam) ? viewParam : "web";
@@ -107,7 +117,7 @@ function lessonResponse(c: Course, id: string | undefined, viewParam: string | n
   if (library === null) return html(`<pre>Lesson error: ${(error?.message ?? "unknown").replace(/</g, "&lt;")}</pre>`, 500);
   const refs = referenceDocs(c);
   const { pages } = library;
-  if (id === undefined) return html(renderCourse(c.name, pages, refs));
+  if (id === undefined) return html(renderCourse(c.name, pages, refs, lessonProgress(db, c.name)));
   const i = pages.findIndex((p) => p.id === id);
   const page = pages[i];
   if (page === undefined) return new Response("Not found", { status: 404 });
@@ -116,7 +126,11 @@ function lessonResponse(c: Course, id: string | undefined, viewParam: string | n
   const next = pages[i + 1];
   if (prev !== undefined) nav.prev = prev;
   if (next !== undefined) nav.next = next;
-  return html(renderPage(c.name, page, view, nav, refs.length > 0));
+  if (view !== "web") return html(renderPage(c.name, page, view, nav, refs.length > 0));
+  // Practice: resume or open the encounter, and show what is already answered in it.
+  const e = openEncounter(db, { course: c.name, lesson: page.id, page, now: new Date().toISOString() });
+  return html(renderPage(c.name, page, view, nav, refs.length > 0, { encounterId: e.id, answers: encounterAnswers(db, e.id) }),
+    200, { "cache-control": "no-store" });
 }
 
 async function readJson(req: Request): Promise<unknown> {
@@ -135,11 +149,13 @@ Bun.serve({
     const { pathname } = url;
     const at = new Date().toISOString();
     if (req.method === "POST" && pathname === "/api/answer") {
-      const a = parseAnswer(await readJson(req));
-      if (a === null) return new Response("Bad answer", { status: 400 });
-      insertAnswer.run({ course: a.course, block_id: a.blockId, lesson: a.lesson, choice: a.choice,
-        correct: a.correct ? 1 : 0, first_try: a.firstTry ? 1 : 0, ms: a.ms, at });
-      return new Response(null, { status: 204 });
+      const s = parseSubmission(await readJson(req));
+      if (s === null) return json({ status: "invalid" }, 400);
+      // Acknowledged only after the commit, so a 200 means the answer is on disk.
+      const r = submit(db, s, at);
+      if (r.status === "rejected") return json(r, 400);
+      if (r.status === "conflict") return json(r, 409);
+      return json({ ...r, submissionId: s.submissionId });
     }
     if (req.method === "POST" && pathname === "/api/view") {
       const v = parseView(await readJson(req));

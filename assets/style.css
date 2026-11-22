@@ -68,6 +68,7 @@ th { color: var(--muted-foreground); font-weight: 600; font-size: .82rem; letter
 .q button.ok { border-color: var(--primary); background: color-mix(in oklch, var(--primary) 8%, var(--card)); font-weight: 600; }
 .q button.bad { border-color: var(--destructive); color: var(--destructive); }
 .q .fb { font-size: .88rem; color: var(--muted-foreground); min-height: 1.3em; margin-top: .5rem; }
+.q .saved { font-size: .78rem; color: var(--muted-foreground); min-height: 1.1em; margin-top: .25rem; }
 
 details { border: 1px solid var(--border); border-radius: var(--radius); padding: .6rem .9rem; margin: 1.25rem 0; background: var(--card); }
 details summary { cursor: pointer; font-weight: 600; font-size: .93rem; }

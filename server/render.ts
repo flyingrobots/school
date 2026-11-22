@@ -2,11 +2,15 @@
 // one entry to VIEWS; adding a block type fails to compile until every view
 // handles it.
 import type { Block, NestNode } from "./blocks.ts";
+import type { Recorded } from "./record.ts";
 
 export type View = "web" | "slides";
 export const isView = (v: string | null): v is View => v === "web" || v === "slides";
 
 export type Nav = { prev?: Block; next?: Block };
+
+/** The encounter a web page is served in, and what the learner has already answered in it. */
+export type Progress = { encounterId: string; answers: readonly Recorded[] };
 
 const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
@@ -17,8 +21,25 @@ function nest(n: NestNode): string {
   return `<div class="nest"><span class="lbl">${esc(n.label)}</span>${atoms}${n.children.map(nest).join("")}</div>${edge}`;
 }
 
+/**
+ * A quiz, showing any answers already recorded in this encounter, so a reload shows the
+ * learner's progress rather than a blank question. The database is the source of that state.
+ */
+function quiz(b: Extract<Block, { type: "quiz" }>, answered: readonly Recorded[]): string {
+  const mine = answered.filter((a) => a.blockId === b.id);
+  const last = mine.at(-1);
+  const settled = mine.some((a) => a.correct);
+  const buttons = b.choices.map((c) => {
+    const cls = last?.choiceId === c.id ? ` class="${last.correct ? "ok" : "bad"}"` : "";
+    return `<button data-choice="${esc(c.id)}" data-correct="${c.correct}"${cls}>${esc(c.text)}</button>`;
+  }).join("");
+  const fb = last === undefined ? "" : esc(`${last.correct ? "Correct." : "Not quite."} ${b.why}`.trim());
+  const status = last === undefined ? "" : "Saved.";
+  return `<div class="q" data-block="${esc(b.id)}" data-why="${esc(b.why)}"${settled ? ' data-settled="true"' : ""}><p>${b.q}</p>${buttons}<p class="fb">${fb}</p><p class="saved" aria-live="polite">${status}</p></div>`;
+}
+
 // Body renderer shared by both views; containers are handled per view.
-function leaf(b: Block, render: (b: Block) => string): string {
+function leaf(b: Block, render: (b: Block) => string, answered: readonly Recorded[] = []): string {
   switch (b.type) {
     case "prose":
       return b.html;
@@ -29,9 +50,7 @@ function leaf(b: Block, render: (b: Block) => string): string {
     case "aside":
       return `<p class="aside">${b.html}</p>`;
     case "quiz":
-      return `<div class="q" data-block="${esc(b.id)}" data-why="${esc(b.why)}"><p>${b.q}</p>${b.choices
-        .map((c) => `<button data-choice="${esc(c.id)}" data-correct="${c.correct}">${esc(c.text)}</button>`)
-        .join("")}<p class="fb"></p></div>`;
+      return quiz(b, answered);
     case "explain":
       return `<div class="explain" data-block="${esc(b.id)}"><p>${b.prompt}</p><details><summary>Model answer</summary><p>${b.model}</p></details></div>`;
     case "nest":
@@ -69,11 +88,17 @@ function navLinks(courseName: string, page: Block, nav: Nav, view: View, hasRefe
 
 const FOLLOW_UP = `<p class="aside">Anything unclear? Ask your teacher (the agent) a follow-up question. That's what it's for.</p>`;
 
-export function renderPage(courseName: string, page: Block, view: View, nav: Nav, hasReference = false): string {
+/**
+ * `progress` is given for the web view only. Without it the page records nothing: the slides
+ * view is a presentation, not practice (RFC 1, "Views").
+ */
+export function renderPage(courseName: string, page: Block, view: View, nav: Nav, hasReference = false, progress?: Progress): string {
   if (page.type !== "page") throw new Error(`renderPage: ${page.id} is not a page`);
-  const render = (b: Block): string => leaf(b, render);
+  const answered = progress?.answers ?? [];
+  const render = (b: Block): string => leaf(b, render, answered);
   const header = `<h1>${esc(page.title)}</h1><p class="subtitle">${page.subtitle}</p>`;
-  const meta = `<div id="school-meta" data-course="${esc(courseName)}" data-lesson="${esc(page.id)}" hidden></div>`;
+  const encounter = progress === undefined ? "" : ` data-encounter="${esc(progress.encounterId)}"`;
+  const meta = `<div id="school-meta" data-course="${esc(courseName)}" data-lesson="${esc(page.id)}"${encounter} hidden></div>`;
   switch (view) {
     case "web":
       return shell(page.title, view, `${meta}${navLinks(courseName, page, nav, view, hasReference)}${header}${render(page)}${FOLLOW_UP}`);
@@ -129,12 +154,26 @@ function referenceItems(courseName: string, reference: readonly string[]): strin
 <div class="item-content"><div class="item-title">${esc(title(f))}</div></div></a>`).join('<div class="item-sep"></div>');
 }
 
-export function renderCourse(courseName: string, pages: readonly Block[], reference: readonly string[] = []): string {
+/** The distinct quizzes a page shows, counting a block reused through `ref` once. */
+export function quizIds(b: Block, into = new Set<string>()): Set<string> {
+  if (b.type === "quiz") into.add(b.id);
+  if (b.type === "page" || b.type === "section") for (const c of b.children) quizIds(c, into);
+  return into;
+}
+
+export function renderCourse(courseName: string, pages: readonly Block[], reference: readonly string[] = [],
+  progress: ReadonlyMap<string, ReadonlySet<string>> = new Map()): string {
   const base = `/courses/${esc(courseName)}`;
+  const done = (p: Block) => {
+    // Only quizzes the lesson still shows count, so an edited lesson never reads as over 100%.
+    const ids = quizIds(p);
+    const right = [...ids].filter((id) => progress.get(p.id)?.has(id)).length;
+    return ids.size === 0 ? "" : `<div class="item-desc">${right} of ${ids.size} answered correctly</div>`;
+  };
   const rows = pages.map((p, i) => p.type !== "page" ? "" :
     `${i > 0 ? '<div class="item-sep"></div>' : ""}<a class="item" href="${base}/lessons/${esc(p.id)}">
 <div class="item-media icon">${i + 1}</div>
-<div class="item-content"><div class="item-title">${esc(p.title)}</div><div class="item-desc">${esc(p.subtitle ?? p.id)}</div></div>
+<div class="item-content"><div class="item-title">${esc(p.title)}</div><div class="item-desc">${esc(p.subtitle ?? p.id)}</div>${done(p)}</div>
 <div class="item-actions" aria-hidden="true">&rarr;</div></a>`).join("");
   const lessons = rows === ""
     ? `<div class="item-group outline"><div class="item"><div class="item-content">
