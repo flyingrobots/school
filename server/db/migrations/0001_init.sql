@@ -1,8 +1,10 @@
 -- 0001: School's learning record on Postgres (RFC 3 v0.4.0 §3.5; flyingrobots/school#45).
 --
 -- What this creates:
---   * two roles: school_owner, which owns every object here, and school_app, which the server
---     connects as and which may only EXECUTE the public functions below (§3.1);
+--   * the privileges of two roles: school_owner, which owns every object here, and school_app,
+--     which the server connects as and which may only EXECUTE the public functions below (§3.1).
+--     The runner creates both roles and schema `school` (server/db/migrate.ts, BOOTSTRAP) and runs
+--     this file, like every migration, as school_owner;
 --   * the record's tables in schema `school`, append-only, with no column kept for legacy SQLite
 --     rows: every answer names its encounter, block, choice and submission (§3.3);
 --   * record_seq, the one sequence every evidence row takes its `seq` from, so "before" and
@@ -16,28 +18,11 @@
 --
 -- Guard rails, not tamper-proofing: the owner can still drop a trigger (§3.1).
 --
--- The runner (server/db/migrate.ts) runs this file in one transaction. It must connect as a role
--- that can create roles and become them; in practice the database's superuser.
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'school_owner') THEN
-    CREATE ROLE school_owner NOLOGIN;
-  END IF;
-  -- NOLOGIN here; a deployment gives it LOGIN and a password (the adapter's task, flyingrobots/school#46).
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'school_app') THEN
-    CREATE ROLE school_app NOLOGIN;
-  END IF;
-END
-$$;
-
-CREATE SCHEMA school AUTHORIZATION school_owner;
-
--- Everything below is created as, and so owned by, the owner.
-SET LOCAL ROLE school_owner;
+-- The runner (server/db/migrate.ts) runs this file in one transaction, as school_owner.
 
 -- Postgres grants EXECUTE on every new function to PUBLIC. Not here: functions the owner creates,
--- now or in any later migration, start revoked, and are granted by name.
+-- now or in any later migration (the runner runs every file as the owner), start revoked, and are
+-- granted by name.
 ALTER DEFAULT PRIVILEGES FOR ROLE school_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 REVOKE ALL ON SCHEMA school FROM PUBLIC;
 GRANT USAGE ON SCHEMA school TO school_app;
@@ -84,7 +69,7 @@ CREATE TABLE school.answers (
   choice_id text NOT NULL,
   correct boolean NOT NULL,
   first_try boolean NOT NULL,
-  ms integer NOT NULL CONSTRAINT answers_ms CHECK (ms >= 0),
+  ms bigint NOT NULL CONSTRAINT answers_ms CHECK (ms >= 0),
   at timestamptz NOT NULL
 );
 -- Two concurrent first answers to one block cannot both be first (§3.2).
@@ -98,7 +83,7 @@ CREATE TABLE school.explanations (
   encounter_id uuid NOT NULL REFERENCES school.encounters (id),
   block_id text NOT NULL,
   text text NOT NULL CONSTRAINT explanations_text CHECK (text <> ''),
-  ms integer NOT NULL CONSTRAINT explanations_ms CHECK (ms >= 0),
+  ms bigint NOT NULL CONSTRAINT explanations_ms CHECK (ms >= 0),
   at timestamptz NOT NULL
 );
 CREATE INDEX explanations_encounter ON school.explanations (encounter_id, block_id, seq);
@@ -207,10 +192,13 @@ RETURN (SELECT school.grading_json(g) FROM school.gradings g WHERE g.submission_
 -- open_encounter(course, lesson, content, at, aid_tracking) -> (id, hash, resumed)
 -- Stores `content`, the page's canonical JSON, as a snapshot (once per distinct content), then
 -- resumes the latest encounter of this lesson with that content and the same aid_tracking whose
--- last activity (its opening or its latest answer) is within six hours before `at`, or opens a
--- new one. The six hours is server/record.ts RESUME_WINDOW_MS. Concurrent opens of one lesson
--- and content are serialised, so they agree on one encounter (§3.2).
-CREATE FUNCTION school.open_encounter(p_course text, p_lesson text, p_content text, p_at timestamptz, p_aid_tracking integer DEFAULT NULL)
+-- last activity is within six hours before `at`, or opens a new one. Activity is the learner's:
+-- the encounter's opening, its latest answer or its latest explanation; a grading is not (main's
+-- rule, flyingrobots/school#53). The six hours is server/record.ts RESUME_WINDOW_MS.
+-- aid_tracking has no default: the caller states it, NULL meaning not observed. A change of
+-- capture version starts a new encounter, so first try resets inside the window then.
+-- Concurrent opens of one lesson and content are serialised, so they agree on one encounter (§3.2).
+CREATE FUNCTION school.open_encounter(p_course text, p_lesson text, p_content text, p_at timestamptz, p_aid_tracking integer)
 RETURNS TABLE (id uuid, hash text, resumed boolean)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = school, pg_temp AS $$
 #variable_conflict use_column
@@ -223,7 +211,9 @@ BEGIN
   SELECT e.id INTO v_id FROM school.encounters e
   WHERE e.course = p_course AND e.lesson = p_lesson AND e.view = 'web' AND e.snapshot_hash = v_hash
     AND e.aid_tracking IS NOT DISTINCT FROM p_aid_tracking
-    AND greatest(e.at, (SELECT max(a.at) FROM school.answers a WHERE a.encounter_id = e.id)) >= p_at - interval '6 hours'
+    AND greatest(e.at,
+                 (SELECT max(a.at) FROM school.answers a WHERE a.encounter_id = e.id),
+                 (SELECT max(x.at) FROM school.explanations x WHERE x.encounter_id = e.id)) >= p_at - interval '6 hours'
   ORDER BY e.seq DESC LIMIT 1;
   IF v_id IS NOT NULL THEN
     RETURN QUERY SELECT v_id, v_hash, true;
@@ -242,7 +232,7 @@ $$;
 -- that quiz and choice are not in its snapshot); correct and first_try are NULL unless stored or
 -- duplicate. `correct` is the snapshot's; `first_try` is true when the encounter holds no earlier
 -- answer to the block. If a concurrent answer takes first try, this one is stored as not first.
-CREATE FUNCTION school.submit(p_submission uuid, p_encounter uuid, p_block text, p_choice text, p_ms integer, p_at timestamptz)
+CREATE FUNCTION school.submit(p_submission uuid, p_encounter uuid, p_block text, p_choice text, p_ms bigint, p_at timestamptz)
 RETURNS TABLE (status text, correct boolean, first_try boolean)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = school, pg_temp AS $$
 #variable_conflict use_column
@@ -276,7 +266,7 @@ BEGIN
     END;
   END IF;
   SELECT * INTO r FROM school.answers a WHERE a.submission_id = p_submission;
-  IF r.encounter_id <> p_encounter OR r.block_id <> p_block OR r.choice_id <> p_choice THEN
+  IF r.encounter_id IS DISTINCT FROM p_encounter OR r.block_id IS DISTINCT FROM p_block OR r.choice_id IS DISTINCT FROM p_choice THEN
     RETURN QUERY SELECT 'conflict'::text, NULL::boolean, NULL::boolean;
     RETURN;
   END IF;
@@ -308,7 +298,7 @@ $$;
 -- 'stored'; 'duplicate' (this id already holds this encounter, block and text); 'conflict' (it
 -- holds something else; the first stands); or 'rejected' (no such encounter, or no explain block
 -- with that id in its snapshot).
-CREATE FUNCTION school.save_explanation(p_submission uuid, p_encounter uuid, p_block text, p_text text, p_ms integer, p_at timestamptz)
+CREATE FUNCTION school.save_explanation(p_submission uuid, p_encounter uuid, p_block text, p_text text, p_ms bigint, p_at timestamptz)
 RETURNS text
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = school, pg_temp AS $$
 DECLARE
@@ -327,7 +317,8 @@ BEGIN
     IF v_seq IS NOT NULL THEN RETURN 'stored'; END IF;
   END IF;
   SELECT * INTO x FROM school.explanations y WHERE y.submission_id = p_submission;
-  RETURN CASE WHEN x.encounter_id = p_encounter AND x.block_id = p_block AND x.text = p_text THEN 'duplicate' ELSE 'conflict' END;
+  RETURN CASE WHEN x.encounter_id IS NOT DISTINCT FROM p_encounter AND x.block_id IS NOT DISTINCT FROM p_block
+              AND x.text IS NOT DISTINCT FROM p_text THEN 'duplicate' ELSE 'conflict' END;
 END
 $$;
 
@@ -408,10 +399,10 @@ REVOKE ALL ON SEQUENCE school.record_seq FROM PUBLIC, school_app;
 REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA school FROM PUBLIC;
 
 GRANT EXECUTE ON FUNCTION school.open_encounter(text, text, text, timestamptz, integer) TO school_app;
-GRANT EXECUTE ON FUNCTION school.submit(uuid, uuid, text, text, integer, timestamptz) TO school_app;
+GRANT EXECUTE ON FUNCTION school.submit(uuid, uuid, text, text, bigint, timestamptz) TO school_app;
 GRANT EXECUTE ON FUNCTION school.encounter_answers(uuid) TO school_app;
 GRANT EXECUTE ON FUNCTION school.lesson_progress(text) TO school_app;
-GRANT EXECUTE ON FUNCTION school.save_explanation(uuid, uuid, text, text, integer, timestamptz) TO school_app;
+GRANT EXECUTE ON FUNCTION school.save_explanation(uuid, uuid, text, text, bigint, timestamptz) TO school_app;
 GRANT EXECUTE ON FUNCTION school.explanation(uuid) TO school_app;
 GRANT EXECUTE ON FUNCTION school.record_grading(uuid, text, text, text, text, text, jsonb, text, jsonb, text, timestamptz) TO school_app;
 GRANT EXECUTE ON FUNCTION school.encounter_explanations(uuid) TO school_app;

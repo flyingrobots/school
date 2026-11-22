@@ -18,9 +18,20 @@ Practical notes for anyone — human or agent — changing the framework.
   dependency, and every migration is shipped.
 - The Postgres record (RFC 3) is built by numbered migrations in `server/db/migrations/`
   (`NNNN_name.sql`, from 0001, no gaps), applied by `server/db/migrate.ts`, one transaction per
-  file. Never edit an applied migration; the runner refuses a changed checksum, so add a new file.
-  `0001_init.sql` documents each public function's signature above it. Its tests run on PGlite
-  (`server/db/*.test.ts`). The server does not use it yet; it still runs on SQLite.
+  file. `0001_init.sql` documents each public function's signature above it. Its tests run on
+  PGlite (`server/db/*.test.ts`). The server does not use it yet; it still runs on SQLite.
+  - **Applied** means applied to any database that holds or will hold learner data. Never edit an
+    applied migration; the runner refuses a changed or missing file, so add a new one. Until the
+    first such database applies a file, it may still be corrected in place, and the pull request
+    says so.
+  - The runner creates the roles `school_owner` and `school_app` and schema `school` if absent,
+    then runs every file as `school_owner`, which may create objects only in `school`. A file
+    may not contain `BEGIN`, `COMMIT`, `ROLLBACK`, `SET ROLE` or similar; the runner owns the
+    transaction and the role. Apply migrations only through the runner, never with `psql -f`.
+  - The runner connects as the database's superuser: it creates roles and switches to them.
+  - Both roles are created `NOLOGIN`. The deployment grants `school_app` `LOGIN` and its password
+    (`ALTER ROLE school_app LOGIN PASSWORD ...`); that is not a migration, so no secret lives in
+    the repository. The roles are cluster-wide: do not pre-create them with other memberships.
 - The server is a hexagon (RFC 3, §4): `server/core/` holds the model (Zod), the ports and the use
   cases, and imports nothing but itself and Zod (`server/core/boundary.test.ts`). Adapters live in
   `server/adapters/`; every `LearningRecord` adapter must pass `server/contract/learning-record.ts`.
