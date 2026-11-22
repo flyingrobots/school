@@ -16,9 +16,9 @@ any leading `"use client"` removed, for the CLI defect described under
 [Stock components](#stock-components). Regenerate only from a fresh CLI install, with the same
 `perl` correction.
 
-`quiz-example.tsx` and `explain-example.tsx` are the exceptions: each is `shadcn add
-@flyingrobots/<name>-example` from School's registry (`flyingrobots/shadcn-registry`), installed
-the same way, and its hash is of that file.
+`quiz-example.tsx`, `explain-example.tsx` and `nest-example.tsx` are the exceptions: each is `shadcn
+add @flyingrobots/<name>-example` from School's registry (`flyingrobots/shadcn-registry`),
+installed the same way, and its hash is of that file.
 
 ## Stock components
 
