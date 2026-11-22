@@ -1,3 +1,6 @@
 *
-!*.ts
-*.test.ts
+!package.json
+!bun.lock
+!**/*.ts
+**/*.test.ts
+contract/**

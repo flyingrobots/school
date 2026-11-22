@@ -1,11 +1,14 @@
 # Ubuntu LTS, with Bun copied in from the official image at the pinned version (ADR 4).
-# Bun ships no Ubuntu image of its own; its binary is self-contained, SQLite included.
+# Bun ships no Ubuntu image of its own; its binary is self-contained.
 FROM oven/bun:1.4.4 AS bun
 
 FROM ubuntu:26.04
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 WORKDIR /app
-COPY *.ts ./
+COPY package.json bun.lock ./
+RUN bun install --production --frozen-lockfile
+# The build context is already filtered by .dockerignore: modules at any depth, no tests.
+COPY . ./
 # The course and any source mounts are supplied at run time, not baked in (ADR 6).
 ENV HOST=0.0.0.0 PORT=4747 SCHOOL_ROOT=/framework SCHOOL_COURSE=/course SCHOOL_STATE=/state
 # A dedicated non-root user with no extra groups (Ubuntu's own `ubuntu` user is in sudo, adm

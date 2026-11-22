@@ -5,9 +5,11 @@ import { dirname, join, normalize, sep } from "node:path";
 import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { lastValidLoader, quizIds, type Block } from "./blocks.ts";
 import { migrate, snapshot } from "./migrate.ts";
-import { encounterAnswers, lessonProgress, openEncounter, submit, type Submission } from "./record.ts";
-import { encounterExplanations, explanationState, gradeExplanation, saveExplanation, type ExplanationSubmission, type Grader } from "./explain.ts";
-import { bridgeConfig, callBridge } from "./grade.ts";
+import { PROMPT_VERSION, RUBRIC_VERSION, bridgeConfig, callBridge } from "./grade.ts";
+import { sqliteRecord } from "./adapters/sqlite.ts";
+import { ExplanationSubmission, GradeRequest, Submission, ViewEvent } from "./core/model.ts";
+import type { Grader } from "./core/ports.ts";
+import { createSchool } from "./core/school.ts";
 import { bridgeClient, bridgeStatus, effectiveBridge, loadSettings, saveSettings, settingsFile, toBridge, validToken, validUrl } from "./settings.ts";
 import { ConfigError, course, courseNames, mountTable, parseConfig, type Course } from "./config.ts";
 
@@ -54,7 +56,7 @@ const deadlineMs = bridgeCfg?.deadlineMs ?? 240_000;
 const bridgeNow = () => effectiveBridge(process.env, loadSettings(SETTINGS));
 const currentBridge = () => bridgeClient(bridgeNow(), deadlineMs);
 const grader: Grader = {
-  adapter: "bridge", model: "",
+  adapter: "bridge", model: "", rubricVersion: RUBRIC_VERSION, promptVersion: PROMPT_VERSION,
   grade: async (input) => {
     const c = currentBridge();
     return c === null ? { status: "failed", error: "no bridge is connected yet; connect one in Settings" } : callBridge(c, input);
@@ -66,46 +68,9 @@ const grader: Grader = {
     : `school: grading through the bridge at ${b.url} (from ${b.urlFrom})`);
 }
 
-/** Where to go back to from the settings page: a path on this site, never another origin. */
-
-const insertView = db.prepare(`INSERT INTO views (course, lesson, at) VALUES ($course, $lesson, $at)`);
-
-
-const isStr = (v: unknown, max = 500): v is string => typeof v === "string" && v.length > 0 && v.length <= max;
-const isInt = (v: unknown): v is number => Number.isInteger(v) && typeof v === "number" && v >= 0;
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** A submission names only what the learner did. Correctness and first try are the database's to decide. */
-function parseExplanation(v: unknown): ExplanationSubmission | null {
-  if (typeof v !== "object" || v === null) return null;
-  const o: Record<string, unknown> = { ...v };
-  if (typeof o.submissionId !== "string" || !UUID.test(o.submissionId)) return null;
-  if (typeof o.encounterId !== "string" || !UUID.test(o.encounterId)) return null;
-  if (!isStr(o.blockId, 200) || !isInt(o.ms) || typeof o.text !== "string") return null;
-  const text = o.text.trim();
-  if (text.length === 0 || text.length > 10_000) return null;
-  return { submissionId: o.submissionId.toLowerCase(), encounterId: o.encounterId.toLowerCase(), blockId: o.blockId, text, ms: o.ms };
-}
-
-/** A saved explanation and its latest grading, as the app shows it. */
-const explanationNow = (submissionId: string) => explanationState(db, submissionId)?.state ?? null;
-
-function parseSubmission(v: unknown): Submission | null {
-  if (typeof v !== "object" || v === null) return null;
-  const o: Record<string, unknown> = { ...v };
-  if (typeof o.submissionId !== "string" || !UUID.test(o.submissionId)) return null;
-  if (typeof o.encounterId !== "string" || !UUID.test(o.encounterId)) return null;
-  if (!isStr(o.blockId, 200) || !isStr(o.choiceId, 200) || !isInt(o.ms)) return null;
-  return { submissionId: o.submissionId.toLowerCase(), encounterId: o.encounterId.toLowerCase(), blockId: o.blockId, choiceId: o.choiceId, ms: o.ms };
-}
-
-function parseView(v: unknown): { course: string; lesson: string } | null {
-  if (typeof v !== "object" || v === null) return null;
-  const o: Record<string, unknown> = { ...v };
-  if (!isStr(o.course, 200) || !isStr(o.lesson, 200)) return null;
-  return { course: o.course, lesson: o.lesson };
-}
+// The hexagon (RFC 3, §4): this file is the composition root and the HTTP adapter. It parses
+// every request with the core's Zod schemas and reaches the record only through the use cases.
+const school = createSchool({ record: sqliteRecord(db), grader, clock: { now: () => new Date().toISOString() } });
 
 // Static files come only from configured mounts; lesson sources and state are never served raw.
 const MOUNTS: Record<string, string> = mountTable(config);
@@ -221,16 +186,16 @@ const isView = (v: string | null): v is View => v === "web" || v === "slides";
 const summary = (p: Block | undefined) => (p === undefined || p.type !== "page" ? null : { id: p.id, title: p.title, subtitle: p.subtitle });
 
 /** A course: its lessons, each with how many of its quizzes have been answered correctly, and its reference documents. */
-function courseJson(c: Course): Response {
+async function courseJson(c: Course): Promise<Response> {
   const { library, error } = lessons(c);
   if (library === null) return json({ error: error?.message ?? "the lessons could not be loaded" }, 500);
-  const done = lessonProgress(db, c.name);
+  const done = await school.lessonProgress(c.name);
   return json({
     name: c.name,
     reference: referenceDocs(c),
     lessons: library.pages.map((p) => {
       const ids = quizIds(p);
-      return { ...summary(p), quizzes: ids.size, answeredCorrectly: [...ids].filter((id) => done.get(p.id)?.has(id)).length };
+      return { ...summary(p), quizzes: ids.size, answeredCorrectly: [...ids].filter((id) => done[p.id]?.includes(id)).length };
     }),
   });
 }
@@ -239,7 +204,7 @@ function courseJson(c: Course): Response {
  * One lesson. In the web view this opens or resumes the learner's encounter and includes what is
  * already answered in it, which is what opening the page used to do. The slides view records nothing.
  */
-function lessonJson(c: Course, id: string, viewParam: string | null): Response {
+async function lessonJson(c: Course, id: string, viewParam: string | null): Promise<Response> {
   const view = isView(viewParam) ? viewParam : "web";
   const { library, error } = lessons(c);
   if (library === null) return json({ error: error?.message ?? "the lessons could not be loaded" }, 500);
@@ -249,8 +214,8 @@ function lessonJson(c: Course, id: string, viewParam: string | null): Response {
   if (page === undefined) return json({ error: "no such lesson" }, 404);
   const base = { course: c.name, view, lesson: page, prev: summary(pages[i - 1]), next: summary(pages[i + 1]), hasReference: referenceDocs(c).length > 0 };
   if (view !== "web") return json(base);
-  const e = openEncounter(db, { course: c.name, lesson: page.id, page, now: new Date().toISOString() });
-  return json({ ...base, encounterId: e.id, answers: encounterAnswers(db, e.id), explanations: encounterExplanations(db, e.id) },
+  const opened = await school.openLesson(c.name, page);
+  return json({ ...base, encounterId: opened.encounter.id, answers: opened.answers, explanations: opened.explanations },
     200, { "cache-control": "no-store" });
 }
 
@@ -282,36 +247,33 @@ Bun.serve({
   async fetch(req) {
     const url = new URL(req.url);
     const { pathname } = url;
-    const at = new Date().toISOString();
     if (req.method === "POST" && pathname.startsWith("/api/")) {
       const refused = guardApi(req);
       if (refused !== null) return refused;
     }
     if (req.method === "POST" && pathname === "/api/answer") {
-      const s = parseSubmission(await readJson(req));
-      if (s === null) return json({ status: "invalid" }, 400);
+      const s = Submission.safeParse(await readJson(req));
+      if (!s.success) return json({ status: "invalid" }, 400);
       // Acknowledged only after the commit, so a 200 means the answer is on disk.
-      const r = submit(db, s, at);
+      const r = await school.submitAnswer(s.data);
       if (r.status === "rejected") return json(r, 400);
       if (r.status === "conflict") return json(r, 409);
-      return json({ ...r, submissionId: s.submissionId });
+      return json({ ...r, submissionId: s.data.submissionId });
     }
     if (req.method === "POST" && pathname === "/api/explanation") {
-      const s = parseExplanation(await readJson(req));
-      if (s === null) return json({ status: "invalid" }, 400);
-      // Saved and committed before any grading is attempted (RFC 1 proposal 4, lifecycle step 1).
-      const r = saveExplanation(db, s, at);
+      const s = ExplanationSubmission.safeParse(await readJson(req));
+      if (!s.success) return json({ status: "invalid" }, 400);
+      const { result: r, explanation } = await school.saveExplanation(s.data);
       if (r.status === "rejected") return json(r, 400);
       if (r.status === "conflict") return json(r, 409);
-      return json({ ...r, submissionId: s.submissionId, explanation: explanationNow(s.submissionId) });
+      return json({ ...r, submissionId: s.data.submissionId, explanation });
     }
     if (req.method === "POST" && pathname === "/api/grade") {
-      const body = await readJson(req);
-      const id = typeof body === "object" && body !== null ? (body as Record<string, unknown>).submissionId : undefined;
-      if (typeof id !== "string" || !UUID.test(id)) return json({ status: "invalid" }, 400);
-      const g = await gradeExplanation(db, id.toLowerCase(), grader, new Date().toISOString());
+      const body = GradeRequest.safeParse(await readJson(req));
+      if (!body.success) return json({ status: "invalid" }, 400);
+      const g = await school.gradeExplanation(body.data.submissionId);
       if (g === null) return json({ status: "unknown submission" }, 404);
-      return json({ status: g.status, explanation: explanationNow(id.toLowerCase()) });
+      return json({ status: g.grading.status, explanation: g.explanation });
     }
     if (req.method === "POST" && pathname === "/api/settings/bridge") {
       const body = (await readJson(req)) as Record<string, unknown> | null;
@@ -349,9 +311,9 @@ Bun.serve({
       return json(r.body, r.status);
     }
     if (req.method === "POST" && pathname === "/api/view") {
-      const v = parseView(await readJson(req));
-      if (v === null) return new Response("Bad view", { status: 400 });
-      insertView.run({ course: v.course, lesson: v.lesson, at });
+      const v = ViewEvent.safeParse(await readJson(req));
+      if (!v.success) return new Response("Bad view", { status: 400 });
+      await school.recordView(v.data);
       return new Response(null, { status: 204 });
     }
     if (req.method === "POST" && pathname.startsWith("/api/")) return notFound();
