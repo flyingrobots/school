@@ -51,7 +51,7 @@ Entries are tagged:
 
 **Objective item** *(School)* — A question with a declared correct answer: multiple choice and anything else checkable by comparison. Graded by the server, deterministically, with no model involved and no delay.
 
-**Subjective item** *(School)* — A write-in or an explanation, with no declared answer, that needs reasoning to assess. Graded by an agent through the sidecar.
+**Subjective item** *(School)* — A write-in or an explanation, with no declared answer, that needs reasoning to assess. Graded by an agent through the bridge.
 
 **Server grading** and **model grading** *(School)* — The two kinds of judgment, kept apart because they carry different authority. Comparing an answer against a declared one is not the same kind of evidence as a model's opinion of an explanation, and the record must never conflate them.
 
@@ -71,9 +71,9 @@ Entries are tagged:
 
 **Declared for measurement, generated for practice** *(School)* — The governing rule for the two kinds of question. A quiz block is practice, so it may be generated for one learner. A quiz or exam is measurement, so its items are declared in the course and are the same for everyone; otherwise results do not mean the same thing for two learners, or for one learner twice.
 
-**Course file** *(School)* — **Unsettled**, and possibly unnecessary. If a course is played by an agent reading the repository, the server needs only the machine-readable parts (sequence, assessment items, block structure) and a compiled bundle may be redundant. See the open decisions in RFC 1.
+**Course file** *(School)* — A lesson file: one block-JSON page in a course's `lessons/` directory. There is no compiled bundle; the server reads the directory.
 
-**Course schema**, **format version** *(School)* — **Unsettled**, and downstream of whether a course file exists at all. [ADR 7](adr/0007-course-schema-in-graphql-compiled-by-wesley.md) proposes GraphQL SDL compiled by Wesley; JSON Schema is the alternative; neither is settled.
+**Course schema**, **format version** *(School)* — The block JSON format, validated when the server loads a course (`server/blocks.ts`). A small JSON Schema will describe it when an author needs one. [ADR 7](adr/0007-course-schema-in-graphql-compiled-by-wesley.md)'s GraphQL compiler was withdrawn on 2026-11-22. **Unsettled:** how a format version is declared.
 
 ## The learner's side
 
@@ -103,7 +103,7 @@ Entries are tagged:
 
 **Mount** *(School)* — A named directory the server will serve files from, configured rather than compiled in.
 
-**Sidecar** *(School, reserved term)* — The server's bridge to an agent: a host process, outside Docker, that the server calls for the two jobs needing a model — grading **subjective items** and **preparing** future lesson renderings ([ADR 8](adr/0008-the-school-skill-and-who-invokes-whom.md)). Originally scoped to grading alone. It is **not** a repository and has nothing to do with course distribution. Do not use "sidecar" for anything else.
+**Bridge** *(School)*, formerly **sidecar** — The separate host process the server sends model work to. It runs LLM agents through command templates the learner configures (`claude -p … {prompt}`), trying each in order as a hierarchy of fallbacks, and returns the first output that matches the requested schema ([RFC 1](rfc/0001-school.md), proposal 4). Its job today is grading **subjective items**; **preparing** lesson renderings is deferred with model B ([ADR 8](adr/0008-the-school-skill-and-who-invokes-whom.md)). It is **not** a repository and has nothing to do with course distribution.
 
 ## Retired wording
 
@@ -111,6 +111,6 @@ Entries are tagged:
 | --- | --- | --- |
 | lesson pack, pack | **course** | The repository and the shareable unit are the course. |
 | lesson file | **course file** (if it exists at all) | A course contains lessons, not the reverse. |
-| sidecar repository | **course repository** | "Sidecar" is reserved for the grading service. |
+| sidecar repository | **course repository** | "Sidecar" named the grading service, now the bridge. |
 | private content repository | **learner state** | Courses are public; only the learner's record is private. |
 | curriculum | **objectives** + **sequence** | Two separable things; naming them apart avoids the earlier confusion. |

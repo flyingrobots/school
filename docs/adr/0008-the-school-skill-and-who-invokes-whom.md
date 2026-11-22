@@ -1,6 +1,8 @@
 # 8. The `school` skill, and who invokes whom
 
-Date: 2026-11-21 · Status: Accepted
+Date: 2026-11-21 · Status: Accepted, amended 2026-11-22
+
+> **Amended 2026-11-22: courses ship finished lessons ("model A").** The learner chose this after an external review pointed out that the server was being built for authored lessons while this ADR described generated ones. A course carries its lessons as authored block JSON, playable with no agent at all. Personalisation is *surgical*: review blocks (`due-review`), remediation inserted where the evidence shows a gap, and graded explanations. Generating a whole lesson rendering per learner ("model B") is **deferred, not rejected**: everything below about preparation describes that later step, and the retention rule still governs it when it comes. The two jobs this ADR gives an agent remain, but today the only one built towards is grading explanations.
 
 ## Context
 Until now the assumption was that the agent drives: you run a teaching skill in some folder, it decides everything, and it writes the artifacts itself. An earlier draft of this ADR kept that direction and only moved the structure into the framework — the agent would call the framework to scaffold a course, then fill it in.
@@ -46,7 +48,7 @@ Authoring a course is also `/school`, run by a person writing or extending one.
 - **The sidecar widens.** RFC 1 scoped it to grading only. It is now the server's bridge to an agent for grading *and* preparation. Its constraints and activation gates apply unchanged to both.
 - **Grading splits by item type, and the two are different authorities.** A deterministic server grading of a declared answer and a model's judgment of an explanation are not the same kind of evidence, and the learning record contract must keep them apart. This strengthens RFC 1's existing principle that a submission, a grade and a teaching decision are separate records.
 - A learner never waits on a model. Model failures degrade the *future* of a course, not the page in front of them.
-- Prepared lessons are durable artifacts in learner state, not ephemeral renderings. They need storage, and they need the same content hashing as anything else an answer points at.
+- *(Deferred with model B.)* Prepared lessons are durable artifacts in learner state, not ephemeral renderings. They need storage, and they need the same content hashing as anything else an answer points at.
 - The skill is version-coupled to the framework's rubric and schema. A newer skill writing against an older framework's structure will drift.
 - The framework now needs a way to be *called from* the server (the sidecar) and a way to *call* a person's agent during authoring. Two different interfaces.
 
