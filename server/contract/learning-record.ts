@@ -83,6 +83,25 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
       .toMatchObject({ firstTry: true });
   });
 
+  t("an explanation is activity: one written late in the window keeps the encounter open past it", async (r) => {
+    const page = lesson("l1", [quiz("q1"), explain]);
+    const e1 = await r.openEncounter({ course: "c", lesson: "l1", page, now: at(0) });
+    await r.saveExplanation({ submissionId: uuid(), encounterId: e1.id, blockId: "e1", text: "Because.", ms: 1 }, at(RESUME_WINDOW_MS - 1000));
+    expect(await r.openEncounter({ course: "c", lesson: "l1", page, now: at(RESUME_WINDOW_MS + 1000) }))
+      .toEqual({ id: e1.id, hash: e1.hash, resumed: true });
+  });
+
+  t("grading is not the learner's activity: a late grading does not keep the encounter open", async (r) => {
+    const page = lesson("l1", [explain]);
+    const e1 = await r.openEncounter({ course: "c", lesson: "l1", page, now: at(0) });
+    const id = uuid();
+    await r.saveExplanation({ submissionId: id, encounterId: e1.id, blockId: "e1", text: "Because.", ms: 1 }, at(1000));
+    await r.recordGrading(succeeded(id), at(2 * RESUME_WINDOW_MS));
+    const later = await r.openEncounter({ course: "c", lesson: "l1", page, now: at(2 * RESUME_WINDOW_MS + 1000) });
+    expect(later.id).not.toBe(e1.id);
+    expect(later.resumed).toBe(false);
+  });
+
   t("an edited lesson is a new snapshot and a new encounter; the old answers stay with the old one", async (r) => {
     const e1 = await r.openEncounter({ course: "c", lesson: "l1", page: lesson("l1", [quiz("q1")]), now: at(0) });
     await r.submit({ submissionId: uuid(), encounterId: e1.id, blockId: "q1", choiceId: "right", ms: 1 }, at(1));

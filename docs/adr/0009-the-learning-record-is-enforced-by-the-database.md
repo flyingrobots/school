@@ -28,11 +28,12 @@ A rule that only the server enforces is broken by the next bug in the server. So
 Answers recorded before schema version 5 keep these columns NULL: unknown, not invented.
 
 ### Encounters resume on the server
-Serving the web view of a lesson resumes the latest encounter of that lesson with **the same snapshot**, as long as its last activity (its creation or its latest answer) is within `RESUME_WINDOW_MS`, six hours. Otherwise a new encounter starts. So:
+Serving the web view of a lesson resumes the latest encounter of that lesson with **the same snapshot**, as long as its last activity (its creation, its latest answer or its latest explanation) is within `RESUME_WINDOW_MS`, six hours. Otherwise a new encounter starts. So:
 - a reload, a dropped connection, or a phone tab coming back keeps the encounter, and first try does not reset;
 - a different device continues the same encounter, because nothing lives in the browser;
 - coming back the next day is a new encounter, whose first answers are first tries again. That is the spaced retrieval School is built for;
-- an edited lesson has a new snapshot, so it gets a new encounter. Earlier answers still point at what the learner actually saw.
+- an edited lesson has a new snapshot, so it gets a new encounter. Earlier answers still point at what the learner actually saw;
+- grading an explanation is not the learner's activity, so a grading that lands, or is retried, hours later does not keep the encounter open.
 
 The page is rendered with the encounter's recorded answers already shown. The course index counts, for each lesson, the quizzes it still shows that have been answered correctly.
 
