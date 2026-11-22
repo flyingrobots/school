@@ -167,7 +167,7 @@ test("the migration lock is taken before the ledger is touched, and released aft
     const run = migrate(recording, folder(files));
     if (fails) await expect(run).rejects.toThrow(/no_such_function/); else await run;
     const lock = seen.findIndex((s) => /pg_advisory_lock\(/.test(s));
-    const ledger = seen.findIndex((s) => s.includes("schema_migrations"));
+    const ledger = seen.findIndex((s) => s.includes("schema_migrations") && !s.includes("pg_advisory")); // the lock key names it too
     expect(lock).toBe(0);
     expect(ledger).toBeGreaterThan(lock);
     expect(seen.at(-1)).toMatch(/pg_advisory_unlock\(/);

@@ -114,6 +114,8 @@ function topLevel(sql: string): string {
   return out;
 }
 
+/** A routine whose SQL-standard body runs to a closing END: only this opens BEGIN ATOMIC. */
+const ROUTINE_ATOMIC = /^CREATE\s+(OR\s+REPLACE\s+)?(FUNCTION|PROCEDURE)\b[\s\S]*\bBEGIN\s+ATOMIC\b/i;
 const TRANSACTION = /^(BEGIN|START|COMMIT|END|ROLLBACK|ABORT|PREPARE\s+TRANSACTION)\b/i;
 const ROLE = /^((SET|RESET)\s+((SESSION|LOCAL)\s+)?(ROLE|SESSION\s+AUTHORIZATION)\b|SET\s+(SESSION|LOCAL)\s+SESSION\s+AUTHORIZATION\b)/i;
 
@@ -124,7 +126,7 @@ function refuseControl(name: string, sql: string): void {
     const s = raw.trim();
     if (s === "") continue;
     if (atomic) { if (/^END$/i.test(s)) atomic = false; continue; }
-    if (/\bBEGIN\s+ATOMIC\b/i.test(s)) { atomic = true; continue; }
+    if (ROUTINE_ATOMIC.test(s)) { atomic = true; continue; }
     const t = TRANSACTION.exec(s);
     if (t) throw new Error(`${name}: the runner owns the transaction; remove its ${t[1]!.split(/\s+/)[0]!.toUpperCase()}`);
     const r = ROLE.exec(s);
@@ -153,6 +155,19 @@ function verify(migrations: Migration[], recorded: Map<number, Applied>): void {
  */
 export async function migrate(db: Connection, dir: string = MIGRATIONS): Promise<{ applied: number[] }> {
   const migrations = readMigrations(dir);
+  // One runner at a time, from before the ledger is created or read until the last file: a
+  // concurrent CREATE TABLE IF NOT EXISTS is not race-free. Held for the session, released below.
+  await db.exec(`SELECT pg_advisory_lock(${LOCK})`);
+  try {
+    return await apply(db, migrations);
+  } finally {
+    await db.exec(`SELECT pg_advisory_unlock(${LOCK})`);
+  }
+}
+
+const LOCK = "hashtext('school.schema_migrations')";
+
+async function apply(db: Connection, migrations: Migration[]): Promise<{ applied: number[] }> {
   await db.exec(`CREATE TABLE IF NOT EXISTS public.schema_migrations (
     version integer PRIMARY KEY,
     name text NOT NULL,
@@ -171,8 +186,9 @@ export async function migrate(db: Connection, dir: string = MIGRATIONS): Promise
     if (before.has(m.version)) continue;
     await db.exec("BEGIN");
     try {
-      // Two runners at once: the second waits here, then sees what the first recorded.
-      await db.exec("SELECT pg_advisory_xact_lock(hashtext('school.schema_migrations'))");
+      // Already held for the session; taken again per file, so the recheck below also holds for a
+      // driver whose session lock was lost with a reconnect.
+      await db.exec(`SELECT pg_advisory_xact_lock(${LOCK})`);
       const now = await recorded();
       verify(migrations, now);
       if (now.has(m.version)) { await db.exec("COMMIT"); continue; }

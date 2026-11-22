@@ -190,13 +190,15 @@ RETURN (SELECT school.grading_json(g) FROM school.gradings g WHERE g.submission_
 -- ---------------------------------------------------------------------------------------------
 
 -- open_encounter(course, lesson, content, at, aid_tracking) -> (id, hash, resumed)
--- Stores `content`, the page's canonical JSON, as a snapshot (once per distinct content), then
--- resumes the latest encounter of this lesson with that content and the same aid_tracking whose
--- last activity is within six hours before `at`, or opens a new one. Activity is the learner's:
+-- Stores `content`, the page's canonical JSON, as a snapshot (once per distinct content). Then it
+-- takes the latest encounter of this course and lesson with that content, and resumes it only if
+-- its last activity is within six hours before `at` AND its aid_tracking equals the argument;
+-- otherwise it opens a new one. An older encounter never resumes. Activity is the learner's:
 -- the encounter's opening, its latest answer or its latest explanation; a grading is not (main's
 -- rule, flyingrobots/school#53). The six hours is server/record.ts RESUME_WINDOW_MS.
 -- aid_tracking has no default: the caller states it, NULL meaning not observed. A change of
--- capture version starts a new encounter, so first try resets inside the window then.
+-- capture version always starts a new encounter, even back to an earlier version inside the
+-- window, so first try resets then.
 -- Concurrent opens of one lesson and content are serialised, so they agree on one encounter (§3.2).
 CREATE FUNCTION school.open_encounter(p_course text, p_lesson text, p_content text, p_at timestamptz, p_aid_tracking integer)
 RETURNS TABLE (id uuid, hash text, resumed boolean)
@@ -208,13 +210,14 @@ DECLARE
 BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended('school.open_encounter ' || p_course || ' ' || p_lesson || ' ' || v_hash, 0));
   INSERT INTO school.snapshots (hash, content, at) VALUES (v_hash, p_content, p_at) ON CONFLICT (hash) DO NOTHING;
-  SELECT e.id INTO v_id FROM school.encounters e
-  WHERE e.course = p_course AND e.lesson = p_lesson AND e.view = 'web' AND e.snapshot_hash = v_hash
-    AND e.aid_tracking IS NOT DISTINCT FROM p_aid_tracking
-    AND greatest(e.at,
-                 (SELECT max(a.at) FROM school.answers a WHERE a.encounter_id = e.id),
-                 (SELECT max(x.at) FROM school.explanations x WHERE x.encounter_id = e.id)) >= p_at - interval '6 hours'
-  ORDER BY e.seq DESC LIMIT 1;
+  SELECT l.id INTO v_id
+  FROM (SELECT e.id, e.at, e.aid_tracking FROM school.encounters e
+        WHERE e.course = p_course AND e.lesson = p_lesson AND e.view = 'web' AND e.snapshot_hash = v_hash
+        ORDER BY e.seq DESC LIMIT 1) l
+  WHERE l.aid_tracking IS NOT DISTINCT FROM p_aid_tracking
+    AND greatest(l.at,
+                 (SELECT max(a.at) FROM school.answers a WHERE a.encounter_id = l.id),
+                 (SELECT max(x.at) FROM school.explanations x WHERE x.encounter_id = l.id)) >= p_at - interval '6 hours';
   IF v_id IS NOT NULL THEN
     RETURN QUERY SELECT v_id, v_hash, true;
     RETURN;
