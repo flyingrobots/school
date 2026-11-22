@@ -42,11 +42,12 @@ beforeAll(async () => {
 
   server = Bun.spawn(["bun", join(import.meta.dir, "server.ts")], {
     env: { ...process.env, SCHOOL_COURSES: `ok=${join(root, "ok")},empty=${join(root, "empty")},broken=${join(root, "broken")},linked=${join(root, "linked")}`,
-      SCHOOL_STATE: join(root, "state"), PORT: String(PORT), HOST: "127.0.0.1" },
+      // No built app, as on CI: the API and path checks must not depend on web/dist existing.
+      SCHOOL_STATE: join(root, "state"), SCHOOL_WEB: join(root, "no-web"), PORT: String(PORT), HOST: "127.0.0.1" },
     stdout: "ignore", stderr: "ignore",
   });
   for (let i = 0; i < 100; i++) {
-    try { if ((await fetch(base + "/")).ok) return; } catch {}
+    try { if ((await fetch(base + "/api/courses")).ok) return; } catch {}
     await Bun.sleep(50);
   }
   throw new Error("server did not start");
@@ -82,6 +83,14 @@ test("a same-origin JSON view is still recorded", async () => {
 test("malformed percent-encoding is a 400, not a crash", async () => {
   expect((await fetch(base + "/assets/%E0%A4%A")).status).toBe(400);
   expect((await fetch(base + "/courses/ok/reference/%E0%A4%A")).status).toBe(400);
+});
+
+test("without a built app, pages say so with a 503 and the API still answers", async () => {
+  const r = await fetch(base + "/");
+  expect(r.status).toBe(503);
+  expect((await r.json()).error).toContain("not built");
+  expect((await fetch(base + "/some/page")).status).toBe(503);
+  expect((await fetch(base + "/api/courses")).status).toBe(200);
 });
 
 test("a course with no lessons directory lists no lessons instead of failing", async () => {
