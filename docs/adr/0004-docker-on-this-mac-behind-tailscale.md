@@ -6,7 +6,7 @@ Date: 2026-11-18 · Status: Accepted, amended by [ADR 6](0006-separate-framework
 This Mac is the learner's home server. They want to take lessons from their phone wherever they are, over their tailnet.
 
 ## Decision
-- Run the server with `docker compose` (`server/compose.yaml`, `restart: unless-stopped`) from the `oven/bun:1.4.4-alpine` image, as the non-root `bun` user.
+- Run the server with `docker compose` (`server/compose.yaml`, `restart: unless-stopped`) on Ubuntu 26.04 LTS with the Bun 1.4.4 binary copied from the official `oven/bun:1.4.4` image, as a dedicated non-root `school` user (uid 1000, no extra groups). *(Amended 2026-11-22: previously `oven/bun:1.4.4-alpine`. Ubuntu was the learner's choice; the image grows from 174 MB to 337 MB.)*
 - Publish the port on `127.0.0.1:4747` only. `tailscale serve` exposes it to the tailnet over HTTPS.
 - No login: the tailnet is the access control.
 - Bind-mount `lessons/`, `reference/`, `assets/` and `../aion` read-only, and `progress/` read-write. The image contains only `server.ts`.

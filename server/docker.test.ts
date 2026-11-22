@@ -18,3 +18,10 @@ test("every module the server imports is a .ts file beside it", () => {
     for (const m of readFileSync(join(dir, f), "utf8").matchAll(/from "\.\/([^"]+)"/g)) expect(modules).toContain(m[1]!);
   }
 });
+
+test("the image is Ubuntu LTS with the pinned Bun, run as a non-root user", () => {
+  const df = readFileSync(join(dir, "Dockerfile"), "utf8");
+  expect(df).toMatch(/^FROM oven\/bun:1\.4\.4 AS bun$/m); // the same Bun as CI
+  expect(df).toMatch(/^FROM ubuntu:\d\d\.04$/m); // an LTS release
+  expect(df).toMatch(/^USER school$/m);
+});
