@@ -216,3 +216,100 @@ test("environment variables override saved settings, and the page says which", (
     .toMatchObject({ url: "http://env:2", urlFrom: "environment", token: "env-token-0123456789ab", tokenFrom: "environment" });
   expect(effectiveBridge({}, {})).toMatchObject({ url: null, token: null, urlFrom: "none", tokenFrom: "none" });
 });
+
+// flyingrobots/school#60: anyone who can reach School can post a bridge URL. The token must
+// never follow it there. A listener stands in for an attacker's address and records the
+// Authorization header of every request it receives, whatever the path.
+type Listener = { url: string; seen: (string | null)[]; stop: () => void };
+function listener(reply: (req: Request) => Response = () => Response.json({ status: "ok", agents: [], raw: { evil: true } })): Listener {
+  const seen: (string | null)[] = [];
+  const s = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(req) { seen.push(req.headers.get("authorization")); return reply(req); } });
+  return { url: `http://127.0.0.1:${s.port}`, seen, stop: () => s.stop(true) };
+}
+const listeners: Listener[] = [];
+afterEach(() => { for (const l of listeners.splice(0)) l.stop(); });
+const listen = (reply?: (req: Request) => Response) => { const l = listener(reply); listeners.push(l); return l; };
+
+/** Every route that can reach the bridge, exercised once, so a leak anywhere shows up in a listener. */
+async function touchEverything(at: string) {
+  const g = (p: string) => fetch(at + p);
+  const p = (path: string, body: unknown) => fetch(at + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const replies = [await g("/api/settings/status"), await g("/api/settings/agents"), await p("/api/settings/agents", { agents: [{ name: "fake" }] }), await p("/api/settings/agents/test", { agent: "fake" })];
+  const e = JSON.parse(await (await g("/api/courses/c/lessons/l1")).text()).encounterId;
+  const id = crypto.randomUUID();
+  await p("/api/explanation", { submissionId: id, encounterId: e, blockId: "e1", text: "Because.", ms: 1 });
+  replies.push(await p("/api/grade", { submissionId: id }));
+  return Promise.all(replies.map((r) => r.text()));
+}
+
+/** A second server, with the bridge settings given in its environment. */
+async function serverWith(extra: Record<string, string>) {
+  const port = PORT + 2;
+  const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state-env"), PORT: String(port), HOST: "127.0.0.1", ...extra };
+  for (const k of ["SCHOOL_BRIDGE_URL", "SCHOOL_BRIDGE_TOKEN"]) if (!(k in extra)) delete (env as Record<string, string | undefined>)[k];
+  const s = Bun.spawn(["bun", join(import.meta.dir, "server.ts")], { env, stdout: "ignore", stderr: "ignore" });
+  procs.push(s);
+  const at = `http://127.0.0.1:${port}`;
+  await until(at + "/api/courses", (r) => r.ok);
+  return at;
+}
+
+test("with the token in the environment, the URL cannot be changed from the page", async () => {
+  const evil = listen();
+  const at = await serverWith({ SCHOOL_BRIDGE_TOKEN: TOKEN });
+  const r = await fetch(at + "/api/settings/bridge", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: evil.url }) });
+  expect(r.status).toBe(409);
+  const body = await r.json();
+  expect(body.status).toBe("locked");
+  expect(body.error).toContain("SCHOOL_BRIDGE_TOKEN");
+  expect(await (await fetch(at + "/api/settings/bridge")).json()).toMatchObject({ url: null, tokenFrom: "environment" });
+  await touchEverything(at);
+  expect(evil.seen).toEqual([]);
+});
+
+test("changing the URL clears the saved token, so no request carries it to the new address", async () => {
+  declare();
+  await connect();
+  const evil = listen();
+  const moved = await post("/api/settings/bridge", { url: evil.url });
+  expect(moved.status).toBe(200);
+  expect(await moved.json()).toMatchObject({ status: "saved", tokenSet: false });
+  expect(JSON.parse(readFileSync(join(root, "state", "settings.json"), "utf8")).bridge).toEqual({ url: evil.url });
+  expect(await (await fetch(base + "/api/settings/bridge")).json()).toEqual({ url: evil.url, urlFrom: "settings", tokenSet: false, tokenFrom: "none" });
+  const replies = await touchEverything(base);
+  expect(evil.seen).toEqual([]);
+  // Nothing the address would have said reaches the page either.
+  for (const r of replies) expect(r).not.toContain("evil");
+  // Moving back does not bring the old token back: it has to be entered again.
+  expect(await (await post("/api/settings/bridge", { url: BRIDGE_URL })).json()).toMatchObject({ tokenSet: false });
+  expect(await status()).toMatchObject({ connection: "none" });
+  await connect();
+  expect(await status()).toMatchObject({ connection: "ok" });
+});
+
+test("a token saved together with a new URL goes to that URL, and only a new token does", async () => {
+  await connect();
+  const other = listen();
+  const fresh = "a-different-token-0123456789";
+  expect((await post("/api/settings/bridge", { url: other.url, token: fresh })).status).toBe(200);
+  await touchEverything(base);
+  expect(other.seen.length).toBeGreaterThan(0);
+  expect(other.seen.every((h) => h === `Bearer ${fresh}`)).toBe(true);
+  // The same goes for a generated one.
+  const gen = listen();
+  const g = await (await post("/api/settings/bridge", { url: gen.url, generate: true })).json();
+  await touchEverything(base);
+  expect(gen.seen.length).toBeGreaterThan(0);
+  expect(gen.seen.every((h) => h === `Bearer ${g.generated}`)).toBe(true);
+  // Saving the same URL again, written with a trailing slash, is not a change.
+  expect(await (await post("/api/settings/bridge", { url: gen.url + "/" })).json()).toMatchObject({ tokenSet: true });
+});
+
+test("a bridge that redirects does not take the token with it", async () => {
+  const evil = listen();
+  const redirector = listen((req) => new Response(null, { status: 307, headers: { location: evil.url + new URL(req.url).pathname } }));
+  expect((await post("/api/settings/bridge", { url: redirector.url, token: TOKEN })).status).toBe(200);
+  await touchEverything(base);
+  expect(redirector.seen.length).toBeGreaterThan(0);
+  expect(evil.seen).toEqual([]);
+});
