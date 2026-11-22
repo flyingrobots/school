@@ -2,7 +2,7 @@
 
 - **Status:** Draft, revision 3. Agent-written; revised twice against the same external review. Not yet accepted.
 - **Date:** 2026-11-18, revised 2026-11-21.
-- **Describes:** `~/git/school` at commit `22e5411`. The workspace is a git repository as of 2026-11-21, so revision 3 cites commits where revision 2 could not.
+- **Describes:** this repository at commit `22e5411`. The workspace is a git repository as of 2026-11-21, so revision 3 cites commits where revision 2 could not.
 - **Builds on:** ADRs 1–5 in `docs/adr/`
 - **Decision requested:** agree on [the concept](#the-concept), accept the [learning record contract](#the-learning-record-contract), accept, amend or reject each of the four [proposals](#proposals), and answer [open questions](#open-questions) 1 and 2. This RFC deliberately does not settle those two for the learner; see [review reconciliation](#review-reconciliation).
 
@@ -39,7 +39,7 @@ The skill's lessons are static HTML files. After Lesson 2 the learner asked, "wa
 
 One study session goes like this:
 
-1. **The teacher plans.** The learner runs `/teach` in `~/git/school`. The teacher reads `MISSION.md` and the learning records, and queries `progress.db` for recent results. It writes the next lesson, aimed just past what the learner can already do, with claims citing the papers. The lesson includes at least one activity from an earlier lesson, chosen by the teacher, as delayed practice.
+1. **The teacher plans.** The learner runs `/teach` at the repository root. The teacher reads `MISSION.md` and the learning records, and queries `progress/progress.db` for recent results. It writes the next lesson, aimed just past what the learner can already do, with claims citing the papers. The lesson includes at least one activity from an earlier lesson, chosen by the teacher, as delayed practice.
 2. **The learner studies, anywhere.** They open the lesson on a phone or laptop through the tailnet, answer quizzes with immediate feedback, and write or dictate a 30-second explanation.
 3. **School records.** Each submission is stored with the content the learner actually saw and the encounter it belonged to (see [the learning record contract](#the-learning-record-contract)).
 4. **The teacher adapts, and says why.** The next plan names the recorded attempts that caused each review item to return, so the learner can disagree with the reasoning.
@@ -329,7 +329,7 @@ Possibilities, not proposals. Each is built only if real use shows a need for it
 ## Review log
 
 - **Revision 1** (2026-11-18): first draft.
-- **Revision 3** (2026-11-21): reconciled against the full text of the same external review, checked row by row rather than recalled. Re-measured the current state against commit `22e5411`; recorded the Dockerfile fix and the `.dockerignore` cause behind it; tightened proposal 2b to displayed values; added the [reconciliation table](#review-reconciliation). Wrote down four things that existed only in captured session transcripts: how lessons are planned, the undetected reference cycles, the unverified tailnet route, and the still-live destructive migration. Those transcripts were removed from this repository and its history on 2026-11-21, so this RFC is now their only record.
+- **Revision 3** (2026-11-21): reconciled against the full text of the same external review, checked row by row rather than recalled. Re-measured the current state against commit `22e5411`; recorded the Dockerfile fix and the `.dockerignore` cause behind it; tightened proposal 2b to displayed values; added the [reconciliation table](#review-reconciliation). Wrote down four things that existed only in captured session transcripts: how lessons are planned, the undetected reference cycles, the unverified tailnet route, and the still-live destructive migration. Those transcripts were removed from this repository and its history on 2026-11-21, so this RFC is now their only record. Also normalised machine-specific paths across the workspace to repo-root-relative ones (`../aion` for the sibling papers checkout), keeping only the two that are verbatim historical quotes: the original `/teach` request above and the broken `file://` URLs in ADR 5's problem statement.
 - **Revision 2** (2026-11-18): revised after an external review that returned *changes required*. It added the learning record contract, the preserving migration, the definition of first try, idempotent submissions, the grading lifecycle and rubric, binding snapshots, the sidecar activation gates and the view contracts. It replaced the ban on generated content with a retention rule, and closed the Markdown question. The Bun claim was verified locally; the Claude Code documentation claims were taken from the review and not checked here.
 
 ## Open questions
@@ -339,4 +339,4 @@ Questions 1 and 2 are unanswered and block work: 1 governs whether the sidecar m
 1. **What did "false" reject?** The learner answered "false" to the rule that LLMs grade but never supply content, then described the sidecar. Revision 2 assumes: the sidecar grades first, and generated content is allowed later if it is reviewed and kept as a revision. Confirm or correct this.
 2. **Does the subscription permit automated use through its CLI?** The CLI supports non-interactive mode; whether the learner's plan allows this wrapper must be checked before enabling the CLI adapter.
 3. **Answered:** the sidecar stays typed around grading and lives in this repository until a second real consumer exists.
-4. **Answered, and done:** `~/git/school` became a git repository on 2026-11-21 (commit `22e5411`), published as `flyingrobots/school` under Apache 2.0. The rest of increment 1 — the preserving migration — is not done.
+4. **Answered, and done:** this workspace became a git repository on 2026-11-21 (commit `22e5411`), published as `flyingrobots/school` under Apache 2.0. The rest of increment 1 — the preserving migration — is not done.

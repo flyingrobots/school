@@ -1,9 +1,9 @@
 # AIΩN Resources
 
 ## Knowledge
-- [Repo: ~/git/aion README](file:///Users/james/git/aion/README.md)
+- Repo README: `../aion/README.md` (sibling checkout of the AIΩN papers)
   One-paragraph summary of every paper and the central thesis. Use for: series map, elevator pitch.
-- [Paper I: A Worldline Algebra for Recursive Provenance (Zenodo)](https://doi.org/10.5281/zenodo.17908005) (source: ~/git/aion/aion-paper-01-warp/paper/main.tex)
+- [Paper I: A Worldline Algebra for Recursive Provenance (Zenodo)](https://doi.org/10.5281/zenodo.17908005) (source: `../aion/aion-paper-01-warp/paper/main.tex`)
   Defines WARP graphs. Use for: atoms, skeletons, attachments, depth. §2 and the Appendix worked example are the gentlest start.
 - [Paper II: Canonical State Evolution and Deterministic Worldlines](https://doi.org/10.5281/zenodo.17934512)
   Deterministic rewriting, ticks. Use for: why replay is deterministic.

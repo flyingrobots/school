@@ -1,7 +1,7 @@
 # Mission: The AIΩN Foundations Series
 
 ## Why
-James wrote the AIΩN papers (~/git/aion). They want to explain the series clearly to other people: talks, reviewers, collaborators. To do that they will re-learn it from zero, the way a newcomer would meet it.
+James wrote the AIΩN papers (`../aion`, a sibling checkout). They want to explain the series clearly to other people: talks, reviewers, collaborators. To do that they will re-learn it from zero, the way a newcomer would meet it.
 
 ## Success looks like
 - Give the central thesis ("store transformations, not states") in 30 seconds, with one concrete example

@@ -9,7 +9,7 @@ This Mac is the learner's home server. They want to take lessons from their phon
 - Run the server with `docker compose` (`server/compose.yaml`, `restart: unless-stopped`) from the `oven/bun:1.4.4-alpine` image, as the non-root `bun` user.
 - Publish the port on `127.0.0.1:4747` only. `tailscale serve` exposes it to the tailnet over HTTPS.
 - No login: the tailnet is the access control.
-- Bind-mount `lessons/`, `reference/`, `assets/` and `~/git/aion` read-only, and `progress/` read-write. The image contains only `server.ts`.
+- Bind-mount `lessons/`, `reference/`, `assets/` and `../aion` read-only, and `progress/` read-write. The image contains only `server.ts`.
 
 ## Alternatives
 - Run `bun server/server.ts` directly: simpler, but does not survive reboots or crashes without extra setup.

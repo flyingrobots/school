@@ -9,4 +9,4 @@ services:
       - ../reference:/school/reference:ro
       - ../assets:/school/assets:ro
       - ../progress:/school/progress
-      - ${HOME}/git/aion:/aion:ro
+      - ../../aion:/aion:ro   # sibling checkout of the papers; relative to this file
