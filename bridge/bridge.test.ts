@@ -1,6 +1,6 @@
 // The bridge over HTTP, as the real process (flyingrobots/school#10).
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -72,4 +72,46 @@ test("logs are JSON Lines and never contain the prompt", async () => {
   const lines = out.trim().split("\n");
   for (const l of lines) expect(typeof JSON.parse(l).kind).toBe("string");
   expect(out).not.toContain("SECRET-LEARNER-TEXT");
+});
+
+// Configuring the bridge from School's settings page (flyingrobots/school#13).
+test("a bridge with no configuration file starts, reports itself unconfigured, and accepts one", async () => {
+  const d = mkdtempSync(join(tmpdir(), "school-bridge-fresh-"));
+  const port = PORT + 7;
+  const p = Bun.spawn(["bun", join(import.meta.dir, "bridge.ts")], {
+    env: { ...process.env, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: join(d, "nested", "bridge.json"), SCHOOL_BRIDGE_PORT: String(port) },
+    stdout: "ignore", stderr: "ignore",
+  });
+  const at = `http://127.0.0.1:${port}`;
+  const send = (method: string, path: string, body?: unknown) =>
+    fetch(at + path, { method, headers: { ...auth, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+  try {
+    for (let i = 0; i < 100; i++) { try { if ((await fetch(at + "/health")).status === 401) break; } catch {} await Bun.sleep(50); }
+    expect(await (await send("GET", "/health")).json()).toMatchObject({ status: "unconfigured", agents: [] });
+    expect(await (await send("GET", "/config")).json()).toMatchObject({ status: "unconfigured", raw: { agents: [] } });
+    expect(await (await send("POST", "/run", { prompt: "p", schema })).json()).toMatchObject({ status: "failed", error: expect.stringMatching(/no agents/) });
+
+    // An invalid configuration is refused with its reason, and nothing is written.
+    const bad = await send("PUT", "/config", { agents: [{ name: "x", command: 'oops "unbalanced' }] });
+    expect(bad.status).toBe(400);
+    expect((await bad.json()).error).toMatch(/quote/);
+    expect(existsSync(join(d, "nested", "bridge.json"))).toBe(false);
+
+    const good = join(d, "good");
+    writeFileSync(good, `#!/bin/sh\necho '{"ok": true}'\n`);
+    chmodSync(good, 0o755);
+    const config = { timeout_seconds: 5, agents: [{ name: "good", command: `${good} {prompt}`, output: "text" }] };
+    expect(await (await send("PUT", "/config", config)).json()).toMatchObject({ status: "saved", agents: [{ name: "good", found: true }] });
+    expect(JSON.parse(readFileSync(join(d, "nested", "bridge.json"), "utf8"))).toEqual(config);
+    expect(statSync(join(d, "nested", "bridge.json")).mode & 0o777).toBe(0o600);
+    expect(await (await send("GET", "/config")).json()).toMatchObject({ status: "ok", raw: config });
+
+    expect(await (await send("POST", "/test", { agent: "good" })).json()).toMatchObject({ status: "succeeded", output: { ok: true } });
+    expect((await send("POST", "/test", { agent: "nobody" })).status).toBe(404);
+    expect((await fetch(at + "/config", { method: "PUT", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
+  } finally {
+    p.kill();
+    await p.exited;
+    rmSync(d, { recursive: true, force: true });
+  }
 });

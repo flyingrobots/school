@@ -3,11 +3,12 @@ import { Database } from "bun:sqlite";
 import { dirname, join, normalize, sep } from "node:path";
 import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { lastValidLoader } from "./blocks.ts";
-import { esc, isView, renderCourse, renderExplain, renderLanding, renderPage, renderReference } from "./render.ts";
+import { esc, isView, renderCourse, renderExplain, renderSettings, renderLanding, renderPage, renderReference } from "./render.ts";
 import { migrate, snapshot } from "./migrate.ts";
 import { encounterAnswers, lessonProgress, openEncounter, submit, type Submission } from "./record.ts";
 import { encounterExplanations, explanationState, gradeExplanation, saveExplanation, type ExplanationSubmission, type Grader } from "./explain.ts";
 import { bridgeConfig, callBridge } from "./grade.ts";
+import { bridgeClient, bridgeStatus, effectiveBridge, loadSettings, saveSettings, settingsFile, toBridge, validToken, validUrl } from "./settings.ts";
 import { ConfigError, course, courseNames, mountTable, parseConfig, type Course } from "./config.ts";
 
 let config;
@@ -46,10 +47,27 @@ if (migration.copied > 0) console.log(`school: preserved ${migration.copied} ans
 // Grading goes through the bridge, a separate host process that runs the learner's agent
 // commands. Without one, a grading attempt is stored as failed with that reason. The token
 // lives only in this process's environment; it is never logged or stored.
-const grader: Grader = bridgeCfg === null ? null
-  : { adapter: "bridge", model: "", grade: (input) => callBridge(bridgeCfg, input) };
-console.log(grader === null ? "school: no bridge configured (SCHOOL_BRIDGE_URL); explanations are saved but not graded"
-  : `school: grading through the bridge at ${bridgeCfg!.url}`);
+// The connection is resolved at each use, from the environment and then the settings page's
+// saved values, so saving settings takes effect without a restart.
+const SETTINGS = settingsFile(config.state);
+const deadlineMs = bridgeCfg?.deadlineMs ?? 240_000;
+const bridgeNow = () => effectiveBridge(process.env, loadSettings(SETTINGS));
+const currentBridge = () => bridgeClient(bridgeNow(), deadlineMs);
+const grader: Grader = {
+  adapter: "bridge", model: "",
+  grade: async (input) => {
+    const c = currentBridge();
+    return c === null ? { status: "failed", error: "no bridge is connected yet; connect one in Settings" } : callBridge(c, input);
+  },
+};
+{
+  const b = bridgeNow();
+  console.log(b.url === null ? "school: no bridge connected; explanations are saved but not graded until one is (Settings)"
+    : `school: grading through the bridge at ${b.url} (from ${b.urlFrom})`);
+}
+
+/** Where to go back to from the settings page: a path on this site, never another origin. */
+const backTo = (from: string | null) => (from !== null && from.startsWith("/") && !from.startsWith("//") && !from.startsWith("/settings") ? from : "/");
 
 const insertView = db.prepare(`INSERT INTO views (course, lesson, at) VALUES ($course, $lesson, $at)`);
 
@@ -269,6 +287,41 @@ Bun.serve({
       if (g === null) return json({ status: "unknown submission" }, 404);
       return json({ status: g.status, html: explainHtml(id.toLowerCase()) });
     }
+    if (req.method === "POST" && pathname === "/api/settings/bridge") {
+      const body = (await readJson(req)) as Record<string, unknown> | null;
+      if (body === null || typeof body !== "object") return json({ status: "invalid" }, 400);
+      const now = bridgeNow();
+      const saved = loadSettings(SETTINGS);
+      const next = { ...saved.bridge };
+      if (body.url !== undefined) {
+        if (now.urlFrom === "environment") return json({ status: "locked", error: "SCHOOL_BRIDGE_URL is set in the environment, which overrides this setting" }, 409);
+        if (typeof body.url !== "string" || (body.url !== "" && !validUrl(body.url))) return json({ status: "invalid", error: "the URL must start with http:// or https://" }, 400);
+        next.url = body.url.replace(/\/+$/, "");
+      }
+      let generated: string | undefined;
+      if (body.generate === true || body.token !== undefined) {
+        if (now.tokenFrom === "environment") return json({ status: "locked", error: "SCHOOL_BRIDGE_TOKEN is set in the environment, which overrides this setting" }, 409);
+        if (body.generate === true) {
+          generated = Buffer.from(crypto.getRandomValues(new Uint8Array(24))).toString("base64url");
+          next.token = generated;
+        } else if (typeof body.token === "string" && validToken(body.token)) {
+          next.token = body.token;
+        } else {
+          return json({ status: "invalid", error: "the token must be at least 16 characters, with no spaces" }, 400);
+        }
+      }
+      saveSettings(SETTINGS, { ...saved, bridge: next });
+      // A generated token is returned once, so the learner can start the bridge with it. Never again.
+      return json({ status: "saved", tokenSet: Boolean(next.token), ...(generated === undefined ? {} : { generated }) });
+    }
+    if (req.method === "POST" && pathname === "/api/settings/agents") {
+      const r = await toBridge(currentBridge(), "PUT", "/config", await readJson(req));
+      return json(r.body, r.status);
+    }
+    if (req.method === "POST" && pathname === "/api/settings/agents/test") {
+      const r = await toBridge(currentBridge(), "POST", "/test", await readJson(req));
+      return json(r.body, r.status);
+    }
     if (req.method === "POST" && pathname === "/api/view") {
       const v = parseView(await readJson(req));
       if (v === null) return new Response("Bad view", { status: 400 });
@@ -277,6 +330,17 @@ Bun.serve({
     }
     if (req.method === "POST" && pathname.startsWith("/api/")) return notFound();
     if (req.method !== "GET") return new Response("Method not allowed", { status: 405 });
+
+    if (pathname === "/api/settings/status") return json(await bridgeStatus(currentBridge()));
+    if (pathname === "/api/settings/agents") {
+      const r = await toBridge(currentBridge(), "GET", "/config");
+      return json(r.body, r.status);
+    }
+    if (pathname === "/settings") {
+      const b = bridgeNow();
+      return html(renderSettings({ back: backTo(url.searchParams.get("from")), url: b.url, urlFrom: b.urlFrom, tokenSet: b.token !== null, tokenFrom: b.tokenFrom }),
+        200, { "cache-control": "no-store" });
+    }
 
     // The landing page is School's index of installed courses, not one course's lessons.
     if (pathname === "/" || pathname === "/courses" || pathname === "/courses/") {
