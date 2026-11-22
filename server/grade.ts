@@ -3,7 +3,9 @@
 // process that tries the learner's own agent commands in order. Every failure, including every
 // agent failing, the bridge being unreachable, and an answer of the wrong shape, comes back as
 // `failed` with a reason; it is never turned into a verdict.
+import { z } from "zod";
 import { ConfigError } from "./config.ts";
+import { Findings as FindingsSchema } from "./core/model.ts";
 
 export const RUBRIC_VERSION = "rubric-v1";
 export const PROMPT_VERSION = "prompt-v1";
@@ -85,10 +87,7 @@ function userMessage(i: GradingInput): string {
   return `<prompt>\n${i.prompt}\n</prompt>\n<reference_answer id="model">\n${i.modelAnswer}\n</reference_answer>\n${sources}\n<explanation>\n${i.explanation}\n</explanation>`;
 }
 
-const isCriterion = (v: unknown): v is Criterion => typeof v === "object" && v !== null &&
-  ["meets", "partly", "misses"].includes((v as Criterion).verdict) && typeof (v as Criterion).note === "string";
-
-/** The model's JSON, checked against RESPONSE_SCHEMA by hand: a local server may ignore the schema. */
+/** The model's JSON, checked against RESPONSE_SCHEMA: a local server may ignore the schema. */
 function parseFindings(text: string): Findings | string {
   let v: unknown;
   try {
@@ -96,11 +95,8 @@ function parseFindings(text: string): Findings | string {
   } catch {
     return "the grader did not return JSON";
   }
-  const o = v as Partial<Findings>;
-  const ok = typeof v === "object" && v !== null && typeof o.insufficient_evidence === "boolean" &&
-    isCriterion(o.fidelity) && isCriterion(o.completeness) && isCriterion(o.accessibility) && typeof o.summary === "string" &&
-    Array.isArray(o.contradictions) && o.contradictions.every((c) => typeof c?.source_id === "string" && typeof c.quote === "string" && typeof c.note === "string");
-  return ok ? (v as Findings) : "the grader returned JSON of the wrong shape";
+  const parsed = FindingsSchema.safeParse(v);
+  return parsed.success ? parsed.data : "the grader returned JSON of the wrong shape";
 }
 
 /** The whole prompt an agent receives: an agent CLI has no separate system channel. */
@@ -108,8 +104,21 @@ export function gradingPrompt(i: GradingInput): string {
   return `${SYSTEM}\n\n${userMessage(i)}\n\nReply with only one JSON object, no prose and no code fence, matching this JSON Schema:\n${JSON.stringify(RESPONSE_SCHEMA)}`;
 }
 
-type Attempt = { agent: string; status: string; error?: string };
-type BridgeReply = { status: "succeeded"; agent: string; output: unknown; attempts: Attempt[] } | { status: "failed"; error: string; attempts: Attempt[] };
+// The bridge's reply envelope (bridge/run.ts, ChainResult). Only what is read here is checked;
+// other fields an attempt carries (ms, exit code, output streams) are left alone.
+const Attempt = z.object({ agent: z.string(), status: z.string(), error: z.string().optional() });
+const BridgeReply = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("succeeded"), agent: z.string(), output: z.unknown(), attempts: z.array(Attempt) }),
+  z.object({ status: z.literal("failed"), error: z.string(), attempts: z.array(Attempt) }),
+]);
+
+/** The first problem with a reply envelope, in words a learner's record can keep. */
+function envelopeProblem(e: z.ZodError): string {
+  const i = e.issues[0];
+  if (i === undefined) return "it did not match";
+  const at = i.path.length === 0 ? "the reply" : i.path.map(String).join(".");
+  return `${at}: ${i.message}`;
+}
 
 export async function callBridge(cfg: BridgeClientConfig, input: GradingInput): Promise<Outcome> {
   let res: Response;
@@ -118,6 +127,7 @@ export async function callBridge(cfg: BridgeClientConfig, input: GradingInput): 
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${cfg.token}` },
       body: JSON.stringify({ prompt: gradingPrompt(input), schema: RESPONSE_SCHEMA, deadline_ms: cfg.deadlineMs }),
+      redirect: "error", // never carry the token to an address the bridge redirects to (flyingrobots/school#60)
       signal: AbortSignal.timeout(cfg.deadlineMs + 10_000),
     });
   } catch (e) {
@@ -128,15 +138,19 @@ export async function callBridge(cfg: BridgeClientConfig, input: GradingInput): 
   const text = await res.text();
   if (res.status === 401) return { status: "failed", error: "the bridge refused the token", raw: text };
   if (res.status !== 200) return { status: "failed", error: `the bridge answered HTTP ${res.status}`, raw: text };
-  let reply: BridgeReply;
+  let json: unknown;
   try {
-    reply = JSON.parse(text);
+    json = JSON.parse(text);
   } catch {
     return { status: "failed", error: "the bridge's reply was not JSON", raw: text };
   }
+  // A 200 is not proof of the shape: anything else is a failure that keeps the raw text (flyingrobots/school#17).
+  const parsed = BridgeReply.safeParse(json);
+  if (!parsed.success) return { status: "failed", error: `the bridge's reply was not the expected shape (${envelopeProblem(parsed.error)})`, raw: text };
+  const reply = parsed.data;
   if (reply.status !== "succeeded") {
     const why = reply.attempts.map((a) => `${a.agent}: ${a.error ?? a.status}`).join("; ");
-    return { status: "failed", error: `${reply.error ?? "every agent failed"}${why ? ` (${why})` : ""}`, raw: text };
+    return { status: "failed", error: `${reply.error || "every agent failed"}${why ? ` (${why})` : ""}`, raw: text };
   }
   // The bridge checked the schema; check again here, since this is what the learner will see.
   const findings = parseFindings(JSON.stringify(reply.output));

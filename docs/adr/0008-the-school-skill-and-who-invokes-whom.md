@@ -2,6 +2,8 @@
 
 Date: 2026-11-21 · Status: Accepted, amended 2026-11-22
 
+> **Direction reversed 2026-11-22, pending acceptance: model B.** The maintainer decided that lessons are prepared for each learner and courses ship a curriculum; [RFC 2](../rfc/0002-lessons-written-for-each-learner.md) specifies it. This ADR is rewritten when RFC 2 is accepted; until then, the model A amendment below describes what is built.
+
 > **Amended 2026-11-22: courses ship finished lessons ("model A").** The learner chose this after an external review pointed out that the server was being built for authored lessons while this ADR described generated ones. A course carries its lessons as authored block JSON, playable with no agent at all. Personalisation is *surgical*: review blocks (`due-review`), remediation inserted where the evidence shows a gap, and graded explanations. Generating a whole lesson rendering per learner ("model B") is **deferred, not rejected**: everything below about preparation describes that later step, and the retention rule still governs it when it comes. The two jobs this ADR gives an agent remain, but today the only one built towards is grading explanations.
 
 ## Context

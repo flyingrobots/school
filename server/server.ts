@@ -12,12 +12,16 @@ import type { Grader } from "./core/ports.ts";
 import { createSchool } from "./core/school.ts";
 import { bridgeClient, bridgeStatus, effectiveBridge, loadSettings, saveSettings, settingsFile, toBridge, validToken, validUrl } from "./settings.ts";
 import { ConfigError, course, courseNames, mountTable, parseConfig, type Course } from "./config.ts";
+import { allowedHosts, hostAllowed } from "./hosts.ts";
+import { agentOrder, agentTest } from "./agents.ts";
 
 let config;
 let bridgeCfg;
+let hosts: string[];
 try {
   config = parseConfig(process.env, join(import.meta.dir, ".."));
   bridgeCfg = bridgeConfig(process.env);
+  hosts = allowedHosts(config, process.env);
 } catch (e) {
   if (e instanceof ConfigError) {
     console.error(`school: ${e.message}`);
@@ -246,6 +250,10 @@ Bun.serve({
   // 255 s is Bun's maximum, so the grader's own timeout is capped below it (grade.ts).
   idleTimeout: 255,
   async fetch(req) {
+    // Before anything else, so that no route, present or future, answers a rebound name (flyingrobots/school#18).
+    if (!hostAllowed(req.headers.get("host"), hosts)) {
+      return json({ status: "refused", error: "this Host is not one of School's names; add it to SCHOOL_ALLOWED_HOSTS if it should be" }, 403);
+    }
     const url = new URL(req.url);
     const { pathname } = url;
     if (req.method === "POST" && pathname.startsWith("/api/")) {
@@ -285,7 +293,15 @@ Bun.serve({
       if (body.url !== undefined) {
         if (now.urlFrom === "environment") return json({ status: "locked", error: "SCHOOL_BRIDGE_URL is set in the environment, which overrides this setting" }, 409);
         if (typeof body.url !== "string" || (body.url !== "" && !validUrl(body.url))) return json({ status: "invalid", error: "the URL must start with http:// or https://" }, 400);
-        next.url = body.url.replace(/\/+$/, "");
+        const url = body.url.replace(/\/+$/, "");
+        // School has no login, so whoever posts a URL may not be the learner. The token is only
+        // ever sent to the URL it was saved with (flyingrobots/school#60): a token from the
+        // environment locks the URL, and a new URL drops a saved token until one is given again.
+        if (url !== (saved.bridge?.url ?? "")) {
+          if (now.tokenFrom === "environment") return json({ status: "locked", error: "SCHOOL_BRIDGE_TOKEN is set in the environment, so the bridge URL can only be changed there too: set SCHOOL_BRIDGE_URL beside it" }, 409);
+          delete next.token;
+        }
+        next.url = url;
       }
       let generated: string | undefined;
       if (body.generate === true || body.token !== undefined) {
@@ -299,16 +315,25 @@ Bun.serve({
           return json({ status: "invalid", error: "the token must be at least 16 characters, with no spaces" }, 400);
         }
       }
-      saveSettings(SETTINGS, { ...saved, bridge: next });
-      // A generated token is returned once, so the learner can start the bridge with it. Never again.
-      return json({ status: "saved", tokenSet: Boolean(next.token), ...(generated === undefined ? {} : { generated }) });
+      const after = { ...saved, bridge: next };
+      saveSettings(SETTINGS, after);
+      // tokenSet is the token in effect, from the environment or settings, as the GET reports it
+      // (flyingrobots/school#61). A generated token is returned once, so the learner can start
+      // the bridge with it. Never again.
+      return json({ status: "saved", tokenSet: effectiveBridge(process.env, after).token !== null, ...(generated === undefined ? {} : { generated }) });
     }
+    // Agents are declared, commands and all, only in the bridge's file on its host. From here
+    // they can be reordered, switched on and off, and tested; only those fields reach the bridge.
     if (req.method === "POST" && pathname === "/api/settings/agents") {
-      const r = await toBridge(currentBridge(), "PUT", "/config", await readJson(req));
+      const order = agentOrder(await readJson(req));
+      if ("error" in order) return json({ status: "invalid", error: order.error }, 400);
+      const r = await toBridge(currentBridge(), "PUT", "/config", order);
       return json(r.body, r.status);
     }
     if (req.method === "POST" && pathname === "/api/settings/agents/test") {
-      const r = await toBridge(currentBridge(), "POST", "/test", await readJson(req));
+      const t = agentTest(await readJson(req));
+      if ("error" in t) return json({ status: "invalid", error: t.error }, 400);
+      const r = await toBridge(currentBridge(), "POST", "/test", t);
       return json(r.body, r.status);
     }
     if (req.method === "POST" && pathname === "/api/view") {
@@ -357,5 +382,6 @@ Bun.serve({
     return serveApp(pathname);
   },
 });
+console.log(`school: answering to ${hosts.join(", ")}`);
 console.log(`school: http://${config.host}:${config.port}  courses=${courses.length > 0 ? courses.join(", ") : "(none)"}  state=${config.state}`);
 if (Object.keys(config.mounts).length > 0) console.log(`school: mounts ${Object.keys(config.mounts).map((n) => "/" + n).join(" ")}`);

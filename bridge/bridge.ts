@@ -5,7 +5,9 @@
 //   SCHOOL_BRIDGE_TOKEN=<shared secret> bun bridge/bridge.ts
 //
 // Configuration is a JSON file (SCHOOL_BRIDGE_CONFIG, default ~/.config/school/bridge.json),
-// re-read on every request so an edit takes effect without a restart. Logs are JSON Lines on
+// re-read on every request so an edit takes effect without a restart. Agents and their commands
+// are declared only in that file; over HTTP they can be reordered, switched on and off, and
+// tested, never given a command (flyingrobots/school#18). Logs are JSON Lines on
 // stdout; they never contain a prompt or an answer, which are the learner's private work.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -37,7 +39,7 @@ function rawConfig(): Record<string, unknown> | null {
   }
 }
 
-/** The checked configuration, or null when none has been written yet (School's settings page can write one). */
+/** The checked configuration, or null when none has been written yet. Only the learner writes one, on this computer. */
 function config(): BridgeConfig | null {
   const raw = rawConfig();
   return raw === null ? null : loadConfig(raw);
@@ -51,6 +53,36 @@ function saveConfig(raw: unknown): BridgeConfig {
   writeFileSync(temp, JSON.stringify(raw, null, 2) + "\n", { mode: 0o600 });
   renameSync(temp, configPath);
   return checked;
+}
+
+class OrderError extends Error {}
+const ONLY = `agent commands and settings are set only in ${configPath} on this computer; over HTTP agents can only be reordered and switched on or off`;
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * The file's configuration with its declared agents in a new order and switched on or off as
+ * `body` says (flyingrobots/school#18). Every agent must be named exactly once, and nothing but
+ * a name and `enabled` may be sent: every command, and every other field, stays as written.
+ */
+function reorder(file: Record<string, unknown>, body: unknown): Record<string, unknown> {
+  if (!isObject(body) || !Array.isArray(body.agents)) throw new OrderError('send { "agents": [{ "name": ..., "enabled": true }] }');
+  if (Object.keys(body).some((k) => k !== "agents")) throw new OrderError(ONLY);
+  const declared = new Map<string, Record<string, unknown>>();
+  for (const a of (Array.isArray(file.agents) ? file.agents : []) as unknown[]) if (isObject(a) && typeof a.name === "string") declared.set(a.name, a);
+  const seen = new Set<string>();
+  const agents = (body.agents as unknown[]).map((a) => {
+    if (!isObject(a) || typeof a.name !== "string") throw new OrderError('each agent is named by its "name"');
+    if (Object.keys(a).some((k) => k !== "name" && k !== "enabled")) throw new OrderError(ONLY);
+    const was = declared.get(a.name);
+    if (was === undefined) throw new OrderError(`no agent "${a.name}" is declared in ${configPath}`);
+    if (seen.has(a.name)) throw new OrderError(`agent "${a.name}" is named twice`);
+    seen.add(a.name);
+    if (a.enabled !== undefined && typeof a.enabled !== "boolean") throw new OrderError(`agent "${a.name}": "enabled" is true or false`);
+    return a.enabled === undefined ? was : { ...was, enabled: a.enabled };
+  });
+  const left = [...declared.keys()].filter((n) => !seen.has(n));
+  if (left.length > 0) throw new OrderError(`name every declared agent; missing ${left.map((n) => JSON.stringify(n)).join(", ")}`);
+  return { ...file, agents };
 }
 
 try {
@@ -104,18 +136,26 @@ Bun.serve({
     const isJson = (r: Request) => (r.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase() === "application/json";
     if (req.method === "PUT" && pathname === "/config") {
       if (!isJson(req)) return json({ status: "expected application/json" }, 415);
-      let raw: unknown;
+      let body: unknown;
       try {
-        raw = await req.json();
+        body = await req.json();
       } catch {
         return json({ status: "invalid", error: "body is not JSON" }, 400);
       }
+      let file: Record<string, unknown> | null;
       try {
-        const c = saveConfig(raw);
+        file = rawConfig();
+        if (file !== null) loadConfig(file);
+      } catch (e) {
+        return json({ status: "misconfigured", config: configPath, error: e instanceof Error ? e.message : String(e) }, 409);
+      }
+      if (file === null) return json({ status: "unconfigured", config: configPath, error: `declare the agents in ${configPath} on the bridge's computer first` }, 409);
+      try {
+        const c = saveConfig(reorder(file, body));
         log("config.saved", { config: configPath, agents: c.agents.map((a) => a.name) });
         return json({ status: "saved", agents: c.agents.map((a) => ({ name: a.name, enabled: a.enabled, found: found(a.argv[0]!) })) });
       } catch (e) {
-        if (e instanceof BridgeConfigError) return json({ status: "invalid", error: e.message }, 400);
+        if (e instanceof OrderError || e instanceof BridgeConfigError) return json({ status: "invalid", error: e.message }, 400);
         throw e;
       }
     }
@@ -158,7 +198,7 @@ Bun.serve({
       } catch (e) {
         return json({ status: "failed", error: e instanceof Error ? e.message : String(e), attempts: [] });
       }
-      if (c === null) return json({ status: "failed", error: "the bridge has no agents configured yet; add them in School's settings", attempts: [] });
+      if (c === null) return json({ status: "failed", error: `the bridge has no agents configured yet; declare them in ${configPath}`, attempts: [] });
       const id = crypto.randomUUID();
       log("run.start", { id });
       const result = await serially(() => runChain(c!, { prompt, schema: schema as Record<string, unknown>, deadlineMs: deadline }));
