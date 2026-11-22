@@ -63,9 +63,13 @@ th { color: var(--muted-foreground); font-weight: 600; font-size: .82rem; letter
   border: 1px solid var(--border); border-radius: var(--radius);
   box-shadow: var(--shadow-sm); cursor: pointer; transition: background-color .15s, border-color .15s;
 }
-.q button:hover:not(:disabled) { background: color-mix(in oklch, var(--accent) 60%, transparent); }
+/* Hover only where a pointer really hovers: on a phone, :hover sticks to the tapped button and,
+   being more specific than .ok, hid the result of the answer. An answered choice keeps its state. */
+@media (hover: hover) {
+  .q button:hover:not(:disabled):not(.ok):not(.bad) { background: color-mix(in oklab, var(--accent) 60%, transparent); }
+}
 .q button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
-.q button.ok { border-color: var(--primary); background: color-mix(in oklch, var(--primary) 8%, var(--card)); font-weight: 600; }
+.q button.ok { border-color: var(--primary); background: color-mix(in oklab, var(--primary) 8%, var(--card)); font-weight: 600; }
 .q button.bad { border-color: var(--destructive); color: var(--destructive); }
 .q .fb { font-size: .88rem; color: var(--muted-foreground); min-height: 1.3em; margin-top: .5rem; }
 .q .saved { font-size: .78rem; color: var(--muted-foreground); min-height: 1.1em; margin-top: .25rem; }

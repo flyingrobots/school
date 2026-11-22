@@ -43,3 +43,15 @@ test.each([...SHEETS])("%s never uses a surface token as a text colour", (sheet)
   }
   expect(offenders).toEqual([]);
 });
+
+/**
+ * Never mix in a polar space (oklch, lch, hsl, hwb). Mixing there interpolates hue, and the
+ * neutral tokens are written with an explicit hue of 0 — red — such as `--card: oklch(1 0 0)`.
+ * `color-mix(in oklch, var(--primary) 8%, var(--card))` therefore came out at hue 346, a pink
+ * #f3eef0, on the button for a CORRECT answer: the colour that says "wrong". Oklab has no hue
+ * axis, so a near-white mixed with teal stays a teal-tinted white.
+ */
+test.each([...SHEETS])("%s mixes colours only in a space without a hue axis", (sheet) => {
+  const polar = [...read(sheet).matchAll(/color-mix\(\s*in\s+(oklch|lch|hsl|hwb)\b[^;]*/g)].map((m) => m[0]);
+  expect(polar).toEqual([]);
+});

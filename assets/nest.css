@@ -13,7 +13,7 @@
   flex-wrap: wrap;
   gap: .5rem;
   align-items: flex-start;
-  background: color-mix(in oklch, var(--primary) 4%, transparent);
+  background: color-mix(in oklab, var(--primary) 4%, transparent);
 }
 .nest > .lbl {
   flex-basis: 100%;

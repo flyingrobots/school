@@ -6,10 +6,10 @@
 .item { display: flex; align-items: flex-start; gap: .9rem; padding: .9rem 1rem; border-radius: var(--radius); color: var(--foreground); text-decoration: none; transition: background-color .15s; }
 .item-group.outline .item { border-radius: 0; }
 .item.outline { border: 1px solid var(--border); background: var(--card); color: var(--card-foreground); box-shadow: var(--shadow-sm); }
-.item.muted { background: color-mix(in oklch, var(--muted) 55%, transparent); }
+.item.muted { background: color-mix(in oklab, var(--muted) 55%, transparent); }
 .item.sm { padding: .65rem .85rem; gap: .75rem; }
 .item.xs { padding: .45rem .7rem; gap: .6rem; }
-a.item:hover { background: color-mix(in oklch, var(--accent) 50%, transparent); }
+a.item:hover { background: color-mix(in oklab, var(--accent) 50%, transparent); }
 .item-media { flex: none; display: inline-flex; align-items: center; justify-content: center; }
 .item-media.icon { width: 2rem; height: 2rem; border-radius: calc(var(--radius) - 2px); border: 1px solid var(--border); background: var(--muted); color: var(--foreground); font-family: var(--font-mono); font-size: .78rem; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: .1rem; }
 .item.sm .item-media.icon { width: 1.75rem; height: 1.75rem; font-size: .74rem; }
