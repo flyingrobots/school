@@ -6,6 +6,16 @@ import { defineConfig } from "vite"
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    rollupOptions: {
+      input: {
+        main: resolve(import.meta.dirname, "index.html"),
+        "home-a": resolve(import.meta.dirname, "mockups/home-a.html"),
+        "home-b": resolve(import.meta.dirname, "mockups/home-b.html"),
+        "home-c": resolve(import.meta.dirname, "mockups/home-c.html"),
+      },
+    },
+  },
   resolve: {
     // The registry examples are written for shadcn's Next.js website; these stand in for its
     // modules (src/demo/README.md). Exact matches first, then the "@" prefix.
