@@ -3,8 +3,8 @@ title: "RFC 2: Lessons written for each learner"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-22
 updated: 2026-11-22
-version: 0.2.1
-status: "Draft proposal. Not accepted. Builds on flyingrobots/school at commit a959505."
+version: 0.3.0
+status: "Draft. A second round of two external reviews (2026-11-22) approved starting steps 0–2 and required changes to steps 3–4; v0.3.0 makes them. Builds on flyingrobots/school at commit a959505."
 supersedes: "RFC 2 v0.1.0, 'How to Build School', which is split into this RFC, RFC 3 and the architecture reference."
 ---
 
@@ -27,17 +27,19 @@ them is what clears a course.
 | A course ships a curriculum, not finished lessons | Decided | Lessons tailored to one learner's evidence cannot be shared, and their rationale is private |
 | The server prepares lessons and quizzes ahead of time into learner state | Decided | The next lesson responds to evidence; a learner never waits on a model |
 | Exams are declared in the course; passing them completes it | Decided | Measurement must mean the same thing for every learner and every attempt |
-| The record captures assistance (hints, model-answer reveals) | Proposed | RFC 1 requires it; without it an aided answer looks unaided |
-| Exam attempts and completion are append-only events with derived status | Proposed | Keeps the record's rule that nothing is updated or deleted |
+| The record captures assistance (hints, model-answer reveals) from the first real study | Proposed | RFC 1 requires it; without it an aided answer looks like one with no recorded aid |
+| Generated lessons are untrusted content: inert Markdown and typed blocks only, every answer key quoted from a source | Proposed | A model now writes what the learner's browser renders, and what the record counts as correct |
+| Exam attempts and completion are append-only events | Proposed | Keeps the record's rule that nothing is updated or deleted, and a completion survives a later edit to the exam |
 | Delayed review (`due-review`) is the first learning feature once real use begins | Proposed | It is the evidence that most predicts retention |
 | Work is gated on evidence of real use, not on the calendar | Proposed | Two weeks with one lesson proves little |
 | SQLite is retired: the record moves to Postgres functions, PGlite in tests, types from Wesley ([RFC 3](0003-postgres-functions-and-generated-types.md)) | Decided | One store; real study and new tables are born in Postgres |
 
-This RFC answers three external reviews of v0.1.0 and the maintainer's own feedback; the
-[review response](#appendix-a-review-response) lists every finding and what became of it.
+This RFC answers three external reviews of v0.1.0, the maintainer's own feedback, and two
+reviews of v0.2.1; the [review response](#appendix-a-review-response) lists every finding and what
+became of it.
 
 In short: courses become curricula, learners get lessons and quizzes written for them in private,
-exams decide completion, and the record learns to tell aided from unaided work.
+exams decide completion, and the record learns to tell aided work from work with no recorded aid.
 
 ## Contents
 
@@ -62,13 +64,16 @@ These terms are new or change meaning under this RFC. The framework's
 | Term | Meaning |
 | --- | --- |
 | **Curriculum** | What a course must teach: objectives, a set of **concepts**, their prerequisites and the sources that teach them. Public, in the course. |
-| **Concept** | One teachable idea in a curriculum, with a stable `id`, a statement of what a learner can do once they have it, its prerequisites and its sources. |
+| **Concept** | One teachable idea in a curriculum, with a stable `id`, a statement of what a learner can do once they have it, its prerequisites and its sources. Every quiz, explain and exam item names the concept it measures. |
 | **Prepared lesson** | A lesson written for one learner from the curriculum and their evidence, stored in their state before they need it. Replaces "lesson rendering". |
 | **Preparation** | One attempt to write a prepared lesson, through the bridge. Succeeds or fails, and is recorded either way. |
 | **Generated quiz** | A quiz written for one learner, in their state. Practice and personal measurement; not comparable across learners. |
 | **Exam** | An assessment declared in the course, identical for everyone. Passing the course's exams completes it. |
 | **Exposure** | Something School showed that could help with a block: a hint, a model answer, feedback, the reference documents. |
-| **Aided** | A submission made after an exposure to that block in School. **Unaided** means none was recorded, which is the most School can know. |
+| **Aid tracking** | Whether School was recording exposures when an encounter opened, as a version number on the encounter; absent means it was not. |
+| **Aided** | A submission made after a recorded exposure to that block in the same encounter. |
+| **No recorded aid** | Aid tracking was on and no exposure to that block preceded the submission. The most School can know; never called "unaided". |
+| **Unknown aid** | Aid tracking was off for the encounter, so School cannot say. |
 | **Decision note** | A private record of why the teacher chose something, naming the evidence. |
 
 ## 1. Where things live
@@ -127,10 +132,12 @@ unvalidated is ever shown.
 
 | Rule | Proposal |
 | --- | --- |
-| When | Ahead of time: after each encounter ends, prepare the next lesson. How far ahead is **Open** (Q1). |
-| Who writes | The server asks the bridge; the agent runs under the `/school` skill, which constrains structure, citations and question balance. |
-| Inputs | The curriculum, the learner's mission and notes, their evidence, earlier prepared lessons. |
-| Validation | A prepared lesson must pass the block validator, cite only the curriculum's sources and include at least one review item where evidence calls for it. Otherwise the preparation fails. |
+| When | Ahead of time, triggered by an event: the submission that leaves every quiz and explain block of the current lesson answered at least once. Encounter closure is not an event (it is six idle hours after the fact), so it never triggers anything. How far ahead is **Open** (Q1). |
+| Who writes | The server asks the bridge. The bridge tries a fallback chain of different agents, so no constraint may depend on one of them running a skill: every constraint lives in the server's prompt and the server's validator. The `/school` skill helps an agent that has it; the validator decides. |
+| Inputs | The curriculum, the text of the sources it cites, the learner's mission and notes, their evidence, earlier prepared lessons. The server reads all of it and puts it in the prompt, so the agent still runs with no tools in an empty folder, exactly as for grading. |
+| Validation | A prepared lesson must pass the block validator, cite only the curriculum's sources, name a curriculum concept on every quiz and explain block, carry an answer-key quote on every quiz (below), and include at least one review item where evidence calls for it. Otherwise the preparation fails. |
+| Rendering | Untrusted, whatever passed validation (below). |
+| Activation | Preparation is the bridge's second capability. It is off until enabled separately from grading, and it has its own gates: the prompt and validator above, a size bound on the inputs, and a test that a lesson with raw HTML or an unquoted answer key is refused. |
 | Storage | Written to learner state; a preparation row records the attempt, its inputs' hashes, the agent and the outcome. Snapshots work exactly as today. |
 | Failure | Recorded like a failed grading. The learner sees the last prepared lesson and an honest "the next lesson is not ready yet". |
 | Replay | A prepared lesson is a file; it plays with no agent running. |
@@ -170,7 +177,7 @@ a state derived from the preparation rows, and it has one failure mode worth des
 ```mermaid
 stateDiagram-v2
     [*] --> NotPrepared
-    NotPrepared --> Preparing: an encounter ends
+    NotPrepared --> Preparing: the lesson's last block is answered
     Preparing --> Ready: preparation succeeded
     Preparing --> Failed: invalid output or no agent
     Failed --> Preparing: retry
@@ -185,17 +192,39 @@ stateDiagram-v2
 a field. The emphasis is the failed state: a missing agent delays the future of a course, never the
 lesson in front of the learner.*
 
+**Generated lessons are untrusted content.** RFC 1 trusts installed courses, so their `html`
+blocks carry markup[^rfc1-md]. A prepared lesson does not inherit that trust: a model wrote it, and
+it renders in an origin with no login that can reach the bridge settings. Validation establishes
+its shape; this rule establishes what it may do.
+
+| Content | Rule |
+| --- | --- |
+| Prose | Markdown in an inert subset: headings, emphasis, lists, code, quotes and links to `http(s)` only. Raw HTML is stripped before rendering, never passed through; `Bun.markdown` passes it through today, so the stripping is School's own step, with tests. |
+| Interactive content | Typed blocks only (`quiz`, `explain`, `nest`); a prepared lesson may not contain an `html` block |
+| Plain-text fields | Escaped, as today |
+
+**A generated answer key is checked, and the learner can dispute it.** RFC 1's first principle
+says generated content is reviewed[^rfc1]; nobody reviews a prepared lesson before the learner sees
+it, and a wrong `correct` flag would become objective-looking evidence. So:
+
+| Check | Rule |
+| --- | --- |
+| Source quote | Every quiz names, for its correct choice, a quote from a cited source. The validator checks the quote appears in that source, the same mechanical check gradings use for contradictions. No quote, or a quote not found: the preparation fails. |
+| Flag this item | Every generated quiz shows a "flag this item" action. A flag is an append-only row; a flagged item's answers are shown as disputed and excluded from evidence that drives review and preparation until a later preparation replaces the item. |
+
 Generated quizzes follow the same path inside each prepared lesson. They are practice and
 personal measurement, so they may differ between learners. That replaces RFC 1's rule "declared
 for measurement, generated for practice" with **"exams declared, everything else generated"**.
 
 In short: lessons and quizzes are written ahead of time, validated, stored privately and
-replayable, and a failure is recorded and shown honestly.
+replayable; they render as untrusted content, every answer key is quoted from a source, and a
+failure is recorded and shown honestly.
 
 ## 3. Recording assistance
 
 RFC 1 requires that an answer given after help is not counted as unaided[^rfc1], and the record
-cannot tell today. This section adds the missing observation.
+cannot tell today. This section adds the missing observation, and an explicit boundary for when
+School was observing.
 
 | What School observes | Recorded as |
 | --- | --- |
@@ -203,36 +232,53 @@ cannot tell today. This section adds the missing observation.
 | A model answer revealed | An `exposures` row: `model-answer` |
 | Feedback shown after an answer | An `exposures` row: `feedback` |
 | Reference documents opened during an exam | An `exposures` row: `reference` |
-| Answers recorded before this change | No rows; aid is **unknown**, not "unaided" |
+| An encounter opened while School was recording exposures | `aid_tracking` on the encounter: the capture version, set when it opens |
+| An encounter opened while it was not | `aid_tracking` absent; aid is **unknown** |
 
-Whether a submission was aided is **derived**, never stored: it is aided when an exposure to the
-same block precedes it in the same encounter, and unknown for rows older than the `exposures`
-table. School records only what it showed; it cannot see other tabs or books, so "unaided" always
-means "no recorded aid".
+Whether a submission was aided is **derived**, never stored, and has three values. The boundary is
+the encounter's `aid_tracking`, recorded when observation was active, never inferred from when the
+first hint happened to occur:
+
+| Value | Meaning |
+| --- | --- |
+| **Aided** | Tracking was on, and an exposure to the same block precedes the submission in the same encounter |
+| **No recorded aid** | Tracking was on, and none precedes it |
+| **Unknown** | Tracking was off for that encounter |
+
+School records only what it showed; it cannot see other tabs or books, so the middle value is
+never called "unaided". `exposures` and `aid_tracking` are created in RFC 3's first migration, and
+the pages record every exposure they show (feedback after an answer, a revealed model answer) from
+the first real study, so in practice every encounter on Postgres is tracked; the unknown value
+exists for honesty, not for legacy rows. "Precedes" means an earlier value of the record's shared
+sequence ([RFC 3 §3.4](0003-postgres-functions-and-generated-types.md#34-time-and-order)), never a
+comparison of timestamps.
 
 **Listing 1. Exposures and derived aid (proposed, illustrative)**
 
 ```sql
+-- encounters gains: aid_tracking int  -- capture version when opened; NULL = not observed
 CREATE TABLE exposures (
-  id INTEGER PRIMARY KEY,
-  encounter_id TEXT NOT NULL REFERENCES encounters (id),
-  block_id TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('hint', 'model-answer', 'feedback', 'reference')),
-  at TEXT NOT NULL
+  seq bigint PRIMARY KEY DEFAULT nextval('record_seq'),  -- the record's shared order
+  encounter_id uuid NOT NULL REFERENCES encounters (id),
+  block_id text NOT NULL,
+  kind text NOT NULL CHECK (kind IN ('hint', 'model-answer', 'feedback', 'reference')),
+  at timestamptz NOT NULL                                 -- from the server's clock
 );
 -- Append-only, like every evidence table.
 CREATE VIEW explanation_aid AS
 SELECT x.submission_id,
-       CASE WHEN x.at < (SELECT min(at) FROM exposures) THEN 'unknown'
-            WHEN EXISTS (SELECT 1 FROM exposures e
-                         WHERE e.encounter_id = x.encounter_id AND e.block_id = x.block_id AND e.at < x.at)
-            THEN 'aided' ELSE 'unaided' END AS aid
-FROM explanations x;
+       CASE WHEN e.aid_tracking IS NULL THEN 'unknown'
+            WHEN EXISTS (SELECT 1 FROM exposures p
+                         WHERE p.encounter_id = x.encounter_id AND p.block_id = x.block_id AND p.seq < x.seq)
+            THEN 'aided'
+            ELSE 'no-recorded-aid' END AS aid
+FROM explanations x JOIN encounters e ON e.id = x.encounter_id;
 ```
 
-*Listing 1. Exposures and derived aid. Proposed code, not in the repository. The same view shape
-applies to answers. Aid is a query over facts, so a later change to what counts as aid reinterprets
-nothing that was stored.*
+*Listing 1. Exposures and derived aid. Proposed code, not in the repository. The boundary is a
+fact recorded on the encounter, so an empty `exposures` table means "no recorded aid" for tracked
+encounters and "unknown" for untracked ones, and a first exposure never reclassifies earlier work.
+The same view shape applies to answers.*
 
 **Figure 4. Submit, reveal, revise**
 
@@ -243,7 +289,7 @@ sequenceDiagram
     participant D as Postgres
     L->>S: Explanation 1
     S->>D: explanations row (submission A)
-    Note over D: aid(A) = unaided: no exposure precedes it
+    Note over D: aid(A) = no recorded aid: tracked, none precedes it
     L->>S: Show the model answer
     S->>D: exposures row: model-answer
     L->>S: Explanation 2, revised
@@ -253,14 +299,14 @@ sequenceDiagram
 
 *Figure 4. Submit, reveal, revise: the acceptance trace a review asked for. The revised explanation
 is useful learning and is kept, but the derived view marks it aided, so it can never count as
-unaided evidence.*
+evidence of work done without help.*
 
 The same separation applies to everything the record holds: **observations** (what was shown and
 answered) are stored, **judgments** (correct, graded, aided) are derived or appended, and
 **decisions** (what to review next) are notes that name their evidence.
 
-In short: School records the help it gives, derives aid from those facts, and keeps unknown aid
-unknown.
+In short: School records the help it gives and when it was watching, derives aid from those facts,
+and keeps unknown aid unknown.
 
 ## 4. Exams and completion
 
@@ -271,11 +317,11 @@ the maintainer decided both. This section makes them fit the record's rule that 
 
 | Property | Proposal |
 | --- | --- |
-| Declared | `exams/<id>.json` in the course: covered concepts, an item pool, items drawn per attempt, and a pass policy |
+| Declared | `exams/<id>.json` in the course: covered concepts, an item pool (each item naming its concept), items drawn per attempt, and a pass policy |
 | Identity | An attempt is pinned to the exam's snapshot hash when it starts; a course edit never changes a started attempt |
 | Items | Drawn from the pool with a seed recorded at the start, and choice order shuffled by that seed, so a retake is not a memory test of the last sitting |
 | Feedback | After finishing: which concepts were missed, not the answer key |
-| Retakes | Allowed after a minimum delay the exam declares |
+| Retakes | Allowed after a minimum delay the exam declares, counted from the **start** of the previous attempt, so abandoning an attempt does not dodge it |
 | Conditions | Whether references are allowed is a **declared condition**, recorded as an exposure if opened; School cannot enforce closed book on the learner's own machine |
 | Encounters | Every attempt has its own encounter (the [glossary](../glossary.md)'s "one occasion of being shown content"); the six-hour resume rule never folds a retake into an earlier sitting |
 
@@ -289,7 +335,8 @@ Every state change is a new row; status is a view.
 | An item is answered | `answers` and `explanations`, as today, in the attempt's encounter | Refused once the attempt has finished |
 | The learner finishes | `exam_finishes`: attempt id, time | Unique per attempt; repeating it returns the existing row |
 | A written item is graded | `gradings`, as today | Appended; `supersedes` for retries |
-| Result | View: objective score from answers; written status from the latest grading of each item | Derived, never stored |
+| Which submission counts | The latest submission per item before the attempt's `exam_finishes` row | A grading counts only if it grades that submission, so a late grade for an earlier draft cannot decide the result |
+| Result | View: objective score from the counted answers; written status from the latest grading of each counted explanation | Derived, never stored |
 
 **Figure 5. An exam attempt, derived from its events**
 
@@ -315,20 +362,20 @@ failed: a broken grader is never an educational verdict.*
 
 | Question | Proposal |
 | --- | --- |
-| Passing an exam | Objective score at or above the declared pass mark, **and** no written item judged `misses` by its latest succeeded grading. Written grading is a model's judgment, so its weight is declared in the exam and visible to the learner. **Open** (Q3): whether a model may ever block a pass. |
+| Passing an exam | Objective score at or above the declared pass mark. What written items contribute is the exam's declared policy, visible to the learner, and is **Open** (Q3): until Q3 is decided, written items in exams are feedback only and cannot affect a pass. |
 | Grading unavailable | The attempt is **pending**, never passed or failed, until grading succeeds |
-| Completing the course | Derived: every exam the course declares has a passed attempt. Each exam is identified by its snapshot hash, so completion names exactly what was passed. |
-| A course revised later | A completion stands for the exam versions it names; a changed exam is a new exam to pass if the learner wants the new revision |
-| Recording it | A view, not a flag. It lists the attempts that justify it. |
+| Completing the course | The first time every exam the course declares has a passed attempt, the server appends a `completions` row naming each exam's snapshot hash and the attempt that passed it. The derivation decides when; the row records that it happened. |
+| A course revised later | Even a typo fix changes an exam's hash. A completion row stands for the exam versions it names and is never revoked by an edit; a changed exam is a new exam to pass only if the learner wants the new revision. |
+| Recording it | An append-only event, so completion cannot silently disappear when a derivation's inputs change. The view that triggers it stays, to show progress towards the next one. |
 
 In short: exams are declared, drawn, attempted in their own encounters and recorded as events;
-passing and completion are derived from those events and name their evidence.
+passing is derived from them, and completion is appended once, naming its evidence.
 
 ## 5. Delayed review
 
 All three reviews agree that delayed review is the feature that most improves the record, because a
-correct, unaided answer after a delay is the strongest evidence School can hold. This section moves
-it to the front.
+correct answer with no recorded aid, after a delay, is the strongest evidence School can hold. This
+section moves it to the front.
 
 | Rule | Proposal |
 | --- | --- |
@@ -354,28 +401,28 @@ gate.
 ```mermaid
 flowchart TD
     fix["0. Fix #17, #18, #19"] --> core["1. Postgres core: hexagon, functions, PGlite tests, SQLite deleted (RFC 3)"]
-    wesley["Wesley emitters (RFC 3 step 1)"] --> core
     pages["Pages (#15) with the answer outbox; Lessons 1 and 2 (#3)"] --> gate1
-    core --> gate1{"Real use on Postgres: answers from the phone over the tailnet, several encounters across both lessons on different days?"}
+    core --> gate1{"Real use on Postgres: 6 encounters across both lessons on 3 different days, from the phone over the tailnet?"}
     gate1 -- "Not yet" --> pages
-    gate1 -- "Yes" --> review["2. Exposures, decision notes, due-review"]
+    gate1 -- "Yes" --> review["2. Decision notes, due-review"]
     review --> gate2{"At least one delayed review answered, with its decision note?"}
     gate2 -- "Yes" --> curriculum["3. Curriculum format; preparation through the bridge; /school for curricula"]
     curriculum --> exams["4. Exams, attempts, completion"]
 ```
 
-*Figure 6. Order of work. Security and correctness fixes come first. The Postgres core, with
-Wesley's emitters, and the pages are built side by side; real study on the phone begins only when
-both exist, so every piece of evidence is born in Postgres. Then delayed review, model B and exams.*
+*Figure 6. Order of work. Security and correctness fixes come first. The Postgres core and the
+pages are built side by side; real study on the phone begins only when both exist, so every piece
+of evidence is born in Postgres. Wesley's emitters gate nothing: they replace hand-written schemas
+when they land (RFC 3 §5). Then delayed review, model B and exams.*
 
 | Step | Evidence before the next |
 | --- | --- |
 | 0 | Tests for #17, #18 and #19 that failed before their fixes |
-| 1 | RFC 3's evidence: rules hold on PGlite, races handled on real Postgres, no SQLite code remains |
-| Gate | Answers recorded on Postgres from the phone over the tailnet; several encounters across Lessons 1 and 2 on different days; the outbox survives a tab closed offline |
+| 1 | RFC 3's evidence: the contract suite passes on PGlite and on real Postgres, the races are handled, no SQLite code remains; the pages record exposures |
+| Gate | Answers recorded on Postgres from the phone over the tailnet: at least 6 encounters across Lessons 1 and 2, on at least 3 different days; the outbox survives a tab closed offline |
 | 2 | A delayed review answered, with a decision note naming the evidence |
-| 3 | A prepared lesson validated, studied and replayed with no agent running; a failed preparation shown honestly |
-| 4 | An attempt walked from start through a failed grading and a successful retry, with every row named; a completion that lists its attempts |
+| 3 | A prepared lesson validated, studied and replayed with no agent running; a failed preparation shown honestly; preparations refused for raw HTML and for an unquoted answer key; a flagged item excluded from evidence |
+| 4 | An attempt walked from start through a failed grading and a successful retry, with every row named; a completion row that names its attempts and survives an edit to the exam |
 
 Interface details for the pages: the command palette opens with `⌘K` or `Space Space`, never `Esc`,
 which keeps meaning close; `hjkl` act only outside text fields; and the phone, where most study
@@ -390,12 +437,12 @@ then add review, preparation and exams in that order, each proven by evidence.
 | --- | --- | --- |
 | Q1 | How far ahead does preparation run? | One lesson ahead, so evidence from the current lesson always shapes the next |
 | Q2 | What is the curriculum's file format? | Markdown with typed front matter per concept, validated at load |
-| Q3 | May a model's grading block an exam pass? | No: written items count toward the pass only when graded; a `misses` asks for a retake of that item, never a fail on its own |
+| Q3 | May a model's grading block an exam pass? | **Open, for the maintainer.** Any authority that asks for another attempt delays completion, even if it is never called a fail. Until decided, written exam items are feedback only (§4.3). |
 | Q4 | Do generated quizzes gate the next lesson? | No; they inform preparation |
-| Q5 | Should lesson prose be authored in Markdown? | Yes, with typed fields for interactive blocks |
+| Q5 | Should lesson prose be authored in Markdown? | Yes, with typed fields for interactive blocks; for prepared lessons, the inert subset in §2 |
 | Q6 | Which homepage design? | Decide while building step 1 |
 
-In short: six questions remain, each with a recommendation; none blocks step 0 or step 1.
+In short: six questions remain; Q3 is the maintainer's to decide, and none blocks steps 0 to 2.
 
 ## Appendix A: Review response
 
@@ -416,7 +463,7 @@ v0.1.0. Every finding is listed with what became of it.
 | Identical exams with free retakes measure memory | A | Adopted: item pools, seeds, retake delay, §4.1 |
 | Graded is not passed; unavailable grading needs a rule | C | Adopted: §4.3 |
 | Postgres now; `first_try` race; roles; migration oracle | A, B, C | Overruled by the maintainer: SQLite is ditched; Postgres in production, PGlite in tests (roles and privileges verified in a spike). Every requirement is in RFC 3; with no learner data, nothing migrates and the oracle is not built |
-| Wesley as a dependency | A, B, C | Overruled by the maintainer: types from Wesley; its emitters are on RFC 3's critical path, built in parallel with step 1 |
+| Wesley as a dependency | A, B, C | Overruled by the maintainer: types from Wesley. Revised in v0.3.0: the emitters gate nothing; hand-written Zod comes first (RFC 3 §5) |
 | `due-review` buried behind infrastructure | A, B, C | Partly adopted: it is the first feature after real use begins, ahead of model B and exams |
 | Gate on evidence, not the calendar | A, C | Adopted: §6 |
 | Append-only described as tamper-proof | A, C | Corrected in the architecture reference |
@@ -426,7 +473,31 @@ v0.1.0. Every finding is listed with what became of it.
 | Delete the shadcn example files | A | Not adopted here: they are the `/demo` sandbox, tested against the registry |
 | Confidence before reveal; hash-chained rows; teacher forecasts; two-grader agreement; FSRS; teacher brief; regrade harness; offline queue | A, B, C | Recorded as ideas, not scheduled; the offline queue is the ADR 9 outbox and is in step 1 |
 
+### Round 2: reviews of v0.2.1
+
+Two external reviews of v0.2.1 and RFC 3 v0.3.0 were received on 2026-11-22. Both approved RFC 3
+and starting steps 0–2; one required changes before steps 3–4, the other three document edits.
+
+| Finding | Outcome |
+| --- | --- |
+| The aid view treats the first exposure as the start of observation | Fixed: `aid_tracking` on the encounter, three values, §3 and Listing 1 |
+| Create `exposures` in the first migration, so early study does not read as unaided | Adopted: §3; RFC 3 §3.5 |
+| Generated lessons need a rendering policy; they inherit no course trust | Adopted: inert Markdown, typed blocks, no `html`, §2 |
+| Nobody reviews a generated answer key | Adopted: a source quote per quiz, checked mechanically, and "flag this item", §2 |
+| Blocks must name their concept | Adopted: glossary and §2 validation, exam items in §4.1 |
+| "After each encounter ends" is not an event | Fixed: preparation is triggered by the lesson's last block being answered, §2 |
+| Completion cannot be only a view | Fixed: an appended `completions` row, §4.3 |
+| Preparation is a second bridge capability with its own gates; `/school` does not hold across the fallback chain | Adopted: constraints live in the server's prompt and validator; inputs are read by the server; separate activation, §2 |
+| Wesley's prerequisite contradicts RFC 3 | Fixed: Figure 6, its caption and the Wesley row above |
+| §4.3's pass rule contradicts Q3 | Fixed: Q3 is left open for the maintainer; written exam items are feedback only until then |
+| Which submission counts when an answer is revised | Adopted: the latest before finishing; gradings bind to it, §4.2 |
+| Retake delay can be dodged by abandoning an attempt | Fixed: counted from the previous attempt's start, §4.1 |
+| "Several encounters" needs a number | Fixed: 6 encounters on 3 days, §6 |
+| RFC 1 is stale outside the contract and principles | Adopted: RFC 1 revision 15 accepts those in part and marks the rest superseded |
+| A replayable learner-history fixture | Recorded as an idea (flyingrobots/school#27) |
+
 ## Appendix B: Citations
 
 [^adr8]: flyingrobots/school, `docs/adr/0008-the-school-skill-and-who-invokes-whom.md` at `a959505`: the server invokes an agent for grading and for preparing future lessons; preparation was deferred as model B.
-[^rfc1]: flyingrobots/school, `docs/rfc/0001-school.md` at `a959505`: the learning record contract, including "Assistance is recorded".
+[^rfc1]: flyingrobots/school, `docs/rfc/0001-school.md` at `a959505`: the learning record contract, including "Assistance is recorded", and design principle 1, that generated content is reviewed.
+[^rfc1-md]: flyingrobots/school, `docs/rfc/0001-school.md` at `a959505`, revisions 11 and 12 in its review log: installed courses are trusted and only `html` blocks carry markup; plain-text fields are escaped.
