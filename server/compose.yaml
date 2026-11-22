@@ -8,6 +8,9 @@ services:
     ports:
       - "127.0.0.1:4747:4747"   # local only; tailscale serve publishes it to the tailnet
     environment:
+      # Host names School answers to besides localhost, comma-separated: the tailnet name that
+      # `tailscale serve` publishes it under. Any other Host header is refused (DNS rebinding).
+      SCHOOL_ALLOWED_HOSTS: ${SCHOOL_ALLOWED_HOSTS:-}
       # Read-only source material the course cites, as name=path pairs inside the container.
       SCHOOL_MOUNTS: ${SCHOOL_MOUNTS:-}
       # Explanation grading through the bridge on the host (bridge/bridge.ts). Optional: without

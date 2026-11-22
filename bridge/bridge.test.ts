@@ -1,6 +1,6 @@
 // The bridge over HTTP, as the real process (flyingrobots/school#10).
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -79,12 +79,15 @@ test("logs are JSON Lines and never contain the prompt", async () => {
   expect(out).not.toContain("SECRET-LEARNER-TEXT");
 });
 
-// Configuring the bridge from School's settings page (flyingrobots/school#13).
-test("a bridge with no configuration file starts, reports itself unconfigured, and accepts one", async () => {
+// The bridge's agents are declared in its own file on the host (flyingrobots/school#13, narrowed
+// by flyingrobots/school#18): over HTTP they can be reordered, turned on and off, and tested, but
+// no request can write a command.
+test("a bridge with no configuration file starts, reports itself unconfigured, and takes its agents only from that file", async () => {
   const d = mkdtempSync(join(tmpdir(), "school-bridge-fresh-"));
   const port = PORT + 7;
+  const file = join(d, "nested", "bridge.json");
   const p = Bun.spawn(["bun", join(import.meta.dir, "bridge.ts")], {
-    env: { ...process.env, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: join(d, "nested", "bridge.json"), SCHOOL_BRIDGE_PORT: String(port) },
+    env: { ...process.env, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: file, SCHOOL_BRIDGE_PORT: String(port) },
     stdout: "ignore", stderr: "ignore",
   });
   const at = `http://127.0.0.1:${port}`;
@@ -94,22 +97,41 @@ test("a bridge with no configuration file starts, reports itself unconfigured, a
     for (let i = 0; i < 100; i++) { try { if ((await fetch(at + "/health")).status === 401) break; } catch {} await Bun.sleep(50); }
     expect(await (await send("GET", "/health")).json()).toMatchObject({ status: "unconfigured", agents: [] });
     expect(await (await send("GET", "/config")).json()).toMatchObject({ status: "unconfigured", raw: { agents: [] } });
-    expect(await (await send("POST", "/run", { prompt: "p", schema })).json()).toMatchObject({ status: "failed", error: expect.stringMatching(/no agents/) });
+    expect(await (await send("POST", "/run", { prompt: "p", schema })).json()).toMatchObject({ status: "failed", error: expect.stringContaining(file) });
 
-    // An invalid configuration is refused with its reason, and nothing is written.
-    const bad = await send("PUT", "/config", { agents: [{ name: "x", command: 'oops "unbalanced' }] });
-    expect(bad.status).toBe(400);
-    expect((await bad.json()).error).toMatch(/quote/);
-    expect(existsSync(join(d, "nested", "bridge.json"))).toBe(false);
-
+    // With no file, nothing can be configured over HTTP, a whole configuration least of all.
     const good = join(d, "good");
     writeFileSync(good, `#!/bin/sh\necho '{"ok": true}'\n`);
     chmodSync(good, 0o755);
-    const config = { timeout_seconds: 5, agents: [{ name: "good", command: `${good} {prompt}`, output: "text" }] };
-    expect(await (await send("PUT", "/config", config)).json()).toMatchObject({ status: "saved", agents: [{ name: "good", found: true }] });
-    expect(JSON.parse(readFileSync(join(d, "nested", "bridge.json"), "utf8"))).toEqual(config);
-    expect(statSync(join(d, "nested", "bridge.json")).mode & 0o777).toBe(0o600);
+    const config = { timeout_seconds: 5, agents: [{ name: "good", command: `${good} {prompt}`, output: "text" }, { name: "other", command: "no-such-cli-qqq" }] };
+    const none = await send("PUT", "/config", config);
+    expect(none.status).toBe(409);
+    expect((await none.json()).error).toContain(file);
+    expect(existsSync(file)).toBe(false);
+
+    // An invalid file is reported with its reason.
+    mkdirSync(join(d, "nested"), { recursive: true });
+    writeFileSync(file, JSON.stringify({ agents: [{ name: "x", command: 'oops "unbalanced' }] }));
+    expect(await (await send("GET", "/health")).json()).toMatchObject({ status: "misconfigured", error: expect.stringMatching(/quote/) });
+
+    // The learner writes the file on the host.
+    writeFileSync(file, JSON.stringify(config, null, 2) + "\n");
+    const written = readFileSync(file, "utf8");
     expect(await (await send("GET", "/config")).json()).toMatchObject({ status: "ok", raw: config });
+
+    // A command, or any field but the order and the switch, is refused and the file is untouched.
+    for (const body of [config, { agents: [{ name: "good", command: "touch x" }, { name: "other" }] }, { agents: [{ name: "good", output: "claude-json" }, { name: "other" }] },
+      { agents: [{ name: "good" }, { name: "other" }], timeout_seconds: 900 }, { agents: [{ name: "good" }] }, { agents: [{ name: "good" }, { name: "other" }, { name: "new", command: "x" }] }]) {
+      const r = await send("PUT", "/config", body);
+      expect([JSON.stringify(body), r.status]).toEqual([JSON.stringify(body), 400]);
+    }
+    expect(readFileSync(file, "utf8")).toBe(written);
+
+    // Reordering and switching an agent off keeps every command as written.
+    expect(await (await send("PUT", "/config", { agents: [{ name: "other", enabled: false }, { name: "good" }] })).json())
+      .toMatchObject({ status: "saved", agents: [{ name: "other", enabled: false, found: false }, { name: "good", enabled: true, found: true }] });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ timeout_seconds: 5, agents: [{ ...config.agents[1], enabled: false }, config.agents[0]] });
+    expect(statSync(file).mode & 0o777).toBe(0o600);
 
     expect(await (await send("POST", "/test", { agent: "good" })).json()).toMatchObject({ status: "succeeded", output: { ok: true } });
     expect((await send("POST", "/test", { agent: "nobody" })).status).toBe(404);
