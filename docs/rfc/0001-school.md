@@ -209,32 +209,29 @@ Whether EPUB needs no change to any lesson will be checked when it is built.
 
 **Scope.** The sidecar's first and only capability is grading explanations. Any later capability that produces teaching content (personal examples, explanations of mistakes, extra practice) must meet the same rules as other content: reviewed, stored as a revision, and recorded in the snapshot of every encounter that shows it. Whether to build such a capability is [open question 1](#open-questions).
 
-**Placement: a standard HTTP client** (decided 2026-11-22). The server speaks OpenAI- or Anthropic-compatible HTTP to a configured endpoint: a local model server on the host (LM Studio, Ollama) or a hosted API with a key from the environment. There is no wrapper around an agent CLI. That removes the MCP tool-leakage gate, the stdin and argument handling, and the question of whether a consumer subscription permits automated use. A separate host process is justified only if local-model isolation ever needs it.
+**Placement: the bridge** (confirmed by the learner 2026-11-22). The server never calls a model itself. It sends each grading to the **bridge**, a separate process on the host, outside Docker, in this repository. The bridge runs LLM agents through **command templates the learner writes**, tried in order as a hierarchy of fallbacks: if the first agent fails, times out or returns output that does not match the requested schema, the next one runs. This is the pattern Reader's voices already use. It reuses the host's agent CLIs, their logins and their subscriptions, and it keeps credentials and agent processes out of the container that the tailnet can reach.
 
 ```text
 phone ──tailnet──▶ tailscale serve ──▶ 127.0.0.1:4747  school (Docker)
-                                             │  HTTP, endpoint chosen by config
-                                ┌────────────┴─────────────┐
-                                ▼                          ▼
-                     hosted API (key in env;      local model server on the host
-                     inference is remote)         (inference is local)
+                                             │  POST /run  (bearer token)
+                                             ▼
+                                   host: bridge (127.0.0.1:4748)
+                                             │  tries each agent in order
+                                ┌────────────┼──────────────┐
+                                ▼            ▼              ▼
+                           claude -p …   codex exec …   a local model CLI
 ```
 
-The configuration below is illustrative; the names are not final.
+Each agent is a command template. `{prompt}` is replaced by the prompt as one argument; a template without it receives the prompt on stdin. Templates are split into words like a shell would split them, but nothing runs through a shell. The configuration below is illustrative.
 
-```toml
-default = "local"
-
-[adapters.local]
-kind = "openai-compatible"           # for example LM Studio or Ollama on the host
-base_url = "http://127.0.0.1:1234/v1"
-model = "example-model"
-
-[adapters.hosted]
-kind = "anthropic"                   # or "openai-compatible"
-api_key_env = "SCHOOL_GRADER_API_KEY"
-model = "example-model"
-timeout_s = 120
+```json
+{
+  "timeout_seconds": 180,
+  "agents": [
+    { "name": "claude", "command": "claude -p --output-format json {prompt}", "output": "claude-json" },
+    { "name": "local", "command": "llm -m my-local-model", "output": "text" }
+  ]
+}
 ```
 
 **Rubric.** Each grading judges three things separately, with one note per finding:
@@ -258,9 +255,11 @@ Each is `meets`, `partly` or `misses`. The grader may instead return `insufficie
 
 **Activation gates.** The sidecar is not enabled until each of these has been demonstrated against the deployed configuration:
 
-- The container reaches a local model server through `host.docker.internal`. *(Unverified.)*
-- The API key is read from the environment and never written to the database, a log or a page.
-- Each lifecycle case passes: timeout, malformed output, a restart after saving, a duplicate delivery, and two different explanations for the same block.
+- The container reaches the bridge through `host.docker.internal` while the bridge listens only on `127.0.0.1`. *(Unverified.)*
+- Requests without the shared token are rejected.
+- Each agent's command is run without a shell, in an empty working directory, and its whole process tree is killed on timeout.
+- What an agent may do is set by the learner's own command (tool restrictions, sandbox flags). The bridge's prompt asks for JSON only; that request does not replace the CLI's own permissions.
+- Each lifecycle case passes: timeout, malformed output, a fallback to the next agent, a restart after saving, a duplicate delivery, and two different explanations for the same block.
 
 ## Review reconciliation
 
@@ -296,7 +295,7 @@ One thing the review could not see, because it read only the RFC: the `.dockerig
 
 - **Store blocks in the database.** A database can keep immutable versions too. Files are chosen because they suit the authoring and review workflow: the teacher edits them, the learner reads diffs, and git keeps history.
 - **Generate content on every page load.** Rejected because nothing would be kept, so content could not be revisited and answers could not be attributed. Generation whose output is reviewed and stored is a different thing and remains possible (proposal 4, scope).
-- **Call a model API directly from the container.** Rejected at first because it puts a credential in a container reachable from the tailnet and cannot use host-side agent logins. **Adopted 2026-11-22** after all: wrapping a consumer CLI cost more (tool leakage, argument handling, subscription terms) than one API key in the environment of a private, single-user machine.
+- **Call a model API directly from the container.** It would work, with a provider abstraction. It would put credentials in a container reachable from the tailnet, and could not use host-side agent logins. Briefly adopted on 2026-11-22 from an external reviewer's suggestion, then reverted the same day by the learner in favour of the bridge.
 - **General SQL bindings first.** Deferred in favour of one named selector, which has a known result shape and cost.
 - **Use the d3 library.** Only its pattern is kept: data plus one render function per type, rendered on the server.
 - **Write a Markdown parser.** Unnecessary: `Bun.markdown` exists.
@@ -320,7 +319,7 @@ Each increment ends only when its evidence exists.
 | **2. Separate framework, course and state** — **DONE 2026-11-21** | `server/config.ts` (`SCHOOL_COURSE`, `SCHOOL_STATE`, `SCHOOL_MOUNTS`); `render.ts` discovers reference documents; the AIΩN course and the learner's state are now separate repositories. The course schema question (ADR 7) turned out **not** to block this and stays open. | **Met.** Two unrelated courses — one on knitting, one on chess — each served their own index, lesson, reference list and a named source mount, with **no server change between runs**. Learner state was written to its own directory and nothing was written into either course. Pointing `SCHOOL_STATE` inside `SCHOOL_COURSE` exits 2 with a clear message. 14 unit tests. |
 | **3. One web lesson** — split into 3a validation (flyingrobots/school#1, **done**), 3b the record contract (flyingrobots/school#2, **done**) and 3c Lesson 1 end to end (flyingrobots/school#3) | Fix the Dockerfile; convert Lesson 1; add `encounters`, `snapshots`, choice IDs and submission UUIDs; validate the lesson set at load. | The rebuilt container serves Lesson 1, and one answer row identifies its snapshot, encounter, block, choice and submission. HTTP 200 alone is not evidence. |
 | **4. Reuse and delayed practice** | Convert Lesson 2 with a `ref` to a Lesson 1 quiz; teacher-chosen review; the `due-review` selector. | The acceptance scenario above produces three submissions in two encounters, with correct first-try values. |
-| **5. Explanation feedback** | HTTP grading client, local model first, then a hosted API; rubric v1; lifecycle. | All activation gates pass; a failure is shown honestly; every grading names its submission. |
+| **5. Explanation feedback** | The bridge, with command templates tried in order; rubric v1; lifecycle. | All activation gates pass; a failure is shown honestly; every grading names its submission. |
 | **6. Presentation and exports** | `slides` with its contract; Markdown prose; EPUB later. | Each view meets its contract in the table above. |
 
 Each increment that changes a decision gets an ADR. ADRs 6 (framework/course/state), 7 (the course schema, reopened), 8 (the `school` skill and who invokes whom) and 9 (the learning record, enforced by the database) are written; still to come are views (10), bindings (11) and the sidecar (12).
@@ -342,7 +341,7 @@ Possibilities, not proposals. Each is built only if real use shows a need for it
 ## Review log
 
 - **Revision 1** (2026-11-18): first draft.
-- **Revision 12** (2026-11-22): recorded the learner's four decisions after the external review. Courses ship finished lessons with surgical personalisation (model A; ADR 8 amended). ADR 7 is withdrawn in favour of load-time validation and, later, a small JSON Schema. Grading uses a standard HTTP client, which makes open question 2 moot. Installed courses are trusted, but plain-text fields are always escaped. New ADRs, EPUB and schema work are frozen until two weeks of real use on the phone; see the rollout.
+- **Revision 12** (2026-11-22): recorded the learner's four decisions after the external review. Courses ship finished lessons with surgical personalisation (model A; ADR 8 amended). ADR 7 is withdrawn in favour of load-time validation and, later, a small JSON Schema. Grading goes through the bridge, which runs the learner's own CLI command templates as a hierarchy of fallbacks; the learner replaced an earlier, reviewer-suggested HTTP client the same day. Installed courses are trusted, but plain-text fields are always escaped. New ADRs, EPUB and schema work are frozen until two weeks of real use on the phone; see the rollout.
 - **Revision 11** (2026-11-22): the rest of the external review's code findings. One guard on every `POST /api/*` (JSON only, cross-site refused). Static files are served only if their resolved path stays inside the mount, and never a directory. Malformed percent-encoding is a 400. A course with no `lessons/` lists none. Plain-text lesson fields (`subtitle`, `q`, `prompt`, `model`) and lesson errors are escaped; only `html` blocks carry markup. Config containment resolves symlinks and covers `DB_PATH`. `compose.yaml` names no course. Dark shadows apply however dark is chosen.
 - **Revision 10** (2026-11-22): an external review found that an interrupted migration could null every answer's course, encounter, choice and submission. The version was written after the data transaction, so a crash in between sent a current-shaped database down the v2 rebuild, and `DROP TABLE` fires no triggers. The version is now written inside the transaction, the dispatch is an exhaustive `switch` on the shape on disk, and a database from a newer School is refused. Legacy and v2 `views` tables now gain `course`.
 - **Revision 9** (2026-11-21): **3b is done.** The learner required that progress is never lost and lives in School's SQLite database. [ADR 9](../adr/0009-the-learning-record-is-enforced-by-the-database.md) puts the record's rules in the database: append-only triggers, correctness and first try derived inside the INSERT from the stored snapshot, and server-side encounter resumption. Postgres with database functions was considered and left open.
@@ -359,7 +358,7 @@ Possibilities, not proposals. Each is built only if real use shows a need for it
 Questions 1, 3, 4, 5 and 6 are answered and 2 is moot. None of them blocks any increment.
 
 1. **Answered 2026-11-21 — "false" rejected the rule, not just the mechanism.** Agents do prepare lesson content, and they grade subjective answers. The blanket prohibition is gone; the retention rule replaces it — anything generated is prepared ahead of time, stored as a revision, and recorded in the snapshot of every encounter that shows it, on the same terms as authored content. See [ADR 8](../adr/0008-the-school-skill-and-who-invokes-whom.md).
-2. **Moot 2026-11-22.** Grading uses a standard HTTP client, not the agent CLI, so the subscription question no longer arises.
+2. **The learner's call, per agent.** Each command template the learner configures runs under that CLI's own plan and terms; whether a plan permits this automated use is for the learner to check for each agent they list.
 3. **Answered 2026-11-21.** The skill is `/school`. A person runs it to author or extend a course; the server invokes an agent for subjective grading and for preparing future lessons. Taking an already-prepared lesson needs no agent. See [ADR 8](../adr/0008-the-school-skill-and-who-invokes-whom.md).
 4. **Answered 2026-11-22: no schema compiler.** Lessons are block JSON validated at load; a small JSON Schema comes when an author needs one. ADR 7 is withdrawn. The original question: **Does a course file need a schema language at all, and if so which?** Now that the server only plays prepared lessons, a course file may carry little more than the sequence, the assessment items and the block structure. The learner wants text, diffable, with binary assets referenced by path. Wesley gives a deterministic format hash and a CI breaking-change gate but emits no JSON instance validator; JSON Schema validates instances natively but hand-rolls versioning. Blocks increment 2. See ADR 7.
 5. **Answered:** the sidecar stays typed around grading and lives in this repository until a second real consumer exists.

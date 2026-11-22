@@ -51,7 +51,7 @@ Entries are tagged:
 
 **Objective item** *(School)* — A question with a declared correct answer: multiple choice and anything else checkable by comparison. Graded by the server, deterministically, with no model involved and no delay.
 
-**Subjective item** *(School)* — A write-in or an explanation, with no declared answer, that needs reasoning to assess. Graded by a model through the grading client.
+**Subjective item** *(School)* — A write-in or an explanation, with no declared answer, that needs reasoning to assess. Graded by an agent through the bridge.
 
 **Server grading** and **model grading** *(School)* — The two kinds of judgment, kept apart because they carry different authority. Comparing an answer against a declared one is not the same kind of evidence as a model's opinion of an explanation, and the record must never conflate them.
 
@@ -103,7 +103,7 @@ Entries are tagged:
 
 **Mount** *(School)* — A named directory the server will serve files from, configured rather than compiled in.
 
-**Grading client** *(School)*, formerly **sidecar** — The server's bridge to a model: a standard HTTP client speaking OpenAI- or Anthropic-compatible APIs, pointed at a local model server or a hosted API (decided 2026-11-22; RFC 1, proposal 4). Its job is grading **subjective items**; **preparing** lesson renderings is deferred with model B ([ADR 8](adr/0008-the-school-skill-and-who-invokes-whom.md)). It was first designed as a host process wrapping an agent CLI, which is where the name "sidecar" came from. It is **not** a repository and has nothing to do with course distribution. Do not use "sidecar" for anything else.
+**Bridge** *(School)*, formerly **sidecar** — The separate host process the server sends model work to. It runs LLM agents through command templates the learner configures (`claude -p … {prompt}`), trying each in order as a hierarchy of fallbacks, and returns the first output that matches the requested schema ([RFC 1](rfc/0001-school.md), proposal 4). Its job today is grading **subjective items**; **preparing** lesson renderings is deferred with model B ([ADR 8](adr/0008-the-school-skill-and-who-invokes-whom.md)). It is **not** a repository and has nothing to do with course distribution.
 
 ## Retired wording
 
@@ -111,6 +111,6 @@ Entries are tagged:
 | --- | --- | --- |
 | lesson pack, pack | **course** | The repository and the shareable unit are the course. |
 | lesson file | **course file** (if it exists at all) | A course contains lessons, not the reverse. |
-| sidecar repository | **course repository** | "Sidecar" named the grading service, now the grading client. |
+| sidecar repository | **course repository** | "Sidecar" named the grading service, now the bridge. |
 | private content repository | **learner state** | Courses are public; only the learner's record is private. |
 | curriculum | **objectives** + **sequence** | Two separable things; naming them apart avoids the earlier confusion. |
