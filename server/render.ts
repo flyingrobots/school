@@ -111,10 +111,58 @@ function leaf(b: Block, render: (b: Block) => string, answered: readonly Recorde
   }
 }
 
-function shell(title: string, view: View, body: string): string {
+// Lucide's "settings" icon (ISC licence), drawn in the current text colour.
+const COG = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>`;
+
+function shell(title: string, view: View, body: string, scripts: readonly string[] = ["quiz.js", "explain.js"]): string {
+  // Every page has the settings button and the Esc shortcut (nav.js); the settings page itself has a Back link instead.
+  const cog = scripts.includes("settings.js") ? "" : `<a class="settings-cog" href="/settings" aria-label="Settings" title="Settings (Esc)">${COG}</a>`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title><link rel="stylesheet" href="/assets/tokens.css"><link rel="stylesheet" href="/assets/item.css"><link rel="stylesheet" href="/assets/style.css"><link rel="stylesheet" href="/assets/nest.css"></head>
-<body class="view-${view}">${body}<script src="/assets/quiz.js"></script><script src="/assets/explain.js"></script></body></html>`;
+<body class="view-${view}">${cog}${body}${[...scripts, "nav.js"].map((s) => `<script src="/assets/${s}"></script>`).join("")}</body></html>`;
+}
+
+export type SettingsView = { back: string; url: string | null; urlFrom: string; tokenSet: boolean; tokenFrom: string };
+
+/**
+ * The settings page. The connection form is rendered here; the agent list depends on the
+ * bridge and is filled in by settings.js. The token is never in the page: only whether one is set.
+ */
+export function renderSettings(v: SettingsView): string {
+  const locked = (from: string, name: string) =>
+    from === "environment" ? `<p class="hint">Set by <code>${name}</code> in the server's environment, which overrides this page.</p>` : "";
+  const tokenState = v.tokenSet
+    ? (v.tokenFrom === "environment" ? "A token is set in the environment." : "A token is saved. Type a new one to replace it.")
+    : "No token yet. Generate one, or paste the bridge's.";
+  return shell("Settings", "web", `<nav class="course"><a href="${esc(v.back)}">\u2190 Back</a> <span class="sep">/</span> <span>Settings</span></nav>
+<h1>Settings</h1>
+<p class="subtitle">Press <kbd>Esc</kbd> to go back.</p>
+<section class="panel" aria-labelledby="bridge-h">
+<h2 id="bridge-h">Grading bridge</h2>
+<p class="hint">Written explanations are graded by AI agents that the bridge runs on this computer, outside School. Start it in a terminal, then connect it here.</p>
+<div id="bridge-status" class="status" role="status" aria-live="polite">Checking the bridge\u2026</div>
+<form id="bridge-form" class="fields">
+<label class="field"><span class="field-label">Bridge address</span>
+<input name="url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:4748" value="${esc(v.url ?? "")}"${v.urlFrom === "environment" ? " disabled" : ""}></label>
+${locked(v.urlFrom, "SCHOOL_BRIDGE_URL")}
+<label class="field"><span class="field-label">Token</span>
+<input name="token" type="password" autocomplete="off" spellcheck="false" placeholder="${v.tokenSet ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" : "At least 16 characters"}"${v.tokenFrom === "environment" ? " disabled" : ""}></label>
+<p class="hint" id="token-state">${tokenState}</p>
+${locked(v.tokenFrom, "SCHOOL_BRIDGE_TOKEN")}
+<div class="actions"><button type="submit">Save connection</button>${v.tokenFrom === "environment" ? "" : `<button type="button" class="secondary" data-act="generate">Generate a token</button>`}</div>
+<p class="form-msg" role="status" aria-live="polite"></p>
+</form>
+<div id="start-command" class="callout" hidden>
+<p><strong>Start the bridge with this token.</strong> It is shown only now; School keeps it, but won't show it again.</p>
+<pre><code></code></pre>
+<button type="button" class="secondary" data-act="copy">Copy</button>
+</div>
+</section>
+<section class="panel" aria-labelledby="agents-h">
+<h2 id="agents-h">Agents</h2>
+<p class="hint">Tried in order: if one is missing, fails, times out or gives an unusable answer, the next one runs. Write each command as you would type it. <code>{prompt}</code> becomes the prompt as one argument; without it, the prompt arrives on stdin. <code>{output_file}</code> is a file the agent may write its answer to. Commands run on this computer, so anyone who can open School can change them.</p>
+<div id="agents"><p class="hint">Connect the bridge to edit its agents.</p></div>
+</section>`, ["settings.js"]);
 }
 
 function navLinks(courseName: string, page: Block, nav: Nav, view: View, hasReference: boolean): string {

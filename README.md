@@ -41,11 +41,22 @@ SCHOOL_MOUNTS="papers=/path/to/source-material" \
 
 Written explanations are graded by LLM agents that the **bridge** runs on the host, outside Docker. Each agent is a command template, tried in order until one returns a usable answer. `{prompt}` becomes the prompt as a single argument; a template without it gets the prompt on stdin. `{output_file}` is a file the agent may write its answer to. Templates are split like a shell would split them, but never run through a shell.
 
+The easiest way to set it up is School's **Settings** page: the cog at the top right of every page, or **Esc** when you aren't typing. There you can:
+
+- **generate a token**, which comes with the exact command to start the bridge;
+- **connect** the bridge's address and token;
+- **check** that it answers and that each agent's program is found;
+- **edit the agents**: add, remove, reorder, turn them on or off, and **Test** one for real.
+
+The bridge starts without a configuration file, so its agents can be set up entirely from that page. To start from the example instead:
+
 ```sh
 mkdir -p ~/.config/school
 cp bridge/bridge.example.json ~/.config/school/bridge.json   # then edit the agents
 SCHOOL_BRIDGE_TOKEN=a-long-random-secret bun bridge/bridge.ts
 ```
+
+The connection is saved in `settings.json` in your state directory, mode 0600. `SCHOOL_BRIDGE_URL` and `SCHOOL_BRIDGE_TOKEN` in the server's environment override it, and the page says when they do. The page never shows a saved token. **Anyone who can open School can change the agents' commands, which run on the bridge's computer.** Saving them needs the token, which the server holds, so School must stay on a network only you can reach, such as your tailnet.
 
 What an agent may do is set by its own command: the example turns off Claude Code's tools and MCP servers, and runs Codex in a read-only sandbox. Whether your plan for each CLI permits this use is yours to check. Each run gets an empty working directory and is killed, with everything it started, at its timeout. The bridge logs JSON Lines, never the prompt or the answer.
 

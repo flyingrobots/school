@@ -150,3 +150,55 @@ nav.course .sep { opacity: .45; }
 a.item { text-decoration: none; }
 a.item:hover .item-title { text-decoration: underline; text-underline-offset: 2px; }
 .item-actions { opacity: .4; font-size: 1.1rem; }
+
+/* Settings: the cog on every page, and the settings page (render.ts renderSettings). */
+.settings-cog {
+  position: fixed; top: .6rem; right: .6rem; z-index: 10; display: inline-flex; padding: .45rem;
+  color: var(--muted-foreground); background: var(--background); border: 1px solid var(--border); border-radius: 999px;
+}
+.settings-cog:hover { color: var(--foreground); border-color: var(--ring); }
+.settings-cog:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+kbd { font-family: var(--font-mono); font-size: .8em; padding: .05em .35em; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; }
+.panel { margin: 1.5rem 0; padding: 1rem 1.1rem; background: var(--card); color: var(--card-foreground); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
+.panel h2 { margin-top: 0; }
+.panel .hint, .panel .field-label { color: var(--muted-foreground); font-size: .88rem; }
+.panel .hint { margin: .35rem 0; }
+.panel code, .panel .mono { font-family: var(--font-mono); font-size: .85em; }
+.status { margin: .75rem 0; padding: .6rem .75rem; border: 1px solid var(--border); border-left-width: 4px; border-radius: var(--radius); }
+.status[data-state="ok"], .status[data-state="unconfigured"] { border-left-color: var(--primary); }
+.status[data-state="unreachable"], .status[data-state="unauthorised"], .status[data-state="misconfigured"] { border-left-color: var(--destructive); }
+.fields, .agent { display: grid; gap: .35rem; }
+.field { display: grid; gap: .25rem; margin-top: .5rem; }
+.panel input, .panel textarea, .panel select {
+  box-sizing: border-box; width: 100%; padding: .5rem .65rem; font: inherit; font-size: .93rem;
+  background: var(--background); color: var(--foreground); border: 1px solid var(--input); border-radius: var(--radius);
+}
+.panel input[type="checkbox"] { width: auto; }
+.panel input:disabled { opacity: .7; }
+.panel input:focus-visible, .panel textarea:focus-visible, .panel select:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.panel .actions { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-top: .6rem; }
+.panel button {
+  padding: .45rem .85rem; font: inherit; font-size: .9rem; font-weight: 600; cursor: pointer;
+  background: var(--primary); color: var(--primary-foreground); border: 1px solid var(--primary); border-radius: var(--radius);
+}
+.panel button.secondary { background: var(--card); color: var(--card-foreground); border-color: var(--border); font-weight: 500; }
+.panel button.danger { color: var(--destructive); }
+.panel button:disabled { opacity: .6; cursor: progress; }
+.panel button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.form-msg { min-height: 1.2em; font-size: .88rem; color: var(--muted-foreground); }
+.form-msg[data-bad="true"] { color: var(--destructive); }
+.callout { margin-top: .75rem; padding: .75rem; border: 1px dashed var(--primary); border-radius: var(--radius); }
+.callout pre { overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+ol.agents { list-style: none; margin: .5rem 0 0; padding: 0; display: grid; gap: .75rem; }
+.agent { padding: .75rem; border: 1px solid var(--border); border-radius: var(--radius); }
+.agent-head { display: flex; align-items: center; gap: .5rem; }
+.agent-head .agent-name { flex: 1; font-weight: 600; }
+.agent-opts { display: flex; flex-wrap: wrap; gap: .75rem; font-size: .88rem; color: var(--muted-foreground); }
+.agent-opts select { width: auto; }
+.agent-opts input { width: 5.5rem; }
+.panel .inline input { width: 5.5rem; }
+.switch { display: inline-flex; align-items: center; gap: .3rem; font-size: .88rem; white-space: nowrap; }
+.badge.b-found { color: var(--primary); }
+.badge.b-missing { color: var(--destructive); }
+.badge.b-new { color: var(--muted-foreground); }
+.panel .badge { font-family: var(--font-sans); font-size: .75rem; font-weight: 600; letter-spacing: 0; text-transform: none; padding: 0 .45rem; background: transparent; border: 1px solid currentColor; border-radius: 999px; white-space: nowrap; }
