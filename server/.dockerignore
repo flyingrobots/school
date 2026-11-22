@@ -1,2 +1,4 @@
 *
 !server.ts
+!blocks.ts
+!render.ts

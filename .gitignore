@@ -20,7 +20,9 @@ yarn-error.log*
 .env.*
 !.env.example
 
-# SQLite transient sidecar files (keep progress.db tracked)
+# SQLite runtime state. The schema is created by server/server.ts on boot,
+# so the database file is regenerated and must never be committed.
+progress/*.db
 *.db-wal
 *.db-shm
 *.db-journal
@@ -43,6 +45,16 @@ docker-compose.override.yml
 
 # Git bundles
 *.bundle
+
+# Bun
+.bun/
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Claude Code local settings (keep .claude/settings.json shared)
+.claude/settings.local.json
 
 # Claude Code session transcripts (captured /teach logs; keep local, never commit)
 *command-message*.txt
