@@ -124,67 +124,105 @@ export function migrate(db: Database, onBackup?: (from: Shape) => void): Result 
   const from = db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
   const found = shape(db);
 
+  // A newer School wrote this. Its shape may look current to us; migrating would be a downgrade.
+  if (from > SCHEMA_VERSION) {
+    throw new Error(`progress.db is schema version ${from}, newer than this School (${SCHEMA_VERSION}); refusing to touch it`);
+  }
+
   // Already current: nothing to write, so no backup and no transaction.
   if (found === "current" && from === SCHEMA_VERSION) {
     return { from, to: SCHEMA_VERSION, copied: 0, shape: found };
   }
 
-  // Nothing to preserve in an empty database, so no snapshot is taken for one.
-  if (found !== "absent") onBackup?.(found);
+  // Back up before rewriting anything. An empty database has nothing to preserve, and a
+  // current-shaped one only needs its version stamped, so neither takes a snapshot.
+  if (found !== "absent" && found !== "current") onBackup?.(found);
 
-  const run = db.transaction(() => {
+  // The version is written INSIDE the transaction (SQLite applies user_version transactionally),
+  // so data and version commit together. And the dispatch is exhaustive on the shape found on
+  // disk: a current-shaped table can never reach a rebuild, whatever the version says.
+  const run = db.transaction((): number => {
     db.exec(RECORD_TABLES);
-    if (found === "absent") {
-      db.exec(SCHEMA);
-      db.exec(RULES);
-      return 0;
-    }
-
-    // v3 and v4 differ only by added nullable columns, so add them rather than rebuild.
-    if (found === "v3" || found === "v4") {
-      const before = db.query<{ n: number }, []>("SELECT count(*) AS n FROM answers").get()?.n ?? 0;
-      if (found === "v3") {
-        db.exec("ALTER TABLE answers ADD COLUMN course TEXT");
-        if (!columns(db, "views").includes("course")) db.exec("ALTER TABLE views ADD COLUMN course TEXT");
-        db.exec("DROP INDEX IF EXISTS answers_lesson");
-        db.exec("CREATE INDEX answers_lesson ON answers (course, lesson, at)");
+    let copied: number;
+    switch (found) {
+      case "current":
+        // Data already at this schema, version not: a crash between the two, under the
+        // old ordering. Restore the rules if missing and stamp the version. Nothing else.
+        db.exec(RULES);
+        copied = 0;
+        break;
+      case "absent":
+        db.exec(SCHEMA);
+        db.exec(RULES);
+        copied = 0;
+        break;
+      case "v3":
+      case "v4":
+        copied = addColumns(db, found);
+        break;
+      case "legacy":
+      case "v2":
+        copied = rebuild(db, found);
+        break;
+      default: {
+        const never: never = found;
+        throw new Error(`unknown answers shape ${String(never)}`);
       }
-      db.exec("ALTER TABLE answers ADD COLUMN encounter_id TEXT REFERENCES encounters (id)");
-      db.exec("ALTER TABLE answers ADD COLUMN choice_id TEXT");
-      db.exec("ALTER TABLE answers ADD COLUMN submission_id TEXT");
-      db.exec(RULES);
-      return before;
     }
-
-    // Rebuild into a new table, then swap. Copying is explicit per shape so that no column
-    // is silently reinterpreted: a legacy `question` is a position, never a block id.
-    db.exec(SCHEMA.replace(/CREATE TABLE answers/, "CREATE TABLE answers_next")
-                  .replace(/CREATE INDEX answers_block ON answers /, "CREATE INDEX answers_block_next ON answers_next ")
-                  .replace(/CREATE INDEX answers_lesson ON answers /, "CREATE INDEX answers_lesson_next ON answers_next "));
-
-    if (found === "legacy") {
-      db.exec(`INSERT INTO answers_next (id, origin, course, block_id, lesson, question, prompt, choice, correct, first_try, ms, at)
-               SELECT id, 'legacy', NULL, NULL, lesson, question, prompt, choice, correct, first_try, ms, at FROM answers`);
-    } else {
-      db.exec(`INSERT INTO answers_next (id, origin, course, block_id, lesson, question, prompt, choice, correct, first_try, ms, at)
-               SELECT id, 'block', NULL, block_id, lesson, NULL, NULL, choice, correct, first_try, ms, at FROM answers`);
-    }
-    const copied = db.query<{ n: number }, []>("SELECT count(*) AS n FROM answers_next").get()?.n ?? 0;
-    const before = db.query<{ n: number }, []>("SELECT count(*) AS n FROM answers").get()?.n ?? 0;
-    if (copied !== before) throw new Error(`migration would lose rows: ${before} before, ${copied} after`);
-
-    db.exec("DROP TABLE answers");
-    db.exec("ALTER TABLE answers_next RENAME TO answers");
-    db.exec("DROP INDEX IF EXISTS answers_block_next");
-    db.exec("DROP INDEX IF EXISTS answers_lesson_next");
-    db.exec("CREATE INDEX IF NOT EXISTS answers_block ON answers (block_id, at)");
-    db.exec("CREATE INDEX IF NOT EXISTS answers_lesson ON answers (course, lesson, at)");
-    db.exec(RULES);
+    // A views table older than courses lacks `course`; every path ends with it present.
+    if (!columns(db, "views").includes("course")) db.exec("ALTER TABLE views ADD COLUMN course TEXT");
+    db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     return copied;
   });
 
   const copied = run();
-  // Outside the data transaction: a PRAGMA write is not part of the row history.
-  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   return { from, to: SCHEMA_VERSION, copied, shape: found };
+}
+
+const count = (db: Database, table: string) => db.query<{ n: number }, []>(`SELECT count(*) AS n FROM ${table}`).get()?.n ?? 0;
+
+/** v3 and v4 differ from current only by added nullable columns, so add them rather than rebuild. */
+function addColumns(db: Database, found: "v3" | "v4"): number {
+  const before = count(db, "answers");
+  if (found === "v3") {
+    db.exec("ALTER TABLE answers ADD COLUMN course TEXT");
+    db.exec("DROP INDEX IF EXISTS answers_lesson");
+    db.exec("CREATE INDEX answers_lesson ON answers (course, lesson, at)");
+  }
+  db.exec("ALTER TABLE answers ADD COLUMN encounter_id TEXT REFERENCES encounters (id)");
+  db.exec("ALTER TABLE answers ADD COLUMN choice_id TEXT");
+  db.exec("ALTER TABLE answers ADD COLUMN submission_id TEXT");
+  db.exec(RULES);
+  if (count(db, "answers") !== before) throw new Error("migration changed the number of answers");
+  return before;
+}
+
+/**
+ * Rebuild into a new table, then swap. Only for shapes that predate every column the copy
+ * could lose. Copying is explicit per shape so that no column is silently reinterpreted:
+ * a legacy `question` is a position, never a block id.
+ */
+function rebuild(db: Database, found: "legacy" | "v2"): number {
+  db.exec(SCHEMA.replace(/CREATE TABLE answers/, "CREATE TABLE answers_next")
+                .replace(/CREATE INDEX answers_block ON answers /, "CREATE INDEX answers_block_next ON answers_next ")
+                .replace(/CREATE INDEX answers_lesson ON answers /, "CREATE INDEX answers_lesson_next ON answers_next "));
+  if (found === "legacy") {
+    db.exec(`INSERT INTO answers_next (id, origin, course, block_id, lesson, question, prompt, choice, correct, first_try, ms, at)
+             SELECT id, 'legacy', NULL, NULL, lesson, question, prompt, choice, correct, first_try, ms, at FROM answers`);
+  } else {
+    db.exec(`INSERT INTO answers_next (id, origin, course, block_id, lesson, question, prompt, choice, correct, first_try, ms, at)
+             SELECT id, 'block', NULL, block_id, lesson, NULL, NULL, choice, correct, first_try, ms, at FROM answers`);
+  }
+  const copied = count(db, "answers_next");
+  const before = count(db, "answers");
+  if (copied !== before) throw new Error(`migration would lose rows: ${before} before, ${copied} after`);
+
+  db.exec("DROP TABLE answers");
+  db.exec("ALTER TABLE answers_next RENAME TO answers");
+  db.exec("DROP INDEX IF EXISTS answers_block_next");
+  db.exec("DROP INDEX IF EXISTS answers_lesson_next");
+  db.exec("CREATE INDEX IF NOT EXISTS answers_block ON answers (block_id, at)");
+  db.exec("CREATE INDEX IF NOT EXISTS answers_lesson ON answers (course, lesson, at)");
+  db.exec(RULES);
+  return copied;
 }
