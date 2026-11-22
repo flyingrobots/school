@@ -35,6 +35,7 @@ SCHOOL_MOUNTS="papers=/path/to/source-material" \
 | `SCHOOL_STATE` | Where **your** answers and progress go. Must not be inside the course; the server refuses to start if it is. |
 | `SCHOOL_MOUNTS` | `name=path` pairs, served read-only at `/name/...`, for source material a course cites. |
 | `HOST`, `PORT` | Default `127.0.0.1:4747`. |
+| `SCHOOL_ALLOWED_HOSTS` | Comma-separated host names School answers to, besides `127.0.0.1`, `localhost`, `::1` and `HOST`: set it to your tailnet name, such as `school.example.ts.net`. Names only, no port or wildcard. Any other `Host` header gets a 403, which is what stops a DNS-rebinding page from reaching School. |
 | `SCHOOL_BRIDGE_URL`, `SCHOOL_BRIDGE_TOKEN` | Where the bridge listens, and the secret it shares with the server. Unset, explanations are saved but not graded. The token is never stored or logged. |
 
 ### Grading explanations: the bridge
@@ -46,9 +47,9 @@ The easiest way to set it up is School's **Settings** page: the cog at the top r
 - **generate a token**, which comes with the exact command to start the bridge;
 - **connect** the bridge's address and token;
 - **check** that it answers and that each agent's program is found;
-- **edit the agents**: add, remove, reorder, turn them on or off, and **Test** one for real.
+- **order the agents**: reorder the agents declared in the bridge's file, turn them on or off, and **Test** one for real.
 
-The bridge starts without a configuration file, so its agents can be set up entirely from that page. To start from the example instead:
+The agents themselves, and their commands, are written only in the bridge's configuration file on the bridge's computer. No request to School or to the bridge can add an agent or set or change a command; the page can only reorder, switch and test what the file declares. The bridge starts without the file and reports itself unconfigured until you write one. Start from the example:
 
 ```sh
 mkdir -p ~/.config/school
@@ -56,7 +57,9 @@ cp bridge/bridge.example.json ~/.config/school/bridge.json   # then edit the age
 SCHOOL_BRIDGE_TOKEN=a-long-random-secret bun bridge/bridge.ts
 ```
 
-The connection is saved in `settings.json` in your state directory, mode 0600. `SCHOOL_BRIDGE_URL` and `SCHOOL_BRIDGE_TOKEN` in the server's environment override it, and the page says when they do. The page never shows a saved token. **Anyone who can open School can change the agents' commands, which run on the bridge's computer.** Saving them needs the token, which the server holds, so School must stay on a network only you can reach, such as your tailnet.
+The file is re-read on every request, so an edit takes effect without a restart.
+
+The connection is saved in `settings.json` in your state directory, mode 0600. `SCHOOL_BRIDGE_URL` and `SCHOOL_BRIDGE_TOKEN` in the server's environment override it, and the page says when they do. The page never shows a saved token. **Anyone who can open School can reorder, switch off and test your agents and change which bridge School grades through**, so School must stay on a network only you can reach, such as your tailnet, with its name in `SCHOOL_ALLOWED_HOSTS`. They cannot change what an agent runs.
 
 What an agent may do is set by its own command: the example turns off Claude Code's tools and MCP servers, and runs Codex in a read-only sandbox. Whether your plan for each CLI permits this use is yours to check. Each run gets an empty working directory and is killed, with everything it started, at its timeout. The bridge logs JSON Lines, never the prompt or the answer.
 
