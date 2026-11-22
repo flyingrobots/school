@@ -49,6 +49,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10",
+    "@happy-dom/global-registrator": "^21.0.4",
     "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",

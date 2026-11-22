@@ -23,6 +23,13 @@ Practical notes for anyone — human or agent — changing the framework.
 - Every `POST /api/*` needs `Content-Type: application/json` and is refused when the browser
   says it is cross-site. A new endpoint under `/api/` inherits that guard; one outside it does
   not, so keep state-changing routes under `/api/`.
+- Every request is checked against the Host allowlist (`server/hosts.ts`) before routing, so a
+  new route of any method inherits it. School behind a new name (another tailnet name, a LAN
+  name) needs that name in `SCHOOL_ALLOWED_HOSTS`, or every request through it gets a 403.
+- An agent's command is written only in the bridge's file on its host. `POST /api/settings/agents`
+  (and the bridge's `PUT /config` behind it) takes `{ "agents": [{ "name", "enabled" }] }` naming
+  every declared agent once, and nothing else; `server/agents.ts` rebuilds the body from those
+  fields so no other field can reach the bridge. Do not add a way to write a command over HTTP.
 - Tests are `bun test` from the repository root. No `package.json`, no build step (ADR 2).
   The web app's browser tests (`web/test/shell.test.ts`) also need `npm ci` in `web/` and Google
   Chrome, which they drive through playwright-core; without either they fail rather than skip.

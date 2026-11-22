@@ -85,18 +85,26 @@ JSON API.
 | POST | `/api/view` | Records a view |
 | GET | `/api/settings/status` | Whether the bridge answers |
 | GET, POST | `/api/settings/bridge` | The bridge address and token; the token is never returned except once when generated |
-| GET, POST | `/api/settings/agents` | The bridge's agents, passed through to the bridge |
-| POST | `/api/settings/agents/test` | Runs one agent for real |
+| GET, POST | `/api/settings/agents` | The bridge's agents as its file declares them; a POST only reorders them and switches them on or off |
+| POST | `/api/settings/agents/test` | Runs one declared agent for real |
 | GET | `/courses/:c/reference/*`, `/<mount>/*` | Files, contained in their folder after resolving symlinks |
 
-Every `POST` under `/api/` must carry `Content-Type: application/json` and is refused when the
-browser says it is cross-site. That forces a CORS preflight the server never answers, which stops
-an ordinary cross-site page from writing. It does **not** stop a page that becomes same-origin
-through DNS rebinding, because the server checks no `Host` header
+Before any route, the server refuses with a 403 every request whose `Host` header is not one of
+its names: `127.0.0.1`, `localhost`, `::1`, `HOST` when it is a real name, and the names in
+`SCHOOL_ALLOWED_HOSTS`. The port is not compared. This stops a page that becomes same-origin
+through DNS rebinding, which still sends its own name as the Host
 ([flyingrobots/school#18](https://github.com/flyingrobots/school/issues/18)).
 
-In short: the server is thin. It serves files safely, guards writes against ordinary cross-site
-requests, and hands learning-record work to SQL.
+Every `POST` under `/api/` must also carry `Content-Type: application/json` and is refused when
+the browser says it is cross-site. That forces a CORS preflight the server never answers, which
+stops an ordinary cross-site page from writing.
+
+No endpoint can set an agent's command. `POST /api/settings/agents` forwards only each agent's
+name and on/off switch, and the bridge's `PUT /config` accepts only a reordering of the agents
+its file already declares; commands are written by editing that file on the host.
+
+In short: the server is thin. It answers only to its own names, serves files safely, guards
+writes against ordinary cross-site requests, and hands learning-record work to SQL.
 
 ## The learning record
 
@@ -220,7 +228,7 @@ throws before the failure is stored ([flyingrobots/school#17](https://github.com
 
 | Property | Today |
 | --- | --- |
-| Agents | Command templates, tried in order; output must match the response schema |
+| Agents | Command templates, tried in order; output must match the response schema. Declared, commands included, only in the bridge's file on the host. |
 | Isolation | No shell, an empty working folder, the process tree killed on timeout. This is not filesystem confinement: an agent can do whatever its own command allows. |
 | Local or hosted | Agents are launched locally; whether inference is local depends on the agent. A hosted CLI sends the prompt and the explanation over the network. |
 | Grading | Fidelity, completeness, accessibility, each `meets`, `partly` or `misses`, or insufficient evidence; quoted contradictions are checked to exist in the source, not to support the criticism |
@@ -251,7 +259,6 @@ is currently broken.
 
 | Defect | Effect | Issue |
 | --- | --- | --- |
-| No `Host` check; agent commands editable over HTTP | A DNS-rebinding page can rewrite an agent command and run it on the host | [#18](https://github.com/flyingrobots/school/issues/18) |
 | Bridge reply shape not validated | A malformed reply throws and stores no failed grading | [#17](https://github.com/flyingrobots/school/issues/17) |
 | Explanations ignored by resume | An explanation does not keep its encounter open | [#19](https://github.com/flyingrobots/school/issues/19) |
 | Phone over the tailnet | Never verified end to end | [#3](https://github.com/flyingrobots/school/issues/3) |
@@ -266,6 +273,7 @@ is currently broken.
 | `SCHOOL_MOUNTS` | Server | `name=path` pairs served read-only | none |
 | `SCHOOL_WEB` | Server | The built web app | `web/dist` |
 | `HOST`, `PORT` | Server | Listen address | `127.0.0.1:4747` |
+| `SCHOOL_ALLOWED_HOSTS` | Server | Host names answered besides `127.0.0.1`, `localhost`, `::1` and `HOST`, comma-separated; the tailnet name | none |
 | `SCHOOL_BRIDGE_URL`, `SCHOOL_BRIDGE_TOKEN` | Server | Override the saved bridge settings | none |
 | `SCHOOL_BRIDGE_TOKEN` | Bridge | Shared secret, 16 characters or more | required |
 | `SCHOOL_BRIDGE_CONFIG` | Bridge | Agents file, re-read per request | `~/.config/school/bridge.json` |
