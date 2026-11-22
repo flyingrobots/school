@@ -1,6 +1,8 @@
 # 7. Define the course schema with GraphQL SDL, compiled by Wesley
 
-Date: 2026-11-21 · Status: Accepted
+Date: 2026-11-21 · Status: **Withdrawn 2026-11-22**
+
+> **Withdrawn 2026-11-22.** The learner dropped this decision after an external review. A course's lessons are block JSON, validated when the server loads them (`server/blocks.ts`). Runtime validation and editor support will come from a small JSON Schema when a course author needs one, with no compiler and no build step. A schema compiler is reconsidered only if a second implementation of the format ever exists. The text below is kept as the record of what was proposed and why it was not adopted.
 
 > **Amended 2026-11-21.** "Lesson file" is now **course file** ([glossary](../glossary.md)), and this decision is **no longer settled**. [ADR 8](0008-the-school-skill-and-who-invokes-whom.md) establishes that the server plays prepared lessons and only calls an agent for subjective grading and preparation, which shrinks what a course file must carry to the machine-readable parts the server needs. Whether that still warrants a GraphQL schema compiled by Wesley, rather than plain JSON Schema or no schema language at all, is open. Wesley also emits no JSON instance validator: its TypeScript output is types, which erase at runtime.
 

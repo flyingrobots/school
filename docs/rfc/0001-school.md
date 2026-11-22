@@ -60,7 +60,7 @@ Lessons, reference sheets and the papers are served read-only. Content changes c
 
 ### How lessons are planned
 
-Lessons are written **one at a time, as the course goes**. Only the direction is planned: it roughly follows the order of the sources a course lists. There is no syllabus, and the teacher does not write one unless asked — an offer to draft a 10–12 lesson outline was made on 2026-11-18 and was not taken up.
+Lessons are written **one at a time, as the course goes**, and each one, once written, is a finished lesson in the course (model A, [ADR 8](../adr/0008-the-school-skill-and-who-invokes-whom.md) as amended): the course's sequence is the lessons written so far, and the evidence decides what is written next and what is reviewed within it. Only the direction is planned: it roughly follows the order of the sources a course lists. There is no syllabus, and the teacher does not write one unless asked — an offer to draft a 10–12 lesson outline was made on 2026-11-18 and was not taken up.
 
 This is deliberate, not an omission. A syllabus fixed in advance would decide the next lesson before the evidence for it exists, which is the opposite of the organizing idea. The cost is that the course has no visible map, so the learner cannot reorder it ahead of time; the mitigation is that every lesson names the recorded attempts behind its review items (step 4 above).
 
@@ -187,7 +187,7 @@ A lesson is a JSON file whose root is a `page` block. Every block has a globally
 
 These are two separate decisions.
 
-**2a. Markdown: accept.** Prose blocks may use an `md` field, rendered with `Bun.markdown.html`. The API is marked unstable, so the Bun version stays pinned (ADR 4) and a test covers the markup we rely on. Lesson Markdown is trusted, because the teacher wrote it and it is in git. Learner text and model text are **never** rendered as Markdown or HTML; they are shown as escaped plain text. Exercises keep typed fields, not Markdown.
+**2a. Markdown: accept.** Prose blocks may use an `md` field, rendered with `Bun.markdown.html`. The API is marked unstable, so the Bun version stays pinned (ADR 4) and a test covers the markup we rely on. **An installed course is trusted** (decided 2026-11-22): it is code the learner chose to install, so `html` blocks and Markdown carry markup. Fields that are plain text by meaning (`subtitle`, `q`, `prompt`, `model`, choice text) are always escaped, as are error messages. If courses from strangers are ever supported, the answer is sanitised Markdown with raw HTML stripped, not escaping everything. Learner text and model text are **never** rendered as Markdown or HTML; they are shown as escaped plain text. Exercises keep typed fields, not Markdown.
 
 **2b. Dynamic review: start with one named selector.** Instead of general SQL in lesson files, add a `review` block bound to one built-in operation, `due-review`. It returns a bounded list of block IDs (at most `limit`, in a fixed order) chosen from first-try misses and time since the last encounter. If the selector fails, the block says so and the rest of the page renders. The selected blocks become part of the encounter's snapshot, so a later database change cannot alter what an answer refers to. The snapshot keeps the **resolved content as displayed**, not merely the list of selected block IDs: if a binding ever substitutes values inside an exercise, those values are what is stored, because an ID alone would not recover what the learner actually read.
 
@@ -209,18 +209,15 @@ Whether EPUB needs no change to any lesson will be checked when it is built.
 
 **Scope.** The sidecar's first and only capability is grading explanations. Any later capability that produces teaching content (personal examples, explanations of mistakes, extra practice) must meet the same rules as other content: reviewed, stored as a revision, and recorded in the snapshot of every encounter that shows it. Whether to build such a capability is [open question 1](#open-questions).
 
-**Placement.** A separate process on the host, outside Docker, in this repository. Its advantage is process separation and reuse of host-side tools and logins. A direct API client in the container could also abstract providers; the sidecar is chosen for the separation, not because the alternative is limited to one provider.
+**Placement: a standard HTTP client** (decided 2026-11-22). The server speaks OpenAI- or Anthropic-compatible HTTP to a configured endpoint: a local model server on the host (LM Studio, Ollama) or a hosted API with a key from the environment. There is no wrapper around an agent CLI. That removes the MCP tool-leakage gate, the stdin and argument handling, and the question of whether a consumer subscription permits automated use. A separate host process is justified only if local-model isolation ever needs it.
 
 ```text
 phone ──tailnet──▶ tailscale serve ──▶ 127.0.0.1:4747  school (Docker)
-                                             │  POST /grade  (token)
-                                             ▼
-                                   host: llm-sidecar (127.0.0.1:<port>)
-                                             │  adapter chosen by config
+                                             │  HTTP, endpoint chosen by config
                                 ┌────────────┴─────────────┐
                                 ▼                          ▼
-                    agent CLI (subscription;      local model server
-                    inference is remote)          (inference is local)
+                     hosted API (key in env;      local model server on the host
+                     inference is remote)         (inference is local)
 ```
 
 The configuration below is illustrative; the names are not final.
@@ -233,9 +230,10 @@ kind = "openai-compatible"           # for example LM Studio or Ollama on the ho
 base_url = "http://127.0.0.1:1234/v1"
 model = "example-model"
 
-[adapters.agent]
-kind = "cli"
-command = ["claude", "-p", "--output-format", "json"]   # incomplete: see activation gates
+[adapters.hosted]
+kind = "anthropic"                   # or "openai-compatible"
+api_key_env = "SCHOOL_GRADER_API_KEY"
+model = "example-model"
 timeout_s = 120
 ```
 
@@ -260,12 +258,9 @@ Each is `meets`, `partly` or `misses`. The grader may instead return `insufficie
 
 **Activation gates.** The sidecar is not enabled until each of these has been demonstrated against the deployed configuration:
 
-- The container reaches the sidecar through `host.docker.internal` while the sidecar listens only on `127.0.0.1`. *(Unverified.)*
-- Requests without the shared token are rejected.
-- The CLI adapter runs with no tools available: built-in tools disabled with the CLI's tool restriction option, *and* no MCP servers or settings inherited from the user's configuration. Shown by trying to make the agent use a tool. The Claude Code documentation notes that disabling built-in tools does not disable MCP tools ([CLI reference](https://code.claude.com/docs/en/cli-reference)).
-- The prompt goes on stdin; the argument list is fixed by the configuration.
+- The container reaches a local model server through `host.docker.internal`. *(Unverified.)*
+- The API key is read from the environment and never written to the database, a log or a page.
 - Each lifecycle case passes: timeout, malformed output, a restart after saving, a duplicate delivery, and two different explanations for the same block.
-- The subscription's terms allow this use ([open question 2](#open-questions)). The local adapter does not wait on this.
 
 ## Review reconciliation
 
@@ -295,13 +290,13 @@ Two of the review's own claims are **taken on trust and not verified here**: tha
 
 One thing the review could not see, because it read only the RFC: the `.dockerignore` cause of problem 1. Revision 2 recorded the Dockerfile half of that bug and would not have fixed it.
 
-**The review's recommendation on open question 1 is still only a recommendation.** It advised rejecting a blanket ban on LLM-written content while keeping grading as the sidecar's first job, and revision 2 wrote that into principle 1 and proposal 4. The learner has not confirmed it. Until they do, that part of the design rests on the reviewer's suggestion and this RFC's assumption rather than on a decision — which is the one thing the review explicitly asked not to let happen quietly.
+**The review's recommendation on open question 1 is still only a recommendation.** It advised rejecting a blanket ban on LLM-written content while keeping grading as the sidecar's first job, and revision 2 wrote that into principle 1 and proposal 4. The learner has not confirmed it. Until they do, that part of the design rests on the reviewer's suggestion and this RFC's assumption rather than on a decision — which is the one thing the review explicitly asked not to let happen quietly. *(Since confirmed: see [open question 1](#open-questions).)*
 
 ## Alternatives considered
 
 - **Store blocks in the database.** A database can keep immutable versions too. Files are chosen because they suit the authoring and review workflow: the teacher edits them, the learner reads diffs, and git keeps history.
 - **Generate content on every page load.** Rejected because nothing would be kept, so content could not be revisited and answers could not be attributed. Generation whose output is reviewed and stored is a different thing and remains possible (proposal 4, scope).
-- **Call a model API directly from the container.** It would work, with the same provider abstraction. It would put credentials in a container reachable from the tailnet, and could not use host-side agent logins. Superseded by the sidecar.
+- **Call a model API directly from the container.** Rejected at first because it puts a credential in a container reachable from the tailnet and cannot use host-side agent logins. **Adopted 2026-11-22** after all: wrapping a consumer CLI cost more (tool leakage, argument handling, subscription terms) than one API key in the environment of a private, single-user machine.
 - **General SQL bindings first.** Deferred in favour of one named selector, which has a known result shape and cost.
 - **Use the d3 library.** Only its pattern is kept: data plus one render function per type, rendered on the server.
 - **Write a Markdown parser.** Unnecessary: `Bun.markdown` exists.
@@ -317,13 +312,15 @@ One thing the review could not see, because it read only the RFC: the `.dockerig
 
 Each increment ends only when its evidence exists.
 
+**Freeze (2026-11-22).** No new ADRs, EPUB, schema or multi-view work until the learner has used School on their phone for two weeks: Lessons 1 and 2 converted, `tailscale serve` working end to end, and real rows in `progress.db`. That use is expected to settle more than further design would. Increments 4–6 below stay as written, but are not started before then.
+
 | Increment | Work | Evidence required before moving on |
 | --- | --- | --- |
 | **1. Preserve the foundation** — **DONE 2026-11-21** | `git init` (commit `22e5411`). `server/migrate.ts` replaces the destructive migration. | **Met.** `server/migrate.test.ts`, 5 tests / 66 assertions on a *populated* legacy fixture: all four answers present with original position, prompt, choice and timestamp; two answers to one position stay two answers; the `VACUUM INTO` backup opens standalone and still reads as legacy; a second run copies nothing and takes no snapshot; a v2 database keeps its block attribution. Also proven end to end — the real server migrated a populated legacy database on boot, logged the backup, and served `/` at 200. |
 | **2. Separate framework, course and state** — **DONE 2026-11-21** | `server/config.ts` (`SCHOOL_COURSE`, `SCHOOL_STATE`, `SCHOOL_MOUNTS`); `render.ts` discovers reference documents; the AIΩN course and the learner's state are now separate repositories. The course schema question (ADR 7) turned out **not** to block this and stays open. | **Met.** Two unrelated courses — one on knitting, one on chess — each served their own index, lesson, reference list and a named source mount, with **no server change between runs**. Learner state was written to its own directory and nothing was written into either course. Pointing `SCHOOL_STATE` inside `SCHOOL_COURSE` exits 2 with a clear message. 14 unit tests. |
 | **3. One web lesson** — split into 3a validation (flyingrobots/school#1, **done**), 3b the record contract (flyingrobots/school#2, **done**) and 3c Lesson 1 end to end (flyingrobots/school#3) | Fix the Dockerfile; convert Lesson 1; add `encounters`, `snapshots`, choice IDs and submission UUIDs; validate the lesson set at load. | The rebuilt container serves Lesson 1, and one answer row identifies its snapshot, encounter, block, choice and submission. HTTP 200 alone is not evidence. |
 | **4. Reuse and delayed practice** | Convert Lesson 2 with a `ref` to a Lesson 1 quiz; teacher-chosen review; the `due-review` selector. | The acceptance scenario above produces three submissions in two encounters, with correct first-try values. |
-| **5. Explanation feedback** | Sidecar with the local adapter first; rubric v1; lifecycle; then the CLI adapter after its gates. | All activation gates pass; a failure is shown honestly; every grading names its submission. |
+| **5. Explanation feedback** | HTTP grading client, local model first, then a hosted API; rubric v1; lifecycle. | All activation gates pass; a failure is shown honestly; every grading names its submission. |
 | **6. Presentation and exports** | `slides` with its contract; Markdown prose; EPUB later. | Each view meets its contract in the table above. |
 
 Each increment that changes a decision gets an ADR. ADRs 6 (framework/course/state), 7 (the course schema, reopened), 8 (the `school` skill and who invokes whom) and 9 (the learning record, enforced by the database) are written; still to come are views (10), bindings (11) and the sidecar (12).
@@ -345,6 +342,7 @@ Possibilities, not proposals. Each is built only if real use shows a need for it
 ## Review log
 
 - **Revision 1** (2026-11-18): first draft.
+- **Revision 12** (2026-11-22): recorded the learner's four decisions after the external review. Courses ship finished lessons with surgical personalisation (model A; ADR 8 amended). ADR 7 is withdrawn in favour of load-time validation and, later, a small JSON Schema. Grading uses a standard HTTP client, which makes open question 2 moot. Installed courses are trusted, but plain-text fields are always escaped. New ADRs, EPUB and schema work are frozen until two weeks of real use on the phone; see the rollout.
 - **Revision 11** (2026-11-22): the rest of the external review's code findings. One guard on every `POST /api/*` (JSON only, cross-site refused). Static files are served only if their resolved path stays inside the mount, and never a directory. Malformed percent-encoding is a 400. A course with no `lessons/` lists none. Plain-text lesson fields (`subtitle`, `q`, `prompt`, `model`) and lesson errors are escaped; only `html` blocks carry markup. Config containment resolves symlinks and covers `DB_PATH`. `compose.yaml` names no course. Dark shadows apply however dark is chosen.
 - **Revision 10** (2026-11-22): an external review found that an interrupted migration could null every answer's course, encounter, choice and submission. The version was written after the data transaction, so a crash in between sent a current-shaped database down the v2 rebuild, and `DROP TABLE` fires no triggers. The version is now written inside the transaction, the dispatch is an exhaustive `switch` on the shape on disk, and a database from a newer School is refused. Legacy and v2 `views` tables now gain `course`.
 - **Revision 9** (2026-11-21): **3b is done.** The learner required that progress is never lost and lives in School's SQLite database. [ADR 9](../adr/0009-the-learning-record-is-enforced-by-the-database.md) puts the record's rules in the database: append-only triggers, correctness and first try derived inside the INSERT from the stored snapshot, and server-side encounter resumption. Postgres with database functions was considered and left open.
@@ -358,11 +356,11 @@ Possibilities, not proposals. Each is built only if real use shows a need for it
 
 ## Open questions
 
-Question 2 gates the CLI adapter only. Questions 3 and 4 block increment 2. Increment 1 waits on none of them.
+Questions 1, 3, 4, 5 and 6 are answered and 2 is moot. None of them blocks any increment.
 
 1. **Answered 2026-11-21 — "false" rejected the rule, not just the mechanism.** Agents do prepare lesson content, and they grade subjective answers. The blanket prohibition is gone; the retention rule replaces it — anything generated is prepared ahead of time, stored as a revision, and recorded in the snapshot of every encounter that shows it, on the same terms as authored content. See [ADR 8](../adr/0008-the-school-skill-and-who-invokes-whom.md).
-2. **Does the subscription permit automated use through its CLI?** The CLI supports non-interactive mode; whether the learner's plan allows this wrapper must be checked before enabling the CLI adapter.
+2. **Moot 2026-11-22.** Grading uses a standard HTTP client, not the agent CLI, so the subscription question no longer arises.
 3. **Answered 2026-11-21.** The skill is `/school`. A person runs it to author or extend a course; the server invokes an agent for subjective grading and for preparing future lessons. Taking an already-prepared lesson needs no agent. See [ADR 8](../adr/0008-the-school-skill-and-who-invokes-whom.md).
-4. **Does a course file need a schema language at all, and if so which?** Now that the server only plays prepared lessons, a course file may carry little more than the sequence, the assessment items and the block structure. The learner wants text, diffable, with binary assets referenced by path. Wesley gives a deterministic format hash and a CI breaking-change gate but emits no JSON instance validator; JSON Schema validates instances natively but hand-rolls versioning. Blocks increment 2. See ADR 7.
+4. **Answered 2026-11-22: no schema compiler.** Lessons are block JSON validated at load; a small JSON Schema comes when an author needs one. ADR 7 is withdrawn. The original question: **Does a course file need a schema language at all, and if so which?** Now that the server only plays prepared lessons, a course file may carry little more than the sequence, the assessment items and the block structure. The learner wants text, diffable, with binary assets referenced by path. Wesley gives a deterministic format hash and a CI breaking-change gate but emits no JSON instance validator; JSON Schema validates instances natively but hand-rolls versioning. Blocks increment 2. See ADR 7.
 5. **Answered:** the sidecar stays typed around grading and lives in this repository until a second real consumer exists.
 6. **Answered, and done:** this workspace became a git repository on 2026-11-21 (commit `22e5411`), published as `flyingrobots/school` under Apache 2.0. The rest of increment 1 — the preserving migration — is not done.
