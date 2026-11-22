@@ -133,3 +133,15 @@ test("a file that ends or opens a transaction of its own is refused before anyth
     SELECT 'commit; rollback;' AS "end";`;
   expect(readMigrations(folder({ "0001_a.sql": fine })).map((m) => m.name)).toEqual(["0001_a.sql"]);
 });
+
+test("a file that changes role is refused before anything runs, and one that escapes the owner at run time rolls back", async () => {
+  for (const sql of ["RESET ROLE;", "SET ROLE postgres;", "set local role school_app;", "SET SESSION AUTHORIZATION postgres;",
+                     "CREATE TABLE school.a (id int);\nreset session authorization;"]) {
+    expect(() => readMigrations(folder({ "0001_a.sql": sql }))).toThrow(/0001_a\.sql: the runner runs every file as school_owner; remove its (SET|RESET)/);
+  }
+  const d = folder({ "0001_a.sql": "DO $$ BEGIN EXECUTE 'RESET ROLE'; END $$;\nCREATE TABLE public.escaped (id int);" });
+  const db = new PGlite();
+  await expect(migrate(db, d)).rejects.toThrow(/0001_a\.sql: must end as school_owner, not postgres/);
+  expect((await db.query("SELECT 1 FROM pg_tables WHERE tablename = 'escaped'")).rows).toEqual([]);
+  expect((await db.query("SELECT 1 FROM public.schema_migrations")).rows).toEqual([]);
+}, SLOW);
