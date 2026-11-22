@@ -2,7 +2,7 @@
 import { Database } from "bun:sqlite";
 import { dirname, join, normalize, sep } from "node:path";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
-import { BlockError, loadLibrary } from "./blocks.ts";
+import { lastValidLoader } from "./blocks.ts";
 import { isView, renderCourse, renderLanding, renderPage, renderReference } from "./render.ts";
 import { migrate, snapshot } from "./migrate.ts";
 import { ConfigError, course, courseNames, mountTable, parseConfig, type Course } from "./config.ts";
@@ -65,12 +65,23 @@ function referenceDocs(c: Course): string[] {
   return readdirSync(c.reference).filter((f) => f.endsWith(".html")).sort();
 }
 
+// Lessons are reloaded on every request so edits show up without a restart. A reload that
+// fails validation falls back to the course's last valid set, and the failure is logged.
+const loadLessons = lastValidLoader();
+function lessons(c: Course) {
+  const { library, error } = loadLessons(c.lessons);
+  if (error !== null) {
+    console.error(`school: ${c.name}: ${error.message}${library !== null ? " (serving the last valid lesson set)" : ""}`);
+  }
+  return { library, error };
+}
+
 /** How many lessons a course serves, for the landing page. Never throws on a broken course. */
 function lessonCount(c: Course): number | null {
   try {
-    return loadLibrary(c.lessons).pages.length;
+    return lessons(c).library?.pages.length ?? null;
   } catch {
-    return null;
+    return null; // for example, a course with no lessons directory
   }
 }
 
@@ -90,26 +101,22 @@ async function serveMount(pathname: string): Promise<Response> {
 
 const html = (body: string, status = 200) => new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8" } });
 
-// Lessons are reloaded on every request so edits show up without a restart.
 function lessonResponse(c: Course, id: string | undefined, viewParam: string | null): Response {
   const view = isView(viewParam) ? viewParam : "web";
-  try {
-    const refs = referenceDocs(c);
-    const { pages } = loadLibrary(c.lessons);
-    if (id === undefined) return html(renderCourse(c.name, pages, refs));
-    const i = pages.findIndex((p) => p.id === id);
-    const page = pages[i];
-    if (page === undefined) return new Response("Not found", { status: 404 });
-    const nav: { prev?: (typeof pages)[number]; next?: (typeof pages)[number] } = {};
-    const prev = pages[i - 1];
-    const next = pages[i + 1];
-    if (prev !== undefined) nav.prev = prev;
-    if (next !== undefined) nav.next = next;
-    return html(renderPage(c.name, page, view, nav, refs.length > 0));
-  } catch (e) {
-    if (e instanceof BlockError) return html(`<pre>Lesson error: ${e.message.replace(/</g, "&lt;")}</pre>`, 500);
-    throw e;
-  }
+  const { library, error } = lessons(c);
+  if (library === null) return html(`<pre>Lesson error: ${(error?.message ?? "unknown").replace(/</g, "&lt;")}</pre>`, 500);
+  const refs = referenceDocs(c);
+  const { pages } = library;
+  if (id === undefined) return html(renderCourse(c.name, pages, refs));
+  const i = pages.findIndex((p) => p.id === id);
+  const page = pages[i];
+  if (page === undefined) return new Response("Not found", { status: 404 });
+  const nav: { prev?: (typeof pages)[number]; next?: (typeof pages)[number] } = {};
+  const prev = pages[i - 1];
+  const next = pages[i + 1];
+  if (prev !== undefined) nav.prev = prev;
+  if (next !== undefined) nav.next = next;
+  return html(renderPage(c.name, page, view, nav, refs.length > 0));
 }
 
 async function readJson(req: Request): Promise<unknown> {

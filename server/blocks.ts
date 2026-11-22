@@ -5,7 +5,10 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export type NestNode = { label: string; atoms: string[]; edge?: string; children: NestNode[] };
-export type Choice = { text: string; correct: boolean };
+/** A quiz choice. `id` is stable for the choice's meaning, so a recorded answer survives rewording or reordering. */
+export type Choice = { id: string; text: string; correct: boolean };
+
+const CHOICE_ID = /^[a-z0-9-]+$/;
 
 export type Block =
   | { type: "page"; id: string; title: string; subtitle: string; children: Block[] }
@@ -77,10 +80,14 @@ function parseRaw(v: unknown, where: string, ctx: Ctx): Raw {
       block = { type, id, html: str(v, "html", at) };
       break;
     case "quiz": {
+      const seen = new Set<string>();
       const choices = arr(v, "choices", at).map((c) => {
-        if (!isObj(c) || typeof c.text !== "string" || typeof c.correct !== "boolean")
-          throw new BlockError(`${at}: each choice needs "text" and "correct"`);
-        return { text: c.text, correct: c.correct };
+        if (!isObj(c) || typeof c.id !== "string" || typeof c.text !== "string" || typeof c.correct !== "boolean")
+          throw new BlockError(`${at}: each choice needs "id", "text" and "correct"`);
+        if (!CHOICE_ID.test(c.id)) throw new BlockError(`${at}: choice id "${c.id}" must match ${CHOICE_ID.source}`);
+        if (seen.has(c.id)) throw new BlockError(`${at}: duplicate choice id "${c.id}"`);
+        seen.add(c.id);
+        return { id: c.id, text: c.text, correct: c.correct };
       });
       if (choices.filter((c) => c.correct).length !== 1) throw new BlockError(`${at}: exactly one choice must be correct`);
       block = { type, id, q: str(v, "q", at), choices, why: str(v, "why", at) };
@@ -127,5 +134,52 @@ export function loadLibrary(dir: string): Library {
       return target;
     });
   }
+  rejectCycles(pages);
   return { pages, byId };
+}
+
+const childrenOf = (b: Block): Block[] => (b.type === "page" || b.type === "section" ? b.children : []);
+
+/**
+ * Refs make the resolved lessons a graph, not a tree. Sharing one block from several parents
+ * (a diamond) is allowed; a block that contains itself, directly or not, is not, because the
+ * renderer would recurse forever. Depth-first with an explicit path so the error names the cycle.
+ */
+function rejectCycles(pages: readonly Block[]): void {
+  const done = new Set<Block>();
+  const path: Block[] = [];
+  const visit = (b: Block): void => {
+    if (done.has(b)) return;
+    const at = path.indexOf(b);
+    if (at !== -1) {
+      const cycle = [...path.slice(at), b].map((x) => x.id).join(" > ");
+      throw new BlockError(`reference cycle: ${cycle}`);
+    }
+    path.push(b);
+    for (const c of childrenOf(b)) visit(c);
+    path.pop();
+    done.add(b);
+  };
+  for (const p of pages) visit(p);
+}
+
+export type Load = { library: Library | null; error: BlockError | null };
+
+/**
+ * A loader that falls back to the last lesson set that loaded cleanly from each directory
+ * (RFC 1: the server "keeps serving the previous valid set if validation fails"). The error
+ * is returned on every failing load, so a fallback never hides a broken set silently.
+ */
+export function lastValidLoader(): (dir: string) => Load {
+  const last = new Map<string, Library>();
+  return (dir) => {
+    try {
+      const library = loadLibrary(dir);
+      last.set(dir, library);
+      return { library, error: null };
+    } catch (e) {
+      if (!(e instanceof BlockError)) throw e;
+      return { library: last.get(dir) ?? null, error: e };
+    }
+  };
 }

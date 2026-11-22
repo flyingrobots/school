@@ -30,7 +30,7 @@ function leaf(b: Block, render: (b: Block) => string): string {
       return `<p class="aside">${b.html}</p>`;
     case "quiz":
       return `<div class="q" data-block="${esc(b.id)}" data-why="${esc(b.why)}"><p>${b.q}</p>${b.choices
-        .map((c) => `<button data-correct="${c.correct}">${esc(c.text)}</button>`)
+        .map((c) => `<button data-choice="${esc(c.id)}" data-correct="${c.correct}">${esc(c.text)}</button>`)
         .join("")}<p class="fb"></p></div>`;
     case "explain":
       return `<div class="explain" data-block="${esc(b.id)}"><p>${b.prompt}</p><details><summary>Model answer</summary><p>${b.model}</p></details></div>`;
