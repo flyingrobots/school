@@ -11,12 +11,31 @@ It aims at long-term retention rather than the feeling of having covered somethi
 **Early, and not usable yet.** Be warned:
 
 - The design is in [RFC 1](docs/rfc/0001-school.md). It is a **draft and has not been accepted**, and two of its open questions are unanswered.
-- The server runs and serves its index and assets, but **does not serve lessons yet**: the block migration is unfinished, so `/lessons/<id>` returns 404.
-- There is a known destructive schema migration still on disk (`server/server.ts:19`). It is harmless only because the database is empty.
-- The AIΩN Foundations Series currently sits in this repository as the course the framework was built against. It is meant to move into its own repository; until it does, this repo contradicts its own architecture.
-- Terminology in ADRs 6 and 7 predates [the glossary](docs/glossary.md) and needs a pass.
+- The server serves a configured course: its index, lessons, reference documents and any source material it cites. Verified against two unrelated courses with no code changes between them.
+- **Lesson *conversion* is unfinished.** Lessons must be block JSON; the AIΩN course's lessons are still the static HTML that predates the format, so that course serves an empty lesson list until increment 3 converts them.
+- The AIΩN Foundations Series has moved to its own repository as the first course, alongside a private learner-state directory. This repository is now framework only.
 
 Nothing here is stable. There are no releases.
+
+## Running it
+
+No install step, no `package.json` — [Bun](https://bun.com) runs the TypeScript directly (ADR 2).
+
+```sh
+SCHOOL_COURSE=/path/to/a-course \
+SCHOOL_STATE=/path/to/your-state \
+SCHOOL_MOUNTS="papers=/path/to/source-material" \
+  bun server/server.ts
+```
+
+| Variable | Meaning |
+| --- | --- |
+| `SCHOOL_COURSE` | The course to serve. Omit it and the index says so rather than crashing. |
+| `SCHOOL_STATE` | Where **your** answers and progress go. Must not be inside the course; the server refuses to start if it is. |
+| `SCHOOL_MOUNTS` | `name=path` pairs, served read-only at `/name/...`, for source material a course cites. |
+| `HOST`, `PORT` | Default `127.0.0.1:4747`. |
+
+`bun test` runs the suite. `server/compose.yaml` runs it in Docker behind `tailscale serve` (ADR 4).
 
 ## How it is put together
 

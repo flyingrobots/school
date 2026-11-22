@@ -42,7 +42,7 @@ The framework resolves all three from settings the learner edits, not from compi
 
 ## Consequences
 - ADRs 3, 4 and 5 are amended. The database path, the bind mounts and the served allowlist all become configured rather than fixed.
-- The AIΩN material in this repository becomes the first course and moves to its own repository. That is its own rollout increment; until it runs, this repository still contains the course it says it should not.
+- ~~The AIΩN material in this repository becomes the first course and moves to its own repository.~~ **Done 2026-11-21** (increment 2): the course is its own repository, learner state is a separate private one, and this repository is framework only.
 - The compiled course file is a distribution format, so it needs a declared layout and a format version. Without one, courses will not stay readable across School versions.
 - A compile step is new work the project does not have yet: a format, a compiler, and a way to tell a stale artifact from a fresh one. It is the cost of this decision, and it buys course-side validation and a hashable artifact.
 - Block `ref` resolution and lesson-set validation move from the server's loader to the compiler. `server/blocks.ts` keeps validating what it is handed, because a compiled file can still arrive corrupt or from an older format version.
