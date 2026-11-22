@@ -20,6 +20,25 @@ const initialState: ThemeProviderState = {
 
 const ThemeProviderContext = createContext<ThemeProviderState>(initialState)
 
+// Browser storage can be missing or throw (private windows, blocked site data); the theme then
+// lasts for the visit only.
+function readTheme(key: string): Theme | null {
+  try {
+    const stored = localStorage.getItem(key)
+    return stored === "dark" || stored === "light" || stored === "system" ? stored : null
+  } catch {
+    return null
+  }
+}
+
+function writeTheme(key: string, theme: Theme) {
+  try {
+    localStorage.setItem(key, theme)
+  } catch {
+    // the choice still applies until the page closes
+  }
+}
+
 export function ThemeProvider({
   children,
   defaultTheme = "system",
@@ -27,7 +46,7 @@ export function ThemeProvider({
   ...props
 }: ThemeProviderProps) {
   const [theme, setTheme] = useState<Theme>(
-    () => (localStorage.getItem(storageKey) as Theme) || defaultTheme
+    () => readTheme(storageKey) ?? defaultTheme
   )
 
   useEffect(() => {
@@ -36,13 +55,15 @@ export function ThemeProvider({
     root.classList.remove("light", "dark")
 
     if (theme === "system") {
-      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
-        .matches
-        ? "dark"
-        : "light"
-
-      root.classList.add(systemTheme)
-      return
+      // follow the device, including when it changes while the page is open
+      const query = window.matchMedia("(prefers-color-scheme: dark)")
+      const apply = () => {
+        root.classList.remove("light", "dark")
+        root.classList.add(query.matches ? "dark" : "light")
+      }
+      apply()
+      query.addEventListener("change", apply)
+      return () => query.removeEventListener("change", apply)
     }
 
     root.classList.add(theme)
@@ -51,7 +72,7 @@ export function ThemeProvider({
   const value = {
     theme,
     setTheme: (theme: Theme) => {
-      localStorage.setItem(storageKey, theme)
+      writeTheme(storageKey, theme)
       setTheme(theme)
     },
   }
