@@ -154,7 +154,7 @@ describe("acceptance", () => {
     const db = await fresh();
     const clock = /\b(now|clock_timestamp|statement_timestamp|transaction_timestamp|timeofday)\s*\(|\b(current_timestamp|current_date|current_time|localtimestamp|localtime)\b/i;
     const fns = (await db.query<{ name: string; src: string }>(`
-      SELECT p.proname AS name, p.prosrc AS src FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'school'`)).rows;
+      SELECT p.proname AS name, pg_get_functiondef(p.oid) AS src FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'school'`)).rows;
     expect(fns.map((f) => f.name)).toEqual(expect.arrayContaining(APP_FUNCTIONS));
     for (const f of fns) expect(`${f.name}: ${clock.test(f.src)}`).toBe(`${f.name}: false`);
     // Nor does any column default to the clock.
@@ -237,7 +237,7 @@ describe("functions", () => {
       for (const bad of [{ choice: "nope" }, { block: "q9" }, { block: "e1" }, { encounter: uuid() }]) {
         expect(await submit(db, { encounter: e.id, ...bad })).toEqual({ status: "rejected", correct: null, first_try: null });
       }
-      const answers = (await db.query("SELECT block_id, choice_id, correct FROM school.encounter_answers($1)", [e.id])).rows;
+      const answers = (await db.query("SELECT block_id, choice_id, correct FROM school.encounter_answers($1) ORDER BY seq", [e.id])).rows;
       expect(answers).toEqual([
         { block_id: "q1", choice_id: "wrong", correct: false },
         { block_id: "q1", choice_id: "right", correct: true },
@@ -319,7 +319,7 @@ describe("functions", () => {
       expect(second).toEqual({ id: second.id, status: "succeeded", findings: FINDINGS, error: null, model: "m", supersedes: first.id, at: at(3) });
       expect(await error(db.query("SELECT school.record_grading($1, 'failed', 'r', 'p', 'a', null, '[]', null, null, 'x', $2)", [uuid(), at(4)])))
         .toBe("no explanation with that submission id");
-      const rows = (await db.query("SELECT submission_id, block_id, text, grading FROM school.encounter_explanations($1)", [e.id])).rows;
+      const rows = (await db.query("SELECT submission_id, block_id, text, grading FROM school.encounter_explanations($1) ORDER BY seq", [e.id])).rows;
       expect(rows).toEqual([{ submission_id: latest, block_id: "e1", text: "Second go.", grading: second }]);
       const one = (await db.query<{ grading: unknown }>("SELECT grading FROM school.explanation($1)", [latest])).rows[0]!.grading;
       expect(one).toEqual(second);
