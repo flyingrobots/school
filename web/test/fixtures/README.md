@@ -14,5 +14,6 @@ in a scratch copy of this app so no stock component was overwritten. The example
 sandbox's content (`src/demo/`); the hashes prove they are unedited. Regenerate only from a fresh
 CLI install.
 
-`quiz-example.tsx` is the exception: it is `shadcn add @flyingrobots/quiz-example` from School's
-registry (`flyingrobots/shadcn-registry`), installed the same way, and its hash is of that file.
+`quiz-example.tsx` and `explain-example.tsx` are the exceptions: each is `shadcn add
+@flyingrobots/<name>-example` from School's registry (`flyingrobots/shadcn-registry`), installed
+the same way, and its hash is of that file.
