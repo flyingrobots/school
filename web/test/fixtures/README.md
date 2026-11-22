@@ -17,3 +17,34 @@ CLI install.
 `quiz-example.tsx` and `explain-example.tsx` are the exceptions: each is `shadcn add
 @flyingrobots/<name>-example` from School's registry (`flyingrobots/shadcn-registry`), installed
 the same way, and its hash is of that file.
+
+## Stock components
+
+`stock-components.sha256` lists the SHA-256 of every `src/components/ui/*.tsx`, read by
+`test/stock-components.test.ts`. Each one is the file `shadcn add <name>` writes (CLI 4.23.0,
+`components.json` as committed), with one correction described below. Bare names such as `button`
+are not in the `@flyingrobots` registry; the CLI resolves them to the built-in `@shadcn` registry
+at `https://ui.shadcn.com/r/styles/{style}/{name}.json`, here `styles/radix-nova/`
+(`REGISTRY_URL` overrides the host).
+
+The correction: `components.json` sets `rsc: false`, so the CLI's transform means to remove a
+leading `"use client"` from every file it writes. In 4.23.0 that transform tests each file with
+one shared regular expression carrying the `g` flag, so `RegExp.test` keeps its `lastIndex` from
+the previous match and the directive is removed from only every other file in a run. Which files
+keep it depends on install order, so each reinstall flipped the line in a different set of files.
+The fixture records the files with the directive removed, which is what the transform intends, and
+the test also refuses `"use client"` at the top of any file under `src/components/`.
+
+Regenerate it only from a fresh install, in a scratch copy of `web/`, never in place:
+
+```sh
+cp -R web "$SCRATCH/web" && cd "$SCRATCH/web"
+npx shadcn add $(command ls src/components/ui | sed 's/\.tsx$//') --overwrite -y
+perl -0pi -e 's/\A"use client"\n\n//' src/components/ui/*.tsx
+(cd src/components/ui && shasum -a 256 *.tsx) > "$OLDPWD/web/test/fixtures/stock-components.sha256"
+```
+
+A changed hash is then a real upstream change: review the diff of the file before committing the
+new copy and its hash together. A new stock component (one a block pulls in) gets its line the
+same way. After any `shadcn add`, remove the `"use client"` line the CLI may have left with the
+same `perl` command.
