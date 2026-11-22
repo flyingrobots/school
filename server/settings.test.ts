@@ -313,3 +313,18 @@ test("a bridge that redirects does not take the token with it", async () => {
   expect(redirector.seen.length).toBeGreaterThan(0);
   expect(evil.seen).toEqual([]);
 });
+
+// flyingrobots/school#61: the reply to saving the bridge reports the token in effect, from the
+// environment as much as from settings, as GET /api/settings/bridge does, and never the token.
+test("with the token in the environment, saving the same URL reports the token as set", async () => {
+  const saved = listen();
+  mkdirSync(join(root, "state-env"), { recursive: true });
+  writeFileSync(join(root, "state-env", "settings.json"), JSON.stringify({ bridge: { url: saved.url } }));
+  const at = await serverWith({ SCHOOL_BRIDGE_TOKEN: TOKEN });
+  const r = await fetch(at + "/api/settings/bridge", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: saved.url }) });
+  expect(r.status).toBe(200);
+  const text = await r.text();
+  expect(text).not.toContain(TOKEN);
+  expect(JSON.parse(text)).toEqual({ status: "saved", tokenSet: true });
+  expect(await (await fetch(at + "/api/settings/bridge")).json()).toMatchObject({ url: saved.url, tokenSet: true, tokenFrom: "environment" });
+});
