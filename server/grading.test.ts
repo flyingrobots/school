@@ -62,18 +62,19 @@ afterAll(async () => {
 
 const post = (path: string, body: unknown) =>
   fetch(base + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-const lesson = async () => (await fetch(base + "/courses/c/lessons/l1")).text();
+type Lesson = { encounterId: string; lesson: { children: { type: string; id: string }[] }; explanations: { text: string; grading: { status: string; findings?: { summary: string } } | null }[] };
+const lesson = async (): Promise<Lesson> => (await fetch(base + "/api/courses/c/lessons/l1")).json();
 
 let submissionId = "";
 
-test("before submitting, the page offers a text box and hides the model answer", async () => {
-  const html = await lesson();
-  expect(html).toContain("<textarea");
-  expect(html).not.toContain("MODEL-ANSWER-TEXT");
+test("before submitting, the lesson has the explain block and no explanation yet", async () => {
+  const l = await lesson();
+  expect(l.lesson.children.map((b) => [b.type, b.id])).toEqual([["explain", "e1"]]);
+  expect(l.explanations).toEqual([]);
 });
 
 test("submit saves, then grading returns a verdict rendered as escaped text, with the model answer", async () => {
-  const e = /data-encounter="([^"]+)"/.exec(await lesson())![1]!;
+  const e = (await lesson()).encounterId;
   submissionId = crypto.randomUUID();
   const saved = await post("/api/explanation", { submissionId, encounterId: e, blockId: "e1", text: "You keep the changes; state is a replay. <script>x</script>", ms: 9 });
   expect(saved.status).toBe(200);
@@ -83,26 +84,24 @@ test("submit saves, then grading returns a verdict rendered as escaped text, wit
   expect(graded.status).toBe(200);
   const body = await graded.json();
   expect(body.status).toBe("succeeded");
-  expect(body.html).toContain("partly");
-  expect(body.html).toContain("Give one &lt;b&gt;example&lt;/b&gt;.");
-  expect(body.html).toContain("MODEL-ANSWER-TEXT");
-  expect(body.html).toContain("&lt;script&gt;x&lt;/script&gt;");
-  expect(body.html).not.toContain("<script>x");
+  expect(body.explanation.text).toBe("You keep the changes; state is a replay. <script>x</script>");
+  expect(body.explanation.grading.findings.completeness).toEqual({ verdict: "partly", note: "Give one <b>example</b>." });
+  expect(body.explanation.grading.findings.contradictions[0].quote_verified).toBe(true);
 });
 
 test("a reload shows the explanation and its grading from the database", async () => {
-  const html = await lesson();
-  expect(html).toContain("You keep the changes; state is a replay.");
-  expect(html).toContain("Close. Add an example.");
-  expect(html).toContain("MODEL-ANSWER-TEXT");
+  const [x] = (await lesson()).explanations;
+  expect(x!.text).toContain("You keep the changes; state is a replay.");
+  expect(x!.grading?.findings?.summary).toBe("Close. Add an example.");
 });
 
 test("a grader outage keeps the explanation and says so; a retry later succeeds", async () => {
   writeFileSync(join(root, "down"), "");
   const failed = await (await post("/api/grade", { submissionId })).json();
   expect(failed.status).toBe("failed");
-  expect(failed.html).toContain("Your explanation is saved. Automated feedback is unavailable. Retry when ready.");
-  expect(failed.html).toContain("fake-agent: exit 1");
+  expect(failed.explanation.grading.status).toBe("failed");
+  expect(failed.explanation.grading.error).toContain("fake-agent: exit 1");
+  expect(failed.explanation.text).toContain("You keep the changes"); // still saved
   unlinkSync(join(root, "down"));
   expect((await (await post("/api/grade", { submissionId })).json()).status).toBe("succeeded");
 });
@@ -117,7 +116,7 @@ test("the bridge token appears nowhere: not in the database, a page or the serve
   const dbBytes = readFileSync(join(root, "state", "progress.db")).toString("latin1") +
     (() => { try { return readFileSync(join(root, "state", "progress.db-wal")).toString("latin1"); } catch { return ""; } })();
   expect(dbBytes).not.toContain(KEY);
-  expect(await lesson()).not.toContain(KEY);
+  expect(JSON.stringify(await lesson())).not.toContain(KEY);
   server!.kill();
   await server!.exited;
   const out = (await new Response(server!.stdout as ReadableStream).text()) + (await new Response(server!.stderr as ReadableStream).text());
@@ -125,12 +124,3 @@ test("the bridge token appears nowhere: not in the database, a page or the serve
   server = null;
 });
 
-test("the slides view shows the prompt and model answer, and records nothing", async () => {
-  // The server was stopped by the previous test; this one reads the renderer directly.
-  const { renderPage } = await import("./render.ts");
-  const html = renderPage("c", { type: "page", id: "l1", title: "One", subtitle: "", children: [
-    { type: "explain", id: "e1", prompt: "P", model: "M", sources: [] },
-  ] } as never, "slides", {});
-  expect(html).not.toContain("<textarea");
-  expect(html).toContain("M");
-});

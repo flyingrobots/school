@@ -47,8 +47,9 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-const page = async (view = "web") => (await fetch(`${base}/courses/demo/lessons/l1?view=${view}`)).text();
-const encounterOf = (html: string) => /data-encounter="([^"]+)"/.exec(html)?.[1] ?? null;
+type Lesson = { encounterId?: string; answers?: { blockId: string; choiceId: string; correct: boolean }[] };
+const page = async (view = "web"): Promise<Lesson> => (await fetch(`${base}/api/courses/demo/lessons/l1?view=${view}`)).json();
+const encounterOf = (lesson: Lesson) => lesson.encounterId ?? null;
 const answer = (body: Record<string, unknown>) =>
   fetch(base + "/api/answer", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 const rows = () => {
@@ -80,12 +81,11 @@ test("acceptance over HTTP: wrong, right, then the right answer resent five time
 });
 
 test("a reload resumes the encounter and shows what was already answered", async () => {
-  const html = await page();
-  const e = encounterOf(html)!;
+  const lesson = await page();
+  const e = encounterOf(lesson)!;
   expect(new Set(rows().map((r) => r.encounter_id))).toEqual(new Set([e]));
-  expect(html).toContain('data-block="q1" data-why="Because." data-settled="true"');
-  expect(html).toContain('data-choice="right" data-correct="true" class="ok"');
-  expect(html).toContain("Saved.");
+  // What is already answered in this encounter comes back with the lesson, so the app can show it.
+  expect(lesson.answers?.map((a) => [a.blockId, a.choiceId, a.correct])).toEqual([["q1", "wrong", false], ["q1", "right", true]]);
 });
 
 test("the server's restart, even a hard kill, loses no progress", async () => {
@@ -94,13 +94,14 @@ test("the server's restart, even a hard kill, loses no progress", async () => {
   await start();
   expect(rows()).toEqual(before);
   // And the learner lands back in the same encounter, with q1 still shown as answered.
-  const html = await page();
-  expect(encounterOf(html)).toBe(before[0]!.encounter_id as string);
-  expect(html).toContain('data-settled="true"');
+  const lesson = await page();
+  expect(encounterOf(lesson)).toBe(before[0]!.encounter_id as string);
+  expect(lesson.answers?.some((a) => a.blockId === "q1" && a.correct)).toBe(true);
 });
 
-test("the course index shows progress from the database", async () => {
-  expect(await (await fetch(`${base}/courses/demo`)).text()).toContain("1 of 2 answered correctly");
+test("the course shows progress from the database", async () => {
+  const course = await (await fetch(`${base}/api/courses/demo`)).json();
+  expect(course.lessons[0]).toMatchObject({ id: "l1", quizzes: 2, answeredCorrectly: 1 });
 });
 
 test("a client cannot claim correctness, and bad submissions store nothing", async () => {
@@ -119,7 +120,7 @@ test("the slides view opens no encounter and records nothing", async () => {
   const db = () => new Database(join(state, "progress.db"), { readonly: true });
   const count = () => { const d = db(); try { return d.query<{ n: number }, []>("SELECT count(*) AS n FROM encounters").get()!.n; } finally { d.close(); } };
   const before = count();
-  const html = await page("slides");
-  expect(encounterOf(html)).toBeNull();
+  const lesson = await page("slides");
+  expect(encounterOf(lesson)).toBeNull();
   expect(count()).toBe(before);
 });

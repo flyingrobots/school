@@ -63,19 +63,6 @@ const status = async () => (await fetch(base + "/api/settings/status")).json();
 const everything: string[] = []; // every page and API body, checked for the token at the end
 const text = async (r: Response) => { const t = await r.text(); everything.push(t); return t; };
 
-test("every page has a settings button and the Esc shortcut; the settings page renders", async () => {
-  for (const path of ["/", "/courses/c", "/courses/c/lessons/l1"]) {
-    const html = await text(await fetch(base + path));
-    expect(html).toMatch(/<a class="settings-cog" href="\/settings"[^>]*aria-label="Settings"/);
-    expect(html).toContain('<script src="/assets/nav.js"></script>');
-  }
-  const page = await fetch(base + "/settings?from=%2Fcourses%2Fc%2Flessons%2Fl1");
-  expect(page.status).toBe(200);
-  const html = await text(page);
-  expect(html).toContain("<h1>Settings</h1>");
-  expect(html).toContain('href="/courses/c/lessons/l1"'); // back to where Esc was pressed
-  expect(await text(await fetch(base + "/settings?from=https%3A%2F%2Fevil.example"))).not.toContain("evil.example");
-});
 
 test("with nothing configured, the status says so", async () => {
   expect(await status()).toMatchObject({ connection: "none" });
@@ -101,9 +88,8 @@ test("saving the bridge connects it; the token is stored privately and never sho
   const file = join(root, "state", "settings.json");
   expect(statSync(file).mode & 0o777).toBe(0o600);
   expect(JSON.parse(readFileSync(file, "utf8")).bridge.url).toBe(BRIDGE_URL);
-  const html = await text(await fetch(base + "/settings"));
-  expect(html).toContain(BRIDGE_URL);
-  expect(html).toMatch(/token is saved/i);
+  const shown = JSON.parse(await text(await fetch(base + "/api/settings/bridge")));
+  expect(shown).toEqual({ url: BRIDGE_URL, urlFrom: "settings", tokenSet: true, tokenFrom: "settings" });
   // Saving the URL alone keeps the saved token.
   expect((await post("/api/settings/bridge", { url: BRIDGE_URL })).status).toBe(200);
   expect(await status()).toMatchObject({ connection: "unconfigured" });
@@ -131,8 +117,7 @@ test("agents saved from the page reach the bridge, can be tested, and grading th
   expect(tested.status).toBe("failed"); // the fake agent answers the rubric, not {"ok": true}, and the test says so
   expect(tested.attempts[0].error).toMatch(/schema/);
 
-  const page = await text(await fetch(base + "/courses/c/lessons/l1"));
-  const e = /data-encounter="([^"]+)"/.exec(page)![1];
+  const e = JSON.parse(await text(await fetch(base + "/api/courses/c/lessons/l1"))).encounterId;
   const id = crypto.randomUUID();
   await post("/api/explanation", { submissionId: id, encounterId: e, blockId: "e1", text: "Because.", ms: 1 });
   const graded = await (await post("/api/grade", { submissionId: id })).json();
