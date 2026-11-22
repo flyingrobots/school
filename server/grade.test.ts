@@ -1,7 +1,12 @@
 // The server's side of grading: what it sends the bridge and how it reads the reply
 // (RFC 1 proposal 4; flyingrobots/school#10). A fake bridge stands in for bridge/bridge.ts.
 import { afterAll, expect, test } from "bun:test";
-import { RESPONSE_SCHEMA, bridgeConfig, callBridge, checkQuotes, type GradingInput } from "./grade.ts";
+import { Database } from "bun:sqlite";
+import { sqliteRecord } from "./adapters/sqlite.ts";
+import type { Block } from "./core/model.ts";
+import { createSchool } from "./core/school.ts";
+import { PROMPT_VERSION, RESPONSE_SCHEMA, RUBRIC_VERSION, bridgeConfig, callBridge, checkQuotes, type GradingInput } from "./grade.ts";
+import { migrate } from "./migrate.ts";
 
 const input: GradingInput = {
   prompt: "Explain the inversion in under 30 seconds.",
@@ -68,6 +73,58 @@ test.each([
   const out = await callBridge(cfg(), input);
   expect(out.status).toBe("failed");
   if (out.status === "failed") expect(out.error).toMatch(why);
+});
+
+test("a well-formed failure still names each attempt and keeps the raw reply", async () => {
+  const body = { status: "failed", error: "every agent failed", attempts: [{ agent: "claude", status: "failed", error: "exit 1", ms: 5 }] };
+  reply = () => Response.json(body);
+  expect(await callBridge(cfg(), input)).toEqual({ status: "failed", error: "every agent failed (claude: exit 1)", raw: JSON.stringify(body) });
+});
+
+// flyingrobots/school#17: an HTTP 200 whose envelope is not the bridge's reply shape is a failure
+// that keeps the raw text, never a throw.
+const MALFORMED = [
+  ["null", null],
+  ["an empty object", {}],
+  ["an array", []],
+  ["a string", "ok"],
+  ["an unknown status", { status: "maybe", attempts: [] }],
+  ["a failed envelope without attempts", { status: "failed", error: "every agent failed" }],
+  ["a failed envelope whose attempts are not a list", { status: "failed", error: "x", attempts: { agent: "a" } }],
+  ["a failed envelope with an attempt that names no agent", { status: "failed", error: "x", attempts: [{ status: "failed" }] }],
+  ["a succeeded envelope without output", { status: "succeeded", agent: "claude", attempts: [] }],
+  ["a succeeded envelope without an agent", { status: "succeeded", output: verdict, attempts: [] }],
+] as const;
+
+test.each(MALFORMED)("a 200 reply of %s is a failure that keeps the raw text", async (_n, body) => {
+  reply = () => Response.json(body);
+  const out = await callBridge(cfg(), input);
+  expect(out).toMatchObject({ status: "failed", error: expect.stringMatching(/the bridge's reply was not the expected shape/), raw: JSON.stringify(body) });
+});
+
+test("a malformed bridge reply stores one failed grading and returns the honest-failure state", async () => {
+  reply = () => Response.json({ status: "failed", error: "every agent failed" });
+  const db = new Database(":memory:", { strict: true });
+  db.exec("PRAGMA foreign_keys = ON;");
+  migrate(db);
+  const school = createSchool({
+    record: sqliteRecord(db),
+    grader: { adapter: "bridge", model: "", rubricVersion: RUBRIC_VERSION, promptVersion: PROMPT_VERSION, grade: (i) => callBridge(cfg(), i) },
+    clock: { now: () => new Date().toISOString() },
+  });
+  const page: Block = { type: "page", id: "l1", title: "One", subtitle: "", children: [
+    { type: "explain", id: "e1", prompt: input.prompt, model: input.modelAnswer, sources: [...input.sources] },
+  ] };
+  const { encounter } = await school.openLesson("c", page);
+  const submissionId = crypto.randomUUID();
+  expect((await school.saveExplanation({ submissionId, encounterId: encounter.id, blockId: "e1", text: input.explanation, ms: 9 })).result.status).toBe("stored");
+
+  const graded = await school.gradeExplanation(submissionId);
+  expect(graded!.grading).toMatchObject({ status: "failed", error: expect.stringMatching(/not the expected shape/) });
+  expect(graded!.explanation).toMatchObject({ text: input.explanation, grading: { status: "failed" } });
+  const rows = db.query("SELECT status, raw_response AS raw FROM gradings").all() as { status: string; raw: string }[];
+  expect(rows).toEqual([{ status: "failed", raw: JSON.stringify({ status: "failed", error: "every agent failed" }) }]);
+  db.close();
 });
 
 test("an unreachable bridge fails", async () => {

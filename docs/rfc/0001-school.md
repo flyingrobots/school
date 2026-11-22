@@ -1,8 +1,9 @@
 # RFC 1: School, a personal learning system built with an AI teacher
 
-- **Status:** Draft, revision 4. Agent-written. Not yet accepted.
-- **Date:** 2026-11-18, revised 2026-11-21 (revisions 3 and 4).
-- **Describes:** this repository at commit `22e5411`. The workspace is a git repository as of 2026-11-21, so revision 3 cites commits where revision 2 could not.
+- **Status:** Revision 15. Agent-written. **Accepted in part**, on an external review's recommendation of 2026-11-22: [the learning record contract](#the-learning-record-contract) and the [design principles](#design-principles) stand. Everything else is a historical record, superseded where marked.
+- **Superseded by:** [RFC 2](0002-lessons-written-for-each-learner.md) for how lessons are planned and who writes them (model B replaces model A); [RFC 3](0003-postgres-functions-and-generated-types.md) for the store; the [architecture reference](../topics/architecture/README.md) for the current state. The freeze in the [rollout](#rollout) was lifted by the maintainer's decisions of 2026-11-22.
+- **Date:** 2026-11-18, revised 2026-11-21 and 2026-11-22 (revisions 3 to 15).
+- **Describes:** this repository at commit `22e5411` for the measured current state, which is no longer current; the review log runs to revision 15.
 - **Builds on:** ADRs 1–7 in `docs/adr/`. Revision 4 follows [ADR 6](../adr/0006-separate-framework-lessons-and-learner-state.md) and [ADR 7](../adr/0007-course-schema-in-graphql-compiled-by-wesley.md), which changed what School is.
 - **Decision requested:** agree on [the concept](#the-concept), accept the [learning record contract](#the-learning-record-contract), accept, amend or reject each of the four [proposals](#proposals), and answer [open questions](#open-questions) 1 and 2. This RFC deliberately does not settle those two for the learner; see [review reconciliation](#review-reconciliation).
 
@@ -60,6 +61,8 @@ Lessons, reference sheets and the papers are served read-only. Content changes c
 
 ### How lessons are planned
 
+> **Superseded by [RFC 2](0002-lessons-written-for-each-learner.md).** Courses now ship a curriculum, and lessons are prepared for each learner (model B). The paragraph below records model A as it was decided.
+
 Lessons are written **one at a time, as the course goes**, and each one, once written, is a finished lesson in the course (model A, [ADR 8](../adr/0008-the-school-skill-and-who-invokes-whom.md) as amended): the course's sequence is the lessons written so far, and the evidence decides what is written next and what is reviewed within it. Only the direction is planned: it roughly follows the order of the sources a course lists. There is no syllabus, and the teacher does not write one unless asked — an offer to draft a 10–12 lesson outline was made on 2026-11-18 and was not taken up.
 
 This is deliberate, not an omission. A syllabus fixed in advance would decide the next lesson before the evidence for it exists, which is the opposite of the organizing idea. The cost is that the course has no visible map, so the learner cannot reorder it ahead of time; the mitigation is that every lesson names the recorded attempts behind its review items (step 4 above).
@@ -91,6 +94,8 @@ For this mission the decisive test is whether another person could rebuild the i
 7. **Each part is worth what it costs.** A feature earns its place by improving the learner's practice or the trustworthiness of the teacher's decisions.
 
 ## Current state (measured)
+
+> **Superseded by the [architecture reference](../topics/architecture/README.md).** This is the 2026-11-21 measurement at `22e5411`; the store has since moved through schema versions 5 and 6 and is moving to Postgres (RFC 3). It is kept as the record of what was measured then.
 
 First measured on 2026-11-18 by reading the files and running the server against a scratch database. **Re-measured on 2026-11-21** against commit `22e5411`, including a real `docker build` and a container run.
 
@@ -311,6 +316,8 @@ One thing the review could not see, because it read only the RFC: the `.dockerig
 
 Each increment ends only when its evidence exists.
 
+> **Lifted.** The maintainer's decisions of 2026-11-22 in [RFC 2](0002-lessons-written-for-each-learner.md) and [RFC 3](0003-postgres-functions-and-generated-types.md) override the freeze below: schema work and the move to Postgres happen before real use, so that use is recorded in its final store.
+
 **Freeze (2026-11-22).** Increment 5, explanation grading, was pulled forward the same day: multiple choice alone gave the learner too little to study with for two weeks. Otherwise, no new ADRs, EPUB, schema or multi-view work until the learner has used School on their phone for two weeks: Lessons 1 and 2 converted, `tailscale serve` working end to end, and real rows in `progress.db`. That use is expected to settle more than further design would. Increments 4–6 below stay as written, but are not started before then.
 
 | Increment | Work | Evidence required before moving on |
@@ -341,7 +348,7 @@ Possibilities, not proposals. Each is built only if real use shows a need for it
 ## Review log
 
 - **Revision 1** (2026-11-18): first draft.
-- **Revision 15** (2026-11-22): closed revision 14's known limit (flyingrobots/school#18). A page that DNS-rebinds its own name to School became same-origin and could rewrite an agent's command and run it. Every request whose `Host` is not `127.0.0.1`, `localhost`, `::1`, `HOST` or a name in `SCHOOL_ALLOWED_HOSTS` is now refused with a 403 before routing, and agent commands are written only in the bridge's file on its host: the settings API and the bridge's `PUT /config` take only the declared agents' order and on/off switches, and the bridge no longer accepts a first configuration over HTTP.
+- **Revision 15** (2026-11-22): accepted in part after an external review of RFCs 1 to 3. The learning record contract and the design principles stand. Marked superseded: how lessons are planned (RFC 2, model B), the measured current state (the architecture reference) and the freeze (lifted by RFC 2 and RFC 3). The header now matches this log.
 - **Revision 14** (2026-11-22): a settings page (flyingrobots/school#13), opened by a cog on every page or Esc. It connects the bridge, saving the URL and a write-only token in `settings.json` in learner state, where the environment overrides them. It shows whether the bridge answers and which agents' programs are found, and it edits, reorders and tests the bridge's agent chain through new bridge endpoints (`GET`/`PUT /config` and `POST /test`). The bridge now starts without a configuration. Known limit: anyone who can open School can change the agents' commands, so School must stay on a network only the learner can reach.
 - **Revision 13** (2026-11-22): explanation grading built (flyingrobots/school#10). Schema v6 adds append-only `explanations` and `gradings`. An explain block is a text box with the model answer hidden until submission. `/api/explanation` saves first, and `/api/grade` sends one attempt to the bridge, storing it whether it succeeds or fails; a retry adds a row naming the one it supersedes. The bridge (`bridge/`) tries the learner's command templates in order and checks each answer against the rubric's schema; quotes are checked against their sources. Proven once for real: a missing first agent was skipped and `claude -p` graded in 6 s.
 - **Revision 12** (2026-11-22): recorded the learner's four decisions after the external review. Courses ship finished lessons with surgical personalisation (model A; ADR 8 amended). ADR 7 is withdrawn in favour of load-time validation and, later, a small JSON Schema. Grading goes through the bridge, which runs the learner's own CLI command templates as a hierarchy of fallbacks; the learner replaced an earlier, reviewer-suggested HTTP client the same day. Installed courses are trusted, but plain-text fields are always escaped. New ADRs, EPUB and schema work are frozen until two weeks of real use on the phone; see the rollout.
