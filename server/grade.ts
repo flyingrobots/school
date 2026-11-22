@@ -127,6 +127,7 @@ export async function callBridge(cfg: BridgeClientConfig, input: GradingInput): 
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${cfg.token}` },
       body: JSON.stringify({ prompt: gradingPrompt(input), schema: RESPONSE_SCHEMA, deadline_ms: cfg.deadlineMs }),
+      redirect: "error", // never carry the token to an address the bridge redirects to (flyingrobots/school#60)
       signal: AbortSignal.timeout(cfg.deadlineMs + 10_000),
     });
   } catch (e) {

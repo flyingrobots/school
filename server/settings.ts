@@ -55,12 +55,15 @@ export type BridgeStatus = {
   agents: { name: string; enabled: boolean; found: boolean }[];
 };
 
+// Every request that carries the token refuses a redirect: fetch would otherwise follow it to
+// another address with the Authorization header still attached (flyingrobots/school#60).
+
 /** Ask the bridge for its health. Never throws; every failure is a status the page can show. */
 export async function bridgeStatus(c: BridgeClientConfig | null): Promise<BridgeStatus> {
   if (c === null) return { connection: "none", agents: [] };
   let res: Response;
   try {
-    res = await fetch(`${c.url}/health`, { headers: { authorization: `Bearer ${c.token}` }, signal: AbortSignal.timeout(5000) });
+    res = await fetch(`${c.url}/health`, { headers: { authorization: `Bearer ${c.token}` }, redirect: "error", signal: AbortSignal.timeout(5000) });
   } catch (e) {
     return { connection: "unreachable", error: e instanceof Error ? e.message : String(e), agents: [] };
   }
@@ -81,6 +84,7 @@ export async function toBridge(c: BridgeClientConfig | null, method: string, pat
       method,
       headers: { authorization: `Bearer ${c.token}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
       body: body === undefined ? undefined : JSON.stringify(body),
+      redirect: "error",
       signal: AbortSignal.timeout(method === "POST" ? c.deadlineMs : 10_000),
     });
     if (res.status === 401) return { status: 502, body: { status: "unauthorised", error: "the bridge refused the token" } };
