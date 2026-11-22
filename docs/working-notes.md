@@ -8,11 +8,19 @@ Practical notes for anyone — human or agent — changing the framework.
 - Captured `/teach`-style session transcripts (`*command-message*.txt`) are gitignored on
   purpose. Keep them local; never commit them. They were committed once and had to be
   removed from the published history.
-- `server/.dockerignore` admits the manifest, the lockfile and modules at any depth by pattern
-  (`*`, `!package.json`, `!bun.lock`, `!**/*.ts`, `**/*.test.ts`, `contract/**`); the Dockerfile
-  installs production dependencies and copies the filtered context, so a new module ships without
-  any list to update. The old per-file allowlist broke the image twice; `server/docker.test.ts`
-  checks that every relative import is shipped and every package import is a dependency.
+- `server/.dockerignore` admits the manifest, the lockfile, modules at any depth and the SQL
+  migrations by pattern (`*`, `!package.json`, `!bun.lock`, `!**/*.ts`, `!db/**/*.sql`,
+  `**/*.test.ts`, `contract/**`, `node_modules/**`); the Dockerfile installs production
+  dependencies and copies the filtered context, so a new module or migration ships without any
+  list to update. `node_modules/**` keeps the host's dev dependencies' `.d.ts` files from being
+  copied over the production install. The old per-file allowlist broke the image twice;
+  `server/docker.test.ts` checks that every relative import is shipped, every package import is a
+  dependency, and every migration is shipped.
+- The Postgres record (RFC 3) is built by numbered migrations in `server/db/migrations/`
+  (`NNNN_name.sql`, from 0001, no gaps), applied by `server/db/migrate.ts`, one transaction per
+  file. Never edit an applied migration; the runner refuses a changed checksum, so add a new file.
+  `0001_init.sql` documents each public function's signature above it. Its tests run on PGlite
+  (`server/db/*.test.ts`). The server does not use it yet; it still runs on SQLite.
 - The server is a hexagon (RFC 3, §4): `server/core/` holds the model (Zod), the ports and the use
   cases, and imports nothing but itself and Zod (`server/core/boundary.test.ts`). Adapters live in
   `server/adapters/`; every `LearningRecord` adapter must pass `server/contract/learning-record.ts`.
