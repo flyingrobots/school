@@ -4,20 +4,18 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { NotStarted, startSchool, timeout } from "./testing/processes.ts";
 
 async function boot(env: Record<string, string>): Promise<{ code: number | null; up: boolean; err: string }> {
   const port = 20000 + Math.floor(Math.random() * 20000);
-  const proc = Bun.spawn(["bun", join(import.meta.dir, "server.ts")], {
-    env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", ...env }, stdout: "ignore", stderr: "pipe",
-  });
-  let up = false;
-  for (let i = 0; i < 100 && proc.exitCode === null; i++) {
-    try { if ((await fetch(`http://127.0.0.1:${port}/api/courses`)).ok) { up = true; break; } } catch {}
-    await Bun.sleep(50);
+  try {
+    const s = await startSchool({ ...process.env, PORT: String(port), HOST: "127.0.0.1", ...env });
+    s.proc.kill();
+    return { code: null, up: true, err: (await s.output()).stderr };
+  } catch (e) {
+    if (!(e instanceof NotStarted)) throw e;
+    return { code: e.exitCode, up: false, err: e.stderr };
   }
-  if (up) proc.kill();
-  const code = await proc.exited;
-  return { code: up ? null : code, up, err: await new Response(proc.stderr).text() };
 }
 
 test("a dangling DB_PATH symlink into a course stops the server before it creates anything", async () => {
@@ -34,7 +32,7 @@ test("a dangling DB_PATH symlink into a course stops the server before it create
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
+}, timeout(1));
 
 test("a first run creates its state directory and database outside the course", async () => {
   const root = mkdtempSync(join(tmpdir(), "school-boot-"));
@@ -46,4 +44,4 @@ test("a first run creates its state directory and database outside the course", 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
+}, timeout(1));

@@ -10,7 +10,7 @@ Practical notes for anyone — human or agent — changing the framework.
   removed from the published history.
 - `server/.dockerignore` admits the manifest, the lockfile, modules at any depth and the SQL
   migrations by pattern (`*`, `!package.json`, `!bun.lock`, `!**/*.ts`, `!db/**/*.sql`,
-  `**/*.test.ts`, `contract/**`, `node_modules/**`); the Dockerfile installs production
+  `**/*.test.ts`, `contract/**`, `testing/**`, `node_modules/**`); the Dockerfile installs production
   dependencies and copies the filtered context, so a new module or migration ships without any
   list to update. `node_modules/**` keeps the host's dev dependencies' `.d.ts` files from being
   copied over the production install. The old per-file allowlist broke the image twice;

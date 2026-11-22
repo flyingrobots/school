@@ -7,12 +7,13 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { allowedHosts, hostAllowed } from "./hosts.ts";
+import { startSchool, timeout, type Started } from "./testing/processes.ts";
 
 const root = mkdtempSync(join(tmpdir(), "school-host-"));
 const PORT = 20000 + Math.floor(Math.random() * 20000);
 const base = `http://127.0.0.1:${PORT}`;
 const TAILNET = "school.tail1234.ts.net";
-let server: ReturnType<typeof Bun.spawn> | null = null;
+let server: Started | null = null;
 
 beforeAll(async () => {
   mkdirSync(join(root, "course", "lessons"), { recursive: true });
@@ -28,16 +29,11 @@ beforeAll(async () => {
     SCHOOL_STATE: join(root, "state"), SCHOOL_WEB: join(root, "no-web"), PORT: String(PORT), HOST: "127.0.0.1", SCHOOL_ALLOWED_HOSTS: TAILNET };
   delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_URL;
   delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_TOKEN;
-  server = Bun.spawn(["bun", join(import.meta.dir, "server.ts")], { env, stdout: "ignore", stderr: "ignore" });
-  for (let i = 0; i < 100; i++) {
-    try { if ((await fetch(base + "/api/courses")).ok) return; } catch {}
-    await Bun.sleep(50);
-  }
-  throw new Error("server did not start");
-});
+  server = await startSchool(env);
+}, timeout(1));
 afterAll(async () => {
-  server?.kill();
-  await server?.exited;
+  server?.proc.kill();
+  await server?.proc.exited;
   rmSync(root, { recursive: true, force: true });
 });
 
