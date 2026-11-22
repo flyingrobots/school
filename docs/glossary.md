@@ -1,6 +1,6 @@
 # Glossary
 
-The vocabulary used across School's ADRs, RFCs and code. If a term here conflicts with older wording in [ADR 6](adr/0006-separate-framework-lessons-and-learner-state.md), [ADR 7](adr/0007-lesson-file-schema-in-graphql-compiled-by-wesley.md) or [RFC 1](rfc/0001-school.md), this file wins and those documents need a terminology pass.
+The vocabulary used across School's ADRs, RFCs and code. If a term here conflicts with older wording in [ADR 6](adr/0006-separate-framework-lessons-and-learner-state.md), [ADR 7](adr/0007-course-schema-in-graphql-compiled-by-wesley.md) or [RFC 1](rfc/0001-school.md), this file wins and those documents need a terminology pass.
 
 **Where the idea came from.** School's teaching model was inspired by the `teach` skill in [mattpocock/skills](https://github.com/mattpocock/skills). School is not a fork or an extension of it: we write our own skill, for our own framework, and it works differently in almost every detail. What carries over is the principle — that teaching should be grounded in a stated mission, built on high-trust sources, practised through tight feedback loops, and aimed just past what the learner can already do. School then adds what that skill has no notion of: **courses**, **quizzes**, **exams**, and a **server** that records what actually happened.
 
@@ -39,11 +39,21 @@ Entries are tagged:
 
 **Lesson** *(diverges)* — A declared unit in a course's sequence: what it teaches, which materials it draws on, and which assessments attach to it. In the `teach` skill a "lesson" is the generated HTML file the learner reads; we split the word because a course must declare *lesson 1, lesson 2, lesson 3* while the page each learner sees is made for them.
 
-**Lesson rendering** *(School)* — The actual page a specific learner receives for a specific lesson at a specific moment, generated from that lesson's declared materials plus that learner's state. It is disposable and is not shipped in the course. It is kept as a snapshot so old answers stay interpretable. A rendering should be beautiful and readable, cite its claims, recommend one primary source, and remind the learner that the agent is their teacher and can be asked follow-ups.
+**Lesson rendering** *(School)* — The actual page a specific learner receives for a lesson, built from that lesson's declared materials plus that learner's state. **Prepared ahead of time and retained**, not generated when the page is opened: the learner never waits on a model, and a prepared rendering can be replayed with no agent running at all. It lives in learner state rather than in the course, and is hashed as a snapshot so old answers stay interpretable. A rendering should be beautiful and readable, cite its claims, recommend one primary source, and remind the learner that the agent is their teacher and can be asked follow-ups.
 
 **Block** *(model)* — The smallest addressable piece of content, with a stable `id` and a type: `page`, `section`, `prose`, `card`, `quote`, `aside`, `quiz`, `explain`, `nest`. A block can be reused by reference (`{ "ref": id }`) rather than copied, so one activity keeps one history across several appearances.
 
 **Quiz block** *(model, clarified)* — A `quiz`-typed block *inside* a lesson rendering: inline practice, answered while reading. Not the same as a **quiz** below.
+
+**Preparation** *(School)* — The act of an agent building the next lesson rendering before the learner reaches it, from recorded performance and from what the learner says they need. Asynchronous by design: a failure costs the *future* of a course, never the page currently in front of the learner. **Unsettled:** how far ahead it runs, and what a learner sees when they reach the end of what has been prepared.
+
+## Assessment and grading
+
+**Objective item** *(School)* — A question with a declared correct answer: multiple choice and anything else checkable by comparison. Graded by the server, deterministically, with no model involved and no delay.
+
+**Subjective item** *(School)* — A write-in or an explanation, with no declared answer, that needs reasoning to assess. Graded by an agent through the sidecar.
+
+**Server grading** and **model grading** *(School)* — The two kinds of judgment, kept apart because they carry different authority. Comparing an answer against a declared one is not the same kind of evidence as a model's opinion of an explanation, and the record must never conflate them.
 
 ## Courses
 
@@ -63,7 +73,7 @@ Entries are tagged:
 
 **Course file** *(School)* — **Unsettled**, and possibly unnecessary. If a course is played by an agent reading the repository, the server needs only the machine-readable parts (sequence, assessment items, block structure) and a compiled bundle may be redundant. See the open decisions in RFC 1.
 
-**Course schema**, **format version** *(School)* — **Unsettled**, and downstream of whether a course file exists at all. [ADR 7](adr/0007-lesson-file-schema-in-graphql-compiled-by-wesley.md) proposes GraphQL SDL compiled by Wesley; JSON Schema is the alternative; neither is settled.
+**Course schema**, **format version** *(School)* — **Unsettled**, and downstream of whether a course file exists at all. [ADR 7](adr/0007-course-schema-in-graphql-compiled-by-wesley.md) proposes GraphQL SDL compiled by Wesley; JSON Schema is the alternative; neither is settled.
 
 ## The learner's side
 
@@ -89,7 +99,7 @@ Entries are tagged:
 
 **View** *(School)* — A rendering of the same content for a different purpose: `web` (interactive, records evidence), `slides` (presentation, records nothing), `epub` (a frozen export, later). A view may omit a block but never changes its data.
 
-**The School skill** *(School)* — School's own agent-side companion to the framework, written for it rather than adapted from anything: it interviews the learner for a mission, decides what to teach next, authors courses, and generates lesson renderings. The framework is deterministic and the skill is generative; together they are the teacher. **Unsettled:** where the line between them falls, which is what [ADR 8](adr/0008-teach-authors-courses-through-the-framework.md) is about.
+**The `school` skill** *(School)* — School's own skill, invoked as `/school`, written for this framework. Its job is **conformance**: making an agent's output meet School's structure, rubric, citation requirements and question-balancing rules rather than whatever the model would have produced unaided. Used in two places — by a person authoring a course, and by the agent the server calls to grade subjective answers and prepare future lessons ([ADR 8](adr/0008-the-school-skill-and-who-invokes-whom.md)). The framework is deterministic; the skill constrains the part that cannot be.
 
 **Mount** *(School)* — A named directory the server will serve files from, configured rather than compiled in.
 

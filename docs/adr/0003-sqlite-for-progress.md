@@ -1,6 +1,6 @@
 # 3. Store progress in SQLite
 
-Date: 2026-11-18 · Status: Accepted, amended by [ADR 6](0006-separate-framework-lessons-and-learner-state.md): the path is configured, and the database holds one learner's private state outside any lesson pack.
+Date: 2026-11-18 · Status: Accepted, amended by [ADR 6](0006-separate-framework-lessons-and-learner-state.md): the path is configured, and the database holds one learner's private state outside any course.
 
 ## Context
 One learner, a few hundred rows a week. The agent needs to ask questions such as "which questions have not been seen for 5 days?" and "what is first-try accuracy per lesson?".
