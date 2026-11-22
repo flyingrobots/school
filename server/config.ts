@@ -1,18 +1,18 @@
 // Where the framework finds a course, the learner's state, and any extra source material.
 // Nothing here names a subject: a course is configured, never compiled in (ADR 6).
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 
 /** Route prefixes the framework owns. A configured mount may not take one of these. */
-export const RESERVED = ["assets", "lessons", "reference", "api"] as const;
+export const RESERVED = ["assets", "courses", "lessons", "reference", "api"] as const;
 
 const NAME = /^[a-z0-9][a-z0-9-]*$/;
 
 export type Config = {
   /** The framework checkout. Supplies `assets/` and nothing else. */
   framework: string;
-  /** The course root, holding `lessons/` and `reference/`. Null when none is configured. */
-  course: string | null;
-  /** Directory for this learner's private state. Never inside `course`. */
+  /** Registered courses by name, served at `/courses/<name>`. Each holds `lessons/` and `reference/`. */
+  courses: Record<string, string>;
+  /** Directory for this learner's private state. Never inside a course. */
   state: string;
   dbPath: string;
   /** Extra read-only mounts, served at `/<name>/...`. Source material a course cites. */
@@ -28,36 +28,51 @@ function abs(value: string, from: string): string {
 }
 
 /**
- * Parse `SCHOOL_MOUNTS`: `name=path` pairs separated by commas. Relative paths resolve
- * against `from`. Names are lowercase and may not shadow a reserved route.
+ * Parse `name=path` pairs separated by commas, as used by `SCHOOL_COURSES` and
+ * `SCHOOL_MOUNTS`. Relative paths resolve against `from`. Names are lowercase, become URL
+ * segments, and may not shadow a route the framework owns.
  */
-export function parseMounts(spec: string | undefined, from: string): Record<string, string> {
-  const mounts: Record<string, string> = {};
+export function parsePairs(spec: string | undefined, from: string, label: string, reserve = true): Record<string, string> {
+  const out: Record<string, string> = {};
   for (const entry of (spec ?? "").split(",")) {
     const text = entry.trim();
     if (text === "") continue;
     const eq = text.indexOf("=");
-    if (eq <= 0) throw new ConfigError(`SCHOOL_MOUNTS entry ${JSON.stringify(text)} is not name=path`);
+    if (eq <= 0) throw new ConfigError(`${label} entry ${JSON.stringify(text)} is not name=path`);
     const name = text.slice(0, eq).trim();
     const path = text.slice(eq + 1).trim();
-    if (!NAME.test(name)) throw new ConfigError(`mount name ${JSON.stringify(name)} must match ${NAME.source}`);
-    if ((RESERVED as readonly string[]).includes(name)) throw new ConfigError(`mount name ${JSON.stringify(name)} is reserved`);
-    if (name in mounts) throw new ConfigError(`mount name ${JSON.stringify(name)} is set twice`);
-    if (path === "") throw new ConfigError(`mount ${JSON.stringify(name)} has an empty path`);
-    mounts[name] = abs(path, from);
+    if (!NAME.test(name)) throw new ConfigError(`${label} name ${JSON.stringify(name)} must match ${NAME.source}`);
+    if (reserve && (RESERVED as readonly string[]).includes(name)) throw new ConfigError(`${label} name ${JSON.stringify(name)} is reserved`);
+    if (name in out) throw new ConfigError(`${label} name ${JSON.stringify(name)} is set twice`);
+    if (path === "") throw new ConfigError(`${label} ${JSON.stringify(name)} has an empty path`);
+    out[name] = abs(path, from);
   }
-  return mounts;
+  return out;
 }
+
+/** Back-compatible alias; `SCHOOL_MOUNTS` is the only caller that needs the old name. */
+export const parseMounts = (spec: string | undefined, from: string) => parsePairs(spec, from, "SCHOOL_MOUNTS");
 
 export function parseConfig(env: Record<string, string | undefined>, frameworkDefault: string): Config {
   const cwd = process.cwd();
   const framework = abs(env.SCHOOL_ROOT ?? frameworkDefault, cwd);
-  const course = env.SCHOOL_COURSE === undefined || env.SCHOOL_COURSE === "" ? null : abs(env.SCHOOL_COURSE, cwd);
+  // SCHOOL_COURSES registers many; SCHOOL_COURSE stays accepted as a single unnamed course,
+  // named after its directory, so a one-course setup needs no extra ceremony.
+  const courses = parsePairs(env.SCHOOL_COURSES, cwd, "SCHOOL_COURSES");
+  if (env.SCHOOL_COURSE !== undefined && env.SCHOOL_COURSE !== "") {
+    const path = abs(env.SCHOOL_COURSE, cwd);
+    const name = basename(path).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+    if (!NAME.test(name)) throw new ConfigError(`SCHOOL_COURSE directory ${JSON.stringify(basename(path))} does not make a usable course name`);
+    if (name in courses) throw new ConfigError(`SCHOOL_COURSE name ${JSON.stringify(name)} collides with SCHOOL_COURSES`);
+    courses[name] = path;
+  }
   const state = abs(env.SCHOOL_STATE ?? join(framework, "state"), cwd);
 
-  // Learner state must not land inside the course. A course is shared; performance is not.
-  if (course !== null && (state === course || state.startsWith(course + "/"))) {
-    throw new ConfigError(`SCHOOL_STATE (${state}) is inside SCHOOL_COURSE (${course}); learner state must live outside the course`);
+  // Learner state must not land inside any course. A course is shared; performance is not.
+  for (const [name, path] of Object.entries(courses)) {
+    if (state === path || state.startsWith(path + "/")) {
+      throw new ConfigError(`SCHOOL_STATE (${state}) is inside course ${JSON.stringify(name)} (${path}); learner state must live outside the course`);
+    }
   }
 
   const port = Number(env.PORT ?? 4747);
@@ -65,7 +80,7 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
 
   return {
     framework,
-    course,
+    courses,
     state,
     dbPath: env.DB_PATH === undefined || env.DB_PATH === "" ? join(state, "progress.db") : abs(env.DB_PATH, cwd),
     mounts: parseMounts(env.SCHOOL_MOUNTS, cwd),
@@ -74,9 +89,19 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
   };
 }
 
-/** The full mount table actually served, framework and course mounts included. */
+/** Top-level static mounts: the framework's assets plus any configured source material. */
 export function mountTable(config: Config): Record<string, string> {
-  const table: Record<string, string> = { assets: join(config.framework, "assets"), ...config.mounts };
-  if (config.course !== null) table.reference = join(config.course, "reference");
-  return table;
+  return { assets: join(config.framework, "assets"), ...config.mounts };
+}
+
+export type Course = { name: string; root: string; lessons: string; reference: string };
+
+export function course(config: Config, name: string): Course | null {
+  const root = config.courses[name];
+  if (root === undefined) return null;
+  return { name, root, lessons: join(root, "lessons"), reference: join(root, "reference") };
+}
+
+export function courseNames(config: Config): string[] {
+  return Object.keys(config.courses).sort();
 }

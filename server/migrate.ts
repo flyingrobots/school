@@ -2,10 +2,14 @@
 // rebuilt, logical history may not change (RFC 1, principle 2).
 import type { Database } from "bun:sqlite";
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /**
- * Version 3. `origin` separates answers whose block is known from legacy positional ones.
+ * Version 4. `course` records which course an answer belongs to: with several courses
+ * registered, a lesson id alone identifies nothing. Rows recorded before courses existed
+ * keep `course` NULL, which is unknown rather than invented.
+ *
+ * `origin` separates answers whose block is known from legacy positional ones.
  * A legacy row keeps `block_id` NULL rather than guessing an id: unknown attribution is
  * better evidence than invented attribution (RFC 1, principle 4). Its original question
  * position and prompt are kept so the answer stays interpretable.
@@ -14,6 +18,7 @@ const SCHEMA = `
 CREATE TABLE answers (
   id INTEGER PRIMARY KEY,
   origin TEXT NOT NULL CHECK (origin IN ('block', 'legacy')),
+  course TEXT,
   block_id TEXT,
   lesson TEXT NOT NULL,
   question INTEGER,
@@ -26,11 +31,11 @@ CREATE TABLE answers (
   CHECK ((origin = 'block' AND block_id IS NOT NULL) OR (origin = 'legacy' AND block_id IS NULL))
 );
 CREATE INDEX answers_block ON answers (block_id, at);
-CREATE INDEX answers_lesson ON answers (lesson, at);
-CREATE TABLE IF NOT EXISTS views (id INTEGER PRIMARY KEY, lesson TEXT NOT NULL, at TEXT NOT NULL);
+CREATE INDEX answers_lesson ON answers (course, lesson, at);
+CREATE TABLE IF NOT EXISTS views (id INTEGER PRIMARY KEY, course TEXT, lesson TEXT NOT NULL, at TEXT NOT NULL);
 `;
 
-type Shape = "absent" | "legacy" | "v2" | "current";
+type Shape = "absent" | "legacy" | "v2" | "v3" | "current";
 
 function columns(db: Database, table: string): string[] {
   return db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all().map((r) => r.name);
@@ -40,7 +45,8 @@ function columns(db: Database, table: string): string[] {
 export function shape(db: Database): Shape {
   const names = columns(db, "answers");
   if (names.length === 0) return "absent";
-  if (names.includes("origin")) return "current";
+  if (names.includes("course")) return "current";
+  if (names.includes("origin")) return "v3";
   if (names.includes("question") && names.includes("prompt")) return "legacy";
   return "v2";
 }
@@ -79,6 +85,15 @@ export function migrate(db: Database, onBackup?: (from: Shape) => void): Result 
       return 0;
     }
 
+    // v3 differs only by added nullable columns, so add them rather than rebuild.
+    if (found === "v3") {
+      db.exec("ALTER TABLE answers ADD COLUMN course TEXT");
+      if (!columns(db, "views").includes("course")) db.exec("ALTER TABLE views ADD COLUMN course TEXT");
+      db.exec("DROP INDEX IF EXISTS answers_lesson");
+      db.exec("CREATE INDEX answers_lesson ON answers (course, lesson, at)");
+      return db.query<{ n: number }, []>("SELECT count(*) AS n FROM answers").get()?.n ?? 0;
+    }
+
     // Rebuild into a new table, then swap. Copying is explicit per shape so that no column
     // is silently reinterpreted: a legacy `question` is a position, never a block id.
     db.exec(SCHEMA.replace(/CREATE TABLE answers/, "CREATE TABLE answers_next")
@@ -86,11 +101,11 @@ export function migrate(db: Database, onBackup?: (from: Shape) => void): Result 
                   .replace(/CREATE INDEX answers_lesson ON answers /, "CREATE INDEX answers_lesson_next ON answers_next "));
 
     if (found === "legacy") {
-      db.exec(`INSERT INTO answers_next (id, origin, block_id, lesson, question, prompt, choice, correct, first_try, ms, at)
-               SELECT id, 'legacy', NULL, lesson, question, prompt, choice, correct, first_try, ms, at FROM answers`);
+      db.exec(`INSERT INTO answers_next (id, origin, course, block_id, lesson, question, prompt, choice, correct, first_try, ms, at)
+               SELECT id, 'legacy', NULL, NULL, lesson, question, prompt, choice, correct, first_try, ms, at FROM answers`);
     } else {
-      db.exec(`INSERT INTO answers_next (id, origin, block_id, lesson, question, prompt, choice, correct, first_try, ms, at)
-               SELECT id, 'block', block_id, lesson, NULL, NULL, choice, correct, first_try, ms, at FROM answers`);
+      db.exec(`INSERT INTO answers_next (id, origin, course, block_id, lesson, question, prompt, choice, correct, first_try, ms, at)
+               SELECT id, 'block', NULL, block_id, lesson, NULL, NULL, choice, correct, first_try, ms, at FROM answers`);
     }
     const copied = db.query<{ n: number }, []>("SELECT count(*) AS n FROM answers_next").get()?.n ?? 0;
     const before = db.query<{ n: number }, []>("SELECT count(*) AS n FROM answers").get()?.n ?? 0;
@@ -101,7 +116,7 @@ export function migrate(db: Database, onBackup?: (from: Shape) => void): Result 
     db.exec("DROP INDEX IF EXISTS answers_block_next");
     db.exec("DROP INDEX IF EXISTS answers_lesson_next");
     db.exec("CREATE INDEX IF NOT EXISTS answers_block ON answers (block_id, at)");
-    db.exec("CREATE INDEX IF NOT EXISTS answers_lesson ON answers (lesson, at)");
+    db.exec("CREATE INDEX IF NOT EXISTS answers_lesson ON answers (course, lesson, at)");
     return copied;
   });
 

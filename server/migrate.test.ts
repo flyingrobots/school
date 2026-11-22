@@ -158,6 +158,30 @@ test("a version-2 database keeps its block attribution", () => {
     expect(row.origin).toBe("block");
     expect(row.block_id).toBe("inversion-core-1");
     expect(row.question).toBe(null);
+    expect(row.course).toBe(null); // recorded before courses existed
+    db.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a version-3 database gains a course column without touching its rows", () => {
+  const dir = tmp();
+  try {
+    const db = legacyDb(join(dir, "progress.db"));
+    migrate(db); // -> current
+    // Simulate a v3 database by dropping the column v4 added.
+    const before = db.query<Record<string, unknown>, []>("SELECT id, lesson, prompt FROM answers ORDER BY id").all();
+    db.exec("DROP INDEX IF EXISTS answers_lesson"); // SQLite refuses DROP COLUMN while indexed
+    db.exec("ALTER TABLE answers DROP COLUMN course");
+    db.exec("PRAGMA user_version = 3");
+    expect(shape(db)).toBe("v3");
+
+    const result = migrate(db);
+    expect(result.copied).toBe(ROWS.length);
+    expect(shape(db)).toBe("current");
+    expect(db.query<Record<string, unknown>, []>("SELECT id, lesson, prompt FROM answers ORDER BY id").all()).toEqual(before);
+    expect(db.query<Record<string, unknown>, []>("SELECT * FROM answers").get()!.course).toBe(null);
     db.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });

@@ -1,20 +1,53 @@
-// Usage: <div class="quiz" data-quiz='[{"q":"..","a":["..",".."],"c":1,"why":".."}]'></div>
-// When served by server/server.ts, answers are recorded; opened as a file, the quiz works without recording.
-const lesson=location.pathname.split('/').pop();
-const send=(path,body)=>{if(location.protocol==='file:')return;
-  fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),keepalive:true}).catch(()=>{});};
-send('/api/view',{lesson});
-const shown=Date.now();
-document.querySelectorAll('.quiz[data-quiz]').forEach(root=>{
-  JSON.parse(root.dataset.quiz).forEach((item,i)=>{
-    const d=document.createElement('div');d.className='q';
-    d.innerHTML=`<p><strong>${i+1}.</strong> ${item.q}</p>`;
-    const fb=document.createElement('p');fb.className='fb';
-    let tries=0;
-    item.a.forEach((txt,j)=>{const b=document.createElement('button');b.textContent=txt;
-      b.onclick=()=>{d.querySelectorAll('button').forEach(x=>x.className='');
-        b.className=j===item.c?'ok':'bad';fb.textContent=(j===item.c?'Correct. ':'Not quite. ')+item.why;
-        send('/api/answer',{lesson,question:i,prompt:item.q,choice:txt,correct:j===item.c,firstTry:tries++===0,ms:Date.now()-shown});};
-      d.appendChild(b)});
-    d.appendChild(fb);root.appendChild(d)});
-});
+// Drives the quiz markup that render.ts emits: <div class="q" data-block data-why> with
+// <button data-correct>. Opened as a file:// page it still works, it just records nothing.
+//
+// This file previously expected `.quiz[data-quiz]` with a JSON attribute, which the block
+// renderer never produced — so every quiz was inert: no feedback, nothing recorded.
+const meta = document.getElementById("school-meta");
+const course = meta?.dataset.course ?? null;
+const lesson = meta?.dataset.lesson ?? null;
+const recording = course !== null && lesson !== null && location.protocol !== "file:";
+
+const send = (path, body) => {
+  if (!recording) return;
+  fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ course, lesson, ...body }),
+    keepalive: true,
+  }).catch(() => {});
+};
+
+send("/api/view", {});
+const shown = Date.now();
+
+for (const q of document.querySelectorAll(".q[data-block]")) {
+  const blockId = q.dataset.block;
+  const why = q.dataset.why ?? "";
+  const feedback = q.querySelector(".fb");
+  const buttons = [...q.querySelectorAll("button")];
+  let tries = 0;
+  let settled = false;
+
+  for (const button of buttons) {
+    const correct = button.dataset.correct === "true";
+    button.addEventListener("click", () => {
+      if (settled) return;
+      for (const other of buttons) other.className = "";
+      button.className = correct ? "ok" : "bad";
+      if (feedback !== null) feedback.textContent = `${correct ? "Correct." : "Not quite."} ${why}`.trim();
+
+      // firstTry is this browser's view of it. The server decides authoritatively; see the
+      // learning record contract in docs/rfc/0001-school.md.
+      send("/api/answer", {
+        blockId,
+        choice: button.textContent ?? "",
+        correct,
+        firstTry: tries === 0,
+        ms: Date.now() - shown,
+      });
+      tries += 1;
+      if (correct) settled = true;
+    });
+  }
+}
