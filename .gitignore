@@ -43,3 +43,6 @@ docker-compose.override.yml
 
 # Git bundles
 *.bundle
+
+# Claude Code session transcripts (captured /teach logs; keep local, never commit)
+*command-message*.txt
