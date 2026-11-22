@@ -67,10 +67,29 @@ function parseView(v: unknown): { course: string; lesson: string } | null {
 // Static files come only from configured mounts; lesson sources and state are never served raw.
 const MOUNTS: Record<string, string> = mountTable(config);
 
+/**
+ * The course's reference directory, if it is really inside the course. `reference/` is
+ * derived from the course root, so a symlink there could otherwise make anything the server
+ * can read (the learner's state included) the serving root, and per-file containment would
+ * then be checked against the wrong boundary. Source material outside a course is what
+ * SCHOOL_MOUNTS is for. The course root itself may be a symlink; that is configuration.
+ */
+function referenceDir(c: Course): string | null {
+  const root = real(c.root);
+  const dir = real(c.reference);
+  if (root === null || dir === null) return null;
+  if (!dir.startsWith(root + sep)) {
+    console.error(`school: ${c.name}: reference/ resolves outside the course (${dir}); not serving it`);
+    return null;
+  }
+  return dir;
+}
+
 /** A course's reference documents, if it has any. Discovered, not assumed. */
 function referenceDocs(c: Course): string[] {
-  if (!existsSync(c.reference)) return [];
-  return readdirSync(c.reference).filter((f) => f.endsWith(".html")).sort();
+  const dir = referenceDir(c);
+  if (dir === null) return [];
+  return readdirSync(dir).filter((f) => f.endsWith(".html")).sort();
 }
 
 // Lessons are reloaded on every request so edits show up without a restart. A reload that
@@ -227,7 +246,10 @@ Bun.serve({
       if (rest === "/reference" || rest === "/reference/") return html(renderReference(c.name, referenceDocs(c)));
 
       const ref = /^\/reference\/(.+)$/.exec(rest);
-      if (ref !== null) return serveFrom(c.reference, [ref[1]!]);
+      if (ref !== null) {
+        const dir = referenceDir(c);
+        return dir === null ? notFound() : serveFrom(dir, [ref[1]!]);
+      }
 
       const lesson = /^\/lessons\/([\w-]+)$/.exec(rest);
       if (lesson !== null) return lessonResponse(c, lesson[1], url.searchParams.get("view"));

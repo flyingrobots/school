@@ -24,6 +24,13 @@ beforeAll(async () => {
     type: "page", id: "l1", title: "One", subtitle: "<script>alert(1)</script>",
     children: [quiz, { type: "explain", id: "e1", prompt: "Say <b>why</b>", model: "Because <i>so</i>" }],
   }));
+  // linked: a course whose reference DIRECTORY is a symlink to private state (review of #8, P1).
+  mkdirSync(join(root, "private"), { recursive: true });
+  writeFileSync(join(root, "private", "progress.db"), "PRIVATE DB BYTES");
+  writeFileSync(join(root, "private", "diary-entry.html"), "PRIVATE NOTES");
+  mkdirSync(join(root, "linked", "lessons"), { recursive: true });
+  writeFileSync(join(root, "linked", "lessons", "0001.json"), JSON.stringify({ type: "page", id: "k1", title: "K", subtitle: "", children: [] }));
+  symlinkSync(join(root, "private"), join(root, "linked", "reference"));
   // empty: a course with no lessons directory at all.
   mkdirSync(join(root, "empty"), { recursive: true });
   // broken: never valid, with an error message carrying markup.
@@ -32,7 +39,7 @@ beforeAll(async () => {
     JSON.stringify({ type: "page", id: "b1", title: "B", subtitle: "", children: [{ ref: "<x>&\"" }] }));
 
   server = Bun.spawn(["bun", join(import.meta.dir, "server.ts")], {
-    env: { ...process.env, SCHOOL_COURSES: `ok=${join(root, "ok")},empty=${join(root, "empty")},broken=${join(root, "broken")}`,
+    env: { ...process.env, SCHOOL_COURSES: `ok=${join(root, "ok")},empty=${join(root, "empty")},broken=${join(root, "broken")},linked=${join(root, "linked")}`,
       SCHOOL_STATE: join(root, "state"), PORT: String(PORT), HOST: "127.0.0.1" },
     stdout: "ignore", stderr: "ignore",
   });
@@ -120,4 +127,18 @@ test("feedback is announced, and a settled quiz's choices are disabled", async (
   await post("/api/answer", { submissionId: crypto.randomUUID(), encounterId: e, blockId: "q1", choiceId: "right", ms: 1 }, JSONH);
   const after = await (await fetch(base + "/courses/ok/lessons/l1")).text();
   expect(after).toMatch(/<button data-choice="wrong"[^>]* disabled>/);
+});
+
+test("a reference directory that is itself a symlink out of the course serves and lists nothing", async () => {
+  for (const path of ["/courses/linked/reference/progress.db", "/courses/linked/reference/diary-entry.html"]) {
+    const res = await fetch(base + path);
+    expect(res.status).toBe(404);
+    expect(await res.text()).not.toContain("PRIVATE");
+  }
+  for (const path of ["/courses/linked", "/courses/linked/reference", "/"]) {
+    expect(await (await fetch(base + path)).text()).not.toContain("diary-entry");
+  }
+  // An ordinary reference inside its course still works.
+  expect(await (await fetch(base + "/courses/ok/reference/fine.html")).text()).toContain("fine");
+  expect(await (await fetch(base + "/courses/ok/reference")).text()).toContain("fine");
 });

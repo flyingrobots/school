@@ -1,6 +1,6 @@
 // Where the framework finds a course, the learner's state, and any extra source material.
 // Nothing here names a subject: a course is configured, never compiled in (ADR 6).
-import { realpathSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 /** Route prefixes the framework owns. A configured mount may not take one of these. */
@@ -54,23 +54,32 @@ export function parsePairs(spec: string | undefined, from: string, label: string
 /** Back-compatible alias; `SCHOOL_MOUNTS` is the only caller that needs the old name. */
 export const parseMounts = (spec: string | undefined, from: string) => parsePairs(spec, from, "SCHOOL_MOUNTS");
 
+const code = (e: unknown) => (e as NodeJS.ErrnoException).code;
+
 /**
- * `p` with symlinks resolved as far as it exists. A path that does not exist yet (a state
- * directory School will create) resolves its nearest existing ancestor and keeps the rest.
+ * `p` with every symlink resolved. A component that genuinely does not exist yet (a state
+ * directory School will create on first run) is kept as written beneath its resolved parent.
+ * A symlink whose target is missing is refused rather than read as "not there yet": its
+ * target is where a write would land, and that is exactly what the containment check must
+ * see. Any other failure (permissions, a loop, a file where a directory should be) is an
+ * error, never a guess.
  */
 function resolved(p: string): string {
-  const tail: string[] = [];
-  let at = p;
-  for (;;) {
-    try {
-      return join(realpathSync(at), ...tail.reverse());
-    } catch {
-      const up = dirname(at);
-      if (up === at) return p;
-      tail.push(basename(at));
-      at = up;
-    }
+  try {
+    return realpathSync(p);
+  } catch (e) {
+    if (code(e) !== "ENOENT") throw new ConfigError(`cannot resolve ${p}: ${code(e) ?? String(e)}`);
   }
+  let link: boolean;
+  try {
+    link = lstatSync(p).isSymbolicLink();
+  } catch (e) {
+    if (code(e) !== "ENOENT") throw new ConfigError(`cannot inspect ${p}: ${code(e) ?? String(e)}`);
+    const up = dirname(p);
+    return up === p ? p : join(resolved(up), basename(p));
+  }
+  if (link) throw new ConfigError(`${p} is a symlink whose target does not exist; create the target or remove the link`);
+  throw new ConfigError(`cannot resolve ${p}`);
 }
 
 /** Whether `inner` is `outer` or below it, after resolving symlinks. */
