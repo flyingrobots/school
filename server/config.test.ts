@@ -1,6 +1,7 @@
 // Increment 2's gate, config half: a course is configured rather than compiled in, and
 // learner state cannot be placed inside a course.
 import { expect, test } from "bun:test";
+import { join } from "node:path";
 import { ConfigError, course, courseNames, mountTable, parseConfig, parseMounts } from "./config.ts";
 
 const FRAMEWORK = "/opt/school";
@@ -89,4 +90,78 @@ test("nothing in the config names a subject", () => {
     expect(text.toLowerCase()).not.toContain("aion");
     expect(text.toLowerCase()).not.toContain("warp");
   });
+});
+
+// Review finding #8: config invariants that leaked.
+test("a database path inside a course is refused, like a state directory inside one", () => {
+  expect(() => parseConfig({ SCHOOL_COURSES: "aion=/courses/aion", SCHOOL_STATE: "/var/school", DB_PATH: "/courses/aion/progress.db" }, FRAMEWORK))
+    .toThrow(/DB_PATH/);
+});
+
+test("a single SCHOOL_COURSE may not be named after a reserved route", () => {
+  expect(() => parseConfig({ SCHOOL_COURSE: "/somewhere/api", SCHOOL_STATE: "/var/school" }, FRAMEWORK)).toThrow(/reserved/);
+});
+
+test("state reached through a symlink into a course is still inside the course", () => {
+  const { mkdtempSync, mkdirSync, symlinkSync, rmSync } = require("node:fs") as typeof import("node:fs");
+  const { join } = require("node:path") as typeof import("node:path");
+  const root = mkdtempSync(join(require("node:os").tmpdir(), "school-config-"));
+  try {
+    mkdirSync(join(root, "course", "inner"), { recursive: true });
+    symlinkSync(join(root, "course", "inner"), join(root, "state-link"));
+    expect(() => parseConfig({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state-link") }, FRAMEWORK))
+      .toThrow(/inside course/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Review of #8, P2: a dangling symlink used to be resolved as if it were a plain missing file,
+// so DB_PATH could pass the containment check and then create the database inside a course.
+function scratch(): { root: string; done: () => void } {
+  const { mkdtempSync, rmSync } = require("node:fs") as typeof import("node:fs");
+  const root = mkdtempSync(join(require("node:os").tmpdir(), "school-config-"));
+  return { root, done: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+test("a DB_PATH that is a dangling symlink into a course is refused", () => {
+  const { mkdirSync, symlinkSync, existsSync } = require("node:fs") as typeof import("node:fs");
+  const { root, done } = scratch();
+  try {
+    mkdirSync(join(root, "course"));
+    mkdirSync(join(root, "state"));
+    symlinkSync(join(root, "course", "new-progress.db"), join(root, "state", "progress.db"));
+    expect(() => parseConfig({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state") }, FRAMEWORK))
+      .toThrow(/symlink/);
+    expect(existsSync(join(root, "course", "new-progress.db"))).toBe(false);
+  } finally {
+    done();
+  }
+});
+
+test("a DB_PATH symlink whose target exists inside a course is still refused", () => {
+  const { mkdirSync, symlinkSync, writeFileSync } = require("node:fs") as typeof import("node:fs");
+  const { root, done } = scratch();
+  try {
+    mkdirSync(join(root, "course"));
+    mkdirSync(join(root, "state"));
+    writeFileSync(join(root, "course", "new-progress.db"), "");
+    symlinkSync(join(root, "course", "new-progress.db"), join(root, "state", "progress.db"));
+    expect(() => parseConfig({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state") }, FRAMEWORK))
+      .toThrow(/inside course/);
+  } finally {
+    done();
+  }
+});
+
+test("a first run with no state directory yet is accepted", () => {
+  const { mkdirSync } = require("node:fs") as typeof import("node:fs");
+  const { root, done } = scratch();
+  try {
+    mkdirSync(join(root, "course"));
+    const c = parseConfig({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "not", "yet", "state") }, FRAMEWORK);
+    expect(c.dbPath).toBe(join(root, "not", "yet", "state", "progress.db"));
+  } finally {
+    done();
+  }
 });

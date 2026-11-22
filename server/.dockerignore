@@ -1,7 +1,3 @@
 *
-!server.ts
-!blocks.ts
-!render.ts
-!migrate.ts
-!config.ts
-!record.ts
+!*.ts
+*.test.ts

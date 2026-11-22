@@ -55,3 +55,19 @@ test.each([...SHEETS])("%s mixes colours only in a space without a hue axis", (s
   const polar = [...read(sheet).matchAll(/color-mix\(\s*in\s+(oklch|lch|hsl|hwb)\b[^;]*/g)].map((m) => m[0]);
   expect(polar).toEqual([]);
 });
+
+// Review finding #8: a token overridden for the system dark preference must also be
+// overridden for the explicit dark choices, or forcing dark mode keeps light-mode shadows.
+test("every dark override applies to all three ways of choosing dark", () => {
+  const css = read("tokens.css");
+  const block = (selector: RegExp) => {
+    const out = new Set<string>();
+    for (const m of css.matchAll(selector)) for (const t of m[1]!.matchAll(/(--[a-z0-9-]+)\s*:/g)) out.add(t[1]!);
+    return out;
+  };
+  const system = block(/:root:not\(\[data-theme="light"\]\)\s*\{([^}]*)\}/g);
+  const forcedClass = block(/(?:^|\n)\.dark\s*(?:,[^{]*)?\{([^}]*)\}/g);
+  const forcedAttr = block(/:root\[data-theme="dark"\]\s*(?:,[^{]*)?\{([^}]*)\}/g);
+  expect([...system].filter((t) => !forcedClass.has(t))).toEqual([]);
+  expect([...system].filter((t) => !forcedAttr.has(t))).toEqual([]);
+});

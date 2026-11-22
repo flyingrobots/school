@@ -8,7 +8,13 @@ Practical notes for anyone — human or agent — changing the framework.
 - Captured `/teach`-style session transcripts (`*command-message*.txt`) are gitignored on
   purpose. Keep them local; never commit them. They were committed once and had to be
   removed from the published history.
-- `server/.dockerignore` is `*` plus an allowlist. **Adding a new file under `server/` means
-  adding it there and to the Dockerfile `COPY`**, or the image silently ships without it and
-  the server dies on an import it cannot resolve. This has broken the image twice.
+- `server/.dockerignore` admits server modules by pattern (`*`, `!*.ts`, `*.test.ts`) and the
+  Dockerfile copies `*.ts`, so a new module ships without any list to update. The old per-file
+  allowlist broke the image twice; `server/docker.test.ts` keeps the pattern from regressing.
+  A server file that is not TypeScript still needs adding explicitly.
+- `server/compose.yaml` names no course. Its paths come from a gitignored `server/.env`; copy
+  `server/compose.example.env` to start one.
+- Every `POST /api/*` needs `Content-Type: application/json` and is refused when the browser
+  says it is cross-site. A new endpoint under `/api/` inherits that guard; one outside it does
+  not, so keep state-changing routes under `/api/`.
 - Tests are `bun test` from the repository root. No `package.json`, no build step (ADR 2).

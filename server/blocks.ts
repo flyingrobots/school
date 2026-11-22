@@ -1,7 +1,7 @@
 // Block model: a lesson is a tree of blocks rooted at a `page`. Blocks are
 // validated when loaded, and `{ "ref": id }` entries are resolved against
 // every block with an id across all lesson files.
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export type NestNode = { label: string; atoms: string[]; edge?: string; children: NestNode[] };
@@ -114,6 +114,8 @@ export function loadLibrary(dir: string): Library {
   const pending = new Map<Block, Raw[]>(); // containers resolved after every file is parsed
   const byId = new Map<string, Block>();
   const pages: Block[] = [];
+  // A course with no lessons directory is a course with no lessons yet, not a broken one.
+  if (!existsSync(dir)) return { pages, byId };
   for (const file of readdirSync(dir).filter((f) => f.endsWith(".json")).sort()) {
     let json: unknown;
     try {

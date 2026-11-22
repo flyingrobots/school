@@ -36,7 +36,7 @@ SCHOOL_MOUNTS="papers=/path/to/source-material" \
 | `SCHOOL_MOUNTS` | `name=path` pairs, served read-only at `/name/...`, for source material a course cites. |
 | `HOST`, `PORT` | Default `127.0.0.1:4747`. |
 
-`bun test` runs the suite. `server/compose.yaml` runs it in Docker behind `tailscale serve` (ADR 4).
+`bun test` runs the suite. `server/compose.yaml` runs it in Docker behind `tailscale serve` (ADR 4); copy `server/compose.example.env` to `server/.env` and set your course, state and source paths first.
 
 ## How it is put together
 

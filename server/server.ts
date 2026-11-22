@@ -1,9 +1,9 @@
 // School progress server: renders block lessons and records quiz answers to SQLite.
 import { Database } from "bun:sqlite";
 import { dirname, join, normalize, sep } from "node:path";
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { lastValidLoader } from "./blocks.ts";
-import { isView, renderCourse, renderLanding, renderPage, renderReference } from "./render.ts";
+import { esc, isView, renderCourse, renderLanding, renderPage, renderReference } from "./render.ts";
 import { migrate, snapshot } from "./migrate.ts";
 import { encounterAnswers, lessonProgress, openEncounter, submit, type Submission } from "./record.ts";
 import { ConfigError, course, courseNames, mountTable, parseConfig, type Course } from "./config.ts";
@@ -67,10 +67,29 @@ function parseView(v: unknown): { course: string; lesson: string } | null {
 // Static files come only from configured mounts; lesson sources and state are never served raw.
 const MOUNTS: Record<string, string> = mountTable(config);
 
+/**
+ * The course's reference directory, if it is really inside the course. `reference/` is
+ * derived from the course root, so a symlink there could otherwise make anything the server
+ * can read (the learner's state included) the serving root, and per-file containment would
+ * then be checked against the wrong boundary. Source material outside a course is what
+ * SCHOOL_MOUNTS is for. The course root itself may be a symlink; that is configuration.
+ */
+function referenceDir(c: Course): string | null {
+  const root = real(c.root);
+  const dir = real(c.reference);
+  if (root === null || dir === null) return null;
+  if (!dir.startsWith(root + sep)) {
+    console.error(`school: ${c.name}: reference/ resolves outside the course (${dir}); not serving it`);
+    return null;
+  }
+  return dir;
+}
+
 /** A course's reference documents, if it has any. Discovered, not assumed. */
 function referenceDocs(c: Course): string[] {
-  if (!existsSync(c.reference)) return [];
-  return readdirSync(c.reference).filter((f) => f.endsWith(".html")).sort();
+  const dir = referenceDir(c);
+  if (dir === null) return [];
+  return readdirSync(dir).filter((f) => f.endsWith(".html")).sort();
 }
 
 // Lessons are reloaded on every request so edits show up without a restart. A reload that
@@ -93,11 +112,50 @@ function lessonCount(c: Course): number | null {
   }
 }
 
+const notFound = () => new Response("Not found", { status: 404 });
+
+/** `p` with every symlink resolved, or null if it does not exist. */
+function real(p: string): string | null {
+  try {
+    return realpathSync(p);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Serve one regular file from under `base`. Containment is checked twice: lexically, so `..`
+ * cannot climb out, and on the resolved path, so a symlink inside a course or source mount
+ * cannot point at the learner's database or anywhere else on the machine. A directory is
+ * never served, and a symlink that escapes is reported as missing rather than forbidden.
+ */
 async function serveFrom(base: string, rest: string[]): Promise<Response> {
-  const full = normalize(join(base, decodeURIComponent(rest.join("/"))));
-  if (full !== base && !full.startsWith(base + sep)) return new Response("Forbidden", { status: 403 });
-  const file = Bun.file(full);
-  return (await file.exists()) ? new Response(file) : new Response("Not found", { status: 404 });
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(rest.join("/"));
+  } catch {
+    return new Response("Bad request", { status: 400 });
+  }
+  const full = normalize(join(base, decoded));
+  if (!full.startsWith(base + sep)) return notFound();
+  const realBase = real(base);
+  const realFull = real(full);
+  if (realBase === null || realFull === null || !realFull.startsWith(realBase + sep)) return notFound();
+  if (!statSync(realFull).isFile()) return notFound();
+  return new Response(Bun.file(realFull));
+}
+
+/**
+ * One guard for every state-changing endpoint, present and future. The server has no login,
+ * so any page open in the learner's browser could POST to it. Requiring a declared JSON body
+ * makes such a request non-simple: the browser must send a CORS preflight, which this server
+ * never answers. A browser that says the request is cross-site is refused outright.
+ */
+function guardApi(req: Request): Response | null {
+  const type = (req.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  if (type !== "application/json") return new Response("Expected application/json", { status: 415 });
+  if (req.headers.get("sec-fetch-site") === "cross-site") return new Response("Cross-site request refused", { status: 403 });
+  return null;
 }
 
 async function serveMount(pathname: string): Promise<Response> {
@@ -114,7 +172,7 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 function lessonResponse(c: Course, id: string | undefined, viewParam: string | null): Response {
   const view = isView(viewParam) ? viewParam : "web";
   const { library, error } = lessons(c);
-  if (library === null) return html(`<pre>Lesson error: ${(error?.message ?? "unknown").replace(/</g, "&lt;")}</pre>`, 500);
+  if (library === null) return html(`<pre>Lesson error: ${esc(error?.message ?? "unknown")}</pre>`, 500);
   const refs = referenceDocs(c);
   const { pages } = library;
   if (id === undefined) return html(renderCourse(c.name, pages, refs, lessonProgress(db, c.name)));
@@ -148,6 +206,10 @@ Bun.serve({
     const url = new URL(req.url);
     const { pathname } = url;
     const at = new Date().toISOString();
+    if (req.method === "POST" && pathname.startsWith("/api/")) {
+      const refused = guardApi(req);
+      if (refused !== null) return refused;
+    }
     if (req.method === "POST" && pathname === "/api/answer") {
       const s = parseSubmission(await readJson(req));
       if (s === null) return json({ status: "invalid" }, 400);
@@ -163,6 +225,7 @@ Bun.serve({
       insertView.run({ course: v.course, lesson: v.lesson, at });
       return new Response(null, { status: 204 });
     }
+    if (req.method === "POST" && pathname.startsWith("/api/")) return notFound();
     if (req.method !== "GET") return new Response("Method not allowed", { status: 405 });
 
     // The landing page is School's index of installed courses, not one course's lessons.
@@ -183,7 +246,10 @@ Bun.serve({
       if (rest === "/reference" || rest === "/reference/") return html(renderReference(c.name, referenceDocs(c)));
 
       const ref = /^\/reference\/(.+)$/.exec(rest);
-      if (ref !== null) return serveFrom(c.reference, [ref[1]!]);
+      if (ref !== null) {
+        const dir = referenceDir(c);
+        return dir === null ? notFound() : serveFrom(dir, [ref[1]!]);
+      }
 
       const lesson = /^\/lessons\/([\w-]+)$/.exec(rest);
       if (lesson !== null) return lessonResponse(c, lesson[1], url.searchParams.get("view"));
