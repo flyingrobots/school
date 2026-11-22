@@ -57,7 +57,7 @@ beforeEach(async () => {
   delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_TOKEN;
   serverOut = Bun.spawn(["bun", join(import.meta.dir, "server.ts")], { env, stdout: "pipe", stderr: "pipe" });
   procs.push(serverOut);
-  await until(base + "/", (r) => r.ok);
+  await until(base + "/api/courses", (r) => r.ok);
 });
 afterEach(async () => {
   for (const p of procs.splice(0)) { p.kill(); await p.exited; }

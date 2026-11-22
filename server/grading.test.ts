@@ -60,7 +60,7 @@ beforeEach(async () => {
       SCHOOL_BRIDGE_URL: `http://127.0.0.1:${BRIDGE_PORT}`, SCHOOL_BRIDGE_TOKEN: KEY },
     stdout: "pipe", stderr: "pipe",
   });
-  await until(base + "/", (r) => r.ok);
+  await until(base + "/api/courses", (r) => r.ok);
 });
 afterEach(async () => {
   for (const p of [server, bridge]) { p?.kill(); await p?.exited; }
