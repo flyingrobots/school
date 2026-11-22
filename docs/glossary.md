@@ -2,79 +2,105 @@
 
 The vocabulary used across School's ADRs, RFCs and code. If a term here conflicts with older wording in [ADR 6](adr/0006-separate-framework-lessons-and-learner-state.md), [ADR 7](adr/0007-lesson-file-schema-in-graphql-compiled-by-wesley.md) or [RFC 1](rfc/0001-school.md), this file wins and those documents need a terminology pass.
 
-Entries marked **Unsettled** name a thing we have agreed exists without agreeing how it works. They are not decisions.
+**Where the idea came from.** School's teaching model was inspired by the `teach` skill in [mattpocock/skills](https://github.com/mattpocock/skills). School is not a fork or an extension of it: we write our own skill, for our own framework, and it works differently in almost every detail. What carries over is the principle — that teaching should be grounded in a stated mission, built on high-trust sources, practised through tight feedback loops, and aimed just past what the learner can already do. School then adds what that skill has no notion of: **courses**, **quizzes**, **exams**, and a **server** that records what actually happened.
 
-> Not to be confused with `reference/glossary.html`, which is AIΩN subject matter and is course content, not project vocabulary.
+Entries are tagged:
 
-## The three layers
+- *model* — part of the teaching model, in the lineage of that original idea.
+- *School* — something School adds.
+- *diverges* — a word the original used differently, and why ours differs.
+- **Unsettled** — we agree the thing exists, not how it works. Not a decision.
 
-**School**, or **the framework** — This repository: the server, the block model, the renderers, the shared assets and the docs. It is *lesson-agnostic*: it opens a course file, presents what is in it, records evidence, and knows nothing about any subject. Nothing in it names a particular course.
+> Not to be confused with a course's own `GLOSSARY.md`, which is subject matter. This file is project vocabulary.
 
-**Course** — The shareable unit, and the thing that has a git repository. A course bundles lessons, quizzes and exams into an ordered whole that someone can download and work through. A course with exactly one lesson is an ordinary course, not a special case. Courses are public by default; sharing them is the point.
+## The teaching loop
 
-**Learner state** — One person's private record: their answers, views, gradings, and position in a course. It lives outside the course repository and School never writes it there. Whether it is itself a private git repository or a single local file is the learner's configuration choice.
+**Mission** *(model)* — Why *one particular learner* is studying something: the concrete real-world goal, what success looks like, their constraints. Every teaching decision traces back to it. A mission is about the learner, so it is private and is not part of a course.
 
-## Course anatomy
+**Objectives** *(School)* — What a *course* claims to teach, declared by its author. The counterpart to a mission: objectives are about the subject and are shared, a mission is about one person and is not. A lesson is generated from where the two overlap.
 
-**Course repository** — The git repository holding one course. It has its own history, authors and release cadence, independent of School's. It contains course source, not learner state.
+**Zone of proximal development** *(model)* — The band just past what the learner can already do, where teaching lands best. Computed from their learning records, not guessed.
 
-**Course source** — The authored build materials in a course repository: lesson text, question banks, diagrams, source documents, and whatever else the author works in. School never reads course source.
+**Knowledge, Skills, Wisdom** *(model)* — The three-part split School borrows from the original skill's philosophy. Knowledge is captured from high-trust resources, never from an agent's parametric memory. Skills are built by interactive practice with a tight feedback loop. Wisdom comes from real interaction with other practitioners, which is why resources list communities and not only reading.
 
-**Course compiler** — Whatever turns course source into a course file. **Each course may have its own**, written in any language, with any dependencies. The framework does not supply it and does not care how it works. The only contract is that its output conforms to the course schema.
+**Fluency strength** and **storage strength** *(model)* — Retrieving something right now, versus still knowing it months later. Fluency is the more convincing of the two and the less valuable: answering correctly today predicts very little about next month. Storage strength is the goal, and it is built by making practice harder in useful ways — retrieval practice, spacing and interleaving.
 
-**Course file** — The compiled artifact School consumes: one file, produced by a course compiler, conforming to the course schema. This is the *only* interface between a course and the framework, which is what keeps the framework agnostic. **Unsettled:** whether it is JSON or a binary encoding, and whether one file holds a whole course or one file holds each lesson.
+**Learning record** *(model)* — A short numbered note in the learner's own store recording that something is now genuinely understood, or was corrected, or was disclosed as prior knowledge — and why that changes what to teach next. The teaching equivalent of an ADR. Evidence, not a session log. Private.
 
-**Course schema** — The declared, versioned definition of what a valid course file is. Held in this repository, because the framework owns the format. **Unsettled:** whether it is declared in GraphQL SDL compiled by Wesley (ADR 7) or as JSON Schema, and whether Wesley earns its cost at all.
+**Reference document** *(model)* — A compressed, durable cheat sheet: the distilled essence of what a lesson taught, built for quick re-reading. The original skill is explicit that *these* are what a learner returns to, while lessons are not — which is what makes reference documents the durable content of a course.
 
-**Format version** — The identifier of which course schema a course file was built against, recorded inside the file. Lets School reject a file it cannot read and say why. Under ADR 7 this is Wesley's schema hash, computed from the lowered schema rather than the file's bytes.
+**Resources** *(model)* — The curated, annotated set of high-trust sources for a subject, split into Knowledge and Wisdom (communities). Part of a course.
 
-**Asset** — A binary a lesson needs that is not itself text: an image, audio, video, a PDF. Referenced from the course file by path or identifier rather than embedded, so the course file stays text and stays diffable.
+**Notes** *(model)* — How this learner wants to be taught: their stated preferences. Private.
 
-## Content units
+**Component** *(model)* — A reusable asset shared across lessons: a stylesheet, a quiz widget, a simulator, a diagram helper. Reuse is the default rather than the exception. A shared stylesheet is the first component any course needs, so that its lessons read as one coherent course rather than a set of unrelated pages.
 
-**Lesson** — One teaching unit inside a course: short, numbered, teaching a single skill. A lesson is a unit of content, not a repository.
+## Lessons
 
-**Block** — The smallest addressable piece of content, with a stable `id` and a type. Current types: `page`, `section`, `prose`, `card`, `quote`, `aside`, `quiz`, `explain`, `nest`. A block may be reused by reference (`{ "ref": id }`) rather than copied, so one activity can appear in several places while keeping one history.
+**Lesson** *(diverges)* — A declared unit in a course's sequence: what it teaches, which materials it draws on, and which assessments attach to it. In the `teach` skill a "lesson" is the generated HTML file the learner reads; we split the word because a course must declare *lesson 1, lesson 2, lesson 3* while the page each learner sees is made for them.
 
-**Quiz block** — A `quiz`-typed block *inside* a lesson: inline practice, answered as you read. Distinct from a **quiz** below. These are two different things and the old wording conflated them.
+**Lesson rendering** *(School)* — The actual page a specific learner receives for a specific lesson at a specific moment, generated from that lesson's declared materials plus that learner's state. It is disposable and is not shipped in the course. It is kept as a snapshot so old answers stay interpretable. A rendering should be beautiful and readable, cite its claims, recommend one primary source, and remind the learner that the agent is their teacher and can be asked follow-ups.
 
-**Quiz** — An assessment that is its own item in the sequence, covering part of a lesson or one whole lesson. Sits between lessons rather than inside one.
+**Block** *(model)* — The smallest addressable piece of content, with a stable `id` and a type: `page`, `section`, `prose`, `card`, `quote`, `aside`, `quiz`, `explain`, `nest`. A block can be reused by reference (`{ "ref": id }`) rather than copied, so one activity keeps one history across several appearances.
 
-**Exam** — An assessment covering a bundle of several lessons. A course may have one or more, spaced through the sequence.
+**Quiz block** *(model, clarified)* — A `quiz`-typed block *inside* a lesson rendering: inline practice, answered while reading. Not the same as a **quiz** below.
 
-**Assessment** — Quizzes and exams together, when the distinction does not matter. **Unsettled:** whether a quiz and an exam differ in anything but scope — for example whether exams are closed-book, timed, or gate progress.
+## Courses
 
-**Sequence** — The order in which a course presents its lessons, quizzes and exams: lesson 1, its quiz, lesson 2, its quiz, an exam over lessons 1–2, and so on. The sequence belongs to the course and is public. Where the learner *is* in it is learner state and is private. **Unsettled:** whether the sequence is strict, whether an assessment must be passed to advance, and how a fixed sequence coexists with the teacher's adaptive choice of review material (RFC 1).
+**Course** *(School)* — The shareable unit, and the thing that has a git repository. A course declares its objectives, its sequence, its lessons, its quizzes and exams, its reference documents, its resources, its glossary and its components. It does **not** contain lesson renderings or anyone's learner state. A course with one lesson is an ordinary course.
 
-## Learner evidence
+**Course repository** *(School)* — The git repository holding one course, with its own history, authors and release cadence, independent of School's.
 
-These are the identities the [learning record contract](rfc/0001-school.md#the-learning-record-contract) requires. They are summarised here; the contract is authoritative.
+**Sequence** *(School)* — The order a course presents its lessons, quizzes and exams: lesson 1, its quiz, lesson 2, its quiz, an exam over lessons 1–2, and so on. The sequence belongs to the course and is public. **Unsettled:** whether it is strict, whether an assessment must be passed to advance, and how a declared sequence coexists with the agent's adaptive choice of review material.
 
-**Encounter** — One occasion of being shown content: which lesson or assessment, which view, which content snapshot, and when. Created by the server when a page is served.
+**Quiz** *(School)* — An assessment that is its own item in the sequence, covering part of a lesson or one whole lesson.
 
-**Submission** — One answer the learner gave, identified by a client-generated UUID so that a retransmission is not mistaken for a second attempt.
+**Exam** *(School)* — An assessment covering several lessons, spaced through the sequence. A course may have more than one. **Unsettled:** whether an exam differs from a quiz in anything beyond scope — timing, closed-book, or gating progress.
 
-**Grading** — One judgment of one submission. A submission may have several gradings over time; earlier ones are never overwritten.
+**Assessment** *(School)* — Quizzes and exams together, when the distinction does not matter.
 
-**Snapshot** — The retained, resolved content exactly as displayed for an encounter, stored by hash. Lets an old answer still be interpreted after the course is revised.
+**Declared for measurement, generated for practice** *(School)* — The governing rule for the two kinds of question. A quiz block is practice, so it may be generated for one learner. A quiz or exam is measurement, so its items are declared in the course and are the same for everyone; otherwise results do not mean the same thing for two learners, or for one learner twice.
 
-**First try** — The first response to a block within one encounter, decided by the server rather than the browser. Full history is kept, so first-ever performance can also be derived.
+**Course file** *(School)* — **Unsettled**, and possibly unnecessary. If a course is played by an agent reading the repository, the server needs only the machine-readable parts (sequence, assessment items, block structure) and a compiled bundle may be redundant. See the open decisions in RFC 1.
 
-**Position** — Where the learner has reached in a course's sequence. Private state.
+**Course schema**, **format version** *(School)* — **Unsettled**, and downstream of whether a course file exists at all. [ADR 7](adr/0007-lesson-file-schema-in-graphql-compiled-by-wesley.md) proposes GraphQL SDL compiled by Wesley; JSON Schema is the alternative; neither is settled.
 
-## Runtime
+## The learner's side
 
-**View** — A rendering of the same content for a different purpose: `web` (interactive, records evidence), `slides` (presentation, records nothing), `epub` (a frozen export, later). A view may omit a block but never changes its data.
+**Learner state** *(School)* — Everything about one person: their mission, notes, learning records, submissions, gradings, position, and the snapshots of what they were shown. Private, stored outside every course repository, and never written into one.
 
-**Mount** — A named directory the server will serve files from, configured rather than compiled in. `assets` is the only mount the framework itself supplies.
+**Position** *(School)* — Where a learner has reached in a course's sequence.
 
-**Sidecar** — **Reserved term.** The LLM grading service: a process on the host, outside Docker, that grades written explanations. It is *not* a repository and has nothing to do with courses. Do not use "sidecar" for anything else.
+**Encounter** *(School)* — One occasion of being shown content: which lesson or assessment, which view, which snapshot, and when.
+
+**Submission** *(School)* — One answer a learner gave, identified by a client-generated UUID so a retransmission is not counted as a second attempt.
+
+**Grading** *(School)* — One judgment of one submission. A submission may collect several over time; earlier ones are never overwritten.
+
+**Snapshot** *(School)* — The resolved content exactly as displayed for an encounter, stored by hash, so an answer stays interpretable after the course is revised. Required because lesson renderings are generated.
+
+**First try** *(School)* — The first response to a block within one encounter, decided by the server rather than the browser.
+
+## The framework
+
+**School**, or **the framework** *(School)* — This repository: the server, the block model, the renderers, the shared components and the docs. It is subject-agnostic. It renders lessons, records evidence, and runs assessments; it does not know what any course is about.
+
+**Server** *(School)* — The part that serves renderings and records evidence to SQLite. Its existence is the original reason School exists: the skill alone could not see the learner's quiz results.
+
+**View** *(School)* — A rendering of the same content for a different purpose: `web` (interactive, records evidence), `slides` (presentation, records nothing), `epub` (a frozen export, later). A view may omit a block but never changes its data.
+
+**The School skill** *(School)* — School's own agent-side companion to the framework, written for it rather than adapted from anything: it interviews the learner for a mission, decides what to teach next, authors courses, and generates lesson renderings. The framework is deterministic and the skill is generative; together they are the teacher. **Unsettled:** where the line between them falls, which is what [ADR 8](adr/0008-teach-authors-courses-through-the-framework.md) is about.
+
+**Mount** *(School)* — A named directory the server will serve files from, configured rather than compiled in.
+
+**Sidecar** *(School, reserved term)* — The LLM grading service: a host process, outside Docker, that grades written explanations. It is **not** a repository and has nothing to do with courses. Do not use "sidecar" for anything else.
 
 ## Retired wording
 
 | Old term | Use instead | Why |
 | --- | --- | --- |
-| lesson pack, pack | **course** | The repository and the shareable unit are the course. Lessons live inside it. |
-| lesson file | **course file** | The compiled artifact is a course, which contains lessons. |
+| lesson pack, pack | **course** | The repository and the shareable unit are the course. |
+| lesson file | **course file** (if it exists at all) | A course contains lessons, not the reverse. |
 | sidecar repository | **course repository** | "Sidecar" is reserved for the grading service. |
 | private content repository | **learner state** | Courses are public; only the learner's record is private. |
+| curriculum | **objectives** + **sequence** | Two separable things; naming them apart avoids the earlier confusion. |
