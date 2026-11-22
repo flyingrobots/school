@@ -103,7 +103,7 @@ Entries are tagged:
 
 **Mount** *(School)* — A named directory the server will serve files from, configured rather than compiled in.
 
-**Sidecar** *(School, reserved term)* — The LLM grading service: a host process, outside Docker, that grades written explanations. It is **not** a repository and has nothing to do with courses. Do not use "sidecar" for anything else.
+**Sidecar** *(School, reserved term)* — The server's bridge to an agent: a host process, outside Docker, that the server calls for the two jobs needing a model — grading **subjective items** and **preparing** future lesson renderings ([ADR 8](adr/0008-the-school-skill-and-who-invokes-whom.md)). Originally scoped to grading alone. It is **not** a repository and has nothing to do with course distribution. Do not use "sidecar" for anything else.
 
 ## Retired wording
 
