@@ -30,6 +30,11 @@ Practical notes for anyone — human or agent — changing the framework.
   (and the bridge's `PUT /config` behind it) takes `{ "agents": [{ "name", "enabled" }] }` naming
   every declared agent once, and nothing else; `server/agents.ts` rebuilds the body from those
   fields so no other field can reach the bridge. Do not add a way to write a command over HTTP.
+- The bridge token is only ever sent to the address it was saved with. `POST /api/settings/bridge`
+  with a new `url` drops a saved token unless the same request gives one, and is refused (409)
+  when the token comes from `SCHOOL_BRIDGE_TOKEN`. Every request carrying the token uses
+  `redirect: "error"`, because fetch keeps the Authorization header across a redirect. A new
+  call to the bridge must do the same.
 - Tests are `bun test` from the repository root. No `package.json`, no build step (ADR 2).
 - The bridge (`bridge/`) is a separate host process, deliberately outside the Docker image
   and its allowlist. It has no dependencies beyond Bun and is started by hand:
