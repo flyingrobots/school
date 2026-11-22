@@ -4,6 +4,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { startSchool, timeout, type Started } from "./testing/processes.ts";
 
 // Every test gets its own server, state and port, and sets up what it needs: none depends on
 // another having run first.
@@ -12,7 +13,7 @@ let courseDir = "";
 let state = "";
 let PORT = 0;
 let base = "";
-let server: ReturnType<typeof Bun.spawn> | null = null;
+let server: Started | null = null;
 
 const quiz = (id: string) => ({
   type: "quiz", id, q: `Question ${id}?`, why: "Because.",
@@ -20,21 +21,11 @@ const quiz = (id: string) => ({
 });
 
 async function start(): Promise<void> {
-  server = Bun.spawn(["bun", join(import.meta.dir, "server.ts")], {
-    env: { ...process.env, SCHOOL_COURSE: courseDir, SCHOOL_STATE: state, PORT: String(PORT), HOST: "127.0.0.1" },
-    stdout: "ignore", stderr: "ignore",
-  });
-  for (let i = 0; i < 100; i++) {
-    try {
-      if ((await fetch(base + "/api/courses")).ok) return;
-    } catch {}
-    await Bun.sleep(50);
-  }
-  throw new Error("server did not start");
+  server = await startSchool({ ...process.env, SCHOOL_COURSE: courseDir, SCHOOL_STATE: state, PORT: String(PORT), HOST: "127.0.0.1" });
 }
 async function stop(): Promise<void> {
-  server?.kill("SIGKILL"); // no graceful shutdown: a committed answer must survive a hard kill
-  await server?.exited;
+  server?.proc.kill("SIGKILL"); // no graceful shutdown: a committed answer must survive a hard kill
+  await server?.proc.exited;
   server = null;
 }
 
@@ -48,7 +39,7 @@ beforeEach(async () => {
   writeFileSync(join(courseDir, "lessons", "0001.json"),
     JSON.stringify({ type: "page", id: "l1", title: "One", subtitle: "", children: [quiz("q1"), quiz("q2")] }));
   await start();
-});
+}, timeout(1));
 afterEach(async () => {
   await stop();
   rmSync(root, { recursive: true, force: true });
@@ -115,7 +106,7 @@ test("the server's restart, even a hard kill, loses no progress", async () => {
   const lesson = await page();
   expect(encounterOf(lesson)).toBe(before[0]!.encounter_id as string);
   expect(lesson.answers?.some((a) => a.blockId === "q1" && a.correct)).toBe(true);
-});
+}, timeout(1));
 
 test("the course shows progress from the database", async () => {
   await wrongThenRight();
