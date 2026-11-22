@@ -293,7 +293,15 @@ Bun.serve({
       if (body.url !== undefined) {
         if (now.urlFrom === "environment") return json({ status: "locked", error: "SCHOOL_BRIDGE_URL is set in the environment, which overrides this setting" }, 409);
         if (typeof body.url !== "string" || (body.url !== "" && !validUrl(body.url))) return json({ status: "invalid", error: "the URL must start with http:// or https://" }, 400);
-        next.url = body.url.replace(/\/+$/, "");
+        const url = body.url.replace(/\/+$/, "");
+        // School has no login, so whoever posts a URL may not be the learner. The token is only
+        // ever sent to the URL it was saved with (flyingrobots/school#60): a token from the
+        // environment locks the URL, and a new URL drops a saved token until one is given again.
+        if (url !== (saved.bridge?.url ?? "")) {
+          if (now.tokenFrom === "environment") return json({ status: "locked", error: "SCHOOL_BRIDGE_TOKEN is set in the environment, so the bridge URL can only be changed there too: set SCHOOL_BRIDGE_URL beside it" }, 409);
+          delete next.token;
+        }
+        next.url = url;
       }
       let generated: string | undefined;
       if (body.generate === true || body.token !== undefined) {
@@ -307,9 +315,12 @@ Bun.serve({
           return json({ status: "invalid", error: "the token must be at least 16 characters, with no spaces" }, 400);
         }
       }
-      saveSettings(SETTINGS, { ...saved, bridge: next });
-      // A generated token is returned once, so the learner can start the bridge with it. Never again.
-      return json({ status: "saved", tokenSet: Boolean(next.token), ...(generated === undefined ? {} : { generated }) });
+      const after = { ...saved, bridge: next };
+      saveSettings(SETTINGS, after);
+      // tokenSet is the token in effect, from the environment or settings, as the GET reports it
+      // (flyingrobots/school#61). A generated token is returned once, so the learner can start
+      // the bridge with it. Never again.
+      return json({ status: "saved", tokenSet: effectiveBridge(process.env, after).token !== null, ...(generated === undefined ? {} : { generated }) });
     }
     // Agents are declared, commands and all, only in the bridge's file on its host. From here
     // they can be reordered, switched on and off, and tested; only those fields reach the bridge.

@@ -3,11 +3,12 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { startSchool, timeout, type Started } from "./testing/processes.ts";
 
 const root = mkdtempSync(join(tmpdir(), "school-harden-"));
 const PORT = 20000 + Math.floor(Math.random() * 20000);
 const base = `http://127.0.0.1:${PORT}`;
-let server: ReturnType<typeof Bun.spawn> | null = null;
+let server: Started | null = null;
 
 const quiz = { type: "quiz", id: "q1", q: "<img src=x onerror=alert(1)> Which?", why: "Because & so.",
   choices: [{ id: "wrong", text: "Wrong", correct: false }, { id: "right", text: "Right", correct: true }] };
@@ -40,21 +41,13 @@ beforeAll(async () => {
   writeFileSync(join(root, "broken", "lessons", "0001.json"),
     JSON.stringify({ type: "page", id: "b1", title: "B", subtitle: "", children: [{ ref: "<x>&\"" }] }));
 
-  server = Bun.spawn(["bun", join(import.meta.dir, "server.ts")], {
-    env: { ...process.env, SCHOOL_COURSES: `ok=${join(root, "ok")},empty=${join(root, "empty")},broken=${join(root, "broken")},linked=${join(root, "linked")}`,
+  server = await startSchool({ ...process.env, SCHOOL_COURSES: `ok=${join(root, "ok")},empty=${join(root, "empty")},broken=${join(root, "broken")},linked=${join(root, "linked")}`,
       // No built app, as on CI: the API and path checks must not depend on web/dist existing.
-      SCHOOL_STATE: join(root, "state"), SCHOOL_WEB: join(root, "no-web"), PORT: String(PORT), HOST: "127.0.0.1" },
-    stdout: "ignore", stderr: "ignore",
-  });
-  for (let i = 0; i < 100; i++) {
-    try { if ((await fetch(base + "/api/courses")).ok) return; } catch {}
-    await Bun.sleep(50);
-  }
-  throw new Error("server did not start");
-});
+      SCHOOL_STATE: join(root, "state"), SCHOOL_WEB: join(root, "no-web"), PORT: String(PORT), HOST: "127.0.0.1" });
+}, timeout(1));
 afterAll(async () => {
-  server?.kill();
-  await server?.exited;
+  server?.proc.kill();
+  await server?.proc.exited;
   rmSync(root, { recursive: true, force: true });
 });
 

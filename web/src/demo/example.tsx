@@ -1,7 +1,7 @@
 // Stands in for shadcn's `@/components/example` frame (see README.md): the registry examples import
 // Example and ExampleWrapper from it, and this version shows one example at a time.
 import * as React from "react"
-import { cn } from "@/lib/utils"
+import { cn } from "cn"
 
 type Variants = {
   index: number
@@ -22,13 +22,13 @@ function Example({
   title,
   children,
   className,
-  containerClassName: _containerClassName,
+  containerClassName,
   ...props
 }: React.ComponentProps<"div"> & { title?: string; containerClassName?: string }) {
   const { onTitle } = React.useContext(VariantContext)
   React.useLayoutEffect(() => onTitle(title), [title, onTitle])
   return (
-    <div data-slot="example" className="flex w-full max-w-3xl min-w-0 flex-col" {...props}>
+    <div data-slot="example" className={cn("flex w-full max-w-3xl min-w-0 flex-col", containerClassName)} {...props}>
       <div
         data-slot="example-content"
         className={cn(

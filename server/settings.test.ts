@@ -6,6 +6,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, st
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { effectiveBridge } from "./settings.ts";
+import { startBridge, startSchool, timeout, type Started } from "./testing/processes.ts";
 
 // Every test gets its own server, bridge, state and ports, and sets up what it needs: none
 // depends on another having run first.
@@ -15,22 +16,14 @@ let BRIDGE_PORT = 0;
 let base = "";
 let BRIDGE_URL = "";
 const TOKEN = "settings-token-NEVER-ECHO-ME";
-const procs: ReturnType<typeof Bun.spawn>[] = [];
-let serverOut: ReturnType<typeof Bun.spawn> | null = null;
+const procs: Started[] = [];
+let serverOut: Started | null = null;
 
 const verdict = {
   insufficient_evidence: false,
   fidelity: { verdict: "meets", note: "n" }, completeness: { verdict: "meets", note: "n" }, accessibility: { verdict: "meets", note: "n" },
   contradictions: [], summary: "Good.",
 };
-
-async function until(url: string, ok: (r: Response) => boolean) {
-  for (let i = 0; i < 100; i++) {
-    try { if (ok(await fetch(url))) return; } catch {}
-    await Bun.sleep(50);
-  }
-  throw new Error(`${url} did not come up`);
-}
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), "school-settings-"));
@@ -46,22 +39,16 @@ beforeEach(async () => {
     type: "page", id: "l1", title: "One", subtitle: "", children: [{ type: "explain", id: "e1", prompt: "Explain.", model: "M", sources: [] }],
   }));
   // A bridge with no configuration file yet: the settings page is how it gets one.
-  const bridge = Bun.spawn(["bun", join(import.meta.dir, "..", "bridge", "bridge.ts")], {
-    env: { ...process.env, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: join(root, "bridge", "bridge.json"), SCHOOL_BRIDGE_PORT: String(BRIDGE_PORT) },
-    stdout: "ignore", stderr: "ignore",
-  });
-  procs.push(bridge);
-  await until(`${BRIDGE_URL}/health`, (r) => r.status === 401);
+  procs.push(await startBridge({ ...process.env, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: join(root, "bridge", "bridge.json"), SCHOOL_BRIDGE_PORT: String(BRIDGE_PORT) }));
   // A server with no bridge configured at all, as the learner's was.
   const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), PORT: String(PORT), HOST: "127.0.0.1" };
   delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_URL;
   delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_TOKEN;
-  serverOut = Bun.spawn(["bun", join(import.meta.dir, "server.ts")], { env, stdout: "pipe", stderr: "pipe" });
+  serverOut = await startSchool(env);
   procs.push(serverOut);
-  await until(base + "/api/courses", (r) => r.ok);
-});
+}, timeout(2));
 afterEach(async () => {
-  for (const p of procs.splice(0)) { p.kill(); await p.exited; }
+  for (const p of procs.splice(0)) { p.proc.kill(); await p.proc.exited; }
   serverOut = null;
   rmSync(root, { recursive: true, force: true });
 });
@@ -203,9 +190,9 @@ test("the token appears in no page, no API response and no server output", async
   everything.push(await text(await post("/api/grade", { submissionId: id })));
   expect(everything.some((b) => b.includes('"succeeded"'))).toBe(true); // the token was really used
   for (const body of everything) expect(body).not.toContain(TOKEN);
-  serverOut!.kill();
-  await serverOut!.exited;
-  const out = (await new Response(serverOut!.stdout as ReadableStream).text()) + (await new Response(serverOut!.stderr as ReadableStream).text());
+  serverOut!.proc.kill();
+  const { stdout, stderr } = await serverOut!.output();
+  const out = stdout + stderr;
   expect(out).not.toContain(TOKEN);
 });
 
@@ -216,3 +203,113 @@ test("environment variables override saved settings, and the page says which", (
     .toMatchObject({ url: "http://env:2", urlFrom: "environment", token: "env-token-0123456789ab", tokenFrom: "environment" });
   expect(effectiveBridge({}, {})).toMatchObject({ url: null, token: null, urlFrom: "none", tokenFrom: "none" });
 });
+
+// flyingrobots/school#60: anyone who can reach School can post a bridge URL. The token must
+// never follow it there. A listener stands in for an attacker's address and records the
+// Authorization header of every request it receives, whatever the path.
+type Listener = { url: string; seen: (string | null)[]; stop: () => void };
+function listener(reply: (req: Request) => Response = () => Response.json({ status: "ok", agents: [], raw: { evil: true } })): Listener {
+  const seen: (string | null)[] = [];
+  const s = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(req) { seen.push(req.headers.get("authorization")); return reply(req); } });
+  return { url: `http://127.0.0.1:${s.port}`, seen, stop: () => s.stop(true) };
+}
+const listeners: Listener[] = [];
+afterEach(() => { for (const l of listeners.splice(0)) l.stop(); });
+const listen = (reply?: (req: Request) => Response) => { const l = listener(reply); listeners.push(l); return l; };
+
+/** Every route that can reach the bridge, exercised once, so a leak anywhere shows up in a listener. */
+async function touchEverything(at: string) {
+  const g = (p: string) => fetch(at + p);
+  const p = (path: string, body: unknown) => fetch(at + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const replies = [await g("/api/settings/status"), await g("/api/settings/agents"), await p("/api/settings/agents", { agents: [{ name: "fake" }] }), await p("/api/settings/agents/test", { agent: "fake" })];
+  const e = JSON.parse(await (await g("/api/courses/c/lessons/l1")).text()).encounterId;
+  const id = crypto.randomUUID();
+  await p("/api/explanation", { submissionId: id, encounterId: e, blockId: "e1", text: "Because.", ms: 1 });
+  replies.push(await p("/api/grade", { submissionId: id }));
+  return Promise.all(replies.map((r) => r.text()));
+}
+
+/** A second server, with the bridge settings given in its environment. */
+async function serverWith(extra: Record<string, string>) {
+  const port = PORT + 2;
+  const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state-env"), PORT: String(port), HOST: "127.0.0.1", ...extra };
+  for (const k of ["SCHOOL_BRIDGE_URL", "SCHOOL_BRIDGE_TOKEN"]) if (!(k in extra)) delete (env as Record<string, string | undefined>)[k];
+  const s = await startSchool(env);
+  procs.push(s);
+  return s.url;
+}
+
+test("with the token in the environment, the URL cannot be changed from the page", async () => {
+  const evil = listen();
+  const at = await serverWith({ SCHOOL_BRIDGE_TOKEN: TOKEN });
+  const r = await fetch(at + "/api/settings/bridge", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: evil.url }) });
+  expect(r.status).toBe(409);
+  const body = await r.json();
+  expect(body.status).toBe("locked");
+  expect(body.error).toContain("SCHOOL_BRIDGE_TOKEN");
+  expect(await (await fetch(at + "/api/settings/bridge")).json()).toMatchObject({ url: null, tokenFrom: "environment" });
+  await touchEverything(at);
+  expect(evil.seen).toEqual([]);
+}, timeout(1));
+
+test("changing the URL clears the saved token, so no request carries it to the new address", async () => {
+  declare();
+  await connect();
+  const evil = listen();
+  const moved = await post("/api/settings/bridge", { url: evil.url });
+  expect(moved.status).toBe(200);
+  expect(await moved.json()).toMatchObject({ status: "saved", tokenSet: false });
+  expect(JSON.parse(readFileSync(join(root, "state", "settings.json"), "utf8")).bridge).toEqual({ url: evil.url });
+  expect(await (await fetch(base + "/api/settings/bridge")).json()).toEqual({ url: evil.url, urlFrom: "settings", tokenSet: false, tokenFrom: "none" });
+  const replies = await touchEverything(base);
+  expect(evil.seen).toEqual([]);
+  // Nothing the address would have said reaches the page either.
+  for (const r of replies) expect(r).not.toContain("evil");
+  // Moving back does not bring the old token back: it has to be entered again.
+  expect(await (await post("/api/settings/bridge", { url: BRIDGE_URL })).json()).toMatchObject({ tokenSet: false });
+  expect(await status()).toMatchObject({ connection: "none" });
+  await connect();
+  expect(await status()).toMatchObject({ connection: "ok" });
+});
+
+test("a token saved together with a new URL goes to that URL, and only a new token does", async () => {
+  await connect();
+  const other = listen();
+  const fresh = "a-different-token-0123456789";
+  expect((await post("/api/settings/bridge", { url: other.url, token: fresh })).status).toBe(200);
+  await touchEverything(base);
+  expect(other.seen.length).toBeGreaterThan(0);
+  expect(other.seen.every((h) => h === `Bearer ${fresh}`)).toBe(true);
+  // The same goes for a generated one.
+  const gen = listen();
+  const g = await (await post("/api/settings/bridge", { url: gen.url, generate: true })).json();
+  await touchEverything(base);
+  expect(gen.seen.length).toBeGreaterThan(0);
+  expect(gen.seen.every((h) => h === `Bearer ${g.generated}`)).toBe(true);
+  // Saving the same URL again, written with a trailing slash, is not a change.
+  expect(await (await post("/api/settings/bridge", { url: gen.url + "/" })).json()).toMatchObject({ tokenSet: true });
+});
+
+test("a bridge that redirects does not take the token with it", async () => {
+  const evil = listen();
+  const redirector = listen((req) => new Response(null, { status: 307, headers: { location: evil.url + new URL(req.url).pathname } }));
+  expect((await post("/api/settings/bridge", { url: redirector.url, token: TOKEN })).status).toBe(200);
+  await touchEverything(base);
+  expect(redirector.seen.length).toBeGreaterThan(0);
+  expect(evil.seen).toEqual([]);
+});
+
+// flyingrobots/school#61: the reply to saving the bridge reports the token in effect, from the
+// environment as much as from settings, as GET /api/settings/bridge does, and never the token.
+test("with the token in the environment, saving the same URL reports the token as set", async () => {
+  const saved = listen();
+  mkdirSync(join(root, "state-env"), { recursive: true });
+  writeFileSync(join(root, "state-env", "settings.json"), JSON.stringify({ bridge: { url: saved.url } }));
+  const at = await serverWith({ SCHOOL_BRIDGE_TOKEN: TOKEN });
+  const r = await fetch(at + "/api/settings/bridge", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: saved.url }) });
+  expect(r.status).toBe(200);
+  const text = await r.text();
+  expect(text).not.toContain(TOKEN);
+  expect(JSON.parse(text)).toEqual({ status: "saved", tokenSet: true });
+  expect(await (await fetch(at + "/api/settings/bridge")).json()).toMatchObject({ url: saved.url, tokenSet: true, tokenFrom: "environment" });
+}, timeout(1));

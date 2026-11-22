@@ -1,5 +1,3 @@
-"use client"
-
 import * as React from "react"
 import { REGEXP_ONLY_DIGITS, REGEXP_ONLY_DIGITS_AND_CHARS } from "input-otp"
 

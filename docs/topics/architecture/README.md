@@ -84,7 +84,7 @@ JSON API.
 | POST | `/api/grade` | One grading attempt through the bridge |
 | POST | `/api/view` | Records a view |
 | GET | `/api/settings/status` | Whether the bridge answers |
-| GET, POST | `/api/settings/bridge` | The bridge address and token; the token is never returned except once when generated |
+| GET, POST | `/api/settings/bridge` | The bridge address and token; the token is never returned except once when generated. A new address clears a saved token, and is refused (409) while the token comes from the environment |
 | GET, POST | `/api/settings/agents` | The bridge's agents as its file declares them; a POST only reorders them and switches them on or off |
 | POST | `/api/settings/agents/test` | Runs one declared agent for real |
 | GET | `/courses/:c/reference/*`, `/<mount>/*` | Files, contained in their folder after resolving symlinks |
@@ -239,7 +239,9 @@ gap in handling a malformed reply.
 ## The web app
 
 `web/` is a stock shadcn/ui app on Vite and React, themed from theme-book through the
-`@flyingrobots` registry. A test enforces that its stylesheet holds only stock shadcn tokens. What
+`@flyingrobots` registry. A test enforces that its stylesheet holds only stock shadcn tokens, and
+another that every component in `web/src/components/ui/` hashes to a fresh `shadcn add`
+(`web/test/fixtures/README.md` says how to regenerate the hashes). What
 exists: the theme, a light, dark and system toggle, a component sandbox at `/demo`, and three
 homepage mockups. School's pages are not built yet
 ([flyingrobots/school#15](https://github.com/flyingrobots/school/issues/15)). ADR 9 describes a
