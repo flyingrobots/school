@@ -1,16 +1,25 @@
 // School progress server: renders block lessons and records quiz answers to SQLite.
 import { Database } from "bun:sqlite";
-import { join, normalize, sep } from "node:path";
+import { dirname, join, normalize, sep } from "node:path";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { BlockError, loadLibrary } from "./blocks.ts";
-import { isView, renderIndex, renderPage } from "./render.ts";
+import { isView, renderIndex, renderPage, renderReference } from "./render.ts";
 import { migrate, snapshot } from "./migrate.ts";
+import { ConfigError, mountTable, parseConfig } from "./config.ts";
 
-const ROOT = process.env.SCHOOL_ROOT ?? join(import.meta.dir, "..");
-const AION = process.env.AION_ROOT ?? join(process.env.HOME ?? "/", "git", "aion");
-const DB_PATH = process.env.DB_PATH ?? join(ROOT, "progress", "progress.db");
-const LESSONS = join(ROOT, "lessons");
-const HOST = process.env.HOST ?? "127.0.0.1";
-const PORT = Number(process.env.PORT ?? 4747);
+let config;
+try {
+  config = parseConfig(process.env, join(import.meta.dir, ".."));
+} catch (e) {
+  if (e instanceof ConfigError) {
+    console.error(`school: ${e.message}`);
+    process.exit(2);
+  }
+  throw e;
+}
+const LESSONS = config.course === null ? null : join(config.course, "lessons");
+const DB_PATH = config.dbPath;
+mkdirSync(dirname(DB_PATH), { recursive: true });
 
 const db = new Database(DB_PATH, { create: true, strict: true });
 db.exec("PRAGMA journal_mode = WAL;");
@@ -46,8 +55,15 @@ function parseLesson(v: unknown): string | null {
   return isStr(o.lesson, 200) ? o.lesson : null;
 }
 
-// Static files come only from these folders; lessons/, progress/ and server/ are not served raw.
-const MOUNTS: Record<string, string> = { reference: join(ROOT, "reference"), assets: join(ROOT, "assets"), aion: AION };
+// Static files come only from configured mounts; lesson sources and state are never served raw.
+const MOUNTS: Record<string, string> = mountTable(config);
+
+/** The course's reference documents, if it has any. Discovered, not assumed. */
+function referenceDocs(): string[] {
+  const dir = MOUNTS.reference;
+  if (dir === undefined || !existsSync(dir)) return [];
+  return readdirSync(dir).filter((f) => f.endsWith(".html")).sort();
+}
 
 async function serveFile(pathname: string): Promise<Response> {
   const [, top = "", ...rest] = pathname.split("/");
@@ -64,9 +80,13 @@ const html = (body: string, status = 200) => new Response(body, { status, header
 // Lessons are reloaded on every request so edits show up without a restart.
 function lessonResponse(id: string | undefined, viewParam: string | null): Response {
   const view = isView(viewParam) ? viewParam : "web";
+  if (LESSONS === null) {
+    return html(renderIndex([], [], "No course is configured. Set SCHOOL_COURSE to a course directory."), id === undefined ? 200 : 404);
+  }
   try {
+    const refs = referenceDocs();
     const { pages } = loadLibrary(LESSONS);
-    if (id === undefined) return html(renderIndex(pages));
+    if (id === undefined) return html(renderIndex(pages, refs));
     const i = pages.findIndex((p) => p.id === id);
     const page = pages[i];
     if (page === undefined) return new Response("Not found", { status: 404 });
@@ -75,7 +95,7 @@ function lessonResponse(id: string | undefined, viewParam: string | null): Respo
     const next = pages[i + 1];
     if (prev !== undefined) nav.prev = prev;
     if (next !== undefined) nav.next = next;
-    return html(renderPage(page, view, nav));
+    return html(renderPage(page, view, nav, refs.length > 0));
   } catch (e) {
     if (e instanceof BlockError) return html(`<pre>Lesson error: ${e.message.replace(/</g, "&lt;")}</pre>`, 500);
     throw e;
@@ -91,8 +111,8 @@ async function readJson(req: Request): Promise<unknown> {
 }
 
 Bun.serve({
-  hostname: HOST,
-  port: PORT,
+  hostname: config.host,
+  port: config.port,
   async fetch(req) {
     const url = new URL(req.url);
     const { pathname } = url;
@@ -112,10 +132,12 @@ Bun.serve({
     }
     if (req.method !== "GET") return new Response("Method not allowed", { status: 405 });
     if (pathname === "/") return lessonResponse(undefined, null);
+    if (pathname === "/reference" || pathname === "/reference/") return html(renderReference(referenceDocs()));
     const lesson = /^\/lessons\/([\w-]+)$/.exec(pathname);
     if (lesson !== null) return lessonResponse(lesson[1], url.searchParams.get("view"));
     return serveFile(pathname);
   },
 });
 
-console.log(`school: http://${HOST}:${PORT}  db=${DB_PATH}`);
+console.log(`school: http://${config.host}:${config.port}  course=${config.course ?? "(none)"}  state=${config.state}`);
+if (Object.keys(config.mounts).length > 0) console.log(`school: mounts ${Object.keys(config.mounts).map((n) => "/" + n).join(" ")}`);

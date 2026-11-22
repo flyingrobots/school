@@ -55,24 +55,26 @@ function shell(title: string, view: View, body: string): string {
 <body class="view-${view}">${body}<script src="/assets/quiz.js"></script>${js}</body></html>`;
 }
 
-function navLinks(page: Block, nav: Nav, view: View): string {
+function navLinks(page: Block, nav: Nav, view: View, hasReference: boolean): string {
   const link = (b: Block | undefined, label: string) => (b === undefined ? "" : ` · <a href="/lessons/${esc(b.id)}">${label}</a>`);
   const other: View = view === "web" ? "slides" : "web";
-  return `<nav class="course"><a href="/">Home</a>${link(nav.prev, "← Previous")}${link(nav.next, "Next →")} · <a href="/reference/glossary.html">Glossary</a> · <a href="/lessons/${esc(page.id)}?view=${other}">${other === "slides" ? "Present" : "Read"}</a></nav>`;
+  // No document name is assumed here: which reference material exists is the course's business.
+  const reference = hasReference ? ` · <a href="/reference">Reference</a>` : "";
+  return `<nav class="course"><a href="/">Home</a>${link(nav.prev, "← Previous")}${link(nav.next, "Next →")}${reference} · <a href="/lessons/${esc(page.id)}?view=${other}">${other === "slides" ? "Present" : "Read"}</a></nav>`;
 }
 
 const FOLLOW_UP = `<p class="aside">Anything unclear? Ask your teacher (the agent) a follow-up question. That's what it's for.</p>`;
 
-export function renderPage(page: Block, view: View, nav: Nav): string {
+export function renderPage(page: Block, view: View, nav: Nav, hasReference = false): string {
   if (page.type !== "page") throw new Error(`renderPage: ${page.id} is not a page`);
   const render = (b: Block): string => leaf(b, render);
   const header = `<h1>${esc(page.title)}</h1><p class="subtitle">${page.subtitle}</p>`;
   switch (view) {
     case "web":
-      return shell(page.title, view, `${navLinks(page, nav, view)}${header}${render(page)}${FOLLOW_UP}`);
+      return shell(page.title, view, `${navLinks(page, nav, view, hasReference)}${header}${render(page)}${FOLLOW_UP}`);
     case "slides": {
       const slides = [header, ...page.children.map(render), FOLLOW_UP];
-      return shell(page.title, view, `${navLinks(page, nav, view)}${slides.map((s) => `<section class="slide">${s}</section>`).join("")}`);
+      return shell(page.title, view, `${navLinks(page, nav, view, hasReference)}${slides.map((s) => `<section class="slide">${s}</section>`).join("")}`);
     }
     default: {
       const never: never = view;
@@ -81,9 +83,25 @@ export function renderPage(page: Block, view: View, nav: Nav): string {
   }
 }
 
-export function renderIndex(pages: Block[]): string {
+const title = (file: string) => file.replace(/\.html$/, "").replace(/^\d+[-_]?/, "").replace(/[-_]+/g, " ").trim() || file;
+
+export function renderIndex(pages: Block[], reference: string[] = [], notice?: string): string {
   const items = pages
     .map((p) => (p.type === "page" ? `<li><a href="/lessons/${esc(p.id)}">${esc(p.title)}</a> <span class="aside">${esc(p.id)}</span></li>` : ""))
     .join("");
-  return shell("School", "web", `<h1>School</h1><h2>Lessons</h2><ol>${items}</ol><h2>Reference</h2><ul><li><a href="/reference/glossary.html">Glossary</a></li></ul>`);
+  const lessons = items === "" ? `<p class="aside">No lessons yet.</p>` : `<ol>${items}</ol>`;
+  const refs = reference.length === 0 ? "" : `<h2>Reference</h2><ul>${referenceItems(reference)}</ul>`;
+  const head = notice === undefined ? "" : `<p class="aside">${esc(notice)}</p>`;
+  return shell("School", "web", `<h1>School</h1>${head}<h2>Lessons</h2>${lessons}${refs}`);
+}
+
+function referenceItems(reference: string[]): string {
+  return reference.map((f) => `<li><a href="/reference/${encodeURIComponent(f)}">${esc(title(f))}</a></li>`).join("");
+}
+
+export function renderReference(reference: string[]): string {
+  const body = reference.length === 0
+    ? `<p class="aside">This course has no reference documents.</p>`
+    : `<ul>${referenceItems(reference)}</ul>`;
+  return shell("Reference", "web", `<nav class="course"><a href="/">Home</a></nav><h1>Reference</h1>${body}`);
 }

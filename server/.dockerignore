@@ -3,3 +3,4 @@
 !blocks.ts
 !render.ts
 !migrate.ts
+!config.ts

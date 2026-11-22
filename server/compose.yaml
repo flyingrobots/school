@@ -4,9 +4,11 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:4747:4747"   # local only; tailscale serve publishes it to the tailnet
+    environment:
+      # Extra read-only source material this course cites, as name=path pairs.
+      SCHOOL_MOUNTS: "aion=/sources/aion"
     volumes:
-      - ../lessons:/school/lessons:ro
-      - ../reference:/school/reference:ro
-      - ../assets:/school/assets:ro
-      - ../progress:/school/progress
-      - ../../aion:/aion:ro   # sibling checkout of the papers; relative to this file
+      - ../assets:/framework/assets:ro   # the framework supplies assets and nothing else
+      - ../../school-aion:/course:ro     # the course: its own repository, read-only
+      - ../../school-state:/state        # learner state: private, outside the course
+      - ../../aion:/sources/aion:ro      # source material the course cites
