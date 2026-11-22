@@ -3,8 +3,8 @@ title: "RFC 2: Lessons written for each learner"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-22
 updated: 2026-11-22
-version: 0.3.0
-status: "Draft. A second round of two external reviews (2026-11-22) approved starting steps 0–2 and required changes to steps 3–4; v0.3.0 makes them. Builds on flyingrobots/school at commit a959505."
+version: 0.4.0
+status: "Draft. A second round of two external reviews (2026-11-22) approved starting steps 0–2 and required changes to steps 3–4; v0.3.0 makes them. v0.4.0 records the maintainer's decisions on results (Q3, and results in words). Builds on flyingrobots/school at commit a959505."
 supersedes: "RFC 2 v0.1.0, 'How to Build School', which is split into this RFC, RFC 3 and the architecture reference."
 ---
 
@@ -69,6 +69,8 @@ These terms are new or change meaning under this RFC. The framework's
 | **Preparation** | One attempt to write a prepared lesson, through the bridge. Succeeds or fails, and is recorded either way. |
 | **Generated quiz** | A quiz written for one learner, in their state. Practice and personal measurement; not comparable across learners. |
 | **Exam** | An assessment declared in the course, identical for everyone. Passing the course's exams completes it. |
+| **Shown** | A concept the learner has demonstrated in an exam attempt (§4.3). Its opposite is **not yet shown**. School reports results in these words, never as scores, letters or percentages. |
+| **Judgment** | A model's verdict on one criterion of one written answer: *meets*, *partly* or *misses*, with a note. A model judges written answers; it never decides an exam's result. |
 | **Exposure** | Something School showed that could help with a block: a hint, a model answer, feedback, the reference documents. |
 | **Aid tracking** | Whether School was recording exposures when an encounter opened, as a version number on the encounter; absent means it was not. |
 | **Aided** | A submission made after a recorded exposure to that block in the same encounter. |
@@ -134,7 +136,7 @@ unvalidated is ever shown.
 | --- | --- |
 | When | Ahead of time, triggered by an event: the submission that leaves every quiz and explain block of the current lesson answered at least once. Encounter closure is not an event (it is six idle hours after the fact), so it never triggers anything. How far ahead is **Open** (Q1). |
 | Who writes | The server asks the bridge. The bridge tries a fallback chain of different agents, so no constraint may depend on one of them running a skill: every constraint lives in the server's prompt and the server's validator. The `/school` skill helps an agent that has it; the validator decides. |
-| Inputs | The curriculum, the text of the sources it cites, the learner's mission and notes, their evidence, earlier prepared lessons. The server reads all of it and puts it in the prompt, so the agent still runs with no tools in an empty folder, exactly as for grading. |
+| Inputs | The curriculum, the text of the sources it cites, the learner's mission and notes, their evidence (including every *partly* judgment, which the next lesson must address, §4.3), earlier prepared lessons. The server reads all of it and puts it in the prompt, so the agent still runs with no tools in an empty folder, exactly as for grading. |
 | Validation | A prepared lesson must pass the block validator, cite only the curriculum's sources, name a curriculum concept on every quiz and explain block, carry an answer-key quote on every quiz (below), and include at least one review item where evidence calls for it. Otherwise the preparation fails. |
 | Rendering | Untrusted, whatever passed validation (below). |
 | Activation | Preparation is the bridge's second capability. It is off until enabled separately from grading, and it has its own gates: the prompt and validator above, a size bound on the inputs, and a test that a lesson with raw HTML or an unquoted answer key is refused. |
@@ -320,7 +322,7 @@ the maintainer decided both. This section makes them fit the record's rule that 
 | Declared | `exams/<id>.json` in the course: covered concepts, an item pool (each item naming its concept), items drawn per attempt, and a pass policy |
 | Identity | An attempt is pinned to the exam's snapshot hash when it starts; a course edit never changes a started attempt |
 | Items | Drawn from the pool with a seed recorded at the start, and choice order shuffled by that seed, so a retake is not a memory test of the last sitting |
-| Feedback | After finishing: which concepts were missed, not the answer key |
+| Feedback | After finishing: each concept as shown or not yet shown, with the notes of any written judgments; never the answer key, and never a score |
 | Retakes | Allowed after a minimum delay the exam declares, counted from the **start** of the previous attempt, so abandoning an attempt does not dodge it |
 | Conditions | Whether references are allowed is a **declared condition**, recorded as an exposure if opened; School cannot enforce closed book on the learner's own machine |
 | Encounters | Every attempt has its own encounter (the [glossary](../glossary.md)'s "one occasion of being shown content"); the six-hour resume rule never folds a retake into an earlier sitting |
@@ -336,7 +338,7 @@ Every state change is a new row; status is a view.
 | The learner finishes | `exam_finishes`: attempt id, time | Unique per attempt; repeating it returns the existing row |
 | A written item is graded | `gradings`, as today | Appended; `supersedes` for retries |
 | Which submission counts | The latest submission per item before the attempt's `exam_finishes` row | A grading counts only if it grades that submission, so a late grade for an earlier draft cannot decide the result |
-| Result | View: objective score from the counted answers; written status from the latest grading of each counted explanation | Derived, never stored |
+| Result | View: each covered concept shown or not yet shown, from the counted answers and the latest grading of each counted explanation (§4.3) | Derived, never stored |
 
 **Figure 5. An exam attempt, derived from its events**
 
@@ -362,14 +364,19 @@ failed: a broken grader is never an educational verdict.*
 
 | Question | Proposal |
 | --- | --- |
-| Passing an exam | Objective score at or above the declared pass mark. What written items contribute is the exam's declared policy, visible to the learner, and is **Open** (Q3): until Q3 is decided, written items in exams are feedback only and cannot affect a pass. |
-| Grading unavailable | The attempt is **pending**, never passed or failed, until grading succeeds |
+| Results are words | **Decided** by the maintainer, 2026-11-22: no scores, letters, percentages or points anywhere. An item is right or wrong, or has its judgments; a concept is shown or not yet shown; an exam is passed or not yet passed; a course is complete or not. |
+| A multiple-choice item | Shows its concept only if it is right. **Decided**: every drawn multiple-choice item for a concept must be right; there is no allowance for slips, because a retake after the declared delay draws fresh items. |
+| A written item | A model returns a judgment on each criterion (fidelity, completeness, accessibility). **Decided** (Q3): a *misses* on any criterion, or *insufficient evidence*, means the item's concept is not yet shown, so you cannot pass an exam you fail. *Meets* passes. *Partly* also passes, but it is evidence the next prepared lesson must act on (§2): the concept is revisited, and the decision note names the judgment. |
+| Who decides | The model judges written answers, criterion by criterion. It never decides the exam's result: the server derives that from the rules above. |
+| Passing an exam | Every concept the exam covers is shown in one attempt. Otherwise the attempt is **not yet passed**, and its feedback lists the concepts still to show. |
+| Grading unavailable | The attempt is **pending**, neither passed nor not yet passed, until grading succeeds |
 | Completing the course | The first time every exam the course declares has a passed attempt, the server appends a `completions` row naming each exam's snapshot hash and the attempt that passed it. The derivation decides when; the row records that it happened. |
 | A course revised later | Even a typo fix changes an exam's hash. A completion row stands for the exam versions it names and is never revoked by an edit; a changed exam is a new exam to pass only if the learner wants the new revision. |
 | Recording it | An append-only event, so completion cannot silently disappear when a derivation's inputs change. The view that triggers it stays, to show progress towards the next one. |
 
 In short: exams are declared, drawn, attempted in their own encounters and recorded as events;
-passing is derived from them, and completion is appended once, naming its evidence.
+passing is derived from them in words, concept by concept, and completion is appended once, naming
+its evidence.
 
 ## 5. Delayed review
 
@@ -437,12 +444,12 @@ then add review, preparation and exams in that order, each proven by evidence.
 | --- | --- | --- |
 | Q1 | How far ahead does preparation run? | One lesson ahead, so evidence from the current lesson always shapes the next |
 | Q2 | What is the curriculum's file format? | Markdown with typed front matter per concept, validated at load |
-| Q3 | May a model's grading block an exam pass? | **Open, for the maintainer.** Any authority that asks for another attempt delays completion, even if it is never called a fail. Until decided, written exam items are feedback only (§4.3). |
+| Q3 | May a model's grading block an exam pass? | **Decided** 2026-11-22: yes. A *misses* means the concept is not yet shown; *partly* passes and shapes the next lesson. The model judges answers, never the exam (§4.3). |
 | Q4 | Do generated quizzes gate the next lesson? | No; they inform preparation |
 | Q5 | Should lesson prose be authored in Markdown? | Yes, with typed fields for interactive blocks; for prepared lessons, the inert subset in §2 |
 | Q6 | Which homepage design? | Decide while building step 1 |
 
-In short: six questions remain; Q3 is the maintainer's to decide, and none blocks steps 0 to 2.
+In short: Q3 is decided; five questions remain, each with a recommendation, and none blocks steps 0 to 2.
 
 ## Appendix A: Review response
 
@@ -489,7 +496,7 @@ and starting steps 0–2; one required changes before steps 3–4, the other thr
 | Completion cannot be only a view | Fixed: an appended `completions` row, §4.3 |
 | Preparation is a second bridge capability with its own gates; `/school` does not hold across the fallback chain | Adopted: constraints live in the server's prompt and validator; inputs are read by the server; separate activation, §2 |
 | Wesley's prerequisite contradicts RFC 3 | Fixed: Figure 6, its caption and the Wesley row above |
-| §4.3's pass rule contradicts Q3 | Fixed: Q3 is left open for the maintainer; written exam items are feedback only until then |
+| §4.3's pass rule contradicts Q3 | Fixed, then decided: the maintainer answered Q3 in v0.4.0 (§4.3) |
 | Which submission counts when an answer is revised | Adopted: the latest before finishing; gradings bind to it, §4.2 |
 | Retake delay can be dodged by abandoning an attempt | Fixed: counted from the previous attempt's start, §4.1 |
 | "Several encounters" needs a number | Fixed: 6 encounters on 3 days, §6 |
