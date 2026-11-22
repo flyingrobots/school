@@ -1,16 +1,18 @@
 // The settings page (flyingrobots/school#13): connect the bridge and edit its agents from School,
 // through the real server and a real bridge. The only fake is the agent CLI.
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { effectiveBridge } from "./settings.ts";
 
-const root = mkdtempSync(join(tmpdir(), "school-settings-"));
-const PORT = 20000 + Math.floor(Math.random() * 20000);
-const BRIDGE_PORT = PORT + 1;
-const base = `http://127.0.0.1:${PORT}`;
-const BRIDGE_URL = `http://127.0.0.1:${BRIDGE_PORT}`;
+// Every test gets its own server, bridge, state and ports, and sets up what it needs: none
+// depends on another having run first.
+let root = "";
+let PORT = 0;
+let BRIDGE_PORT = 0;
+let base = "";
+let BRIDGE_URL = "";
 const TOKEN = "settings-token-NEVER-ECHO-ME";
 const procs: ReturnType<typeof Bun.spawn>[] = [];
 let serverOut: ReturnType<typeof Bun.spawn> | null = null;
@@ -29,7 +31,12 @@ async function until(url: string, ok: (r: Response) => boolean) {
   throw new Error(`${url} did not come up`);
 }
 
-beforeAll(async () => {
+beforeEach(async () => {
+  root = mkdtempSync(join(tmpdir(), "school-settings-"));
+  PORT = 20000 + Math.floor(Math.random() * 20000);
+  BRIDGE_PORT = PORT + 1;
+  base = `http://127.0.0.1:${PORT}`;
+  BRIDGE_URL = `http://127.0.0.1:${BRIDGE_PORT}`;
   writeFileSync(join(root, "verdict.json"), JSON.stringify(verdict));
   writeFileSync(join(root, "agent"), `#!/bin/sh\ncat "${root}/verdict.json"\n`);
   chmodSync(join(root, "agent"), 0o755);
@@ -52,16 +59,22 @@ beforeAll(async () => {
   procs.push(serverOut);
   await until(base + "/", (r) => r.ok);
 });
-afterAll(async () => {
-  for (const p of procs) { p.kill(); await p.exited; }
+afterEach(async () => {
+  for (const p of procs.splice(0)) { p.kill(); await p.exited; }
+  serverOut = null;
   rmSync(root, { recursive: true, force: true });
 });
 
 const post = (path: string, body: unknown) =>
   fetch(base + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 const status = async () => (await fetch(base + "/api/settings/status")).json();
-const everything: string[] = []; // every page and API body, checked for the token at the end
-const text = async (r: Response) => { const t = await r.text(); everything.push(t); return t; };
+const text = (r: Response) => r.text();
+/** Connect the bridge from the settings page, as the learner does. */
+const connect = async () => expect((await post("/api/settings/bridge", { url: BRIDGE_URL, token: TOKEN })).status).toBe(200);
+const CHAIN = () => ({ timeout_seconds: 10, agents: [
+  { name: "missing", command: "no-such-agent-cli {prompt}", output: "text" },
+  { name: "fake", command: `${join(root, "agent")} -p {prompt}`, output: "text" },
+] });
 
 
 test("with nothing configured, the status says so", async () => {
@@ -96,6 +109,7 @@ test("saving the bridge connects it; the token is stored privately and never sho
 });
 
 test("an invalid agent command is refused with its reason, and the bridge file is not written", async () => {
+  await connect();
   const r = await post("/api/settings/agents", { timeout_seconds: 10, agents: [{ name: "x", command: 'oops "unbalanced', output: "text" }] });
   expect(r.status).toBe(400);
   expect((await r.json()).error).toMatch(/quote/);
@@ -103,10 +117,8 @@ test("an invalid agent command is refused with its reason, and the bridge file i
 });
 
 test("agents saved from the page reach the bridge, can be tested, and grading then works without a restart", async () => {
-  const chain = { timeout_seconds: 10, agents: [
-    { name: "missing", command: "no-such-agent-cli {prompt}", output: "text" },
-    { name: "fake", command: `${join(root, "agent")} -p {prompt}`, output: "text" },
-  ] };
+  await connect();
+  const chain = CHAIN();
   const saved = await post("/api/settings/agents", chain);
   expect(saved.status).toBe(200);
   expect(JSON.parse(readFileSync(join(root, "bridge", "bridge.json"), "utf8"))).toEqual(chain);
@@ -125,7 +137,14 @@ test("agents saved from the page reach the bridge, can be tested, and grading th
 });
 
 test("the token appears in no page, no API response and no server output", async () => {
-  everything.push(JSON.stringify(await status()), await text(await fetch(base + "/api/settings/agents")));
+  const everything = [await text(await post("/api/settings/bridge", { url: BRIDGE_URL, token: TOKEN }))];
+  everything.push(await text(await post("/api/settings/agents", CHAIN())));
+  everything.push(await text(await fetch(base + "/api/settings/bridge")), JSON.stringify(await status()), await text(await fetch(base + "/api/settings/agents")));
+  const e = JSON.parse(await text(await fetch(base + "/api/courses/c/lessons/l1"))).encounterId;
+  const id = crypto.randomUUID();
+  everything.push(await text(await post("/api/explanation", { submissionId: id, encounterId: e, blockId: "e1", text: "Because.", ms: 1 })));
+  everything.push(await text(await post("/api/grade", { submissionId: id })));
+  expect(everything.some((b) => b.includes('"succeeded"'))).toBe(true); // the token was really used
   for (const body of everything) expect(body).not.toContain(TOKEN);
   serverOut!.kill();
   await serverOut!.exited;

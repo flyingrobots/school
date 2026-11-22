@@ -1,18 +1,22 @@
 // The bridge over HTTP, as the real process (flyingrobots/school#10).
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const dir = mkdtempSync(join(tmpdir(), "school-bridge-http-"));
-const PORT = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${PORT}`;
+// Every test gets its own bridge, directory and port: none depends on another having run first.
+let dir = "";
+let PORT = 0;
+let base = "";
 const TOKEN = "test-token-0123456789";
 let proc: ReturnType<typeof Bun.spawn> | null = null;
 
 const schema = { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } };
 
-beforeAll(async () => {
+beforeEach(async () => {
+  dir = mkdtempSync(join(tmpdir(), "school-bridge-http-"));
+  PORT = 20000 + Math.floor(Math.random() * 20000);
+  base = `http://127.0.0.1:${PORT}`;
   const good = join(dir, "good");
   writeFileSync(good, `#!/bin/sh\necho '{"ok": true}'\n`);
   chmodSync(good, 0o755);
@@ -30,9 +34,10 @@ beforeAll(async () => {
   }
   throw new Error("bridge did not start");
 });
-afterAll(async () => {
+afterEach(async () => {
   proc?.kill();
   await proc?.exited;
+  proc = null;
   rmSync(dir, { recursive: true, force: true });
 });
 
