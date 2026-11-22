@@ -14,4 +14,12 @@ jobs:
       - run: bun install --frozen-lockfile
         working-directory: server
       - run: bunx tsc -p server
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # web/test drives the app in Chrome (preinstalled on the runner) through playwright-core.
+      - run: npm ci
+        working-directory: web
+      - run: npx tsc -b
+        working-directory: web
       - run: bun test
