@@ -3,6 +3,7 @@
 // handles it.
 import type { Block, NestNode } from "./blocks.ts";
 import type { Recorded } from "./record.ts";
+import type { ExplanationState } from "./explain.ts";
 
 export type View = "web" | "slides";
 export const isView = (v: string | null): v is View => v === "web" || v === "slides";
@@ -10,7 +11,7 @@ export const isView = (v: string | null): v is View => v === "web" || v === "sli
 export type Nav = { prev?: Block; next?: Block };
 
 /** The encounter a web page is served in, and what the learner has already answered in it. */
-export type Progress = { encounterId: string; answers: readonly Recorded[] };
+export type Progress = { encounterId: string; answers: readonly Recorded[]; explanations?: readonly ExplanationState[] };
 
 export const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
@@ -38,8 +39,48 @@ function quiz(b: Extract<Block, { type: "quiz" }>, answered: readonly Recorded[]
   return `<div class="q" data-block="${esc(b.id)}" data-why="${esc(b.why)}"${settled ? ' data-settled="true"' : ""}><p>${esc(b.q)}</p>${buttons}<p class="fb" aria-live="polite">${fb}</p><p class="saved" aria-live="polite">${status}</p></div>`;
 }
 
+const VERDICT: Record<string, string> = { meets: "Meets", partly: "Partly", misses: "Misses" };
+
+function gradingHtml(g: ExplanationState["grading"], submissionId: string): string {
+  const retry = (label: string) => `<button type="button" data-act="grade" data-submission="${esc(submissionId)}">${label}</button>`;
+  if (g === null) return `<p class="saved" aria-live="polite">Saved.</p>${retry("Get feedback")}`;
+  if (g.status === "failed") {
+    return `<p class="saved" role="status">Your explanation is saved. Automated feedback is unavailable. Retry when ready.</p>` +
+      `<p class="why">${esc(g.error)}</p>${retry("Retry")}`;
+  }
+  const f = g.findings;
+  if (f.insufficient_evidence) {
+    return `<div class="feedback" role="status"><p><strong>Not enough to judge yet.</strong> ${esc(f.summary)}</p></div>`;
+  }
+  const row = (name: string, c: { verdict: string; note: string }) =>
+    `<div class="crit"><dt>${name} <span class="verdict v-${esc(c.verdict)}">${esc(VERDICT[c.verdict] ?? c.verdict)}</span></dt><dd>${esc(c.note)}</dd></div>`;
+  const conflicts = f.contradictions.length === 0 ? "" : `<p class="label">Conflicts with the sources</p><ul class="conflicts">${f.contradictions.map((c) =>
+    `<li><q>${esc(c.quote)}</q> <span class="src">(${esc(c.source_id)}; ${c.quote_verified ? "quote found in the source" : "quote not found in the source"})</span><br>${esc(c.note)}</li>`).join("")}</ul>`;
+  return `<div class="feedback" role="status"><p>${esc(f.summary)}</p><dl class="rubric">${row("Fidelity", f.fidelity)}${row("Completeness", f.completeness)}${row("Accessibility", f.accessibility)}</dl>${conflicts}</div>`;
+}
+
+const explainForm = () =>
+  `<textarea rows="6" aria-label="Your explanation" placeholder="Explain it as if to someone new to it."></textarea>` +
+  `<button type="button" data-act="submit">Submit explanation</button><p class="saved" aria-live="polite"></p>`;
+
+/**
+ * An explain block in the web view. Before an explanation is submitted it is a text box and the
+ * model answer stays hidden, so the explanation is unaided. Afterwards it shows the learner's
+ * text, the latest grading or an honest failure with a retry, and then the model answer.
+ * Everything from the learner or the grader is escaped plain text.
+ */
+export function renderExplain(b: Extract<Block, { type: "explain" }>, state: ExplanationState | undefined): string {
+  const open = `<div class="explain" data-block="${esc(b.id)}"${state ? ` data-submission="${esc(state.submissionId)}"` : ""}><p>${esc(b.prompt)}</p>`;
+  if (state === undefined) return `${open}${explainForm()}</div>`;
+  return `${open}<p class="label">Your explanation</p><blockquote class="mine">${esc(state.text)}</blockquote>` +
+    gradingHtml(state.grading, state.submissionId) +
+    `<details><summary>Model answer</summary><p>${esc(b.model)}</p></details>` +
+    `<button type="button" class="secondary" data-act="again">Write a new explanation</button>` +
+    `<template>${explainForm()}</template></div>`;
+}
+
 // Body renderer shared by both views; containers are handled per view.
-function leaf(b: Block, render: (b: Block) => string, answered: readonly Recorded[] = []): string {
+function leaf(b: Block, render: (b: Block) => string, answered: readonly Recorded[] = [], explained?: readonly ExplanationState[]): string {
   switch (b.type) {
     case "prose":
       return b.html;
@@ -52,7 +93,11 @@ function leaf(b: Block, render: (b: Block) => string, answered: readonly Recorde
     case "quiz":
       return quiz(b, answered);
     case "explain":
-      return `<div class="explain" data-block="${esc(b.id)}"><p>${esc(b.prompt)}</p><details><summary>Model answer</summary><p>${esc(b.model)}</p></details></div>`;
+      // Practice only where answers are recorded; a presentation shows the prompt and the answer.
+      if (explained === undefined) {
+        return `<div class="explain" data-block="${esc(b.id)}"><p>${esc(b.prompt)}</p><details><summary>Model answer</summary><p>${esc(b.model)}</p></details></div>`;
+      }
+      return renderExplain(b, explained.find((x) => x.blockId === b.id));
     case "nest":
       return nest(b.root);
     case "section":
@@ -69,7 +114,7 @@ function leaf(b: Block, render: (b: Block) => string, answered: readonly Recorde
 function shell(title: string, view: View, body: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title><link rel="stylesheet" href="/assets/tokens.css"><link rel="stylesheet" href="/assets/item.css"><link rel="stylesheet" href="/assets/style.css"><link rel="stylesheet" href="/assets/nest.css"></head>
-<body class="view-${view}">${body}<script src="/assets/quiz.js"></script></body></html>`;
+<body class="view-${view}">${body}<script src="/assets/quiz.js"></script><script src="/assets/explain.js"></script></body></html>`;
 }
 
 function navLinks(courseName: string, page: Block, nav: Nav, view: View, hasReference: boolean): string {
@@ -93,7 +138,8 @@ const FOLLOW_UP = `<p class="aside">Anything unclear? Ask your teacher (the agen
 export function renderPage(courseName: string, page: Block, view: View, nav: Nav, hasReference = false, progress?: Progress): string {
   if (page.type !== "page") throw new Error(`renderPage: ${page.id} is not a page`);
   const answered = progress?.answers ?? [];
-  const render = (b: Block): string => leaf(b, render, answered);
+  const explained = progress === undefined ? undefined : progress.explanations ?? [];
+  const render = (b: Block): string => leaf(b, render, answered, explained);
   const header = `<h1>${esc(page.title)}</h1><p class="subtitle">${esc(page.subtitle)}</p>`;
   const encounter = progress === undefined ? "" : ` data-encounter="${esc(progress.encounterId)}"`;
   const meta = `<div id="school-meta" data-course="${esc(courseName)}" data-lesson="${esc(page.id)}"${encounter} hidden></div>`;

@@ -102,7 +102,12 @@ test("plain-text lesson fields are escaped; only html blocks carry markup", asyn
   expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
   expect(html).not.toContain("<img src=x");
   expect(html).toContain("Say &lt;b&gt;why&lt;/b&gt;");
-  expect(html).toContain("Because &lt;i&gt;so&lt;/i&gt;");
+  // The model answer is hidden on the web view until an explanation is submitted
+  // (flyingrobots/school#10); the slides view still shows it, escaped.
+  expect(html).not.toContain("<i>so</i>");
+  const slides = await (await fetch(base + "/courses/ok/lessons/l1?view=slides")).text();
+  expect(slides).toContain("Because &lt;i&gt;so&lt;/i&gt;");
+  expect(slides).not.toContain("<i>so</i>");
 });
 
 test("a lesson error escapes the whole message", async () => {

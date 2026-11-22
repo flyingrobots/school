@@ -3,14 +3,18 @@ import { Database } from "bun:sqlite";
 import { dirname, join, normalize, sep } from "node:path";
 import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { lastValidLoader } from "./blocks.ts";
-import { esc, isView, renderCourse, renderLanding, renderPage, renderReference } from "./render.ts";
+import { esc, isView, renderCourse, renderExplain, renderLanding, renderPage, renderReference } from "./render.ts";
 import { migrate, snapshot } from "./migrate.ts";
 import { encounterAnswers, lessonProgress, openEncounter, submit, type Submission } from "./record.ts";
+import { encounterExplanations, explanationState, gradeExplanation, saveExplanation, type ExplanationSubmission, type Grader } from "./explain.ts";
+import { callGrader, graderConfig } from "./grade.ts";
 import { ConfigError, course, courseNames, mountTable, parseConfig, type Course } from "./config.ts";
 
 let config;
+let graderCfg;
 try {
   config = parseConfig(process.env, join(import.meta.dir, ".."));
+  graderCfg = graderConfig(process.env);
 } catch (e) {
   if (e instanceof ConfigError) {
     console.error(`school: ${e.message}`);
@@ -39,6 +43,13 @@ const migration = migrate(db, (from) => {
 });
 if (migration.copied > 0) console.log(`school: preserved ${migration.copied} answer(s)`);
 
+// The grader is optional: without one, a grading attempt is stored as failed with that reason.
+// The API key lives only in this process's environment; it is never logged or stored.
+const grader: Grader = graderCfg === null ? null
+  : { adapter: graderCfg.adapter, model: graderCfg.model, grade: (input) => callGrader(graderCfg, input) };
+console.log(grader === null ? "school: no grader configured; explanations are saved but not graded"
+  : `school: grader ${graderCfg!.adapter} ${graderCfg!.model} at ${graderCfg!.url}`);
+
 const insertView = db.prepare(`INSERT INTO views (course, lesson, at) VALUES ($course, $lesson, $at)`);
 
 
@@ -48,6 +59,23 @@ const isInt = (v: unknown): v is number => Number.isInteger(v) && typeof v === "
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** A submission names only what the learner did. Correctness and first try are the database's to decide. */
+function parseExplanation(v: unknown): ExplanationSubmission | null {
+  if (typeof v !== "object" || v === null) return null;
+  const o: Record<string, unknown> = { ...v };
+  if (typeof o.submissionId !== "string" || !UUID.test(o.submissionId)) return null;
+  if (typeof o.encounterId !== "string" || !UUID.test(o.encounterId)) return null;
+  if (!isStr(o.blockId, 200) || !isInt(o.ms) || typeof o.text !== "string") return null;
+  const text = o.text.trim();
+  if (text.length === 0 || text.length > 10_000) return null;
+  return { submissionId: o.submissionId.toLowerCase(), encounterId: o.encounterId.toLowerCase(), blockId: o.blockId, text, ms: o.ms };
+}
+
+/** The block's markup for a saved explanation, as the page would render it now. */
+function explainHtml(submissionId: string): string {
+  const x = explanationState(db, submissionId);
+  return x === null ? "" : renderExplain(x.block, x.state);
+}
+
 function parseSubmission(v: unknown): Submission | null {
   if (typeof v !== "object" || v === null) return null;
   const o: Record<string, unknown> = { ...v };
@@ -187,7 +215,8 @@ function lessonResponse(c: Course, id: string | undefined, viewParam: string | n
   if (view !== "web") return html(renderPage(c.name, page, view, nav, refs.length > 0));
   // Practice: resume or open the encounter, and show what is already answered in it.
   const e = openEncounter(db, { course: c.name, lesson: page.id, page, now: new Date().toISOString() });
-  return html(renderPage(c.name, page, view, nav, refs.length > 0, { encounterId: e.id, answers: encounterAnswers(db, e.id) }),
+  return html(renderPage(c.name, page, view, nav, refs.length > 0,
+    { encounterId: e.id, answers: encounterAnswers(db, e.id), explanations: encounterExplanations(db, e.id) }),
     200, { "cache-control": "no-store" });
 }
 
@@ -202,6 +231,9 @@ async function readJson(req: Request): Promise<unknown> {
 Bun.serve({
   hostname: config.host,
   port: config.port,
+  // Bun closes a request idle for 10 s by default; a grading call can take a minute or two.
+  // 255 s is Bun's maximum, so the grader's own timeout is capped below it (grade.ts).
+  idleTimeout: 255,
   async fetch(req) {
     const url = new URL(req.url);
     const { pathname } = url;
@@ -218,6 +250,23 @@ Bun.serve({
       if (r.status === "rejected") return json(r, 400);
       if (r.status === "conflict") return json(r, 409);
       return json({ ...r, submissionId: s.submissionId });
+    }
+    if (req.method === "POST" && pathname === "/api/explanation") {
+      const s = parseExplanation(await readJson(req));
+      if (s === null) return json({ status: "invalid" }, 400);
+      // Saved and committed before any grading is attempted (RFC 1 proposal 4, lifecycle step 1).
+      const r = saveExplanation(db, s, at);
+      if (r.status === "rejected") return json(r, 400);
+      if (r.status === "conflict") return json(r, 409);
+      return json({ ...r, submissionId: s.submissionId, html: explainHtml(s.submissionId) });
+    }
+    if (req.method === "POST" && pathname === "/api/grade") {
+      const body = await readJson(req);
+      const id = typeof body === "object" && body !== null ? (body as Record<string, unknown>).submissionId : undefined;
+      if (typeof id !== "string" || !UUID.test(id)) return json({ status: "invalid" }, 400);
+      const g = await gradeExplanation(db, id.toLowerCase(), grader, new Date().toISOString());
+      if (g === null) return json({ status: "unknown submission" }, 404);
+      return json({ status: g.status, html: explainHtml(id.toLowerCase()) });
     }
     if (req.method === "POST" && pathname === "/api/view") {
       const v = parseView(await readJson(req));

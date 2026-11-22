@@ -18,8 +18,11 @@ export type Block =
   | { type: "quote"; id: string; html: string }
   | { type: "aside"; id: string; html: string }
   | { type: "quiz"; id: string; q: string; choices: Choice[]; why: string }
-  | { type: "explain"; id: string; prompt: string; model: string }
+  | { type: "explain"; id: string; prompt: string; model: string; sources: Source[] }
   | { type: "nest"; id: string; root: NestNode };
+
+/** Material an explanation is graded against. `id` is what a grader's quote cites. */
+export type Source = { id: string; title: string; text: string };
 
 export class BlockError extends Error {}
 
@@ -93,9 +96,19 @@ function parseRaw(v: unknown, where: string, ctx: Ctx): Raw {
       block = { type, id, q: str(v, "q", at), choices, why: str(v, "why", at) };
       break;
     }
-    case "explain":
-      block = { type, id, prompt: str(v, "prompt", at), model: str(v, "model", at) };
+    case "explain": {
+      const seen = new Set<string>();
+      const sources = (v.sources === undefined ? [] : arr(v, "sources", at)).map((x) => {
+        if (!isObj(x) || typeof x.id !== "string" || typeof x.title !== "string" || typeof x.text !== "string")
+          throw new BlockError(`${at}: each source needs "id", "title" and "text"`);
+        if (!CHOICE_ID.test(x.id) || x.id === "model") throw new BlockError(`${at}: source id "${x.id}" must match ${CHOICE_ID.source} and not be "model"`);
+        if (seen.has(x.id)) throw new BlockError(`${at}: duplicate source id "${x.id}"`);
+        seen.add(x.id);
+        return { id: x.id, title: x.title, text: x.text };
+      });
+      block = { type, id, prompt: str(v, "prompt", at), model: str(v, "model", at), sources };
       break;
+    }
     case "nest":
       block = { type, id, root: parseNest(v.root, at) };
       break;

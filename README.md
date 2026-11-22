@@ -35,6 +35,9 @@ SCHOOL_MOUNTS="papers=/path/to/source-material" \
 | `SCHOOL_STATE` | Where **your** answers and progress go. Must not be inside the course; the server refuses to start if it is. |
 | `SCHOOL_MOUNTS` | `name=path` pairs, served read-only at `/name/...`, for source material a course cites. |
 | `HOST`, `PORT` | Default `127.0.0.1:4747`. |
+| `SCHOOL_GRADER` | `anthropic` or `openai-compatible` to grade written explanations. Unset, explanations are saved but not graded. |
+| `SCHOOL_GRADER_URL`, `SCHOOL_GRADER_MODEL`, `SCHOOL_GRADER_API_KEY` | The grader's endpoint, model and key. For `anthropic` they default to `https://api.anthropic.com`, `claude-opus-5-5` and `ANTHROPIC_API_KEY`. The key is never stored or logged. |
+| `SCHOOL_GRADER_TIMEOUT_MS` | Default 120000; at most 240000. |
 
 `bun test` runs the suite. `server/compose.yaml` runs it in Docker behind `tailscale serve` (ADR 4); copy `server/compose.example.env` to `server/.env` and set your course, state and source paths first.
 
