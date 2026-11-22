@@ -339,6 +339,22 @@ describe("functions", () => {
     });
   }, SLOW);
 
+  test("a change of capture version always starts a new encounter: only the latest encounter can resume", async () => {
+    const db = await fresh();
+    await as(db, "school_app", async () => {
+      const v1 = await open(db, at(0), PAGE, "l1", 1);
+      expect(await submit(db, { encounter: v1.id, when: at(1) })).toMatchObject({ status: "stored", first_try: true });
+      const v2 = await open(db, at(2), PAGE, "l1", 2);
+      expect(v2.id).not.toBe(v1.id);
+      expect(v2.resumed).toBe(false);
+      const back = await open(db, at(3), PAGE, "l1", 1);
+      expect(back.id).not.toBe(v1.id);
+      expect(back.id).not.toBe(v2.id);
+      expect(back.resumed).toBe(false);
+      expect(await submit(db, { encounter: back.id, when: at(4) })).toMatchObject({ status: "stored", first_try: true });
+    });
+  }, SLOW);
+
   test("any ms the model accepts is stored exactly, past 2^31", async () => {
     const db = await fresh();
     const big = [2 ** 31, Number.MAX_SAFE_INTEGER];

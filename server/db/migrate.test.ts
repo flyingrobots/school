@@ -132,6 +132,12 @@ test("a file that ends or opens a transaction of its own is refused before anyth
     CREATE FUNCTION school.g() RETURNS int LANGUAGE sql BEGIN ATOMIC SELECT 1; END;
     SELECT 'commit; rollback;' AS "end";`;
   expect(readMigrations(folder({ "0001_a.sql": fine })).map((m) => m.name)).toEqual(["0001_a.sql"]);
+  // Only a routine body opens BEGIN ATOMIC: the words elsewhere must not hide the COMMIT that follows.
+  expect(() => readMigrations(folder({ "0001_a.sql": "SELECT begin atomic FROM school.kept;\nCOMMIT;" })))
+    .toThrow(/0001_a\.sql: the runner owns the transaction; remove its COMMIT/);
+  const routines = `CREATE OR REPLACE PROCEDURE school.p() LANGUAGE sql BEGIN ATOMIC SELECT 1; SELECT 2; END;
+    create function school.h(x int) returns int language sql begin atomic select x; end;`;
+  expect(readMigrations(folder({ "0001_a.sql": routines })).map((m) => m.name)).toEqual(["0001_a.sql"]);
 });
 
 test("a file that changes role is refused before anything runs, and one that escapes the owner at run time rolls back", async () => {
@@ -144,4 +150,28 @@ test("a file that changes role is refused before anything runs, and one that esc
   await expect(migrate(db, d)).rejects.toThrow(/0001_a\.sql: must end as school_owner, not postgres/);
   expect((await db.query("SELECT 1 FROM pg_tables WHERE tablename = 'escaped'")).rows).toEqual([]);
   expect((await db.query("SELECT 1 FROM public.schema_migrations")).rows).toEqual([]);
+}, SLOW);
+
+// PGlite is one connection, so two runners cannot really race here. What can be checked is the
+// order: the migration lock is taken before the ledger is created or read, and released at the end,
+// on success and on failure alike. The race itself belongs to the real-Postgres job (flyingrobots/school#50).
+test("the migration lock is taken before the ledger is touched, and released after, even on failure", async () => {
+  for (const [files, fails] of [[{ "0001_a.sql": "CREATE TABLE school.a (id int);" }, false],
+                                [{ "0001_a.sql": "SELECT no_such_function();" }, true]] as const) {
+    const db = new PGlite();
+    const seen: string[] = [];
+    const recording = {
+      exec: (sql: string) => { seen.push(sql); return db.exec(sql); },
+      query: <T>(sql: string, params?: unknown[]) => { seen.push(sql); return db.query<T>(sql, params); },
+    };
+    const run = migrate(recording, folder(files));
+    if (fails) await expect(run).rejects.toThrow(/no_such_function/); else await run;
+    const lock = seen.findIndex((s) => /pg_advisory_lock\(/.test(s));
+    const ledger = seen.findIndex((s) => s.includes("schema_migrations"));
+    expect(lock).toBe(0);
+    expect(ledger).toBeGreaterThan(lock);
+    expect(seen.at(-1)).toMatch(/pg_advisory_unlock\(/);
+    const held = (await db.query("SELECT 1 FROM pg_locks WHERE locktype = 'advisory'")).rows;
+    expect(held).toEqual([]);
+  }
 }, SLOW);
