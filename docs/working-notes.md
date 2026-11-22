@@ -8,9 +8,15 @@ Practical notes for anyone — human or agent — changing the framework.
 - Captured `/teach`-style session transcripts (`*command-message*.txt`) are gitignored on
   purpose. Keep them local; never commit them. They were committed once and had to be
   removed from the published history.
-- `server/.dockerignore` admits server modules by pattern (`*`, `!*.ts`, `*.test.ts`) and the
-  Dockerfile copies `*.ts`, so a new module ships without any list to update. The old per-file
-  allowlist broke the image twice; `server/docker.test.ts` keeps the pattern from regressing.
+- `server/.dockerignore` admits the manifest, the lockfile and modules at any depth by pattern
+  (`*`, `!package.json`, `!bun.lock`, `!**/*.ts`, `**/*.test.ts`, `contract/**`); the Dockerfile
+  installs production dependencies and copies the filtered context, so a new module ships without
+  any list to update. The old per-file allowlist broke the image twice; `server/docker.test.ts`
+  checks that every relative import is shipped and every package import is a dependency.
+- The server is a hexagon (RFC 3, §4): `server/core/` holds the model (Zod), the ports and the use
+  cases, and imports nothing but itself and Zod (`server/core/boundary.test.ts`). Adapters live in
+  `server/adapters/`; every `LearningRecord` adapter must pass `server/contract/learning-record.ts`.
+- Typecheck the server with `bunx tsc -p server` after `bun install` in `server/`.
   A server file that is not TypeScript still needs adding explicitly.
 - `server/compose.yaml` names no course. Its paths come from a gitignored `server/.env`; copy
   `server/compose.example.env` to start one.
