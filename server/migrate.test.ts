@@ -169,12 +169,17 @@ test("a version-3 database gains a course column without touching its rows", () 
   const dir = tmp();
   try {
     const db = legacyDb(join(dir, "progress.db"));
-    migrate(db); // -> current
-    // Simulate a v3 database by dropping the column v4 added.
-    const before = db.query<Record<string, unknown>, []>("SELECT id, lesson, prompt FROM answers ORDER BY id").all();
-    db.exec("DROP INDEX IF EXISTS answers_lesson"); // SQLite refuses DROP COLUMN while indexed
-    db.exec("ALTER TABLE answers DROP COLUMN course");
+    // A v3 database, built as v3 actually was: answers with origin but no course column.
+    // (Deriving it from the current schema stopped working once v5 added further columns.)
+    db.exec(`CREATE TABLE answers_v3 (
+      id INTEGER PRIMARY KEY, origin TEXT NOT NULL CHECK (origin IN ('block', 'legacy')), block_id TEXT,
+      lesson TEXT NOT NULL, question INTEGER, prompt TEXT, choice TEXT NOT NULL, correct INTEGER NOT NULL,
+      first_try INTEGER NOT NULL, ms INTEGER NOT NULL, at TEXT NOT NULL)`);
+    db.exec(`INSERT INTO answers_v3 SELECT id, 'legacy', NULL, lesson, question, prompt, choice, correct, first_try, ms, at FROM answers`);
+    db.exec("DROP TABLE answers");
+    db.exec("ALTER TABLE answers_v3 RENAME TO answers");
     db.exec("PRAGMA user_version = 3");
+    const before = db.query<Record<string, unknown>, []>("SELECT id, lesson, prompt FROM answers ORDER BY id").all();
     expect(shape(db)).toBe("v3");
 
     const result = migrate(db);
