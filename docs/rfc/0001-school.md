@@ -1,16 +1,28 @@
 # RFC 1: School, a personal learning system built with an AI teacher
 
-- **Status:** Draft, revision 3. Agent-written; revised twice against the same external review. Not yet accepted.
-- **Date:** 2026-11-18, revised 2026-11-21.
+- **Status:** Draft, revision 4. Agent-written. Not yet accepted.
+- **Date:** 2026-11-18, revised 2026-11-21 (revisions 3 and 4).
 - **Describes:** this repository at commit `22e5411`. The workspace is a git repository as of 2026-11-21, so revision 3 cites commits where revision 2 could not.
-- **Builds on:** ADRs 1–5 in `docs/adr/`
+- **Builds on:** ADRs 1–7 in `docs/adr/`. Revision 4 follows [ADR 6](../adr/0006-separate-framework-lessons-and-learner-state.md) and [ADR 7](../adr/0007-lesson-file-schema-in-graphql-compiled-by-wesley.md), which changed what School is.
 - **Decision requested:** agree on [the concept](#the-concept), accept the [learning record contract](#the-learning-record-contract), accept, amend or reject each of the four [proposals](#proposals), and answer [open questions](#open-questions) 1 and 2. This RFC deliberately does not settle those two for the learner; see [review reconciliation](#review-reconciliation).
 
 ## The concept
 
-School is a personal course that one learner and an AI teacher build together, one lesson at a time. The teacher plans and writes the lessons. The learner takes them on any device and practises. School records how each practice went, so **the next lesson responds to evidence from the previous one**.
+School is a **learning framework**, and it is lesson-agnostic. It opens a lesson file, presents the activities in it, records how the practice went, and gives an AI teacher the evidence to decide what to teach next. It knows nothing about any particular subject.
 
-It is not a course platform, and it does not publish content. It has one learner, its lessons are written for one specific goal, and it runs on the learner's own machine.
+Three things are kept apart ([ADR 6](../adr/0006-separate-framework-lessons-and-learner-state.md)):
+
+| Layer | What it is | Visibility |
+| --- | --- | --- |
+| **The framework** | this repository: server, block model, renderers, shared assets | public |
+| **A lesson pack** | its own git repository: authored sources, compiled into one lesson file School can open | shareable, public by default |
+| **Learner state** | one person's answers, views, gradings and position in a lesson | private, outside the pack |
+
+Lessons are worth sharing and worth versioning on their own; performance is worth neither. A pack is authored in its own repository with its own history, and a compile step produces the lesson file ([ADR 7](../adr/0007-lesson-file-schema-in-graphql-compiled-by-wesley.md)). That compiled file is the only interface between a pack and the framework, which is what keeps the framework agnostic: it knows one format, not how any course is written.
+
+The **AIΩN Foundations Series is the first pack, and it was the test case that built the framework** — not its purpose. It still lives in this repository, which contradicts all of the above; moving it out is [increment 2](#rollout).
+
+School runs on the learner's own machine. It has one learner at a time and it does not publish anything on their behalf.
 
 ### Where it came from
 
@@ -25,7 +37,7 @@ School began on 2026-11-18 as an ordinary use of the `/teach` skill in Claude Co
 | `RESOURCES.md`, `NOTES.md` | Trusted sources, and the learner's preferences |
 | `assets/` | A shared stylesheet and components, such as the quiz widget |
 
-In this workspace the learner is the author of the AIΩN Foundations Series. Their goal is to explain the series to other people, so they asked to be taught it from zero, the way a newcomer would meet it (`MISSION.md`, `learning-records/0001-author-learning-as-newcomer.md`).
+In this first workspace the learner is the author of the AIΩN Foundations Series, and that course is what the framework was built against. Their goal is to explain the series to other people, so they asked to be taught it from zero, the way a newcomer would meet it (`MISSION.md`, `learning-records/0001-author-learning-as-newcomer.md`).
 
 The skill's lessons are static HTML files. After Lesson 2 the learner asked, "wait, you can't see my quiz results?" The teacher couldn't: answers stayed in the browser and were lost. That gap led to the server (ADR 1), and the rest followed from using it:
 
@@ -108,7 +120,9 @@ Problems that block a rebuild:
 1. ~~`server/Dockerfile` copies only `server.ts`.~~ **Fixed 2026-11-21** in commit `22e5411`. The real cause was `server/.dockerignore`, which was `*` plus `!server.ts`: `blocks.ts` and `render.ts` could not enter the build context at all, so widening the Dockerfile's `COPY` alone would not have worked. Revision 2 named only the Dockerfile. Both files now admit all three sources, verified by building the image and starting the container.
 2. No lesson is in block form, and `lessons/` is no longer served as static files, so every lesson returns 404. *(Still true, measured above.)*
 3. `render.ts` links `/assets/slides.css` and `/assets/slides.js` for the `slides` view (`server/render.ts:51-52`); `assets/` holds only `nest.css`, `quiz.js` and `style.css`, so both 404. *(Re-checked 2026-11-21.)*
-4. **The version-2 migration drops `answers`** (`server/server.ts:19`). **Still live.** Increment 1 of the [rollout](#rollout) replaces it before anything is rebuilt. It is harmless only because the table is empty today; it stops being harmless the moment one answer is recorded.
+4. **The framework is not lesson-agnostic.** `server/server.ts:8` defaults `AION_ROOT` to a sibling checkout and `server/server.ts:52` hardcodes an `aion` mount; `lessons/`, `reference/`, `MISSION.md`, `RESOURCES.md` and `learning-records/` all describe one course; `progress/progress.db` sits in the same tree. ADRs 6 and 7 decide the shape; increment 2 does the work.
+5. **The lesson file has no schema and no version.** The format is hand-written TypeScript in `server/blocks.ts`, so no pack author can read it and no second implementation can exist (ADR 7).
+6. **The version-2 migration drops `answers`** (`server/server.ts:19`). **Still live.** Increment 1 of the [rollout](#rollout) replaces it before anything is rebuilt. It is harmless only because the table is empty today; it stops being harmless the moment one answer is recorded.
 
 ## The learning record contract
 
@@ -125,8 +139,9 @@ This section is the core of the RFC. It applies to every proposal.
 | Encounter | In which lesson or review did this happen? | An `encounters` row created when a page is served: lesson, view, snapshot hash, time |
 | Submission | Which answer did the learner give? | A client-generated UUID, unique in the database |
 | Grading | Which judgment of that submission is this? | A `gradings` row referring to one submission |
+| Format version | Which lesson-file schema was this written against? | The Wesley schema hash recorded in the compiled pack (ADR 7) |
 
-One stored snapshot per distinct resolved lesson covers both the content revision and anything dynamic bindings selected (see proposal 2). A git commit is not enough on its own, because the server may serve working-tree bytes that differ from any commit.
+One stored snapshot per distinct resolved lesson covers both the content revision and anything dynamic bindings selected (see proposal 2). A git commit is not enough on its own, because the server may serve working-tree bytes that differ from any commit — and under ADR 6 the commit would belong to a repository School does not control. The compiled lesson file is the thing to hash: it has a version where a working tree does not.
 
 ### Rules
 
@@ -141,7 +156,7 @@ Acceptance scenario: today the learner answers a block wrong, then right. Next w
 
 ### Block definitions
 
-The loader validates the whole lesson set before serving it, and keeps serving the previous valid set if validation fails. It rejects:
+Structural validation happens **at compile time**, in the pack compiler, so a pack cannot ship broken (ADR 6). The server still validates what it is handed, because a compiled file can arrive corrupt or in an older format version; it keeps serving the previous valid set if validation fails. Either way, these are rejected:
 
 - two definitions with the same `id` (reusing one definition through `ref` twice is allowed);
 - a `ref` to an unknown `id`;
@@ -165,7 +180,7 @@ A lesson is a JSON file whose root is a `page` block. Every block has a globally
     { "ref": "inversion-core-1" } ] }
 ```
 
-- Lesson files, rubrics and grading prompts live in git. Learner records live in `progress.db`, which is backed up separately.
+- A pack's authored sources, rubrics and grading prompts live in **the pack's** git repository, and the compiler turns them into one lesson file (ADRs 6 and 7). Learner records live in private state outside the pack, and are backed up separately.
 - A block keeps its `id` only while its meaning is unchanged. Changing what a quiz tests means a new block.
 
 ### 2. Data bindings
@@ -305,12 +320,13 @@ Each increment ends only when its evidence exists.
 | Increment | Work | Evidence required before moving on |
 | --- | --- | --- |
 | **1. Preserve the foundation** | `git init`. Replace the version-2 migration with one that runs in a transaction, copies old answers into the new schema and marks them `legacy` with their original question position, prompt and choice text. Back up `progress.db` before migrating. | Against a small *populated* legacy database: every old answer is present with its original meaning; a restore from the backup works; the migration is idempotent. |
-| **2. One web lesson** | Fix the Dockerfile; convert Lesson 1; add `encounters`, `snapshots`, choice IDs and submission UUIDs; validate the lesson set at load. | The rebuilt container serves Lesson 1, and one answer row identifies its snapshot, encounter, block, choice and submission. HTTP 200 alone is not evidence. |
-| **3. Reuse and delayed practice** | Convert Lesson 2 with a `ref` to a Lesson 1 quiz; teacher-chosen review; the `due-review` selector. | The acceptance scenario above produces three submissions in two encounters, with correct first-try values. |
-| **4. Explanation feedback** | Sidecar with the local adapter first; rubric v1; lifecycle; then the CLI adapter after its gates. | All activation gates pass; a failure is shown honestly; every grading names its submission. |
-| **5. Presentation and exports** | `slides` with its contract; Markdown prose; EPUB later. | Each view meets its contract in the table above. |
+| **2. Separate framework, pack and state** | Write the lesson schema in GraphQL SDL and generate the block types with Wesley; build the pack compiler; move the AIΩN course into its own repository as the first pack; make the content root, the named mounts and the state path configurable; write a framework README. | A pack outside this repository compiles and serves, with no AIΩN string left in the framework. A second, trivial pack also serves, without editing the server. Learner state written while studying lands outside the pack directory. |
+| **3. One web lesson** | Fix the Dockerfile; convert Lesson 1; add `encounters`, `snapshots`, choice IDs and submission UUIDs; validate the lesson set at load. | The rebuilt container serves Lesson 1, and one answer row identifies its snapshot, encounter, block, choice and submission. HTTP 200 alone is not evidence. |
+| **4. Reuse and delayed practice** | Convert Lesson 2 with a `ref` to a Lesson 1 quiz; teacher-chosen review; the `due-review` selector. | The acceptance scenario above produces three submissions in two encounters, with correct first-try values. |
+| **5. Explanation feedback** | Sidecar with the local adapter first; rubric v1; lifecycle; then the CLI adapter after its gates. | All activation gates pass; a failure is shown honestly; every grading names its submission. |
+| **6. Presentation and exports** | `slides` with its contract; Markdown prose; EPUB later. | Each view meets its contract in the table above. |
 
-Each increment that changes a decision gets an ADR: blocks and the record contract (6), views (7), bindings (8), the sidecar (9).
+Each increment that changes a decision gets an ADR. ADRs 6 (framework/pack/state) and 7 (the lesson schema) are written; still to come are blocks and the record contract (8), views (9), bindings (10) and the sidecar (11).
 
 The first usable milestone is the whole loop working once: a saved attempt, a deliberate later review, usable feedback, and a teaching decision that names the evidence it used.
 
@@ -329,14 +345,17 @@ Possibilities, not proposals. Each is built only if real use shows a need for it
 ## Review log
 
 - **Revision 1** (2026-11-18): first draft.
+- **Revision 4** (2026-11-21): the learner corrected what School is. It is a lesson-agnostic framework; the AIΩN series was the test case that built it, not its purpose. Lesson packs become their own public git repositories whose authored sources compile to one lesson file ([ADR 6](../adr/0006-separate-framework-lessons-and-learner-state.md)), that file's format is GraphQL SDL compiled by Wesley ([ADR 7](../adr/0007-lesson-file-schema-in-graphql-compiled-by-wesley.md)), and learner state is private and lives outside the pack. Added the separation increment, two problems, the format-version identity, and open questions 3 and 4. ADRs 2–5 are amended accordingly.
 - **Revision 3** (2026-11-21): reconciled against the full text of the same external review, checked row by row rather than recalled. Re-measured the current state against commit `22e5411`; recorded the Dockerfile fix and the `.dockerignore` cause behind it; tightened proposal 2b to displayed values; added the [reconciliation table](#review-reconciliation). Wrote down four things that existed only in captured session transcripts: how lessons are planned, the undetected reference cycles, the unverified tailnet route, and the still-live destructive migration. Those transcripts were removed from this repository and its history on 2026-11-21, so this RFC is now their only record. Also normalised machine-specific paths across the workspace to repo-root-relative ones (`../aion` for the sibling papers checkout), keeping only the two that are verbatim historical quotes: the original `/teach` request above and the broken `file://` URLs in ADR 5's problem statement.
 - **Revision 2** (2026-11-18): revised after an external review that returned *changes required*. It added the learning record contract, the preserving migration, the definition of first try, idempotent submissions, the grading lifecycle and rubric, binding snapshots, the sidecar activation gates and the view contracts. It replaced the ban on generated content with a retention rule, and closed the Markdown question. The Bun claim was verified locally; the Claude Code documentation claims were taken from the review and not checked here.
 
 ## Open questions
 
-Questions 1 and 2 are unanswered and block work: 1 governs whether the sidecar may ever write lesson content, and 2 gates the CLI adapter. The local adapter and increments 1–3 do not wait on either.
+Questions 1 and 2 are unanswered and block work: 1 governs whether the sidecar may ever write lesson content, and 2 gates the CLI adapter. Questions 3 and 4 block increment 2. The local adapter and increment 1 do not wait on any of them.
 
 1. **What did "false" reject?** The learner answered "false" to the rule that LLMs grade but never supply content, then described the sidecar. Revision 2 assumes: the sidecar grades first, and generated content is allowed later if it is reviewed and kept as a revision. Confirm or correct this.
 2. **Does the subscription permit automated use through its CLI?** The CLI supports non-interactive mode; whether the learner's plan allows this wrapper must be checked before enabling the CLI adapter.
-3. **Answered:** the sidecar stays typed around grading and lives in this repository until a second real consumer exists.
-4. **Answered, and done:** this workspace became a git repository on 2026-11-21 (commit `22e5411`), published as `flyingrobots/school` under Apache 2.0. The rest of increment 1 — the preserving migration — is not done.
+3. **Where does `/teach` run?** The skill assumes one workspace holding `MISSION.md`, `lessons/` and `learning-records/`. Under ADR 6 that content is a separate repository and the state is somewhere else again. Either `/teach` runs in the pack and reaches the framework, or it runs here and is pointed at a pack. Unsettled, and it shapes increment 2.
+4. **Is the compiled lesson file JSON or Wesley's little-endian binary?** JSON stays readable and diffable inside a pack repository; binary is compact and comes with a generated codec. See ADR 7, Open.
+5. **Answered:** the sidecar stays typed around grading and lives in this repository until a second real consumer exists.
+6. **Answered, and done:** this workspace became a git repository on 2026-11-21 (commit `22e5411`), published as `flyingrobots/school` under Apache 2.0. The rest of increment 1 — the preserving migration — is not done.

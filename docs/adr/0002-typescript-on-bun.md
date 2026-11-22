@@ -1,6 +1,6 @@
 # 2. Write the server in TypeScript on Bun, with no dependencies
 
-Date: 2026-11-18 · Status: Accepted
+Date: 2026-11-18 · Status: Accepted, amended by [ADR 7](0007-lesson-file-schema-in-graphql-compiled-by-wesley.md): the project gains a build step and a Rust-based schema compiler. The server runtime is unchanged — still Bun with built-ins only.
 
 ## Context
 The learner ruled out Python and asked for TypeScript and Rust. The server only serves files and stores a handful of answers.

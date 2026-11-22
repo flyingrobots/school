@@ -1,6 +1,6 @@
 # 5. Serve only an allowlist of folders
 
-Date: 2026-11-18 · Status: Accepted
+Date: 2026-11-18 · Status: Accepted, amended by [ADR 6](0006-separate-framework-lessons-and-learner-state.md): the four prefixes become a configured map of named mounts; only `assets` is supplied by the framework.
 
 ## Context
 Lessons linked to the AIΩN papers with `file:///Users/j/...` URLs, which do not open on a phone. The workspace also holds files that should not be served, such as `progress/` and `server/`.

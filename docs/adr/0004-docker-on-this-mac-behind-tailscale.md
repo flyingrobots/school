@@ -1,6 +1,6 @@
 # 4. Run in Docker on this Mac, reachable only over Tailscale
 
-Date: 2026-11-18 · Status: Accepted
+Date: 2026-11-18 · Status: Accepted, amended by [ADR 6](0006-separate-framework-lessons-and-learner-state.md): the bind mounts are configured rather than fixed to one course.
 
 ## Context
 This Mac is the learner's home server. They want to take lessons from their phone wherever they are, over their tailnet.
