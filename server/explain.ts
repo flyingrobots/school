@@ -74,7 +74,7 @@ export async function gradeExplanation(db: Database, submissionId: string, grade
 
   // The network call happens outside any transaction: a slow grader must not hold the database.
   const outcome: Outcome = grader === null
-    ? { status: "failed", error: "no grader is configured (set SCHOOL_GRADER)" }
+    ? { status: "failed", error: "no bridge is configured (set SCHOOL_BRIDGE_URL and SCHOOL_BRIDGE_TOKEN)" }
     : await grader.grade(input);
 
   return db.transaction((): Grading => {
@@ -86,7 +86,7 @@ export async function gradeExplanation(db: Database, submissionId: string, grade
       (submission_id, status, rubric_version, prompt_version, adapter, model, sources, raw_response, findings, error, supersedes, at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id, status, findings, error, model, supersedes, at`).get(
       submissionId, outcome.status, RUBRIC_VERSION, PROMPT_VERSION, grader?.adapter ?? "none",
-      outcome.model ?? grader?.model ?? null, JSON.stringify(sources), outcome.raw ?? null, findings,
+      outcome.model ?? (grader?.model || null), JSON.stringify(sources), outcome.raw ?? null, findings,
       outcome.status === "failed" ? outcome.error : null, prev, now)!;
     return toGrading(row);
   }).immediate();

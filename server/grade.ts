@@ -1,8 +1,8 @@
-// The grading client (RFC 1 proposal 4, decided 2026-11-22): a standard HTTP client to a model
-// endpoint, either the Anthropic Messages API or an OpenAI-compatible server such as LM Studio
-// or Ollama. Its one job is judging a learner's explanation against rubric v1. Every failure,
-// including a refusal, a timeout and output of the wrong shape, comes back as `failed` with a
-// reason; it is never turned into a verdict.
+// Grading, from the server's side (RFC 1 proposal 4). The server never runs a model: it sends
+// the rubric prompt and the response schema to the bridge (bridge/bridge.ts), a separate host
+// process that tries the learner's own agent commands in order. Every failure, including every
+// agent failing, the bridge being unreachable, and an answer of the wrong shape, comes back as
+// `failed` with a reason; it is never turned into a verdict.
 import { ConfigError } from "./config.ts";
 
 export const RUBRIC_VERSION = "rubric-v1";
@@ -28,13 +28,7 @@ export type Outcome =
   | { status: "succeeded"; findings: Findings; raw: string; model: string }
   | { status: "failed"; error: string; raw?: string; model?: string };
 
-export type GraderConfig = {
-  adapter: "anthropic" | "openai-compatible";
-  url: string;
-  model: string;
-  apiKey: string | null;
-  timeoutMs: number;
-};
+export type BridgeClientConfig = { url: string; token: string; deadlineMs: number };
 
 const criterion = {
   type: "object", additionalProperties: false, required: ["verdict", "note"],
@@ -61,22 +55,17 @@ export const RESPONSE_SCHEMA = {
   },
 } as const;
 
-/** The grader from the environment, or null when none is configured (grading then fails honestly). */
-export function graderConfig(env: Record<string, string | undefined>): GraderConfig | null {
-  const adapter = env.SCHOOL_GRADER ?? "";
-  if (adapter === "") return null;
-  if (adapter !== "anthropic" && adapter !== "openai-compatible") {
-    throw new ConfigError(`SCHOOL_GRADER ${JSON.stringify(adapter)} must be "anthropic" or "openai-compatible"`);
-  }
-  const url = (env.SCHOOL_GRADER_URL ?? (adapter === "anthropic" ? "https://api.anthropic.com" : "")).replace(/\/+$/, "");
-  if (url === "") throw new ConfigError("SCHOOL_GRADER_URL is required for an openai-compatible grader, e.g. http://host.docker.internal:1234/v1");
-  const model = env.SCHOOL_GRADER_MODEL ?? (adapter === "anthropic" ? "claude-opus-5-5" : "");
-  if (model === "") throw new ConfigError("SCHOOL_GRADER_MODEL is required for an openai-compatible grader");
-  const timeoutMs = Number(env.SCHOOL_GRADER_TIMEOUT_MS ?? 120_000);
-  // Under the server's 255 s request limit, so a slow grader fails here, honestly, first.
-  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 240_000) throw new ConfigError("SCHOOL_GRADER_TIMEOUT_MS must be a positive integer no greater than 240000");
-  const key = env.SCHOOL_GRADER_API_KEY ?? (adapter === "anthropic" ? env.ANTHROPIC_API_KEY : undefined);
-  return { adapter, url, model, apiKey: key === undefined || key === "" ? null : key, timeoutMs };
+/** The bridge from the environment, or null when none is configured (grading then fails honestly). */
+export function bridgeConfig(env: Record<string, string | undefined>): BridgeClientConfig | null {
+  const url = (env.SCHOOL_BRIDGE_URL ?? "").replace(/\/+$/, "");
+  if (url === "") return null;
+  if (!/^https?:\/\//.test(url)) throw new ConfigError(`SCHOOL_BRIDGE_URL ${JSON.stringify(url)} must be an http(s) URL, e.g. http://host.docker.internal:4748`);
+  const token = env.SCHOOL_BRIDGE_TOKEN ?? "";
+  if (token.length < 16) throw new ConfigError("SCHOOL_BRIDGE_TOKEN must be set to the bridge's shared secret (at least 16 characters)");
+  const deadlineMs = Number(env.SCHOOL_BRIDGE_DEADLINE_MS ?? 240_000);
+  // Under the server's 255 s request limit, so a slow chain fails here, honestly, first.
+  if (!Number.isInteger(deadlineMs) || deadlineMs <= 0 || deadlineMs > 240_000) throw new ConfigError("SCHOOL_BRIDGE_DEADLINE_MS must be a positive integer no greater than 240000");
+  return { url, token, deadlineMs };
 }
 
 const SYSTEM = `You grade a learner's short explanation for a self-study course. The learner is a newcomer trying to explain an idea to someone else.
@@ -114,76 +103,45 @@ function parseFindings(text: string): Findings | string {
   return ok ? (v as Findings) : "the grader returned JSON of the wrong shape";
 }
 
-async function post(cfg: GraderConfig, path: string, headers: Record<string, string>, body: unknown): Promise<{ status: number; text: string } | { error: string }> {
+/** The whole prompt an agent receives: an agent CLI has no separate system channel. */
+export function gradingPrompt(i: GradingInput): string {
+  return `${SYSTEM}\n\n${userMessage(i)}\n\nReply with only one JSON object, no prose and no code fence, matching this JSON Schema:\n${JSON.stringify(RESPONSE_SCHEMA)}`;
+}
+
+type Attempt = { agent: string; status: string; error?: string };
+type BridgeReply = { status: "succeeded"; agent: string; output: unknown; attempts: Attempt[] } | { status: "failed"; error: string; attempts: Attempt[] };
+
+export async function callBridge(cfg: BridgeClientConfig, input: GradingInput): Promise<Outcome> {
+  let res: Response;
   try {
-    const res = await fetch(cfg.url + path, {
-      method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body),
-      signal: AbortSignal.timeout(cfg.timeoutMs),
+    res = await fetch(`${cfg.url}/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${cfg.token}` },
+      body: JSON.stringify({ prompt: gradingPrompt(input), schema: RESPONSE_SCHEMA, deadline_ms: cfg.deadlineMs }),
+      signal: AbortSignal.timeout(cfg.deadlineMs + 10_000),
     });
-    return { status: res.status, text: await res.text() };
   } catch (e) {
     const name = e instanceof Error ? e.name : "";
-    if (name === "TimeoutError" || name === "AbortError") return { error: `the grader timed out after ${cfg.timeoutMs} ms` };
-    return { error: `the grader could not be reached (${e instanceof Error ? e.message : String(e)})` };
+    if (name === "TimeoutError" || name === "AbortError") return { status: "failed", error: "the bridge did not answer in time" };
+    return { status: "failed", error: `the bridge could not be reached (${e instanceof Error ? e.message : String(e)})` };
   }
-}
-
-async function anthropic(cfg: GraderConfig, input: GradingInput): Promise<Outcome> {
-  const headers: Record<string, string> = { "anthropic-version": "2026-10-21" };
-  if (cfg.apiKey !== null) headers["x-api-key"] = cfg.apiKey;
-  // Server-side fallback: if a safety classifier declines, the API retries on a fallback model
-  // inside the same call rather than returning nothing.
-  const fallback = /^claude-(opus-5-5|fable-5|sonnet-5-5)/.test(cfg.model);
-  if (fallback) headers["anthropic-beta"] = "server-side-fallback-2026-07-01";
-  const body: Record<string, unknown> = {
-    model: cfg.model,
-    max_tokens: 16000,
-    system: SYSTEM,
-    messages: [{ role: "user", content: userMessage(input) }],
-    output_config: { effort: "high", format: { type: "json_schema", schema: RESPONSE_SCHEMA } },
-  };
-  if (fallback) body.fallbacks = "default";
-  const r = await post(cfg, "/v1/messages", headers, body);
-  if ("error" in r) return { status: "failed", error: r.error };
-  if (r.status !== 200) return { status: "failed", error: `the grader answered HTTP ${r.status}`, raw: r.text };
-  let msg: { model?: string; stop_reason?: string; content?: { type: string; text?: string }[] };
+  const text = await res.text();
+  if (res.status === 401) return { status: "failed", error: "the bridge refused the token", raw: text };
+  if (res.status !== 200) return { status: "failed", error: `the bridge answered HTTP ${res.status}`, raw: text };
+  let reply: BridgeReply;
   try {
-    msg = JSON.parse(r.text);
+    reply = JSON.parse(text);
   } catch {
-    return { status: "failed", error: "the grader's response was not JSON", raw: r.text };
+    return { status: "failed", error: "the bridge's reply was not JSON", raw: text };
   }
-  const model = msg.model ?? cfg.model;
-  if (msg.stop_reason === "refusal") return { status: "failed", error: "the grader refused to grade this", raw: r.text, model };
-  if (msg.stop_reason === "max_tokens") return { status: "failed", error: "the grader ran out of room (max_tokens)", raw: r.text, model };
-  const text = (msg.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
-  const findings = parseFindings(text);
-  return typeof findings === "string" ? { status: "failed", error: findings, raw: r.text, model } : { status: "succeeded", findings, raw: r.text, model };
-}
-
-async function openaiCompatible(cfg: GraderConfig, input: GradingInput): Promise<Outcome> {
-  const headers: Record<string, string> = cfg.apiKey === null ? {} : { authorization: `Bearer ${cfg.apiKey}` };
-  const r = await post(cfg, "/chat/completions", headers, {
-    model: cfg.model,
-    messages: [{ role: "system", content: SYSTEM }, { role: "user", content: userMessage(input) }],
-    response_format: { type: "json_schema", json_schema: { name: "grading", strict: true, schema: RESPONSE_SCHEMA } },
-  });
-  if ("error" in r) return { status: "failed", error: r.error };
-  if (r.status !== 200) return { status: "failed", error: `the grader answered HTTP ${r.status}`, raw: r.text };
-  let msg: { model?: string; choices?: { finish_reason?: string; message?: { content?: string } }[] };
-  try {
-    msg = JSON.parse(r.text);
-  } catch {
-    return { status: "failed", error: "the grader's response was not JSON", raw: r.text };
+  if (reply.status !== "succeeded") {
+    const why = reply.attempts.map((a) => `${a.agent}: ${a.error ?? a.status}`).join("; ");
+    return { status: "failed", error: `${reply.error ?? "every agent failed"}${why ? ` (${why})` : ""}`, raw: text };
   }
-  const model = msg.model ?? cfg.model;
-  const choice = msg.choices?.[0];
-  if (choice?.finish_reason === "length") return { status: "failed", error: "the grader ran out of room (length)", raw: r.text, model };
-  const findings = parseFindings(choice?.message?.content ?? "");
-  return typeof findings === "string" ? { status: "failed", error: findings, raw: r.text, model } : { status: "succeeded", findings, raw: r.text, model };
-}
-
-export function callGrader(cfg: GraderConfig, input: GradingInput): Promise<Outcome> {
-  return cfg.adapter === "anthropic" ? anthropic(cfg, input) : openaiCompatible(cfg, input);
+  // The bridge checked the schema; check again here, since this is what the learner will see.
+  const findings = parseFindings(JSON.stringify(reply.output));
+  return typeof findings === "string" ? { status: "failed", error: findings, raw: text, model: reply.agent }
+    : { status: "succeeded", findings, raw: text, model: reply.agent };
 }
 
 const squash = (s: string) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim().toLowerCase();

@@ -7,14 +7,14 @@ import { esc, isView, renderCourse, renderExplain, renderLanding, renderPage, re
 import { migrate, snapshot } from "./migrate.ts";
 import { encounterAnswers, lessonProgress, openEncounter, submit, type Submission } from "./record.ts";
 import { encounterExplanations, explanationState, gradeExplanation, saveExplanation, type ExplanationSubmission, type Grader } from "./explain.ts";
-import { callGrader, graderConfig } from "./grade.ts";
+import { bridgeConfig, callBridge } from "./grade.ts";
 import { ConfigError, course, courseNames, mountTable, parseConfig, type Course } from "./config.ts";
 
 let config;
-let graderCfg;
+let bridgeCfg;
 try {
   config = parseConfig(process.env, join(import.meta.dir, ".."));
-  graderCfg = graderConfig(process.env);
+  bridgeCfg = bridgeConfig(process.env);
 } catch (e) {
   if (e instanceof ConfigError) {
     console.error(`school: ${e.message}`);
@@ -43,12 +43,13 @@ const migration = migrate(db, (from) => {
 });
 if (migration.copied > 0) console.log(`school: preserved ${migration.copied} answer(s)`);
 
-// The grader is optional: without one, a grading attempt is stored as failed with that reason.
-// The API key lives only in this process's environment; it is never logged or stored.
-const grader: Grader = graderCfg === null ? null
-  : { adapter: graderCfg.adapter, model: graderCfg.model, grade: (input) => callGrader(graderCfg, input) };
-console.log(grader === null ? "school: no grader configured; explanations are saved but not graded"
-  : `school: grader ${graderCfg!.adapter} ${graderCfg!.model} at ${graderCfg!.url}`);
+// Grading goes through the bridge, a separate host process that runs the learner's agent
+// commands. Without one, a grading attempt is stored as failed with that reason. The token
+// lives only in this process's environment; it is never logged or stored.
+const grader: Grader = bridgeCfg === null ? null
+  : { adapter: "bridge", model: "", grade: (input) => callBridge(bridgeCfg, input) };
+console.log(grader === null ? "school: no bridge configured (SCHOOL_BRIDGE_URL); explanations are saved but not graded"
+  : `school: grading through the bridge at ${bridgeCfg!.url}`);
 
 const insertView = db.prepare(`INSERT INTO views (course, lesson, at) VALUES ($course, $lesson, $at)`);
 

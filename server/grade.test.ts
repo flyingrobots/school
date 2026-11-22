@@ -1,6 +1,7 @@
-// The grading client (RFC 1 proposal 4; flyingrobots/school#10), against fake model servers.
+// The server's side of grading: what it sends the bridge and how it reads the reply
+// (RFC 1 proposal 4; flyingrobots/school#10). A fake bridge stands in for bridge/bridge.ts.
 import { afterAll, expect, test } from "bun:test";
-import { RESPONSE_SCHEMA, callGrader, checkQuotes, graderConfig, type GradingInput } from "./grade.ts";
+import { RESPONSE_SCHEMA, bridgeConfig, callBridge, checkQuotes, type GradingInput } from "./grade.ts";
 
 const input: GradingInput = {
   prompt: "Explain the inversion in under 30 seconds.",
@@ -8,101 +9,75 @@ const input: GradingInput = {
   sources: [{ id: "readme", title: "AIΩN README", text: "The fundamental unit of computational storage should be the transformation, not the state." }],
   explanation: "You keep every change, and the current state is just a replay of them.",
 };
-
 const verdict = {
   insufficient_evidence: false,
   fidelity: { verdict: "meets", note: "Matches the thesis." },
   completeness: { verdict: "partly", note: "No example." },
   accessibility: { verdict: "meets", note: "Plain words." },
-  contradictions: [{ source_id: "readme", quote: "should be the transformation, not the state", note: "Fine." }],
+  contradictions: [],
   summary: "Good start; add an example.",
 };
 
-type Seen = { path: string; headers: Headers; body: any };
-const seen: Seen[] = [];
-let reply: (s: Seen) => Response = () => Response.json({});
+const TOKEN = "server-side-token-0123";
+let seen: { auth: string | null; body: any } | null = null;
+let reply: () => Response = () => Response.json({});
 const fake = Bun.serve({
   port: 0,
   async fetch(req) {
-    const s = { path: new URL(req.url).pathname, headers: req.headers, body: await req.json() };
-    seen.push(s);
-    return reply(s);
+    seen = { auth: req.headers.get("authorization"), body: await req.json() };
+    return reply();
   },
 });
 afterAll(() => fake.stop(true));
-const base = `http://127.0.0.1:${fake.port}`;
+const cfg = (over: Record<string, string> = {}) =>
+  bridgeConfig({ SCHOOL_BRIDGE_URL: `http://127.0.0.1:${fake.port}`, SCHOOL_BRIDGE_TOKEN: TOKEN, ...over })!;
 
-const anthropic = (over: Record<string, string> = {}) =>
-  graderConfig({ SCHOOL_GRADER: "anthropic", SCHOOL_GRADER_URL: base, SCHOOL_GRADER_API_KEY: "sk-test-SECRET", ...over })!;
-const anthropicReply = (body: object) => () => Response.json({
-  model: "claude-opus-5-5", stop_reason: "end_turn",
-  content: [{ type: "thinking", thinking: "" }, { type: "text", text: JSON.stringify(body) }],
+test("no bridge configured is not an error, just no grading", () => {
+  expect(bridgeConfig({})).toBeNull();
+  expect(() => bridgeConfig({ SCHOOL_BRIDGE_URL: "http://x" })).toThrow(/SCHOOL_BRIDGE_TOKEN/);
+  expect(() => bridgeConfig({ SCHOOL_BRIDGE_URL: "x:1", SCHOOL_BRIDGE_TOKEN: TOKEN })).toThrow(/http/);
+  expect(() => bridgeConfig({ SCHOOL_BRIDGE_URL: "http://x", SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_DEADLINE_MS: "999999" })).toThrow(/240000/);
 });
 
-test("no grader configured is not an error, just no grader", () => {
-  expect(graderConfig({})).toBeNull();
-  expect(() => graderConfig({ SCHOOL_GRADER: "telepathy" })).toThrow(/SCHOOL_GRADER/);
-  expect(() => graderConfig({ SCHOOL_GRADER: "openai-compatible" })).toThrow(/SCHOOL_GRADER_URL/);
+test("the server sends one prompt holding the rubric, sources and learner text, the schema, the deadline and the token", async () => {
+  reply = () => Response.json({ status: "succeeded", agent: "claude", output: verdict, attempts: [{ agent: "claude", status: "succeeded" }] });
+  const out = await callBridge(cfg(), input);
+  expect(out).toMatchObject({ status: "succeeded", model: "claude" });
+  expect(seen!.auth).toBe(`Bearer ${TOKEN}`);
+  expect(seen!.body.schema).toEqual(RESPONSE_SCHEMA);
+  expect(seen!.body.deadline_ms).toBe(240000);
+  for (const part of [input.explanation, input.modelAnswer, "readme", "fidelity", "<explanation>"]) expect(seen!.body.prompt).toContain(part);
 });
 
-test("anthropic: the request carries the rubric schema, the key, and the learner text as data", async () => {
-  reply = anthropicReply(verdict);
-  const out = await callGrader(anthropic(), input);
-  expect(out.status).toBe("succeeded");
-  const req = seen.at(-1)!;
-  expect(req.path).toBe("/v1/messages");
-  expect(req.headers.get("x-api-key")).toBe("sk-test-SECRET");
-  expect(req.headers.get("anthropic-version")).toBe("2026-10-21");
-  expect(req.body.model).toBe("claude-opus-5-5");
-  expect(req.body.output_config.format).toEqual({ type: "json_schema", schema: RESPONSE_SCHEMA });
-  expect(JSON.stringify(req.body.messages)).toContain(input.explanation);
-  expect(JSON.stringify(req.body.messages)).toContain("readme");
-  if (out.status === "succeeded") {
-    expect(out.findings.completeness.verdict).toBe("partly");
-    expect(out.model).toBe("claude-opus-5-5");
-    expect(out.raw).not.toContain("SECRET");
-  }
-});
-
-test("openai-compatible: chat completions with a json_schema response format", async () => {
-  reply = () => Response.json({ model: "local-model", choices: [{ finish_reason: "stop", message: { content: JSON.stringify(verdict) } }] });
-  const out = await callGrader(graderConfig({ SCHOOL_GRADER: "openai-compatible", SCHOOL_GRADER_URL: base + "/v1", SCHOOL_GRADER_MODEL: "local-model" })!, input);
-  expect(out.status).toBe("succeeded");
-  const req = seen.at(-1)!;
-  expect(req.path).toBe("/v1/chat/completions");
-  expect(req.body.response_format.type).toBe("json_schema");
-  expect(req.body.response_format.json_schema.schema).toEqual(RESPONSE_SCHEMA);
-  expect(req.headers.get("authorization")).toBeNull(); // no key configured, none sent
+test("every agent failing is a failure that names what each one did", async () => {
+  reply = () => Response.json({ status: "failed", error: "every agent failed", attempts: [
+    { agent: "claude", status: "failed", error: "timed out after 180 s" }, { agent: "local", status: "skipped", error: "llm: not found on PATH" },
+  ] });
+  const out = await callBridge(cfg(), input);
+  expect(out.status).toBe("failed");
+  if (out.status === "failed") expect(out.error).toBe("every agent failed (claude: timed out after 180 s; local: llm: not found on PATH)");
 });
 
 test.each([
-  ["a refusal", () => Response.json({ model: "m", stop_reason: "refusal", content: [] }), /refus/],
-  ["running out of tokens", () => Response.json({ model: "m", stop_reason: "max_tokens", content: [{ type: "text", text: "{" }] }), /max_tokens/],
-  ["malformed JSON", () => Response.json({ model: "m", stop_reason: "end_turn", content: [{ type: "text", text: "not json" }] }), /JSON/],
-  ["JSON of the wrong shape", () => Response.json({ model: "m", stop_reason: "end_turn", content: [{ type: "text", text: "{\"fidelity\":1}" }] }), /shape/],
-  ["an HTTP 500", () => new Response("upstream broke", { status: 500 }), /500/],
-] as const)("%s fails, and is never a verdict", async (_name, r, why) => {
+  ["a refused token", () => new Response("no", { status: 401 }), /token/],
+  ["an HTTP error", () => new Response("broke", { status: 500 }), /500/],
+  ["a reply that is not JSON", () => new Response("<html>"), /not JSON/],
+  ["an answer of the wrong shape", () => Response.json({ status: "succeeded", agent: "a", output: { fidelity: 1 }, attempts: [] }), /shape/],
+] as const)("%s fails, and is never a verdict", async (_n, r, why) => {
   reply = r;
-  const out = await callGrader(anthropic(), input);
+  const out = await callBridge(cfg(), input);
   expect(out.status).toBe("failed");
   if (out.status === "failed") expect(out.error).toMatch(why);
 });
 
-test("a timeout fails", async () => {
-  reply = () => new Response(new ReadableStream({ start() {} })); // never finishes
-  const out = await callGrader(anthropic({ SCHOOL_GRADER_TIMEOUT_MS: "200" }), input);
-  expect(out.status).toBe("failed");
-  if (out.status === "failed") expect(out.error).toMatch(/time/i);
-});
-
-test("an unreachable grader fails", async () => {
-  const out = await callGrader(graderConfig({ SCHOOL_GRADER: "anthropic", SCHOOL_GRADER_URL: "http://127.0.0.1:9", SCHOOL_GRADER_API_KEY: "k" })!, input);
-  expect(out.status).toBe("failed");
+test("an unreachable bridge fails", async () => {
+  const out = await callBridge(bridgeConfig({ SCHOOL_BRIDGE_URL: "http://127.0.0.1:9", SCHOOL_BRIDGE_TOKEN: TOKEN })!, input);
+  expect(out).toMatchObject({ status: "failed", error: expect.stringMatching(/could not be reached/) });
 });
 
 test("a quote is verified only when it appears in the source it names", () => {
   const checked = checkQuotes([
-    { source_id: "readme", quote: "should be the  transformation,\nnot the state", note: "" }, // whitespace differs
+    { source_id: "readme", quote: "should be the  transformation,\nnot the state", note: "" },
     { source_id: "readme", quote: "storage should be a database", note: "" },
     { source_id: "nope", quote: "anything", note: "" },
     { source_id: "model", quote: "AIΩN saves how they got there", note: "" },

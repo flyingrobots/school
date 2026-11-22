@@ -1,0 +1,15 @@
+{
+  "timeout_seconds": 180,
+  "agents": [
+    {
+      "name": "claude",
+      "command": "claude --tools \"\" --strict-mcp-config --no-session-persistence --output-format json -p {prompt}",
+      "output": "claude-json"
+    },
+    {
+      "name": "codex",
+      "command": "codex exec --skip-git-repo-check --ephemeral --sandbox read-only -o {output_file}",
+      "output": "text"
+    }
+  ]
+}

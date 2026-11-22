@@ -35,9 +35,25 @@ SCHOOL_MOUNTS="papers=/path/to/source-material" \
 | `SCHOOL_STATE` | Where **your** answers and progress go. Must not be inside the course; the server refuses to start if it is. |
 | `SCHOOL_MOUNTS` | `name=path` pairs, served read-only at `/name/...`, for source material a course cites. |
 | `HOST`, `PORT` | Default `127.0.0.1:4747`. |
-| `SCHOOL_GRADER` | `anthropic` or `openai-compatible` to grade written explanations. Unset, explanations are saved but not graded. |
-| `SCHOOL_GRADER_URL`, `SCHOOL_GRADER_MODEL`, `SCHOOL_GRADER_API_KEY` | The grader's endpoint, model and key. For `anthropic` they default to `https://api.anthropic.com`, `claude-opus-5-5` and `ANTHROPIC_API_KEY`. The key is never stored or logged. |
-| `SCHOOL_GRADER_TIMEOUT_MS` | Default 120000; at most 240000. |
+| `SCHOOL_BRIDGE_URL`, `SCHOOL_BRIDGE_TOKEN` | Where the bridge listens, and the secret it shares with the server. Unset, explanations are saved but not graded. The token is never stored or logged. |
+
+### Grading explanations: the bridge
+
+Written explanations are graded by LLM agents that the **bridge** runs on the host, outside Docker. Each agent is a command template, tried in order until one returns a usable answer. `{prompt}` becomes the prompt as a single argument; a template without it gets the prompt on stdin. `{output_file}` is a file the agent may write its answer to. Templates are split like a shell would split them, but never run through a shell.
+
+```sh
+mkdir -p ~/.config/school
+cp bridge/bridge.example.json ~/.config/school/bridge.json   # then edit the agents
+SCHOOL_BRIDGE_TOKEN=a-long-random-secret bun bridge/bridge.ts
+```
+
+What an agent may do is set by its own command: the example turns off Claude Code's tools and MCP servers, and runs Codex in a read-only sandbox. Whether your plan for each CLI permits this use is yours to check. Each run gets an empty working directory and is killed, with everything it started, at its timeout. The bridge logs JSON Lines, never the prompt or the answer.
+
+| Variable | Meaning |
+| --- | --- |
+| `SCHOOL_BRIDGE_TOKEN` | Required; at least 16 characters, the same value the server has. |
+| `SCHOOL_BRIDGE_CONFIG` | Default `~/.config/school/bridge.json`. Re-read on every request. |
+| `SCHOOL_BRIDGE_HOST`, `SCHOOL_BRIDGE_PORT` | Default `127.0.0.1:4748`. |
 
 `bun test` runs the suite. `server/compose.yaml` runs it in Docker behind `tailscale serve` (ADR 4); copy `server/compose.example.env` to `server/.env` and set your course, state and source paths first.
 

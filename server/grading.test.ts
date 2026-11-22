@@ -1,16 +1,17 @@
-// Explanation grading end to end: the real server, a fake Anthropic endpoint (flyingrobots/school#10).
+// Explanation grading end to end: the real server, the real bridge, and a fake agent CLI (flyingrobots/school#10).
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const root = mkdtempSync(join(tmpdir(), "school-grading-"));
 const PORT = 20000 + Math.floor(Math.random() * 20000);
+const BRIDGE_PORT = PORT + 1;
 const base = `http://127.0.0.1:${PORT}`;
-const KEY = "sk-ant-test-NEVER-STORE-ME";
+const KEY = "bridge-token-NEVER-STORE-ME";
 let server: ReturnType<typeof Bun.spawn> | null = null;
+let bridge: ReturnType<typeof Bun.spawn> | null = null;
 
-let healthy = true;
 const verdict = {
   insufficient_evidence: false,
   fidelity: { verdict: "meets", note: "Faithful to the source." },
@@ -19,16 +20,22 @@ const verdict = {
   contradictions: [{ source_id: "readme", quote: "the transformation, not the state", note: "Matches." }],
   summary: "Close. Add an example.",
 };
-const fake = Bun.serve({
-  port: 0,
-  async fetch(req) {
-    await req.json();
-    if (!healthy) return new Response("overloaded", { status: 529 });
-    return Response.json({ model: "claude-opus-5-5", stop_reason: "end_turn", content: [{ type: "text", text: JSON.stringify(verdict) }] });
-  },
-});
+// The one fake in the chain: an agent CLI. It answers unless the file "down" exists.
+const agentPath = join(root, "fake-agent");
+
+async function until(url: string, ok: (r: Response) => boolean) {
+  for (let i = 0; i < 100; i++) {
+    try { if (ok(await fetch(url))) return; } catch {}
+    await Bun.sleep(50);
+  }
+  throw new Error(`${url} did not come up`);
+}
 
 beforeAll(async () => {
+  writeFileSync(join(root, "verdict.json"), JSON.stringify(verdict));
+  writeFileSync(agentPath, `#!/bin/sh\nif [ -e "${root}/down" ]; then echo "model overloaded" >&2; exit 1; fi\ncat "${root}/verdict.json"\n`);
+  chmodSync(agentPath, 0o755);
+  writeFileSync(join(root, "bridge.json"), JSON.stringify({ timeout_seconds: 10, agents: [{ name: "fake-agent", command: `${agentPath} -p {prompt}` }] }));
   mkdirSync(join(root, "course", "lessons"), { recursive: true });
   writeFileSync(join(root, "course", "lessons", "0001.json"), JSON.stringify({
     type: "page", id: "l1", title: "One", subtitle: "", children: [{
@@ -36,21 +43,20 @@ beforeAll(async () => {
       sources: [{ id: "readme", title: "README", text: "The unit of storage should be the transformation, not the state." }],
     }],
   }));
-  server = Bun.spawn(["bun", join(import.meta.dir, "server.ts")], {
-    env: { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), PORT: String(PORT), HOST: "127.0.0.1",
-      SCHOOL_GRADER: "anthropic", SCHOOL_GRADER_URL: `http://127.0.0.1:${fake.port}`, SCHOOL_GRADER_API_KEY: KEY },
+  bridge = Bun.spawn(["bun", join(import.meta.dir, "..", "bridge", "bridge.ts")], {
+    env: { ...process.env, SCHOOL_BRIDGE_TOKEN: KEY, SCHOOL_BRIDGE_CONFIG: join(root, "bridge.json"), SCHOOL_BRIDGE_PORT: String(BRIDGE_PORT) },
     stdout: "pipe", stderr: "pipe",
   });
-  for (let i = 0; i < 100; i++) {
-    try { if ((await fetch(base + "/")).ok) return; } catch {}
-    await Bun.sleep(50);
-  }
-  throw new Error("server did not start");
+  await until(`http://127.0.0.1:${BRIDGE_PORT}/health`, (r) => r.status === 401);
+  server = Bun.spawn(["bun", join(import.meta.dir, "server.ts")], {
+    env: { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), PORT: String(PORT), HOST: "127.0.0.1",
+      SCHOOL_BRIDGE_URL: `http://127.0.0.1:${BRIDGE_PORT}`, SCHOOL_BRIDGE_TOKEN: KEY },
+    stdout: "pipe", stderr: "pipe",
+  });
+  await until(base + "/", (r) => r.ok);
 });
 afterAll(async () => {
-  server?.kill();
-  await server?.exited;
-  fake.stop(true);
+  for (const p of [server, bridge]) { p?.kill(); await p?.exited; }
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -92,11 +98,12 @@ test("a reload shows the explanation and its grading from the database", async (
 });
 
 test("a grader outage keeps the explanation and says so; a retry later succeeds", async () => {
-  healthy = false;
+  writeFileSync(join(root, "down"), "");
   const failed = await (await post("/api/grade", { submissionId })).json();
   expect(failed.status).toBe("failed");
   expect(failed.html).toContain("Your explanation is saved. Automated feedback is unavailable. Retry when ready.");
-  healthy = true;
+  expect(failed.html).toContain("fake-agent: exit 1");
+  unlinkSync(join(root, "down"));
   expect((await (await post("/api/grade", { submissionId })).json()).status).toBe("succeeded");
 });
 
@@ -106,7 +113,7 @@ test("grading an unknown submission is a 404, and a malformed one a 400", async 
   expect((await post("/api/explanation", { submissionId: crypto.randomUUID(), encounterId: crypto.randomUUID(), blockId: "e1", text: "", ms: 1 })).status).toBe(400);
 });
 
-test("the API key appears nowhere: not in the database, a page or the server's output", async () => {
+test("the bridge token appears nowhere: not in the database, a page or the server's output", async () => {
   const dbBytes = readFileSync(join(root, "state", "progress.db")).toString("latin1") +
     (() => { try { return readFileSync(join(root, "state", "progress.db-wal")).toString("latin1"); } catch { return ""; } })();
   expect(dbBytes).not.toContain(KEY);

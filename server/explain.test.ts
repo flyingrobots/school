@@ -105,10 +105,10 @@ test("grading a submission that does not exist is refused without calling the gr
   expect(called).toBe(false);
 });
 
-test("with no grader configured, an attempt is stored as failed with that reason", async () => {
+test("with no bridge configured, an attempt is stored as failed with that reason", async () => {
   const { d, sub } = setup();
   saveExplanation(d, sub, now(1));
-  expect(await gradeExplanation(d, sub.submissionId, null, now(2))).toMatchObject({ status: "failed", error: expect.stringMatching(/no grader/i) });
+  expect(await gradeExplanation(d, sub.submissionId, null, now(2))).toMatchObject({ status: "failed", error: expect.stringMatching(/no bridge/i) });
 });
 
 test("a reload sees the latest explanation in the encounter and its latest grading", async () => {
