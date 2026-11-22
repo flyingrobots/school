@@ -192,3 +192,64 @@ test("a version-3 database gains a course column without touching its rows", () 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// Review finding #1: the schema version used to be written after the data transaction
+// committed. A crash in between left a current-shaped database with an old version, and the
+// next boot sent it down the v2 rebuild, which nulled every answer's course, encounter,
+// choice and submission. A DROP TABLE fires no triggers, so append-only did not stop it.
+function currentWithStaleVersion(withLegacyRow: boolean): Database {
+  const db = new Database(":memory:", { strict: true });
+  migrate(db);
+  db.exec(`INSERT INTO snapshots VALUES ('h', '{}', 't'); INSERT INTO encounters VALUES ('e', 'c', 'l', 'web', 'h', 't');
+    INSERT INTO answers (origin, course, block_id, lesson, choice, correct, first_try, ms, at, encounter_id, choice_id, submission_id)
+    VALUES ('block', 'c', 'q', 'l', 'x', 1, 1, 1, 't', 'e', 'a', 's1');`);
+  if (withLegacyRow) db.exec(`INSERT INTO answers (origin, lesson, question, prompt, choice, correct, first_try, ms, at)
+    VALUES ('legacy', 'l', 0, 'p', 'x', 1, 1, 1, 't')`);
+  db.exec("PRAGMA user_version = 4"); // the crash: data at v5, version still 4
+  return db;
+}
+
+test.each([false, true])("a current-shaped database with a stale version keeps every value (legacy row: %p)", (legacy) => {
+  const db = currentWithStaleVersion(legacy);
+  const before = db.query("SELECT * FROM answers ORDER BY id").all();
+  let backups = 0;
+  const result = migrate(db, () => backups++);
+  expect(db.query("SELECT * FROM answers ORDER BY id").all()).toEqual(before);
+  expect(result.copied).toBe(0);
+  expect(backups).toBe(0); // nothing is rewritten, so there is nothing to back up
+  expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(SCHEMA_VERSION);
+  expect(() => db.exec("DELETE FROM answers")).toThrow(/append-only/); // the rules are still in place
+});
+
+test("a database from a newer School is refused, not downgraded", () => {
+  const db = new Database(":memory:", { strict: true });
+  migrate(db);
+  db.exec(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
+  expect(() => migrate(db)).toThrow(/newer/);
+  expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(SCHEMA_VERSION + 1);
+});
+
+// The fix relies on SQLite writing user_version as part of the enclosing transaction.
+test("SQLite rolls back user_version with the transaction that set it", () => {
+  const db = new Database(":memory:", { strict: true });
+  expect(() => db.transaction(() => {
+    db.exec("PRAGMA user_version = 9");
+    throw new Error("abort");
+  })()).toThrow("abort");
+  expect(db.query<{ user_version: number }, []>("PRAGMA user_version").get()!.user_version).toBe(0);
+});
+
+// Review finding #2: a legacy or v2 database whose views table predates `course`.
+test.each(["legacy", "v2"] as const)("a %s database's views table gains course, so recording a view works", (kind) => {
+  const db = new Database(":memory:", { strict: true });
+  db.exec(kind === "legacy"
+    ? `CREATE TABLE answers (id INTEGER PRIMARY KEY, lesson TEXT NOT NULL, question INTEGER NOT NULL, prompt TEXT NOT NULL,
+         choice TEXT NOT NULL, correct INTEGER NOT NULL, first_try INTEGER NOT NULL, ms INTEGER NOT NULL, at TEXT NOT NULL)`
+    : `CREATE TABLE answers (id INTEGER PRIMARY KEY, block_id TEXT NOT NULL, lesson TEXT NOT NULL, choice TEXT NOT NULL,
+         correct INTEGER NOT NULL, first_try INTEGER NOT NULL, ms INTEGER NOT NULL, at TEXT NOT NULL)`);
+  db.exec("CREATE TABLE views (id INTEGER PRIMARY KEY, lesson TEXT NOT NULL, at TEXT NOT NULL)");
+  db.exec("INSERT INTO views (lesson, at) VALUES ('l', 't')");
+  migrate(db);
+  db.exec("INSERT INTO views (course, lesson, at) VALUES ('c', 'l', 't2')");
+  expect(db.query("SELECT course, lesson FROM views ORDER BY id").all()).toEqual([{ course: null, lesson: "l" }, { course: "c", lesson: "l" }]);
+});
