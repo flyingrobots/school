@@ -112,6 +112,10 @@ The record is SQLite, schema version 6, in the learner's state folder. Its rules
 SQL so that server code does not have to be trusted to keep them[^adr9]. This section states what
 those rules guarantee, and what they do not.
 
+The Postgres record that replaces it (RFC 3) exists as migrations in `server/db/migrations/`, run by
+`server/db/migrate.ts` and tested on PGlite. The server does not use it yet; see
+[working notes](../../working-notes.md) for how migrations are run.
+
 **Figure 2. The learning record's tables**
 
 ```mermaid

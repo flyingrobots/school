@@ -2,6 +2,8 @@
 !package.json
 !bun.lock
 !**/*.ts
+!db/**/*.sql
 **/*.test.ts
 contract/**
 testing/**
+node_modules/**
