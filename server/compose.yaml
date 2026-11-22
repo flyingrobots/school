@@ -1,3 +1,6 @@
+# Runs School in Docker behind `tailscale serve` (ADR 4). Nothing here names a course (ADR 6):
+# the course, the learner's state and any source material come from the environment, usually
+# a gitignored server/.env beside this file. See compose.example.env.
 services:
   school:
     build: .
@@ -5,10 +8,10 @@ services:
     ports:
       - "127.0.0.1:4747:4747"   # local only; tailscale serve publishes it to the tailnet
     environment:
-      # Extra read-only source material this course cites, as name=path pairs.
-      SCHOOL_MOUNTS: "aion=/sources/aion"
+      # Read-only source material the course cites, as name=path pairs inside the container.
+      SCHOOL_MOUNTS: ${SCHOOL_MOUNTS:-}
     volumes:
       - ../assets:/framework/assets:ro   # the framework supplies assets and nothing else
-      - ../../school-aion:/course:ro     # the course: its own repository, read-only
-      - ../../school-state:/state        # learner state: private, outside the course
-      - ../../aion:/sources/aion:ro      # source material the course cites
+      - ${SCHOOL_COURSE_DIR:?set SCHOOL_COURSE_DIR to the course repository}:/course:ro
+      - ${SCHOOL_STATE_DIR:?set SCHOOL_STATE_DIR to the private learner-state directory}:/state
+      - ${SCHOOL_SOURCES_DIR:?set SCHOOL_SOURCES_DIR to the course's source material, or to an empty directory}:/sources:ro

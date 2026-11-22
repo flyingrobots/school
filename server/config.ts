@@ -1,6 +1,7 @@
 // Where the framework finds a course, the learner's state, and any extra source material.
 // Nothing here names a subject: a course is configured, never compiled in (ADR 6).
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 /** Route prefixes the framework owns. A configured mount may not take one of these. */
 export const RESERVED = ["assets", "courses", "lessons", "reference", "api"] as const;
@@ -53,6 +54,32 @@ export function parsePairs(spec: string | undefined, from: string, label: string
 /** Back-compatible alias; `SCHOOL_MOUNTS` is the only caller that needs the old name. */
 export const parseMounts = (spec: string | undefined, from: string) => parsePairs(spec, from, "SCHOOL_MOUNTS");
 
+/**
+ * `p` with symlinks resolved as far as it exists. A path that does not exist yet (a state
+ * directory School will create) resolves its nearest existing ancestor and keeps the rest.
+ */
+function resolved(p: string): string {
+  const tail: string[] = [];
+  let at = p;
+  for (;;) {
+    try {
+      return join(realpathSync(at), ...tail.reverse());
+    } catch {
+      const up = dirname(at);
+      if (up === at) return p;
+      tail.push(basename(at));
+      at = up;
+    }
+  }
+}
+
+/** Whether `inner` is `outer` or below it, after resolving symlinks. */
+function within(inner: string, outer: string): boolean {
+  const i = resolved(inner);
+  const o = resolved(outer);
+  return i === o || i.startsWith(o.endsWith(sep) ? o : o + sep);
+}
+
 export function parseConfig(env: Record<string, string | undefined>, frameworkDefault: string): Config {
   const cwd = process.cwd();
   const framework = abs(env.SCHOOL_ROOT ?? frameworkDefault, cwd);
@@ -63,15 +90,22 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     const path = abs(env.SCHOOL_COURSE, cwd);
     const name = basename(path).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
     if (!NAME.test(name)) throw new ConfigError(`SCHOOL_COURSE directory ${JSON.stringify(basename(path))} does not make a usable course name`);
+    if ((RESERVED as readonly string[]).includes(name)) throw new ConfigError(`SCHOOL_COURSE name ${JSON.stringify(name)} is reserved; use SCHOOL_COURSES to name it`);
     if (name in courses) throw new ConfigError(`SCHOOL_COURSE name ${JSON.stringify(name)} collides with SCHOOL_COURSES`);
     courses[name] = path;
   }
   const state = abs(env.SCHOOL_STATE ?? join(framework, "state"), cwd);
 
+  const dbPath = env.DB_PATH === undefined || env.DB_PATH === "" ? join(state, "progress.db") : abs(env.DB_PATH, cwd);
+
   // Learner state must not land inside any course. A course is shared; performance is not.
+  // Compared on resolved paths, so a symlink cannot smuggle state into a course.
   for (const [name, path] of Object.entries(courses)) {
-    if (state === path || state.startsWith(path + "/")) {
+    if (within(state, path)) {
       throw new ConfigError(`SCHOOL_STATE (${state}) is inside course ${JSON.stringify(name)} (${path}); learner state must live outside the course`);
+    }
+    if (within(dbPath, path)) {
+      throw new ConfigError(`DB_PATH (${dbPath}) is inside course ${JSON.stringify(name)} (${path}); learner state must live outside the course`);
     }
   }
 
@@ -82,7 +116,7 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     framework,
     courses,
     state,
-    dbPath: env.DB_PATH === undefined || env.DB_PATH === "" ? join(state, "progress.db") : abs(env.DB_PATH, cwd),
+    dbPath,
     mounts: parseMounts(env.SCHOOL_MOUNTS, cwd),
     host: env.HOST ?? "127.0.0.1",
     port,

@@ -117,7 +117,10 @@ for (const q of document.querySelectorAll(".q[data-block]")) {
       for (const other of buttons) other.className = "";
       button.className = correct ? "ok" : "bad";
       if (feedback !== null) feedback.textContent = `${correct ? "Correct." : "Not quite."} ${why}`.trim();
-      if (correct) settled = true;
+      if (correct) {
+        settled = true;
+        for (const b of buttons) b.disabled = true; // answered: the choices are done
+      }
       if (!recording) return;
 
       // Whether it was right, and whether it was a first try, is the server's to decide.

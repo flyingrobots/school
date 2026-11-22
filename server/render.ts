@@ -12,7 +12,7 @@ export type Nav = { prev?: Block; next?: Block };
 /** The encounter a web page is served in, and what the learner has already answered in it. */
 export type Progress = { encounterId: string; answers: readonly Recorded[] };
 
-const esc = (s: string) =>
+export const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
 
 function nest(n: NestNode): string {
@@ -31,11 +31,11 @@ function quiz(b: Extract<Block, { type: "quiz" }>, answered: readonly Recorded[]
   const settled = mine.some((a) => a.correct);
   const buttons = b.choices.map((c) => {
     const cls = last?.choiceId === c.id ? ` class="${last.correct ? "ok" : "bad"}"` : "";
-    return `<button data-choice="${esc(c.id)}" data-correct="${c.correct}"${cls}>${esc(c.text)}</button>`;
+    return `<button data-choice="${esc(c.id)}" data-correct="${c.correct}"${cls}${settled ? " disabled" : ""}>${esc(c.text)}</button>`;
   }).join("");
   const fb = last === undefined ? "" : esc(`${last.correct ? "Correct." : "Not quite."} ${b.why}`.trim());
   const status = last === undefined ? "" : "Saved.";
-  return `<div class="q" data-block="${esc(b.id)}" data-why="${esc(b.why)}"${settled ? ' data-settled="true"' : ""}><p>${b.q}</p>${buttons}<p class="fb">${fb}</p><p class="saved" aria-live="polite">${status}</p></div>`;
+  return `<div class="q" data-block="${esc(b.id)}" data-why="${esc(b.why)}"${settled ? ' data-settled="true"' : ""}><p>${esc(b.q)}</p>${buttons}<p class="fb" aria-live="polite">${fb}</p><p class="saved" aria-live="polite">${status}</p></div>`;
 }
 
 // Body renderer shared by both views; containers are handled per view.
@@ -52,7 +52,7 @@ function leaf(b: Block, render: (b: Block) => string, answered: readonly Recorde
     case "quiz":
       return quiz(b, answered);
     case "explain":
-      return `<div class="explain" data-block="${esc(b.id)}"><p>${b.prompt}</p><details><summary>Model answer</summary><p>${b.model}</p></details></div>`;
+      return `<div class="explain" data-block="${esc(b.id)}"><p>${esc(b.prompt)}</p><details><summary>Model answer</summary><p>${esc(b.model)}</p></details></div>`;
     case "nest":
       return nest(b.root);
     case "section":
@@ -67,11 +67,9 @@ function leaf(b: Block, render: (b: Block) => string, answered: readonly Recorde
 }
 
 function shell(title: string, view: View, body: string): string {
-  const css = view === "slides" ? `<link rel="stylesheet" href="/assets/slides.css">` : "";
-  const js = view === "slides" ? `<script src="/assets/slides.js"></script>` : "";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)}</title><link rel="stylesheet" href="/assets/tokens.css"><link rel="stylesheet" href="/assets/item.css"><link rel="stylesheet" href="/assets/style.css"><link rel="stylesheet" href="/assets/nest.css">${css}</head>
-<body class="view-${view}">${body}<script src="/assets/quiz.js"></script>${js}</body></html>`;
+<title>${esc(title)}</title><link rel="stylesheet" href="/assets/tokens.css"><link rel="stylesheet" href="/assets/item.css"><link rel="stylesheet" href="/assets/style.css"><link rel="stylesheet" href="/assets/nest.css"></head>
+<body class="view-${view}">${body}<script src="/assets/quiz.js"></script></body></html>`;
 }
 
 function navLinks(courseName: string, page: Block, nav: Nav, view: View, hasReference: boolean): string {
@@ -96,7 +94,7 @@ export function renderPage(courseName: string, page: Block, view: View, nav: Nav
   if (page.type !== "page") throw new Error(`renderPage: ${page.id} is not a page`);
   const answered = progress?.answers ?? [];
   const render = (b: Block): string => leaf(b, render, answered);
-  const header = `<h1>${esc(page.title)}</h1><p class="subtitle">${page.subtitle}</p>`;
+  const header = `<h1>${esc(page.title)}</h1><p class="subtitle">${esc(page.subtitle)}</p>`;
   const encounter = progress === undefined ? "" : ` data-encounter="${esc(progress.encounterId)}"`;
   const meta = `<div id="school-meta" data-course="${esc(courseName)}" data-lesson="${esc(page.id)}"${encounter} hidden></div>`;
   switch (view) {
