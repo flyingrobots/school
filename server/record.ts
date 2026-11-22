@@ -9,7 +9,9 @@ import type { Database } from "bun:sqlite";
 import type { Block } from "./blocks.ts";
 
 /**
- * How long after its last activity an encounter resumes rather than a new one starting. A reload,
+ * How long after its last activity an encounter resumes rather than a new one starting. Activity is
+ * the learner's: the encounter's creation, its latest answer and its latest explanation. A grading
+ * is not, since it is the grader's and can land or be retried long after the learner left. A reload,
  * a dropped connection or a phone tab coming back to the foreground all fall inside it, so they
  * do not reset first try. Coming back after a gap longer than this is a new encounter, and its
  * first answers are first tries again: that is spaced retrieval, which is the point.
@@ -46,7 +48,9 @@ export function openEncounter(db: Database, o: { course: string; lesson: string;
     const open = db.query<{ id: string }, [string, string, string, string]>(`
       SELECT e.id FROM encounters e
       WHERE e.course = ?1 AND e.lesson = ?2 AND e.view = 'web' AND e.snapshot_hash = ?3
-        AND max(e.at, coalesce((SELECT max(a.at) FROM answers a WHERE a.encounter_id = e.id), e.at)) >= ?4
+        AND max(e.at,
+                coalesce((SELECT max(a.at) FROM answers a WHERE a.encounter_id = e.id), e.at),
+                coalesce((SELECT max(x.at) FROM explanations x WHERE x.encounter_id = e.id), e.at)) >= ?4
       ORDER BY e.at DESC LIMIT 1`).get(o.course, o.lesson, hash, cutoff);
     if (open !== null) return { id: open.id, hash, resumed: true };
     const id = crypto.randomUUID();
