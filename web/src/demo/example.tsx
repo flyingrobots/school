@@ -22,13 +22,13 @@ function Example({
   title,
   children,
   className,
-  containerClassName: _containerClassName,
+  containerClassName,
   ...props
 }: React.ComponentProps<"div"> & { title?: string; containerClassName?: string }) {
   const { onTitle } = React.useContext(VariantContext)
   React.useLayoutEffect(() => onTitle(title), [title, onTitle])
   return (
-    <div data-slot="example" className="flex w-full max-w-3xl min-w-0 flex-col" {...props}>
+    <div data-slot="example" className={cn("flex w-full max-w-3xl min-w-0 flex-col", containerClassName)} {...props}>
       <div
         data-slot="example-content"
         className={cn(
