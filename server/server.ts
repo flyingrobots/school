@@ -315,9 +315,12 @@ Bun.serve({
           return json({ status: "invalid", error: "the token must be at least 16 characters, with no spaces" }, 400);
         }
       }
-      saveSettings(SETTINGS, { ...saved, bridge: next });
-      // A generated token is returned once, so the learner can start the bridge with it. Never again.
-      return json({ status: "saved", tokenSet: Boolean(next.token), ...(generated === undefined ? {} : { generated }) });
+      const after = { ...saved, bridge: next };
+      saveSettings(SETTINGS, after);
+      // tokenSet is the token in effect, from the environment or settings, as the GET reports it
+      // (flyingrobots/school#61). A generated token is returned once, so the learner can start
+      // the bridge with it. Never again.
+      return json({ status: "saved", tokenSet: effectiveBridge(process.env, after).token !== null, ...(generated === undefined ? {} : { generated }) });
     }
     // Agents are declared, commands and all, only in the bridge's file on its host. From here
     // they can be reordered, switched on and off, and tested; only those fields reach the bridge.
