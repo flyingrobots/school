@@ -10,6 +10,12 @@ services:
     environment:
       # Read-only source material the course cites, as name=path pairs inside the container.
       SCHOOL_MOUNTS: ${SCHOOL_MOUNTS:-}
+      # Explanation grading through the bridge on the host (bridge/bridge.ts). Optional: without
+      # SCHOOL_BRIDGE_URL, explanations are saved but not graded.
+      SCHOOL_BRIDGE_URL: ${SCHOOL_BRIDGE_URL:-}
+      SCHOOL_BRIDGE_TOKEN: ${SCHOOL_BRIDGE_TOKEN:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # the bridge runs on the host, outside Docker
     volumes:
       - ../assets:/framework/assets:ro   # the framework supplies assets and nothing else
       - ${SCHOOL_COURSE_DIR:?set SCHOOL_COURSE_DIR to the course repository}:/course:ro

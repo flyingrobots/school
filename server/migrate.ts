@@ -2,7 +2,7 @@
 // rebuilt, logical history may not change (RFC 1, principle 2).
 import type { Database } from "bun:sqlite";
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 /**
  * Version 5. The learning record contract (RFC 1; ADR 9). `snapshots` keeps each distinct
@@ -57,6 +57,38 @@ CREATE TABLE IF NOT EXISTS encounters (
   at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS encounters_lesson ON encounters (course, lesson, snapshot_hash, at);
+
+-- Version 6: explanations, and every attempt to grade one (RFC 1 proposal 4). An explanation
+-- is saved before any grading; a grading attempt is a row whether it succeeded or failed, and a
+-- retry is a new row naming the one it supersedes.
+CREATE TABLE IF NOT EXISTS explanations (
+  submission_id TEXT PRIMARY KEY,
+  encounter_id TEXT NOT NULL REFERENCES encounters (id),
+  block_id TEXT NOT NULL,
+  course TEXT NOT NULL,
+  lesson TEXT NOT NULL,
+  text TEXT NOT NULL,
+  ms INTEGER NOT NULL,
+  at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS explanations_encounter ON explanations (encounter_id, block_id, at);
+CREATE TABLE IF NOT EXISTS gradings (
+  id INTEGER PRIMARY KEY,
+  submission_id TEXT NOT NULL REFERENCES explanations (submission_id),
+  status TEXT NOT NULL CHECK (status IN ('succeeded', 'failed')),
+  rubric_version TEXT NOT NULL,
+  prompt_version TEXT NOT NULL,
+  adapter TEXT NOT NULL,
+  model TEXT,
+  sources TEXT NOT NULL,
+  raw_response TEXT,
+  findings TEXT,
+  error TEXT,
+  supersedes INTEGER REFERENCES gradings (id),
+  at TEXT NOT NULL,
+  CHECK ((status = 'succeeded' AND findings IS NOT NULL AND error IS NULL) OR (status = 'failed' AND findings IS NULL AND error IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS gradings_submission ON gradings (submission_id, id);
 `;
 
 /**
@@ -85,6 +117,14 @@ CREATE TRIGGER IF NOT EXISTS snapshots_no_update BEFORE UPDATE ON snapshots
   BEGIN SELECT RAISE(ABORT, 'snapshots are append-only'); END;
 CREATE TRIGGER IF NOT EXISTS snapshots_no_delete BEFORE DELETE ON snapshots
   BEGIN SELECT RAISE(ABORT, 'snapshots are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS explanations_no_update BEFORE UPDATE ON explanations
+  BEGIN SELECT RAISE(ABORT, 'explanations are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS explanations_no_delete BEFORE DELETE ON explanations
+  BEGIN SELECT RAISE(ABORT, 'explanations are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS gradings_no_update BEFORE UPDATE ON gradings
+  BEGIN SELECT RAISE(ABORT, 'gradings are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS gradings_no_delete BEFORE DELETE ON gradings
+  BEGIN SELECT RAISE(ABORT, 'gradings are append-only'); END;
 `;
 
 type Shape = "absent" | "legacy" | "v2" | "v3" | "v4" | "current";
