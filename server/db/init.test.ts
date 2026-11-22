@@ -56,9 +56,9 @@ const submit = async (db: PGlite, o: { encounter: string; block?: string; choice
   (await db.query<Submitted>("SELECT * FROM school.submit($1, $2, $3, $4, $5, $6)",
     [o.id ?? uuid(), o.encounter, o.block ?? "q1", o.choice ?? "right", o.ms ?? 1, o.when ?? at(1)])).rows[0]!;
 
-const saveExplanation = async (db: PGlite, o: { encounter: string; id?: string; block?: string; text?: string; when?: string }) =>
+const saveExplanation = async (db: PGlite, o: { encounter: string; id?: string; block?: string; text?: string; ms?: number; when?: string }) =>
   (await db.query<{ save_explanation: string }>("SELECT school.save_explanation($1, $2, $3, $4, $5, $6)",
-    [o.id ?? uuid(), o.encounter, o.block ?? "e1", o.text ?? "Because.", 7, o.when ?? at(2)])).rows[0]!.save_explanation;
+    [o.id ?? uuid(), o.encounter, o.block ?? "e1", o.text ?? "Because.", o.ms ?? 7, o.when ?? at(2)])).rows[0]!.save_explanation;
 
 type GradingJson = { id: number; status: string; findings: unknown; error: string | null; model: string | null; supersedes: number | null; at: string };
 const FINDINGS = { insufficient_evidence: false, summary: "Good.", contradictions: [], fidelity: { verdict: "meets", note: "" },
@@ -148,6 +148,33 @@ describe("acceptance", () => {
     await as(db, "school_owner", () => db.exec("CREATE FUNCTION school.later() RETURNS int LANGUAGE sql AS 'SELECT 1'"));
     const later = (await db.query<{ ok: boolean }>("SELECT has_function_privilege('stranger', 'school.later()', 'EXECUTE') AS ok")).rows[0]!.ok;
     expect(later).toBe(false);
+  }, SLOW);
+
+  test("school_owner owns the schema and every object in it", async () => {
+    const db = await fresh();
+    const q = async (sql: string) => (await db.query<{ name: string; owner: string }>(sql)).rows;
+    const objects = [
+      ...await q(`SELECT 'schema ' || nspname AS name, pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname = 'school'`),
+      ...await q(`SELECT c.relkind::text || ' ' || c.relname AS name, pg_get_userbyid(c.relowner) AS owner FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'school'`),
+      ...await q(`SELECT 'function ' || p.proname AS name, pg_get_userbyid(p.proowner) AS owner FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'school'`),
+      ...await q(`SELECT 'type ' || t.typname AS name, pg_get_userbyid(t.typowner) AS owner FROM pg_type t
+        JOIN pg_namespace n ON n.oid = t.typnamespace WHERE n.nspname = 'school'`),
+    ];
+    expect(objects.length).toBeGreaterThan(RECORD_TABLES.length + APP_FUNCTIONS.length);
+    expect(objects.filter((o) => o.owner !== "school_owner")).toEqual([]);
+  }, SLOW);
+
+  test("the migrations create no function outside schema school", async () => {
+    const db = new PGlite();
+    const outside = async () => (await db.query<{ f: string }>(`SELECT n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS f
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname <> 'school' ORDER BY 1`)).rows.map((r) => r.f);
+    const before = await outside();
+    await migrate(db);
+    expect(await outside()).toEqual(before);
+    expect((await db.query("SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'school'")).rows.length)
+      .toBeGreaterThan(APP_FUNCTIONS.length);
   }, SLOW);
 
   test("no record function calls now() or any other clock", async () => {
@@ -258,7 +285,7 @@ describe("functions", () => {
     expect(msg).toContain("answers_one_first_try");
   }, SLOW);
 
-  test("an encounter resumes inside six hours of its last answer, and only for the same content", async () => {
+  test("an encounter resumes inside six hours of its last activity, here an answer, and only for the same content", async () => {
     const db = await fresh();
     await as(db, "school_app", async () => {
       const e1 = await open(db, at(0));
@@ -272,6 +299,79 @@ describe("functions", () => {
       expect(later.resumed).toBe(false);
       expect(later.id).not.toBe(e1.id);
       expect(await submit(db, { encounter: later.id, choice: "right", when: at(13 * HOUR + 1) })).toMatchObject({ first_try: true });
+    });
+  }, SLOW);
+
+  // The resume rule is main's (flyingrobots/school#53; server/record.ts): activity is the learner's, the
+  // encounter's opening, its latest answer and its latest explanation. These mirror the contract's cases.
+  test("an explanation is activity: one written late in the window keeps the encounter open past it", async () => {
+    const db = await fresh();
+    await as(db, "school_app", async () => {
+      const e1 = await open(db, at(0));
+      expect(await saveExplanation(db, { encounter: e1.id, when: at(6 * HOUR - 1000) })).toBe("stored");
+      expect(await open(db, at(6 * HOUR + 1000))).toEqual({ ...e1, resumed: true });
+    });
+  }, SLOW);
+
+  test("grading is not the learner's activity: a late grading does not keep the encounter open", async () => {
+    const db = await fresh();
+    await as(db, "school_app", async () => {
+      const e1 = await open(db, at(0));
+      const id = uuid();
+      expect(await saveExplanation(db, { encounter: e1.id, id, when: at(1000) })).toBe("stored");
+      await recordGrading(db, id, at(12 * HOUR));
+      const later = await open(db, at(12 * HOUR + 1000));
+      expect(later.id).not.toBe(e1.id);
+      expect(later.resumed).toBe(false);
+    });
+  }, SLOW);
+
+  test("a different aid_tracking does not resume, and aid_tracking must be passed, even as NULL", async () => {
+    const db = await fresh();
+    await as(db, "school_app", async () => {
+      const tracked = await open(db, at(0), PAGE, "l1", 1);
+      const untracked = await open(db, at(1), PAGE, "l1", null);
+      expect(untracked.id).not.toBe(tracked.id);
+      expect(untracked.resumed).toBe(false);
+      expect(await open(db, at(2), PAGE, "l1", null)).toEqual({ ...untracked, resumed: true });
+      expect(await error(db.query("SELECT * FROM school.open_encounter('c', 'l1', $1, $2)", [PAGE, at(3)])))
+        .toMatch(/^function school\.open_encounter\(.*\) does not exist$/);
+    });
+  }, SLOW);
+
+  test("any ms the model accepts is stored exactly, past 2^31", async () => {
+    const db = await fresh();
+    const big = [2 ** 31, Number.MAX_SAFE_INTEGER];
+    const ids: string[] = [];
+    await as(db, "school_app", async () => {
+      const e = await open(db);
+      for (const [i, ms] of big.entries()) {
+        const id = uuid();
+        ids.push(id);
+        expect(await submit(db, { encounter: e.id, block: i === 0 ? "q1" : "q2", ms, id })).toMatchObject({ status: "stored" });
+        expect(await saveExplanation(db, { encounter: e.id, ms, id })).toBe("stored");
+      }
+    });
+    const stored = await as(db, "school_owner", async () => ({
+      answers: (await db.query<{ ms: string }>("SELECT ms::text FROM school.answers WHERE submission_id = ANY($1::uuid[]) ORDER BY seq", [ids])).rows.map((r) => r.ms),
+      explanations: (await db.query<{ ms: string }>("SELECT ms::text FROM school.explanations WHERE submission_id = ANY($1::uuid[]) ORDER BY seq", [ids])).rows.map((r) => r.ms),
+    }));
+    expect(stored).toEqual({ answers: big.map(String), explanations: big.map(String) });
+    const types = (await db.query<{ col: string; type: string }>(`SELECT table_name || '.' || column_name AS col, data_type AS type
+      FROM information_schema.columns WHERE table_schema = 'school' AND column_name = 'ms' ORDER BY 1`)).rows;
+    expect(types).toEqual([{ col: "answers.ms", type: "bigint" }, { col: "explanations.ms", type: "bigint" }]);
+  }, SLOW);
+
+  test("a reused submission id with a NULL encounter, block or choice is a conflict, as on SQLite", async () => {
+    const db = await fresh();
+    await as(db, "school_app", async () => {
+      const e = await open(db);
+      const id = uuid();
+      expect(await submit(db, { encounter: e.id, id })).toMatchObject({ status: "stored" });
+      for (const args of [[id, null, "q1", "right"], [id, e.id, null, "right"], [id, e.id, "q1", null]]) {
+        const r = (await db.query<Submitted>("SELECT * FROM school.submit($1, $2, $3, $4, 1, $5)", [...args, at(9)])).rows[0];
+        expect(`${JSON.stringify(args.slice(1))}: ${r?.status}`).toBe(`${JSON.stringify(args.slice(1))}: conflict`);
+      }
     });
   }, SLOW);
 
