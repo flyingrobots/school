@@ -208,8 +208,76 @@ test.each<[string, QuizState, string[]]>([
   expect(why(host)).toBe(name === "right" || name === "settled" ? quiz.why : null)
 })
 
-// The block is composition only: React and stock shadcn components, nothing else (WEB_STYLE.md).
-test("the block and its example import only React, stock shadcn components and each other", async () => {
+// The choice group's behaviour is ui-sdk's radio group (flyingrobots/school#62): its roles, its
+// name, and its roving focus. Arrow keys only move focus here; an answer is a click, Space or a
+// number key, because checking a radio sends it to the server.
+const group = (host: HTMLElement) => host.querySelector<HTMLElement>("[role=radiogroup]")!
+const focused = () => (document.activeElement as HTMLElement | null)?.dataset.choice
+const arrow = async (key: string) => {
+  await act(async () => press(document.activeElement as HTMLElement, key))
+}
+
+test("the choices are ui-sdk's radio group, named by the question, each a radio checked by the state", () => {
+  const host = render(<QuizView {...quiz} state={{ status: "wrong", choiceId: "venus" }} onChoose={() => {}} />)
+  expect(group(host).dataset.slot).toBe("radio-group")
+  const names = (group(host).getAttribute("aria-labelledby") ?? "").split(" ").filter(Boolean)
+  expect(names.map((id) => document.getElementById(id)?.textContent)).toEqual([quiz.q])
+  expect(choices(host).map((b) => [b.getAttribute("role"), b.dataset.slot, b.getAttribute("aria-checked")])).toEqual([
+    ["radio", "radio", "true"],
+    ["radio", "radio", "false"],
+    ["radio", "radio", "false"],
+  ])
+  expect(choices(host).every((b) => !b.hasAttribute("aria-pressed"))).toBe(true)
+})
+
+test("arrow keys move focus between the choices, wrapping at both ends, and answer nothing", async () => {
+  const s = server()
+  const host = render(<Quiz {...quiz} onAnswer={s.onAnswer} />)
+  expect(choices(host).map((b) => b.tabIndex)).toEqual([0, -1, -1])
+  choice(host, "venus").focus()
+  await arrow("ArrowDown")
+  expect(focused()).toBe("mercury")
+  await arrow("ArrowRight")
+  expect(focused()).toBe("mars")
+  await arrow("ArrowDown")
+  expect(focused()).toBe("venus")
+  await arrow("ArrowUp")
+  expect(focused()).toBe("mars")
+  await arrow("ArrowLeft")
+  expect(focused()).toBe("mercury")
+  expect(s.calls).toEqual([])
+  expect(stateOf(host)).toBe("unanswered")
+  expect(choices(host).map((b) => b.getAttribute("aria-checked"))).toEqual(["false", "false", "false"])
+})
+
+test("after a wrong answer, arrow keys skip the choice the server turned down", async () => {
+  const host = render(<Quiz {...quiz} onAnswer={server().onAnswer} recorded={{ choiceId: "mercury", correct: false }} />)
+  choice(host, "venus").focus()
+  await arrow("ArrowDown")
+  expect(focused()).toBe("mars")
+  await arrow("ArrowUp")
+  expect(focused()).toBe("venus")
+})
+
+test("an agent finds the quiz by its question and answers it through the same callback", async () => {
+  const { createAgent } = await import("@ui-sdk/react/agent")
+  const agent = createAgent()
+  const s = server()
+  render(<Quiz {...quiz} onAnswer={s.onAnswer} />)
+  const components = agent.snapshot().filter((entry) => !entry.offPage && entry.component !== "more")
+  for (const entry of components) expect(entry.label, `${entry.component} ${entry.ref} has no name`).toBeTruthy()
+  const entry = components.find((e) => e.label === quiz.q)
+  expect(entry?.component).toBe("radio")
+  const items = (entry as { items?: { value: string; label: string }[] }).items ?? []
+  expect(items.map((i) => i.value)).toEqual(["venus", "mercury", "mars"])
+  const mercury = items.find((i) => i.label.includes("Mercury"))!
+  const result = await act(async () => agent.act({ steps: [{ ref: quiz.q, action: "setValue", args: [mercury.label] }] }))
+  expect(result.ok, result.error?.message).toBe(true)
+  expect(s.calls.map((c) => c.choiceId)).toEqual(["mercury"])
+})
+
+// The block is composition only: React, ui-sdk behaviours and stock shadcn components (WEB_STYLE.md).
+test("the block and its example import only React, ui-sdk entries, stock shadcn components and each other", async () => {
   const { readFileSync, readdirSync } = await import("node:fs")
   const { join } = await import("node:path")
   const components = join(import.meta.dir, "..", "src", "components")
@@ -219,6 +287,7 @@ test("the block and its example import only React, stock shadcn components and e
   const foreign = (file: string, allowed: string[]) =>
     imports(file).filter((spec) => !allowed.includes(spec) && !(spec.startsWith("@/components/ui/") && stock.has(spec.slice(16))))
   expect(imports("quiz.tsx").length).toBeGreaterThan(1) // zero witnesses would mean the harvest read nothing
-  expect(foreign("quiz.tsx", ["react"])).toEqual([])
+  expect(imports("quiz.tsx")).toContain("@ui-sdk/react/radio")
+  expect(foreign("quiz.tsx", ["react", "@ui-sdk/react/radio"])).toEqual([])
   expect(foreign("quiz-example.tsx", ["@/components/example", "@/components/quiz"])).toEqual([])
 })

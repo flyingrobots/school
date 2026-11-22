@@ -1,5 +1,7 @@
 import * as React from "react"
 
+import { Radio, RadioGroup } from "@ui-sdk/react/radio"
+
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -16,6 +18,7 @@ import { Spinner } from "@/components/ui/spinner"
 
 // A multiple-choice quiz that answers through a callback and shows the verdict it is given.
 // It never decides correctness: the verdict comes from `onAnswer` (the server) or `recorded`.
+// The choices are ui-sdk's radio group (roles, name, roving focus) rendered as shadcn buttons.
 
 export type QuizChoice = { id: string; text: string }
 
@@ -86,11 +89,14 @@ export function QuizView({
   const chosen = state.status === "unanswered" ? undefined : state.choiceId
   const status = STATUS[state.status]
   const done = state.status === "right" || state.status === "settled"
+  const title = React.useId()
 
   return (
     <Card data-quiz="root" data-quiz-id={id} data-state={state.status} aria-busy={state.status === "in-flight"} onKeyDown={onKeyDown} className="w-full">
       <CardHeader>
-        <CardTitle className="text-2xl">{q}</CardTitle>
+        <CardTitle id={title} className="text-2xl">
+          {q}
+        </CardTitle>
         <CardDescription className="text-base">
           {state.status === "wrong" ? "Not quite. Try another answer." : done ? null : "Choose an answer, or press its number."}
         </CardDescription>
@@ -103,30 +109,45 @@ export function QuizView({
         )}
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
+        <RadioGroup
+          aria-labelledby={title}
+          value={chosen ?? null}
+          onValueChange={(next, details) => {
+            // Checking a radio sends the answer, so arrow keys move focus without checking.
+            details.cancel()
+            if (next !== null && details.reason !== "list-navigation") choose(next)
+          }}
+          className="flex flex-col gap-2"
+        >
         {choices.map((c, i) => {
           const mine = c.id === chosen
           const verdict = !mine ? undefined : state.status === "wrong" ? "wrong" : done ? "right" : undefined
           const key = KEYS[i]
           return (
-            <Button
+            <Radio
               key={c.id}
+              value={c.id}
               data-quiz="choice"
               data-choice={c.id}
               data-verdict={verdict}
-              variant={verdict === "right" ? "default" : verdict === "wrong" ? "destructive" : mine ? "secondary" : "outline"}
-              size="lg"
-              aria-pressed={mine}
               aria-keyshortcuts={key}
               disabled={!canChoose(state, c.id)}
-              onClick={() => choose(c.id)}
-              // The chosen answer stays at full strength while the others are disabled around it.
-              className={`h-auto justify-start py-3 text-left text-lg whitespace-normal${mine ? " disabled:opacity-100" : ""}`}
-            >
-              {mine && state.status === "in-flight" ? <Spinner data-icon="inline-start" /> : key && <Kbd data-icon="inline-start">{key}</Kbd>}
-              {c.text}
-            </Button>
+              render={(props) => (
+                <Button
+                  {...props}
+                  variant={verdict === "right" ? "default" : verdict === "wrong" ? "destructive" : mine ? "secondary" : "outline"}
+                  size="lg"
+                  // The chosen answer stays at full strength while the others are disabled around it.
+                  className={`h-auto justify-start py-3 text-left text-lg whitespace-normal${mine ? " disabled:opacity-100" : ""}`}
+                >
+                  {mine && state.status === "in-flight" ? <Spinner data-icon="inline-start" /> : key && <Kbd data-icon="inline-start">{key}</Kbd>}
+                  {c.text}
+                </Button>
+              )}
+            />
           )
         })}
+        </RadioGroup>
         {done && (
           <Alert data-quiz="why" role="status" className="mt-2">
             <AlertTitle className="text-base">Why</AlertTitle>
