@@ -1,5 +1,3 @@
-"use client"
-
 import { useChat } from "@ai-sdk/react"
 import type { UIDataTypes, UIMessage } from "ai"
 import {
