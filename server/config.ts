@@ -16,6 +16,8 @@ export type Config = {
   /** Directory for this learner's private state. Never inside a course. */
   state: string;
   dbPath: string;
+  /** The built web app (web/dist), served for every path that is not the API. */
+  web: string;
   /** Extra read-only mounts, served at `/<name>/...`. Source material a course cites. */
   mounts: Record<string, string>;
   host: string;
@@ -126,6 +128,7 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     courses,
     state,
     dbPath,
+    web: abs(env.SCHOOL_WEB ?? join(framework, "web", "dist"), cwd),
     mounts: parseMounts(env.SCHOOL_MOUNTS, cwd),
     host: env.HOST ?? "127.0.0.1",
     port,
@@ -134,7 +137,7 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
 
 /** Top-level static mounts: the framework's assets plus any configured source material. */
 export function mountTable(config: Config): Record<string, string> {
-  return { assets: join(config.framework, "assets"), ...config.mounts };
+  return { ...config.mounts };
 }
 
 export type Course = { name: string; root: string; lessons: string; reference: string };

@@ -12,7 +12,7 @@ async function boot(env: Record<string, string>): Promise<{ code: number | null;
   });
   let up = false;
   for (let i = 0; i < 100 && proc.exitCode === null; i++) {
-    try { if ((await fetch(`http://127.0.0.1:${port}/`)).ok) { up = true; break; } } catch {}
+    try { if ((await fetch(`http://127.0.0.1:${port}/api/courses`)).ok) { up = true; break; } } catch {}
     await Bun.sleep(50);
   }
   if (up) proc.kill();

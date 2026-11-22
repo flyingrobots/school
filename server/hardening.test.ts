@@ -20,6 +20,8 @@ beforeAll(async () => {
   writeFileSync(join(root, "outside", "secret.html"), "TOP SECRET");
   symlinkSync(join(root, "outside", "secret.html"), join(root, "ok", "reference", "leak.html"));
   writeFileSync(join(root, "ok", "reference", "fine.html"), "<p>fine</p>");
+  mkdirSync(join(root, "ok", "reference", "folder.html"), { recursive: true }); // a directory named like a document
+  mkdirSync(join(root, "ok", "reference", "folder"), { recursive: true });
   writeFileSync(join(root, "ok", "lessons", "0001.json"), JSON.stringify({
     type: "page", id: "l1", title: "One", subtitle: "<script>alert(1)</script>",
     children: [quiz, { type: "explain", id: "e1", prompt: "Say <b>why</b>", model: "Because <i>so</i>" }],
@@ -40,11 +42,12 @@ beforeAll(async () => {
 
   server = Bun.spawn(["bun", join(import.meta.dir, "server.ts")], {
     env: { ...process.env, SCHOOL_COURSES: `ok=${join(root, "ok")},empty=${join(root, "empty")},broken=${join(root, "broken")},linked=${join(root, "linked")}`,
-      SCHOOL_STATE: join(root, "state"), PORT: String(PORT), HOST: "127.0.0.1" },
+      // No built app, as on CI: the API and path checks must not depend on web/dist existing.
+      SCHOOL_STATE: join(root, "state"), SCHOOL_WEB: join(root, "no-web"), PORT: String(PORT), HOST: "127.0.0.1" },
     stdout: "ignore", stderr: "ignore",
   });
   for (let i = 0; i < 100; i++) {
-    try { if ((await fetch(base + "/")).ok) return; } catch {}
+    try { if ((await fetch(base + "/api/courses")).ok) return; } catch {}
     await Bun.sleep(50);
   }
   throw new Error("server did not start");
@@ -82,10 +85,18 @@ test("malformed percent-encoding is a 400, not a crash", async () => {
   expect((await fetch(base + "/courses/ok/reference/%E0%A4%A")).status).toBe(400);
 });
 
+test("without a built app, pages say so with a 503 and the API still answers", async () => {
+  const r = await fetch(base + "/");
+  expect(r.status).toBe(503);
+  expect((await r.json()).error).toContain("not built");
+  expect((await fetch(base + "/some/page")).status).toBe(503);
+  expect((await fetch(base + "/api/courses")).status).toBe(200);
+});
+
 test("a course with no lessons directory lists no lessons instead of failing", async () => {
-  const res = await fetch(base + "/courses/empty");
+  const res = await fetch(base + "/api/courses/empty");
   expect(res.status).toBe(200);
-  expect(await res.text()).toContain("No lessons yet");
+  expect((await res.json()).lessons).toEqual([]);
 });
 
 test("a symlink out of a served directory is not followed, and a directory is not a file", async () => {
@@ -93,57 +104,29 @@ test("a symlink out of a served directory is not followed, and a directory is no
   const leak = await fetch(base + "/courses/ok/reference/leak.html");
   expect(leak.status).toBe(404);
   expect(await leak.text()).not.toContain("TOP SECRET");
-  expect((await fetch(base + "/assets/")).status).toBe(404);
+  expect((await fetch(base + "/courses/ok/reference/folder")).status).toBe(404);
 });
 
-test("plain-text lesson fields are escaped; only html blocks carry markup", async () => {
-  const html = await (await fetch(base + "/courses/ok/lessons/l1")).text();
-  expect(html).not.toContain("<script>alert(1)</script>");
-  expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
-  expect(html).not.toContain("<img src=x");
-  expect(html).toContain("Say &lt;b&gt;why&lt;/b&gt;");
-  // The model answer is hidden on the web view until an explanation is submitted
-  // (flyingrobots/school#10); the slides view still shows it, escaped.
-  expect(html).not.toContain("<i>so</i>");
-  const slides = await (await fetch(base + "/courses/ok/lessons/l1?view=slides")).text();
-  expect(slides).toContain("Because &lt;i&gt;so&lt;/i&gt;");
-  expect(slides).not.toContain("<i>so</i>");
-});
 
-test("a lesson error escapes the whole message", async () => {
-  const res = await fetch(base + "/courses/broken/lessons/b1");
+test("a lesson error reports the whole message as data", async () => {
+  const res = await fetch(base + "/api/courses/broken/lessons/b1");
   expect(res.status).toBe(500);
-  const body = await res.text();
-  expect(body).toContain("&lt;x&gt;&amp;&quot;");
-  expect(body).not.toContain("<x>");
+  expect((await res.json()).error).toContain('unknown ref "<x>&\""');
 });
 
-test("the slides view links no assets that do not exist", async () => {
-  const html = await (await fetch(base + "/courses/ok/lessons/l1?view=slides")).text();
-  for (const m of html.matchAll(/(?:href|src)="(\/assets\/[^"]+)"/g)) {
-    expect([m[1], (await fetch(base + m[1])).status]).toEqual([m[1], 200]);
-  }
+
+// Oracle: a reference document is listed only if it can be served (flyingrobots/school#8 review, P1).
+test("a reference symlink that leaves the course is not listed", async () => {
+  const course = await (await fetch(base + "/api/courses/ok")).json();
+  expect(course.reference).toEqual(["fine.html"]);
 });
 
-test("feedback is announced, and a settled quiz's choices are disabled", async () => {
-  const page = await (await fetch(base + "/courses/ok/lessons/l1")).text();
-  expect(page).toMatch(/class="fb" aria-live="polite"/);
-  const e = /data-encounter="([^"]+)"/.exec(page)![1];
-  await post("/api/answer", { submissionId: crypto.randomUUID(), encounterId: e, blockId: "q1", choiceId: "right", ms: 1 }, JSONH);
-  const after = await (await fetch(base + "/courses/ok/lessons/l1")).text();
-  expect(after).toMatch(/<button data-choice="wrong"[^>]* disabled>/);
+test.each(["progress.db", "diary-entry.html"])("a reference folder that links out of the course does not serve %s", async (file) => {
+  const res = await fetch(`${base}/courses/linked/reference/${file}`);
+  expect([res.status, (await res.text()).includes("PRIVATE")]).toEqual([404, false]);
 });
 
-test("a reference directory that is itself a symlink out of the course serves and lists nothing", async () => {
-  for (const path of ["/courses/linked/reference/progress.db", "/courses/linked/reference/diary-entry.html"]) {
-    const res = await fetch(base + path);
-    expect(res.status).toBe(404);
-    expect(await res.text()).not.toContain("PRIVATE");
-  }
-  for (const path of ["/courses/linked", "/courses/linked/reference", "/"]) {
-    expect(await (await fetch(base + path)).text()).not.toContain("diary-entry");
-  }
-  // An ordinary reference inside its course still works.
-  expect(await (await fetch(base + "/courses/ok/reference/fine.html")).text()).toContain("fine");
-  expect(await (await fetch(base + "/courses/ok/reference")).text()).toContain("fine");
+test("a reference folder that links out of the course lists nothing", async () => {
+  const course = await (await fetch(base + "/api/courses/linked")).json();
+  expect(course.reference).toEqual([]);
 });

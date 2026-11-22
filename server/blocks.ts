@@ -198,3 +198,10 @@ export function lastValidLoader(): (dir: string) => Load {
     }
   };
 }
+
+/** The distinct quizzes a page shows, counting a block reused through `ref` once. */
+export function quizIds(b: Block, into = new Set<string>()): Set<string> {
+  if (b.type === "quiz") into.add(b.id);
+  if (b.type === "page" || b.type === "section") for (const c of b.children) quizIds(c, into);
+  return into;
+}

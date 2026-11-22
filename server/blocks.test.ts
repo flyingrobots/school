@@ -4,7 +4,6 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BlockError, lastValidLoader, loadLibrary } from "./blocks.ts";
-import { renderPage } from "./render.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -34,16 +33,15 @@ const loadError = (dir: string): string => {
   throw new Error("expected a BlockError");
 };
 
-test("a quiz shared by two pages through ref loads, and its buttons carry data-choice", () => {
+test("a quiz shared by two pages through ref loads, with its choice ids", () => {
   const dir = lessons({
     "0001.json": page("p1", [quiz("shared")]),
     "0002.json": page("p2", [{ ref: "shared" }]),
   });
   const { pages } = loadLibrary(dir);
   expect(pages.map((p) => p.id)).toEqual(["p1", "p2"]);
-  const html = renderPage("c", pages[1]!, "web", {});
-  expect(html).toContain('data-choice="a"');
-  expect(html).toContain('data-choice="b"');
+  const shared = pages[1]!.type === "page" ? pages[1]!.children[0] : undefined;
+  expect(shared?.type === "quiz" ? shared.choices.map((c) => c.id) : []).toEqual(["a", "b"]);
 });
 
 test("a diamond (two parents ref one child) is not a cycle", () => {

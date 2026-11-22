@@ -10,8 +10,8 @@ test("no course configured is a valid state, not a crash", () => {
   const c = parseConfig({}, FRAMEWORK);
   expect(courseNames(c)).toEqual([]);
   expect(c.framework).toBe(FRAMEWORK);
-  // Only the framework's own assets are served when nothing is registered.
-  expect(Object.keys(mountTable(c))).toEqual(["assets"]);
+  // Nothing is mounted when nothing is registered; the app comes from web/dist.
+  expect(Object.keys(mountTable(c))).toEqual([]);
 });
 
 test("SCHOOL_COURSES registers several, served under their own names", () => {
@@ -32,7 +32,7 @@ test("a single SCHOOL_COURSE is registered under its directory name", () => {
   expect(courseNames(c)).toEqual(["aion"]);
   expect(course(c, "aion")?.root).toBe("/courses/aion");
   // reference is per course now, not a top-level mount.
-  expect(Object.keys(mountTable(c))).toEqual(["assets"]);
+  expect(Object.keys(mountTable(c))).toEqual([]);
 });
 
 test("a course directory whose name cannot be a URL segment is refused", () => {

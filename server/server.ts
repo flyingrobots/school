@@ -1,9 +1,9 @@
-// School progress server: renders block lessons and records quiz answers to SQLite.
+// School server: a JSON API over courses, lessons and the learner's record in SQLite, plus the
+// built web app (web/dist). It renders no HTML of its own; the pages are the shadcn app in web/.
 import { Database } from "bun:sqlite";
 import { dirname, join, normalize, sep } from "node:path";
 import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { lastValidLoader } from "./blocks.ts";
-import { esc, isView, renderCourse, renderExplain, renderSettings, renderLanding, renderPage, renderReference } from "./render.ts";
+import { lastValidLoader, quizIds, type Block } from "./blocks.ts";
 import { migrate, snapshot } from "./migrate.ts";
 import { encounterAnswers, lessonProgress, openEncounter, submit, type Submission } from "./record.ts";
 import { encounterExplanations, explanationState, gradeExplanation, saveExplanation, type ExplanationSubmission, type Grader } from "./explain.ts";
@@ -67,7 +67,6 @@ const grader: Grader = {
 }
 
 /** Where to go back to from the settings page: a path on this site, never another origin. */
-const backTo = (from: string | null) => (from !== null && from.startsWith("/") && !from.startsWith("//") && !from.startsWith("/settings") ? from : "/");
 
 const insertView = db.prepare(`INSERT INTO views (course, lesson, at) VALUES ($course, $lesson, $at)`);
 
@@ -89,11 +88,8 @@ function parseExplanation(v: unknown): ExplanationSubmission | null {
   return { submissionId: o.submissionId.toLowerCase(), encounterId: o.encounterId.toLowerCase(), blockId: o.blockId, text, ms: o.ms };
 }
 
-/** The block's markup for a saved explanation, as the page would render it now. */
-function explainHtml(submissionId: string): string {
-  const x = explanationState(db, submissionId);
-  return x === null ? "" : renderExplain(x.block, x.state);
-}
+/** A saved explanation and its latest grading, as the app shows it. */
+const explanationNow = (submissionId: string) => explanationState(db, submissionId)?.state ?? null;
 
 function parseSubmission(v: unknown): Submission | null {
   if (typeof v !== "object" || v === null) return null;
@@ -113,6 +109,7 @@ function parseView(v: unknown): { course: string; lesson: string } | null {
 
 // Static files come only from configured mounts; lesson sources and state are never served raw.
 const MOUNTS: Record<string, string> = mountTable(config);
+const WEB = config.web;
 
 /**
  * The course's reference directory, if it is really inside the course. `reference/` is
@@ -136,7 +133,12 @@ function referenceDir(c: Course): string | null {
 function referenceDocs(c: Course): string[] {
   const dir = referenceDir(c);
   if (dir === null) return [];
-  return readdirSync(dir).filter((f) => f.endsWith(".html")).sort();
+  // Listed only if serving it would succeed: a regular file whose resolved path stays inside.
+  return readdirSync(dir).filter((f) => {
+    if (!f.endsWith(".html")) return false;
+    const target = real(join(dir, f));
+    return target !== null && target.startsWith(dir + sep) && statSync(target).isFile();
+  }).sort();
 }
 
 // Lessons are reloaded on every request so edits show up without a restart. A reload that
@@ -212,31 +214,56 @@ async function serveMount(pathname: string): Promise<Response> {
   return serveFrom(base, rest);
 }
 
-const html = (body: string, status = 200, headers: Record<string, string> = {}) =>
-  new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", ...headers } });
-const json = (body: unknown, status = 200) => Response.json(body, { status });
+const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(body, { status, headers });
 
-function lessonResponse(c: Course, id: string | undefined, viewParam: string | null): Response {
+type View = "web" | "slides";
+const isView = (v: string | null): v is View => v === "web" || v === "slides";
+const summary = (p: Block | undefined) => (p === undefined || p.type !== "page" ? null : { id: p.id, title: p.title, subtitle: p.subtitle });
+
+/** A course: its lessons, each with how many of its quizzes have been answered correctly, and its reference documents. */
+function courseJson(c: Course): Response {
+  const { library, error } = lessons(c);
+  if (library === null) return json({ error: error?.message ?? "the lessons could not be loaded" }, 500);
+  const done = lessonProgress(db, c.name);
+  return json({
+    name: c.name,
+    reference: referenceDocs(c),
+    lessons: library.pages.map((p) => {
+      const ids = quizIds(p);
+      return { ...summary(p), quizzes: ids.size, answeredCorrectly: [...ids].filter((id) => done.get(p.id)?.has(id)).length };
+    }),
+  });
+}
+
+/**
+ * One lesson. In the web view this opens or resumes the learner's encounter and includes what is
+ * already answered in it, which is what opening the page used to do. The slides view records nothing.
+ */
+function lessonJson(c: Course, id: string, viewParam: string | null): Response {
   const view = isView(viewParam) ? viewParam : "web";
   const { library, error } = lessons(c);
-  if (library === null) return html(`<pre>Lesson error: ${esc(error?.message ?? "unknown")}</pre>`, 500);
-  const refs = referenceDocs(c);
+  if (library === null) return json({ error: error?.message ?? "the lessons could not be loaded" }, 500);
   const { pages } = library;
-  if (id === undefined) return html(renderCourse(c.name, pages, refs, lessonProgress(db, c.name)));
   const i = pages.findIndex((p) => p.id === id);
   const page = pages[i];
-  if (page === undefined) return new Response("Not found", { status: 404 });
-  const nav: { prev?: (typeof pages)[number]; next?: (typeof pages)[number] } = {};
-  const prev = pages[i - 1];
-  const next = pages[i + 1];
-  if (prev !== undefined) nav.prev = prev;
-  if (next !== undefined) nav.next = next;
-  if (view !== "web") return html(renderPage(c.name, page, view, nav, refs.length > 0));
-  // Practice: resume or open the encounter, and show what is already answered in it.
+  if (page === undefined) return json({ error: "no such lesson" }, 404);
+  const base = { course: c.name, view, lesson: page, prev: summary(pages[i - 1]), next: summary(pages[i + 1]), hasReference: referenceDocs(c).length > 0 };
+  if (view !== "web") return json(base);
   const e = openEncounter(db, { course: c.name, lesson: page.id, page, now: new Date().toISOString() });
-  return html(renderPage(c.name, page, view, nav, refs.length > 0,
-    { encounterId: e.id, answers: encounterAnswers(db, e.id), explanations: encounterExplanations(db, e.id) }),
+  return json({ ...base, encounterId: e.id, answers: encounterAnswers(db, e.id), explanations: encounterExplanations(db, e.id) },
     200, { "cache-control": "no-store" });
+}
+
+/** The built web app: a file from web/dist, or its index.html for any other page path. */
+async function serveApp(pathname: string): Promise<Response> {
+  // A malformed path is the request's fault whether or not the app is built, so it is checked first.
+  if (pathname !== "/" && !pathname.startsWith("/api/")) {
+    const asset = await serveFrom(WEB, pathname.split("/").slice(1));
+    if (asset.status === 200 || asset.status === 400) return asset;
+  }
+  const index = Bun.file(join(WEB, "index.html"));
+  if (!(await index.exists())) return json({ error: "the web app is not built; run `npm run build` in web/" }, 503);
+  return new Response(index, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
 }
 
 async function readJson(req: Request): Promise<unknown> {
@@ -277,7 +304,7 @@ Bun.serve({
       const r = saveExplanation(db, s, at);
       if (r.status === "rejected") return json(r, 400);
       if (r.status === "conflict") return json(r, 409);
-      return json({ ...r, submissionId: s.submissionId, html: explainHtml(s.submissionId) });
+      return json({ ...r, submissionId: s.submissionId, explanation: explanationNow(s.submissionId) });
     }
     if (req.method === "POST" && pathname === "/api/grade") {
       const body = await readJson(req);
@@ -285,7 +312,7 @@ Bun.serve({
       if (typeof id !== "string" || !UUID.test(id)) return json({ status: "invalid" }, 400);
       const g = await gradeExplanation(db, id.toLowerCase(), grader, new Date().toISOString());
       if (g === null) return json({ status: "unknown submission" }, 404);
-      return json({ status: g.status, html: explainHtml(id.toLowerCase()) });
+      return json({ status: g.status, explanation: explanationNow(id.toLowerCase()) });
     }
     if (req.method === "POST" && pathname === "/api/settings/bridge") {
       const body = (await readJson(req)) as Record<string, unknown> | null;
@@ -332,47 +359,41 @@ Bun.serve({
     if (req.method !== "GET") return new Response("Method not allowed", { status: 405 });
 
     if (pathname === "/api/settings/status") return json(await bridgeStatus(currentBridge()));
+    if (pathname === "/api/settings/bridge") {
+      // Whether a token is set, never the token itself.
+      const b = bridgeNow();
+      return json({ url: b.url, urlFrom: b.urlFrom, tokenSet: b.token !== null, tokenFrom: b.tokenFrom }, 200, { "cache-control": "no-store" });
+    }
     if (pathname === "/api/settings/agents") {
       const r = await toBridge(currentBridge(), "GET", "/config");
       return json(r.body, r.status);
     }
-    if (pathname === "/settings") {
-      const b = bridgeNow();
-      return html(renderSettings({ back: backTo(url.searchParams.get("from")), url: b.url, urlFrom: b.urlFrom, tokenSet: b.token !== null, tokenFrom: b.tokenFrom }),
-        200, { "cache-control": "no-store" });
-    }
-
-    // The landing page is School's index of installed courses, not one course's lessons.
-    if (pathname === "/" || pathname === "/courses" || pathname === "/courses/") {
-      return html(renderLanding(courses.map((name) => {
+    if (pathname === "/api/courses") {
+      return json(courses.map((name) => {
         const c = course(config, name)!;
         return { name, lessons: lessonCount(c), reference: referenceDocs(c).length };
-      })));
+      }));
+    }
+    const api = /^\/api\/courses\/([a-z0-9][a-z0-9-]*)(?:\/lessons\/([\w-]+))?$/.exec(pathname);
+    if (api !== null) {
+      const c = course(config, api[1]!);
+      if (c === null) return json({ error: "no such course" }, 404);
+      return api[2] === undefined ? courseJson(c) : lessonJson(c, api[2], url.searchParams.get("view"));
+    }
+    if (pathname.startsWith("/api/")) return json({ error: "not found" }, 404);
+
+    // A course's reference documents are course-authored files, served as they are.
+    const ref = /^\/courses\/([a-z0-9][a-z0-9-]*)\/reference\/(.+)$/.exec(pathname);
+    if (ref !== null) {
+      const c = course(config, ref[1]!);
+      const dir = c === null ? null : referenceDir(c);
+      return dir === null ? notFound() : serveFrom(dir, [ref[2]!]);
     }
 
-    const inCourse = /^\/courses\/([a-z0-9][a-z0-9-]*)(\/.*)?$/.exec(pathname);
-    if (inCourse !== null) {
-      const c = course(config, inCourse[1]!);
-      if (c === null) return new Response("No such course", { status: 404 });
-      const rest = inCourse[2] ?? "/";
-
-      if (rest === "/" || rest === "") return lessonResponse(c, undefined, null);
-      if (rest === "/reference" || rest === "/reference/") return html(renderReference(c.name, referenceDocs(c)));
-
-      const ref = /^\/reference\/(.+)$/.exec(rest);
-      if (ref !== null) {
-        const dir = referenceDir(c);
-        return dir === null ? notFound() : serveFrom(dir, [ref[1]!]);
-      }
-
-      const lesson = /^\/lessons\/([\w-]+)$/.exec(rest);
-      if (lesson !== null) return lessonResponse(c, lesson[1], url.searchParams.get("view"));
-      return new Response("Not found", { status: 404 });
-    }
-
-    return serveMount(pathname);
+    const mounted = await serveMount(pathname);
+    if (mounted.status !== 404) return mounted;
+    return serveApp(pathname);
   },
 });
-
 console.log(`school: http://${config.host}:${config.port}  courses=${courses.length > 0 ? courses.join(", ") : "(none)"}  state=${config.state}`);
 if (Object.keys(config.mounts).length > 0) console.log(`school: mounts ${Object.keys(config.mounts).map((n) => "/" + n).join(" ")}`);
