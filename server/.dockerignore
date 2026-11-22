@@ -4,3 +4,4 @@
 !**/*.ts
 **/*.test.ts
 contract/**
+testing/**

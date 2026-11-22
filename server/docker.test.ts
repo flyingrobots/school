@@ -8,9 +8,9 @@ import { dirname, join, relative, resolve } from "node:path";
 const dir = import.meta.dir;
 const dockerfile = readFileSync(join(dir, "Dockerfile"), "utf8");
 
-/** What the build context keeps, per .dockerignore: the manifest, the lockfile and every non-test module outside contract/. */
+/** What the build context keeps, per .dockerignore: the manifest, the lockfile and every non-test module outside contract/ and testing/. */
 const admitted = (path: string) => path === "package.json" || path === "bun.lock" ||
-  (path.endsWith(".ts") && !path.endsWith(".test.ts") && !path.startsWith("contract/") && !path.startsWith("node_modules/"));
+  (path.endsWith(".ts") && !path.endsWith(".test.ts") && !path.startsWith("contract/") && !path.startsWith("testing/") && !path.startsWith("node_modules/"));
 
 function modules(at = dir): string[] {
   return readdirSync(at, { withFileTypes: true }).flatMap((e) => {
@@ -21,9 +21,9 @@ function modules(at = dir): string[] {
 }
 const shipped = modules().filter(admitted);
 
-test("the image admits modules at any depth, the manifest and lockfile, and no tests or contract suites", () => {
+test("the image admits modules at any depth, the manifest and lockfile, and no tests, test helpers or contract suites", () => {
   const rules = readFileSync(join(dir, ".dockerignore"), "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
-  expect(rules).toEqual(["*", "!package.json", "!bun.lock", "!**/*.ts", "**/*.test.ts", "contract/**"]);
+  expect(rules).toEqual(["*", "!package.json", "!bun.lock", "!**/*.ts", "**/*.test.ts", "contract/**", "testing/**"]);
   expect(dockerfile).toMatch(/^COPY package\.json bun\.lock \.\/$/m);
   expect(dockerfile).toMatch(/^RUN bun install --production --frozen-lockfile$/m);
   expect(dockerfile).toMatch(/^COPY \. \.\/$/m);
