@@ -18,6 +18,8 @@
     "@shadcn/helpers": "^0.3.0",
     "@shadcn/react": "^0.3.1",
     "@tailwindcss/vite": "^4",
+    "@ui-sdk/core": "^0.1.0-beta.13",
+    "@ui-sdk/react": "^0.1.0-beta.13",
     "ai": "^7.0.179",
     "class-variance-authority": "^0.7.1",
     "cmdk": "^1.1.1",

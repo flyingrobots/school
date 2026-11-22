@@ -1,6 +1,8 @@
 import { Button } from "@/components/ui/button"
+import { Gallery } from "@/demo/gallery"
 
 export function App() {
+  if (window.location.pathname.startsWith("/demo")) return <Gallery />
   return (
     <div className="flex min-h-svh p-6">
       <div className="flex max-w-md min-w-0 flex-col gap-4 text-sm leading-loose">

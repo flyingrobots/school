@@ -23,6 +23,11 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
     "paths": {
+      "@/components/example": ["./src/demo/example.tsx"],
+      "next/link": ["./src/demo/shims/next-link.tsx"],
+      "next/image": ["./src/demo/shims/next-image.tsx"],
+      "@/app/(create)/lib/search-params": ["./src/demo/shims/search-params.ts"],
+      "@/components/message-parts": ["./src/demo/shims/message-parts.ts"],
       "@/*": ["./src/*"]
     }
   },
