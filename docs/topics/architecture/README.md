@@ -239,7 +239,9 @@ gap in handling a malformed reply.
 ## The web app
 
 `web/` is a stock shadcn/ui app on Vite and React, themed from theme-book through the
-`@flyingrobots` registry. A test enforces that its stylesheet holds only stock shadcn tokens. What
+`@flyingrobots` registry. A test enforces that its stylesheet holds only stock shadcn tokens, and
+another that every component in `web/src/components/ui/` hashes to a fresh `shadcn add`
+(`web/test/fixtures/README.md` says how to regenerate the hashes). What
 exists: the theme, a light, dark and system toggle, a component sandbox at `/demo`, and three
 homepage mockups. School's pages are not built yet
 ([flyingrobots/school#15](https://github.com/flyingrobots/school/issues/15)). ADR 9 describes a

@@ -1,7 +1,7 @@
 // Stands in for shadcn's `@/components/example` frame (see README.md): the registry examples import
 // Example and ExampleWrapper from it, and this version shows one example at a time.
 import * as React from "react"
-import { cn } from "@/lib/utils"
+import { cn } from "cn"
 
 type Variants = {
   index: number

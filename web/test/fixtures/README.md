@@ -11,8 +11,10 @@ replace them only from those sources, never by hand.
 `registry-examples.sha256` lists the SHA-256 of every `src/components/*-example.tsx` exactly as
 `shadcn add @shadcn/<name>-example` wrote it (CLI 4.23.0, radix-nova style, 2026-11-22), installed
 in a scratch copy of this app so no stock component was overwritten. The examples are the theme
-sandbox's content (`src/demo/`); the hashes prove they are unedited. Regenerate only from a fresh
-CLI install.
+sandbox's content (`src/demo/`); the hashes prove they are unedited. Each hash is of the file with
+any leading `"use client"` removed, for the CLI defect described under
+[Stock components](#stock-components). Regenerate only from a fresh CLI install, with the same
+`perl` correction.
 
 `quiz-example.tsx` and `explain-example.tsx` are the exceptions: each is `shadcn add
 @flyingrobots/<name>-example` from School's registry (`flyingrobots/shadcn-registry`), installed
