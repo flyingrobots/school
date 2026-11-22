@@ -24,6 +24,8 @@ Practical notes for anyone — human or agent — changing the framework.
   says it is cross-site. A new endpoint under `/api/` inherits that guard; one outside it does
   not, so keep state-changing routes under `/api/`.
 - Tests are `bun test` from the repository root. No `package.json`, no build step (ADR 2).
+  The web app's browser tests (`web/test/shell.test.ts`) also need `npm ci` in `web/` and Google
+  Chrome, which they drive through playwright-core; without either they fail rather than skip.
 - The bridge (`bridge/`) is a separate host process, deliberately outside the Docker image
   and its allowlist. It has no dependencies beyond Bun and is started by hand:
   `SCHOOL_BRIDGE_TOKEN=... bun bridge/bridge.ts`. Its tests write fake agent scripts and

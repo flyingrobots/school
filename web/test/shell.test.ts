@@ -125,6 +125,16 @@ describe("command palette", () => {
     await p.context().close()
   })
 
+  test("Space Space on a focused button opens the palette and does not press the button", async () => {
+    const p = await open()
+    await p.getByRole("button", { name: "Toggle Sidebar" }).first().focus()
+    await p.keyboard.press(" ")
+    await p.keyboard.press(" ")
+    await palette(p).waitFor()
+    expect(await p.locator("[data-slot=sidebar][data-state]").first().getAttribute("data-state")).toBe("expanded")
+    await p.context().close()
+  })
+
   test("Esc never opens it", async () => {
     const p = await open()
     await p.keyboard.press("Escape")
@@ -309,9 +319,14 @@ describe("theme switch", () => {
 })
 
 describe("Kbd hints", () => {
-  /** The text of every Kbd and KbdGroup inside a locator, whitespace collapsed. */
+  /** Every hint inside a scope: a KbdGroup as its keys joined by spaces, or a lone Kbd's text. */
   const hints = (p: Page, scope: string) =>
-    p.locator(`${scope} [data-slot=kbd-group], ${scope} [data-slot=kbd]:not([data-slot=kbd-group] [data-slot=kbd])`).evaluateAll((els) => els.map((e) => (e.textContent ?? "").replace(/\s+/g, " ").trim()))
+    p.locator(`${scope} [data-slot=kbd-group], ${scope} [data-slot=kbd]:not([data-slot=kbd-group] [data-slot=kbd])`).evaluateAll((els) =>
+      els.map((e) => {
+        const keys = e.matches("[data-slot=kbd-group]") ? [...e.querySelectorAll("[data-slot=kbd]")] : [e]
+        return keys.map((k) => (k.textContent ?? "").trim()).join(" ")
+      })
+    )
 
   test("the keys list shows every key that acts", async () => {
     const p = await open()

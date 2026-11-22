@@ -1,23 +1,27 @@
-import { Button } from "@/components/ui/button"
+import { createBrowserRouter, RouterProvider } from "react-router"
+
 import { Gallery } from "@/demo/gallery"
+import { CoursePage, HomePage, LessonPage, NotFoundPage, ReferencePage, SettingsPage } from "@/pages/pages"
+import { AppShell } from "@/shell/app-shell"
+
+const router = createBrowserRouter([
+  // The theme sandbox (src/demo/README.md) keeps its own frame, outside the shell.
+  { path: "/demo/*", element: <Gallery /> },
+  {
+    element: <AppShell />,
+    children: [
+      { path: "/", element: <HomePage /> },
+      { path: "/courses/:course", element: <CoursePage /> },
+      { path: "/courses/:course/reference", element: <ReferencePage /> },
+      { path: "/courses/:course/lessons/:lesson", element: <LessonPage /> },
+      { path: "/settings", element: <SettingsPage /> },
+      { path: "*", element: <NotFoundPage /> },
+    ],
+  },
+])
 
 export function App() {
-  if (window.location.pathname.startsWith("/demo")) return <Gallery />
-  return (
-    <div className="flex min-h-svh p-6">
-      <div className="flex max-w-md min-w-0 flex-col gap-4 text-sm leading-loose">
-        <div>
-          <h1 className="font-medium">Project ready!</h1>
-          <p>You may now add components and start building.</p>
-          <p>We&apos;ve already added the button component for you.</p>
-          <Button className="mt-2">Button</Button>
-        </div>
-        <div className="font-mono text-xs text-muted-foreground">
-          (Press <kbd>d</kbd> to toggle dark mode)
-        </div>
-      </div>
-    </div>
-  )
+  return <RouterProvider router={router} />
 }
 
 export default App
