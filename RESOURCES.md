@@ -1,7 +1,7 @@
 # AIΩN Resources
 
 ## Knowledge
-- [Repo: ~/git/aion README](file:///Users/j/git/aion/README.md)
+- [Repo: ~/git/aion README](file:///Users/james/git/aion/README.md)
   One-paragraph summary of every paper and the central thesis. Use for: series map, elevator pitch.
 - [Paper I: A Worldline Algebra for Recursive Provenance (Zenodo)](https://doi.org/10.5281/zenodo.17908005) (source: ~/git/aion/aion-paper-01-warp/paper/main.tex)
   Defines WARP graphs. Use for: atoms, skeletons, attachments, depth. §2 and the Appendix worked example are the gentlest start.

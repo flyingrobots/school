@@ -1,10 +1,10 @@
 # RFC 1: School, a personal learning system built with an AI teacher
 
-- **Status:** Draft, revision 2. Agent-written; revised after an external review. Not yet accepted.
-- **Date:** 2026-11-18
-- **Describes:** the working tree of `~/git/school` on 2026-11-18. The folder is not under version control yet, so there is no commit to cite.
+- **Status:** Draft, revision 3. Agent-written; revised twice against the same external review. Not yet accepted.
+- **Date:** 2026-11-18, revised 2026-11-21.
+- **Describes:** `~/git/school` at commit `22e5411`. The workspace is a git repository as of 2026-11-21, so revision 3 cites commits where revision 2 could not.
 - **Builds on:** ADRs 1–5 in `docs/adr/`
-- **Decision requested:** agree on [the concept](#the-concept), accept the [learning record contract](#the-learning-record-contract), accept, amend or reject each of the four [proposals](#proposals), and answer the [open questions](#open-questions).
+- **Decision requested:** agree on [the concept](#the-concept), accept the [learning record contract](#the-learning-record-contract), accept, amend or reject each of the four [proposals](#proposals), and answer [open questions](#open-questions) 1 and 2. This RFC deliberately does not settle those two for the learner; see [review reconciliation](#review-reconciliation).
 
 ## The concept
 
@@ -46,6 +46,14 @@ One study session goes like this:
 
 Lessons, reference sheets and the papers are served read-only. Content changes come from the teacher, as file edits.
 
+### How lessons are planned
+
+Lessons are written **one at a time, as the course goes**. Only the direction is planned: it roughly follows the papers in order (`RESOURCES.md`). There is no syllabus, and the teacher does not write one unless asked — an offer to draft a 10–12 lesson outline was made on 2026-11-18 and was not taken up.
+
+This is deliberate, not an omission. A syllabus fixed in advance would decide the next lesson before the evidence for it exists, which is the opposite of the organizing idea. The cost is that the course has no visible map, so the learner cannot reorder it ahead of time; the mitigation is that every lesson names the recorded attempts behind its review items (step 4 above).
+
+With `NOTES.md` and `learning-records/0001-author-learning-as-newcomer.md`, this fixes the teaching stance: start from zero, never assume the jargon even though the learner wrote the papers, and end each lesson with a "say it out loud" exercise, because the mission is explaining the series to other people.
+
 ### What it is for
 
 The purpose is long-term retention of real skills, not the feeling of having covered something. The `/teach` skill distinguishes *fluency* (recalling something right now) from *storage strength* (still knowing it months later). Research on learning draws the same line: performance during practice can differ from what is learned ([Bjork Learning and Forgetting Lab](https://bjorklab.psych.ucla.edu/research/)). It builds storage strength through retrieval practice, spacing and interleaving.
@@ -72,32 +80,35 @@ For this mission the decisive test is whether another person could rebuild the i
 
 ## Current state (measured)
 
-Checked on 2026-11-18 by reading the files and running the server against a scratch database.
+First measured on 2026-11-18 by reading the files and running the server against a scratch database. **Re-measured on 2026-11-21** against commit `22e5411`, including a real `docker build` and a container run.
 
 | Item | Observed |
 | --- | --- |
-| Running container | `server-school-1` is up, serving `127.0.0.1:4747`, built from the pre-block `server.ts` (ADR 4). `GET /` returns 200. |
-| `progress.db` | `user_version` 0. `answers`: 0 rows. `views`: 0 rows. The old server is still accepting answers, so this count can change. |
-| Block model | `server/blocks.ts`: block types `page`, `section`, `prose`, `card`, `quote`, `aside`, `quiz`, `explain` and `nest`; `{ "ref": id }` reuse; duplicate IDs and unknown refs throw `BlockError`. Cycles are not detected. |
+| Repository | A git repository since 2026-11-21, published as `flyingrobots/school` under Apache 2.0. `progress/*.db` and captured session transcripts are ignored, so the database is runtime state and the schema lives in `server/server.ts`. |
+| Running container | **None.** The pre-block `server-school-1` container seen on 2026-11-18 is gone, so nothing is currently accepting answers. |
+| `progress.db` | `user_version` 0, still the pre-block schema (`answers` keyed by `lesson` and question position). `answers`: 0 rows. `views`: 0 rows. No learner evidence exists yet — so nothing is at risk today, and equally the teacher has no results to plan from. |
+| Block model | `server/blocks.ts`: block types `page`, `section`, `prose`, `card`, `quote`, `aside`, `quiz`, `explain` and `nest`; `{ "ref": id }` reuse; duplicate IDs and unknown refs throw `BlockError`. **Cycles are still not detected**, though the contract below requires rejecting them (increment 2). |
 | Renderers | `server/render.ts`: views `web` and `slides`, with an exhaustive `switch`. |
-| Server on disk | `server/server.ts` loads `lessons/*.json`, renders `/lessons/:id?view=`, and migrates the schema to version 2 by dropping and recreating `answers`. |
+| Server on disk | `server/server.ts` loads `lessons/*.json`, renders `/lessons/:id?view=`, and still migrates the schema to version 2 by **dropping and recreating `answers`** (`server/server.ts:19`). |
 | Quiz client | `assets/quiz.js` sends the selected choice's *text*, and computes `firstTry` from a counter that resets on every page load. |
-| Lessons | Only `0001-the-inversion.html` and `0002-warp-graphs.html` exist. No `.json` lessons. |
+| Lessons | Only `0001-the-inversion.html` and `0002-warp-graphs.html`. No `.json` lessons, and `loadLibrary` reads only `*.json` (`server/blocks.ts:110`), so the library is empty. |
 | Markdown | Bun 1.4.4 provides `Bun.markdown.html`. Raw HTML in the input passes through unescaped (`"# hi <b>x</b>"` renders `<h1>hi <b>x</b></h1>`). |
+| Phone access | **Unverified.** `tailscale serve --bg 4747` was left for the learner to run on 2026-11-18 and no run is recorded. `tailscale serve status` currently fails on this machine (`Fatal error: The current bundleIdentifier is unknown to the registry`), so the tailnet route has never been shown to work end to end — even though studying on a phone is the reason ADRs 4 and 5 exist. |
 
-Smoke test of the on-disk server (`PORT=4799`, scratch `DB_PATH`):
+Container run on 2026-11-21, built from `server/` with a scratch `progress/` mount:
 
 ```text
-GET /                                  -> 200, index with an empty lesson list
-GET /lessons/0001-the-inversion        -> 404
+GET /                           -> 200
+GET /assets/style.css           -> 200
+GET /lessons/0001-the-inversion -> 404   (no .json lesson exists)
 ```
 
 Problems that block a rebuild:
 
-1. `server/Dockerfile` copies only `server.ts`; the new server imports `blocks.ts` and `render.ts`. *(Inferred from the Dockerfile; not rebuilt.)*
-2. No lesson is in block form, and `lessons/` is no longer served as static files, so every lesson would return 404.
-3. `render.ts` links `/assets/slides.css` and `/assets/slides.js`, which do not exist.
-4. **The version-2 migration drops `answers`.** Increment 1 of the [rollout](#rollout) replaces it with a preserving migration before anything is rebuilt.
+1. ~~`server/Dockerfile` copies only `server.ts`.~~ **Fixed 2026-11-21** in commit `22e5411`. The real cause was `server/.dockerignore`, which was `*` plus `!server.ts`: `blocks.ts` and `render.ts` could not enter the build context at all, so widening the Dockerfile's `COPY` alone would not have worked. Revision 2 named only the Dockerfile. Both files now admit all three sources, verified by building the image and starting the container.
+2. No lesson is in block form, and `lessons/` is no longer served as static files, so every lesson returns 404. *(Still true, measured above.)*
+3. `render.ts` links `/assets/slides.css` and `/assets/slides.js` for the `slides` view (`server/render.ts:51-52`); `assets/` holds only `nest.css`, `quiz.js` and `style.css`, so both 404. *(Re-checked 2026-11-21.)*
+4. **The version-2 migration drops `answers`** (`server/server.ts:19`). **Still live.** Increment 1 of the [rollout](#rollout) replaces it before anything is rebuilt. It is harmless only because the table is empty today; it stops being harmless the moment one answer is recorded.
 
 ## The learning record contract
 
@@ -163,7 +174,7 @@ These are two separate decisions.
 
 **2a. Markdown: accept.** Prose blocks may use an `md` field, rendered with `Bun.markdown.html`. The API is marked unstable, so the Bun version stays pinned (ADR 4) and a test covers the markup we rely on. Lesson Markdown is trusted, because the teacher wrote it and it is in git. Learner text and model text are **never** rendered as Markdown or HTML; they are shown as escaped plain text. Exercises keep typed fields, not Markdown.
 
-**2b. Dynamic review: start with one named selector.** Instead of general SQL in lesson files, add a `review` block bound to one built-in operation, `due-review`. It returns a bounded list of block IDs (at most `limit`, in a fixed order) chosen from first-try misses and time since the last encounter. If the selector fails, the block says so and the rest of the page renders. The selected blocks become part of the encounter's snapshot, so a later database change cannot alter what an answer refers to.
+**2b. Dynamic review: start with one named selector.** Instead of general SQL in lesson files, add a `review` block bound to one built-in operation, `due-review`. It returns a bounded list of block IDs (at most `limit`, in a fixed order) chosen from first-try misses and time since the last encounter. If the selector fails, the block says so and the rest of the page renders. The selected blocks become part of the encounter's snapshot, so a later database change cannot alter what an answer refers to. The snapshot keeps the **resolved content as displayed**, not merely the list of selected block IDs: if a binding ever substitutes values inside an exercise, those values are what is stored, because an ID alone would not recover what the learner actually read.
 
 General author-written SQL is deferred. If it returns, it needs a defined result shape, ordering, row and time limits, and failure behaviour, as well as a read-only connection.
 
@@ -241,6 +252,36 @@ Each is `meets`, `partly` or `misses`. The grader may instead return `insufficie
 - Each lifecycle case passes: timeout, malformed output, a restart after saving, a duplicate delivery, and two different explanations for the same block.
 - The subscription's terms allow this use ([open question 2](#open-questions)). The local adapter does not wait on this.
 
+## Review reconciliation
+
+An external review (*Baker Street*: concept approved, `CHANGES_REQUIRED` on the plan) was applied in revision 2 and re-checked line by line for revision 3, when its full text became available again. Nothing in it is newly adopted here; revision 2 had already acted on it. What revision 3 adds is verification.
+
+The review stated plainly that it had read only the RFC attachment — not the checkout, the ADRs, the database or the container — so its account of the current state was reported, not confirmed. Revision 3 discharges that caveat: every row of [current state](#current-state-measured) has now been checked directly, and the review's two load-bearing observations both hold. The destructive migration is real and still on disk at `server/server.ts:19`, and the database is empty.
+
+| Review item | Where it is handled | Status |
+| --- | --- | --- |
+| MUST 1 — put preservation into the rebuild instructions | Rollout increment 1; principles 2 and 4 | Adopted |
+| MUST 2 — define what a submission identifies | Learning record contract: identities, governing rule, stable choice IDs, snapshot rather than commit | Adopted |
+| MUST 3 — define "first try"; separate answers from retries | Contract rules; acceptance scenario | Adopted |
+| MUST 4 — give grading a complete lifecycle | Proposal 4, lifecycle; retry is manual | Adopted |
+| MUST 5 — specify what the grading labels mean | Proposal 4, rubric; mechanical quote check | Adopted |
+| MUST 6 — preserve what dynamic bindings showed | Proposal 2b | Adopted; **tightened in revision 3** to displayed values |
+| MUST 7 — make the sidecar's constraints activation gates | Proposal 4, activation gates | Adopted; every gate still unmet |
+| SHOULD — let generated content become fixed, reviewed content | Principle 1; proposal 4 scope | Adopted; the underlying preference is [open question 1](#open-questions) |
+| SHOULD — make delayed practice part of the first loop | "How it is used" step 1; increment 3 | Adopted, manual teacher choice first |
+| SHOULD — use the available Markdown renderer | Proposal 2a | Adopted; verified on Bun 1.4.4 |
+| SHOULD — define each view's behavioural contract | Proposal 3 | Adopted |
+| SHOULD — rewrite alternatives around real tradeoffs | Alternatives considered | Adopted |
+| SHOULD — correct "none of these work without a record" | "What it is for" | Adopted |
+| COULD — objective labels, appeals, corrections, calibration set, decision notes | Future directions | Listed, deliberately unscheduled |
+| DONT — all seven | Principles 2–4; the evidence list; the `ms` rule; increment 1's evidence bar | Adopted |
+
+Two of the review's own claims are **taken on trust and not verified here**: that disabling Claude Code's built-in tools does not disable MCP tools, and anything about subscription entitlement. The first is an activation gate for the CLI adapter, so it has to be demonstrated against the installed CLI version rather than cited.
+
+One thing the review could not see, because it read only the RFC: the `.dockerignore` cause of problem 1. Revision 2 recorded the Dockerfile half of that bug and would not have fixed it.
+
+**The review's recommendation on open question 1 is still only a recommendation.** It advised rejecting a blanket ban on LLM-written content while keeping grading as the sidecar's first job, and revision 2 wrote that into principle 1 and proposal 4. The learner has not confirmed it. Until they do, that part of the design rests on the reviewer's suggestion and this RFC's assumption rather than on a decision — which is the one thing the review explicitly asked not to let happen quietly.
+
 ## Alternatives considered
 
 - **Store blocks in the database.** A database can keep immutable versions too. Files are chosen because they suit the authoring and review workflow: the teacher edits them, the learner reads diffs, and git keeps history.
@@ -288,11 +329,14 @@ Possibilities, not proposals. Each is built only if real use shows a need for it
 ## Review log
 
 - **Revision 1** (2026-11-18): first draft.
+- **Revision 3** (2026-11-21): reconciled against the full text of the same external review, checked row by row rather than recalled. Re-measured the current state against commit `22e5411`; recorded the Dockerfile fix and the `.dockerignore` cause behind it; tightened proposal 2b to displayed values; added the [reconciliation table](#review-reconciliation). Wrote down four things that existed only in captured session transcripts: how lessons are planned, the undetected reference cycles, the unverified tailnet route, and the still-live destructive migration. Those transcripts were removed from this repository and its history on 2026-11-21, so this RFC is now their only record.
 - **Revision 2** (2026-11-18): revised after an external review that returned *changes required*. It added the learning record contract, the preserving migration, the definition of first try, idempotent submissions, the grading lifecycle and rubric, binding snapshots, the sidecar activation gates and the view contracts. It replaced the ban on generated content with a retention rule, and closed the Markdown question. The Bun claim was verified locally; the Claude Code documentation claims were taken from the review and not checked here.
 
 ## Open questions
 
+Questions 1 and 2 are unanswered and block work: 1 governs whether the sidecar may ever write lesson content, and 2 gates the CLI adapter. The local adapter and increments 1–3 do not wait on either.
+
 1. **What did "false" reject?** The learner answered "false" to the rule that LLMs grade but never supply content, then described the sidecar. Revision 2 assumes: the sidecar grades first, and generated content is allowed later if it is reviewed and kept as a revision. Confirm or correct this.
 2. **Does the subscription permit automated use through its CLI?** The CLI supports non-interactive mode; whether the learner's plan allows this wrapper must be checked before enabling the CLI adapter.
 3. **Answered:** the sidecar stays typed around grading and lives in this repository until a second real consumer exists.
-4. **Answered:** `~/git/school` becomes a git repository in rollout increment 1.
+4. **Answered, and done:** `~/git/school` became a git repository on 2026-11-21 (commit `22e5411`), published as `flyingrobots/school` under Apache 2.0. The rest of increment 1 — the preserving migration — is not done.
