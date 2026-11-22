@@ -5,3 +5,4 @@
 !db/**/*.sql
 **/*.test.ts
 contract/**
+node_modules/**

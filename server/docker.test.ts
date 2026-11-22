@@ -26,9 +26,9 @@ function modules(at = dir): string[] {
 }
 const shipped = modules().filter(admitted);
 
-test("the image admits modules at any depth, the manifest and lockfile, the migrations, and no tests or contract suites", () => {
+test("the image admits modules at any depth, the manifest and lockfile, the migrations, and no tests, contract suites or host node_modules", () => {
   const rules = readFileSync(join(dir, ".dockerignore"), "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
-  expect(rules).toEqual(["*", "!package.json", "!bun.lock", "!**/*.ts", "!db/**/*.sql", "**/*.test.ts", "contract/**"]);
+  expect(rules).toEqual(["*", "!package.json", "!bun.lock", "!**/*.ts", "!db/**/*.sql", "**/*.test.ts", "contract/**", "node_modules/**"]);
   expect(dockerfile).toMatch(/^COPY package\.json bun\.lock \.\/$/m);
   expect(dockerfile).toMatch(/^RUN bun install --production --frozen-lockfile$/m);
   expect(dockerfile).toMatch(/^COPY \. \.\/$/m);
