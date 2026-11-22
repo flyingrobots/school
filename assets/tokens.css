@@ -111,3 +111,24 @@
   --chart-4: oklch(0.7386 0.1498 68.3);
   --chart-5: oklch(0.7398 0.1497 298.17);
 }
+
+/* theme-book emits colour tokens only. Typography, shape and elevation come from the
+   flyingrobots shadcn registry's monochrome-tokens item, so every `var()` the stylesheets
+   use actually resolves. Without these, `font-family: var(--font-sans)` falls back to the
+   browser default and `border-radius: var(--radius)` silently does nothing. */
+:root {
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-serif: "Iowan Old Style", Charter, Georgia, serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius: 0.5rem;
+  --shadow-sm: 0px 1px 2px 0px hsl(0 0% 0% / 0.10), 0px 1px 2px -1px hsl(0 0% 0% / 0.10);
+  --shadow-xl: 0px 1px 2px 0px hsl(0 0% 0% / 0.10), 0px 8px 10px -1px hsl(0 0% 0% / 0.10);
+}
+
+/* Shadows read as grime on a dark surface; lift them with a light edge instead. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --shadow-sm: 0px 1px 0px 0px hsl(0 0% 100% / 0.04);
+    --shadow-xl: 0px 1px 0px 0px hsl(0 0% 100% / 0.06), 0px 8px 24px -8px hsl(0 0% 0% / 0.6);
+  }
+}
