@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { join, normalize, sep } from "node:path";
 import { BlockError, loadLibrary } from "./blocks.ts";
 import { isView, renderIndex, renderPage } from "./render.ts";
+import { migrate, snapshot } from "./migrate.ts";
 
 const ROOT = process.env.SCHOOL_ROOT ?? join(import.meta.dir, "..");
 const AION = process.env.AION_ROOT ?? join(process.env.HOME ?? "/", "git", "aion");
@@ -13,20 +14,17 @@ const PORT = Number(process.env.PORT ?? 4747);
 
 const db = new Database(DB_PATH, { create: true, strict: true });
 db.exec("PRAGMA journal_mode = WAL;");
-// Schema version 2: answers are keyed by block id rather than question position.
-const version = db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
-if (version < 2) {
-  db.exec(`DROP TABLE IF EXISTS answers;
-CREATE TABLE answers (
-  id INTEGER PRIMARY KEY, block_id TEXT NOT NULL, lesson TEXT NOT NULL, choice TEXT NOT NULL,
-  correct INTEGER NOT NULL, first_try INTEGER NOT NULL, ms INTEGER NOT NULL, at TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS answers_block ON answers (block_id, at);
-CREATE TABLE IF NOT EXISTS views (id INTEGER PRIMARY KEY, lesson TEXT NOT NULL, at TEXT NOT NULL);
-PRAGMA user_version = 2;`);
-}
+// Learner history is never dropped on upgrade. A snapshot is taken first, and only when
+// the migration actually has work to do (RFC 1, rollout increment 1).
+const migration = migrate(db, (from) => {
+  const backup = `${DB_PATH}.bak-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  snapshot(db, backup);
+  console.log(`school: migrating progress.db from ${from}; backup at ${backup}`);
+});
+if (migration.copied > 0) console.log(`school: preserved ${migration.copied} answer(s)`);
 
-const insertAnswer = db.prepare(`INSERT INTO answers (block_id, lesson, choice, correct, first_try, ms, at)
-  VALUES ($block_id, $lesson, $choice, $correct, $first_try, $ms, $at)`);
+const insertAnswer = db.prepare(`INSERT INTO answers (origin, block_id, lesson, choice, correct, first_try, ms, at)
+  VALUES ('block', $block_id, $lesson, $choice, $correct, $first_try, $ms, $at)`);
 const insertView = db.prepare(`INSERT INTO views (lesson, at) VALUES ($lesson, $at)`);
 
 type Answer = { blockId: string; lesson: string; choice: string; correct: boolean; firstTry: boolean; ms: number };

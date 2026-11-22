@@ -23,6 +23,7 @@ yarn-error.log*
 # SQLite runtime state. The schema is created by server/server.ts on boot,
 # so the database file is regenerated and must never be committed.
 progress/*.db
+progress/*.db.bak-*
 *.db-wal
 *.db-shm
 *.db-journal

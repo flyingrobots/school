@@ -2,3 +2,4 @@
 !server.ts
 !blocks.ts
 !render.ts
+!migrate.ts
