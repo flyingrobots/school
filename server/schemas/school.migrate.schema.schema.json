@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "school.migrate.schema/1.0.0",
+  "title": "Schema",
+  "description": "One published message schema, on stdout: what `migrate --schema` prints for each, and `--help` after its help line.",
+  "type": "object",
+  "properties": {
+    "_schema": {
+      "type": "object",
+      "description": "The schema this line follows.",
+      "properties": {
+        "id": {
+          "const": "school.migrate.schema"
+        },
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "kind": {
+      "const": "school.migrate",
+      "description": "The program that printed the line."
+    },
+    "event": {
+      "const": "schema"
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "One id per invocation, on every line it prints."
+    },
+    "at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "description": "When the line was printed, UTC."
+    },
+    "id": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "schema": {
+      "type": "object",
+      "description": "The JSON Schema (draft 2020-12), exactly as published in server/schemas/."
+    }
+  },
+  "required": [
+    "_schema",
+    "kind",
+    "event",
+    "run",
+    "at",
+    "id",
+    "version",
+    "schema"
+  ],
+  "additionalProperties": false
+}
