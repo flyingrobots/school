@@ -1,12 +1,18 @@
 // The config checks, exercised through the real server process and Bun's actual database
-// creation rather than parseConfig alone (review of #8, P2).
+// creation rather than parseConfig alone (review of #8, P2), and the refusal to start on a SQLite
+// progress.db that holds learner work (RFC 3 v0.4.0 §3.3; flyingrobots/school#47).
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { NotStarted, startSchool, timeout } from "./testing/processes.ts";
+import type { Block } from "./blocks.ts";
+import { migrate as migrateSqlite } from "./migrate.ts";
+import { sqliteRecord } from "./adapters/sqlite.ts";
+import { NotStarted, probePort, startSchool, timeout } from "./testing/processes.ts";
+import { ownerQuery } from "./testing/record.ts";
 
-async function boot(env: Record<string, string>): Promise<{ code: number | null; up: boolean; err: string }> {
+async function boot(env: Record<string, string | undefined>): Promise<{ code: number | null; up: boolean; err: string }> {
   try {
     const s = await startSchool({ ...process.env, HOST: "127.0.0.1", ...env });
     s.proc.kill();
@@ -17,30 +23,161 @@ async function boot(env: Record<string, string>): Promise<{ code: number | null;
   }
 }
 
-test("a dangling DB_PATH symlink into a course stops the server before it creates anything", async () => {
+/** A temporary root with an empty course, removed after `fn`. */
+async function inRoot(fn: (root: string) => Promise<void>): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "school-boot-"));
   try {
     mkdirSync(join(root, "course", "lessons"), { recursive: true });
-    mkdirSync(join(root, "state"));
-    symlinkSync(join(root, "course", "new-progress.db"), join(root, "state", "progress.db"));
-    const r = await boot({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state") });
-    expect(r.up).toBe(false);
-    expect(r.code).toBe(2);
-    expect(r.err).toContain("symlink");
-    expect(existsSync(join(root, "course", "new-progress.db"))).toBe(false);
+    await fn(root);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-}, timeout(1));
+}
 
-test("a first run creates its state directory and database outside the course", async () => {
-  const root = mkdtempSync(join(tmpdir(), "school-boot-"));
+test("a dangling DB_PATH symlink into a course stops the server before it creates anything", () => inRoot(async (root) => {
+  mkdirSync(join(root, "state"));
+  symlinkSync(join(root, "course", "new-progress.db"), join(root, "state", "progress.db"));
+  const r = await boot({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "state", "db")}` });
+  expect(r.up).toBe(false);
+  expect(r.code).toBe(2);
+  expect(r.err).toContain("symlink");
+  expect(existsSync(join(root, "course", "new-progress.db"))).toBe(false);
+  expect(existsSync(join(root, "state", "db"))).toBe(false);
+}), timeout(1));
+
+test("without SCHOOL_DATABASE_URL the server refuses to start, saying what to set, and creates nothing", () => inRoot(async (root) => {
+  // No silent default: PGlite is not crash-durable, so a record is only ever where it was asked to be.
+  const r = await boot({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "fresh", "state"), SCHOOL_DATABASE_URL: undefined });
+  expect(r.up).toBe(false);
+  expect(r.code).toBe(2);
+  expect(r.err).toContain("SCHOOL_DATABASE_URL is not set");
+  expect(r.err).toContain("postgres://");
+  expect(r.err).toContain("pglite:");
+  expect(existsSync(join(root, "fresh"))).toBe(false);
+}), timeout(1));
+
+test("a first run on an explicit pglite: record creates it outside the course, and warns that it is not crash-durable", () => inRoot(async (root) => {
+  const port = probePort();
+  const s = await startSchool({ ...process.env, HOST: "127.0.0.1", PORT: String(port), SCHOOL_COURSES: `c=${join(root, "course")}`,
+    SCHOOL_STATE: join(root, "fresh", "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "fresh", "state", "db")}` });
+  s.proc.kill();
+  const { stdout, stderr } = await s.output();
+  expect(existsSync(join(root, "fresh", "state", "db", "PG_VERSION"))).toBe(true);
+  // The server no longer writes SQLite; it only reads a progress.db that is already there.
+  expect(existsSync(join(root, "fresh", "state", "progress.db"))).toBe(false);
+  expect(stdout + stderr).toContain("not crash-durable");
+  expect(stdout + stderr).toContain("development and tests");
+}), timeout(1));
+
+test("a second server on the same pglite: record refuses to start before serving, and the first keeps every answer", () => inRoot(async (root) => {
+  writeFileSync(join(root, "course", "lessons", "0001.json"), JSON.stringify(page));
+  const env = { SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}` };
+  const first = await startSchool({ ...process.env, HOST: "127.0.0.1", ...env });
   try {
-    mkdirSync(join(root, "course", "lessons"), { recursive: true });
-    const r = await boot({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "fresh", "state") });
-    expect(r.up).toBe(true);
-    expect(existsSync(join(root, "fresh", "state", "progress.db"))).toBe(true);
+    const answer = async () => {
+      const { encounterId } = await (await fetch(`${first.url}/api/courses/c/lessons/l1`)).json();
+      const submissionId = crypto.randomUUID();
+      const r = await fetch(`${first.url}/api/answer`, { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ submissionId, encounterId, blockId: "q1", choiceId: "a", ms: 5 }) });
+      expect((await r.json()).status).toBe("stored");
+      return submissionId;
+    };
+    const before = await answer();
+    const second = await boot(env);
+    expect(second.up).toBe(false);
+    expect(second.code).toBe(2);
+    expect(second.err).toContain(join(root, "record"));
+    expect(second.err).toContain("in use");
+    const after = await answer();
+    first.proc.kill("SIGKILL");
+    await first.proc.exited;
+    const ids = (await ownerQuery<{ s: string }>(join(root, "record"), "SELECT submission_id::text AS s FROM school.answers ORDER BY seq")).map((r) => r.s);
+    expect(ids).toEqual([before, after]);
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    first.proc.kill("SIGKILL");
+    await first.proc.exited;
   }
-}, timeout(1));
+}), timeout(3));
+
+test("the startup log names the Postgres server without its user, password or query string", () => inRoot(async (root) => {
+  // Nothing listens on the port, so the open fails; the line naming the record comes first.
+  const port = probePort();
+  for (const url of [`postgres://school:SECRET-USERINFO@127.0.0.1:${port}/school`, `postgres://127.0.0.1:${port}/school?user=school&password=SECRET-QUERY`]) {
+    const r = await boot({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: url });
+    expect(r.up).toBe(false);
+    expect(r.err).toContain(`postgres://127.0.0.1:${port}/school`);
+    expect(r.err).not.toContain("SECRET");
+    expect(r.err).not.toContain("user=");
+    expect(r.err).not.toContain("school@");
+  }
+}), timeout(2));
+
+test("a pglite: record inside a course is refused before anything is created", () => inRoot(async (root) => {
+  const r = await boot({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "course", "db")}` });
+  expect(r.up).toBe(false);
+  expect(r.code).toBe(2);
+  expect(r.err).toContain("SCHOOL_DATABASE_URL");
+  expect(existsSync(join(root, "course", "db"))).toBe(false);
+}), timeout(1));
+
+test("a SCHOOL_DATABASE_URL that is neither postgres:// nor pglite: is refused", () => inRoot(async (root) => {
+  const r = await boot({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: "mysql://localhost/school" });
+  expect(r.up).toBe(false);
+  expect(r.code).toBe(2);
+  expect(r.err).toContain("SCHOOL_DATABASE_URL");
+}), timeout(1));
+
+// RFC 3 §3.3: nothing migrates from SQLite, so a progress.db holding learner work is a premise
+// failure, checked rather than assumed. The server stops and says so before it touches Postgres.
+const explain: Block = { type: "explain", id: "e1", prompt: "Say why.", model: "Because.", sources: [] };
+const quiz: Block = { type: "quiz", id: "q1", q: "Which?", why: "So.", choices: [{ id: "a", text: "A", correct: true }, { id: "b", text: "B", correct: false }] };
+const page: Block = { type: "page", id: "l1", title: "L", subtitle: "", children: [quiz, explain] };
+const NOW = "2026-11-22T10:00:00.000Z";
+
+/** A SQLite progress.db as the old server left it, holding whatever `work` records. */
+async function legacy(path: string, work: (r: ReturnType<typeof sqliteRecord>, encounterId: string) => Promise<unknown>): Promise<void> {
+  const db = new Database(path, { create: true, strict: true });
+  try {
+    migrateSqlite(db);
+    const r = sqliteRecord(db);
+    const e = await r.openEncounter({ course: "c", lesson: "l1", page, now: NOW, aidTracking: null });
+    await work(r, e.id);
+  } finally {
+    db.close();
+  }
+}
+
+const WORK: [string, (r: ReturnType<typeof sqliteRecord>, encounterId: string) => Promise<unknown>][] = [
+  ["an answer", (r, e) => r.submit({ submissionId: crypto.randomUUID(), encounterId: e, blockId: "q1", choiceId: "a", ms: 5 }, NOW)],
+  ["an explanation", (r, e) => r.saveExplanation({ submissionId: crypto.randomUUID(), encounterId: e, blockId: "e1", text: "Because so.", ms: 5 }, NOW)],
+  ["a view", (r) => r.recordView({ course: "c", lesson: "l1" }, NOW)],
+];
+
+test.each(WORK)("a SQLite progress.db holding %s stops startup with a clear message, before Postgres is touched", (what, work) => inRoot(async (root) => {
+  mkdirSync(join(root, "state"));
+  await legacy(join(root, "state", "progress.db"), work);
+  const r = await boot({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "state", "db")}` });
+  expect(r.up).toBe(false);
+  expect(r.code).toBe(2);
+  expect(r.err).toContain(join(root, "state", "progress.db"));
+  expect(r.err).toContain(what === "an answer" ? "1 answer" : what === "an explanation" ? "1 explanation" : "1 view");
+  expect(r.err).toContain("not migrated");
+  expect(existsSync(join(root, "state", "db"))).toBe(false); // Postgres was never opened
+}), timeout(1));
+
+test("a SQLite progress.db with no answer, explanation or view does not stop startup", () => inRoot(async (root) => {
+  mkdirSync(join(root, "state"));
+  await legacy(join(root, "state", "progress.db"), async () => undefined); // an encounter and its snapshot only
+  const r = await boot({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "state", "db")}` });
+  expect(r.up).toBe(true);
+}), timeout(1));
+
+test("a progress.db that is not a SQLite database stops startup rather than being guessed empty", () => inRoot(async (root) => {
+  mkdirSync(join(root, "state"));
+  writeFileSync(join(root, "state", "progress.db"), "this is not a database, but it might have been one".repeat(100));
+  const r = await boot({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "state", "db")}` });
+  expect(r.up).toBe(false);
+  expect(r.code).toBe(2);
+  expect(r.err).toContain(join(root, "state", "progress.db"));
+  expect(existsSync(join(root, "state", "db"))).toBe(false);
+}), timeout(1));

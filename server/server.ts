@@ -1,12 +1,13 @@
-// School server: a JSON API over courses, lessons and the learner's record in SQLite, plus the
+// School server: a JSON API over courses, lessons and the learner's record in Postgres, plus the
 // built web app (web/dist). It renders no HTML of its own; the pages are the shadcn app in web/.
-import { Database } from "bun:sqlite";
-import { dirname, join, normalize, sep } from "node:path";
-import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { join, normalize, sep } from "node:path";
+import { readdirSync, realpathSync, statSync } from "node:fs";
 import { lastValidLoader, quizIds, quizzes, type Block } from "./blocks.ts";
-import { migrate, snapshot } from "./migrate.ts";
 import { PROMPT_VERSION, RUBRIC_VERSION, bridgeConfig, callBridge } from "./grade.ts";
-import { sqliteRecord } from "./adapters/sqlite.ts";
+import { openDatabase, redact } from "./adapters/database.ts";
+import { InUse } from "./adapters/lock.ts";
+import { postgresRecord } from "./adapters/postgres.ts";
+import { legacyRefusal } from "./legacy.ts";
 import { AID_CAPTURE_VERSIONS, AidQuery, Exposure, ExplanationSubmission, GradeRequest, Submission, ViewEvent, type AidTracking } from "./core/model.ts";
 import type { Grader } from "./core/ports.ts";
 import { createSchool, resumeFrom, type CourseOutline } from "./core/school.ts";
@@ -32,25 +33,35 @@ try {
 const courses = courseNames(config);
 /** Every configured course, in the order the API lists them. */
 const served: Course[] = courses.map((name) => course(config, name)!);
-const DB_PATH = config.dbPath;
-mkdirSync(dirname(DB_PATH), { recursive: true });
 
-const db = new Database(DB_PATH, { create: true, strict: true });
-db.exec("PRAGMA journal_mode = WAL;");
-// The learner must never lose progress. FULL syncs the WAL on every commit, so an answer the
-// server has acknowledged survives a power cut, not just a crash. Foreign keys tie every
-// answer to a real encounter and snapshot. Answering is a few writes a minute; the cost is nil.
-db.exec("PRAGMA synchronous = FULL;");
-db.exec("PRAGMA foreign_keys = ON;");
-db.exec("PRAGMA busy_timeout = 5000;");
-// Learner history is never dropped on upgrade. A snapshot is taken first, and only when
-// the migration actually has work to do (RFC 1, rollout increment 1).
-const migration = migrate(db, (from) => {
-  const backup = `${DB_PATH}.bak-${new Date().toISOString().replace(/[:.]/g, "-")}`;
-  snapshot(db, backup);
-  console.log(`school: migrating progress.db from ${from}; backup at ${backup}`);
-});
-if (migration.copied > 0) console.log(`school: preserved ${migration.copied} answer(s)`);
+// RFC 3 §3.3: nothing migrates from SQLite. A progress.db holding learner work stops startup
+// here, before Postgres is opened, rather than leaving that history behind an empty record.
+{
+  const refusal = legacyRefusal(config.dbPath);
+  if (refusal !== null) {
+    console.error(`school: ${refusal}`);
+    process.exit(2);
+  }
+}
+
+// The record (server/adapters/database.ts): migrated as the owner, then served as school_app.
+let database;
+try {
+  database = await openDatabase(config.database);
+} catch (e) {
+  // A record held by another server is a refusal to start, like a bad configuration: exit 2.
+  if (e instanceof InUse) {
+    console.error(`school: ${e.message}`);
+    process.exit(2);
+  }
+  console.error(`school: cannot open the record (${config.database.driver === "pglite" ? `PGlite at ${config.database.dir}` : `Postgres at ${redact(config.database.url)}`}): ${(e as Error).message}`);
+  process.exit(1);
+}
+if (config.database.driver === "pglite") {
+  console.warn(`school: warning: the record is PGlite at ${config.database.dir}, which does not fsync and so is not crash-durable: ` +
+    "a power cut or an operating-system crash can lose acknowledged answers. Use it for development and tests; use a postgres:// SCHOOL_DATABASE_URL for a learner's record.");
+}
+console.log(`school: record in ${database.where}${database.applied.length > 0 ? `; applied migration(s) ${database.applied.join(", ")}` : ""}`);
 
 // Grading goes through the bridge, a separate host process that runs the learner's agent
 // commands. Without one, a grading attempt is stored as failed with that reason. The token
@@ -76,7 +87,7 @@ const grader: Grader = {
 
 // The hexagon (RFC 3, §4): this file is the composition root and the HTTP adapter. It parses
 // every request with the core's Zod schemas and reaches the record only through the use cases.
-const school = createSchool({ record: sqliteRecord(db), grader, clock: { now: () => new Date().toISOString() } });
+const school = createSchool({ record: postgresRecord(database.sql), grader, clock: { now: () => new Date().toISOString() } });
 
 // Static files come only from configured mounts; lesson sources and state are never served raw.
 const MOUNTS: Record<string, string> = mountTable(config);
@@ -285,7 +296,7 @@ async function readJson(req: Request): Promise<unknown> {
   }
 }
 
-Bun.serve({
+const http = Bun.serve({
   hostname: config.host,
   port: config.port,
   // Bun closes a request idle for 10 s by default; a grading call can take a minute or two.
@@ -432,6 +443,19 @@ Bun.serve({
     return serveApp(pathname);
   },
 });
+// A stop closes the record cleanly: PGlite checkpoints its directory. A hard kill loses nothing
+// either, since every acknowledged answer is committed first; this only makes the next start quick.
+let stopping = false;
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.on(signal, async () => {
+    if (stopping) return;
+    stopping = true;
+    await http.stop(true);
+    await database.close();
+    process.exit(0);
+  });
+}
+
 console.log(`school: answering to ${hosts.join(", ")}`);
 console.log(`school: http://${config.host}:${config.port}  courses=${courses.length > 0 ? courses.join(", ") : "(none)"}  state=${config.state}`);
 if (Object.keys(config.mounts).length > 0) console.log(`school: mounts ${Object.keys(config.mounts).map((n) => "/" + n).join(" ")}`);

@@ -19,7 +19,7 @@ Practical notes for anyone — human or agent — changing the framework.
 - The Postgres record (RFC 3) is built by numbered migrations in `server/db/migrations/`
   (`NNNN_name.sql`, from 0001, no gaps), applied by `server/db/migrate.ts`, one transaction per
   file. `0001_init.sql` documents each public function's signature above it. Its tests run on
-  PGlite (`server/db/*.test.ts`). The server does not use it yet; it still runs on SQLite.
+  PGlite (`server/db/*.test.ts`). The server runs it at every startup, before serving.
   - **Applied** means applied to any database that holds or will hold learner data. Never edit an
     applied migration; the runner refuses a changed or missing file, so add a new one. Until the
     first such database applies a file, it may still be corrected in place, and the pull request
@@ -28,27 +28,52 @@ Practical notes for anyone — human or agent — changing the framework.
     then runs every file as `school_owner`, which may create objects only in `school`. A file
     may not contain `BEGIN`, `COMMIT`, `ROLLBACK`, `SET ROLE` or similar; the runner owns the
     transaction and the role. Apply migrations only through the runner, never with `psql -f`.
-  - The runner connects as the database's superuser: it creates roles and switches to them.
-  - Both roles are created `NOLOGIN`. The deployment grants `school_app` `LOGIN` and its password
-    (`ALTER ROLE school_app LOGIN PASSWORD ...`); that is not a migration, so no secret lives in
-    the repository. The roles are cluster-wide: do not pre-create them with other memberships.
+  - The runner connects as the database's superuser: it creates roles and switches to them. So
+    the server's `SCHOOL_DATABASE_URL` names the superuser (compose: `postgres`).
+  - Both roles are created `NOLOGIN`, and School's server needs neither to log in: it logs in as
+    the superuser and takes `school_app`'s role for requests (`SET ROLE` on PGlite's one session,
+    `SET LOCAL ROLE` per transaction on the `Bun.SQL` pool; `server/adapters/database.ts`). Any
+    other client that should log in as `school_app` needs `ALTER ROLE school_app LOGIN PASSWORD ...`
+    from the deployment, not a migration, so no secret lives in the repository. The roles are
+    cluster-wide: do not pre-create them with other memberships.
 - The server is a hexagon (RFC 3, §4): `server/core/` holds the model (Zod), the ports and the use
   cases, and imports nothing but itself and Zod (`server/core/boundary.test.ts`). Adapters live in
   `server/adapters/`; every `LearningRecord` adapter must pass `server/contract/learning-record.ts`.
 - The Postgres adapter (`server/adapters/postgres.ts`) issues only `SELECT * FROM school.<function>($1, ...)`
-  as `school_app`; its test refuses any other statement. It talks to a driver through the `Sql` port
-  (`server/adapters/sql.ts`); the PGlite driver is a test helper in `server/testing/pglite.ts`, since
-  PGlite is a dev dependency and `testing/` is not shipped. It opens an encounter with the
+  as `school_app`; its test refuses any other statement, and so does the server's record at run
+  time (`functionCalls` in `server/adapters/database.ts`), so a new adapter query of another shape
+  fails loudly. It talks to a driver through the `Sql` port (`server/adapters/sql.ts`): PGlite
+  (`server/adapters/pglite.ts`; PGlite is a production dependency) or `Bun.SQL`
+  (`server/adapters/bunsql.ts`). Pass jsonb arguments as values, not `JSON.stringify` text:
+  `Bun.SQL` sends a string to a jsonb parameter as a JSON string. It opens an encounter with the
   `aid_tracking` its caller passes: the lesson API's `?aid=` capture version, or NULL (aid not
   observed) when the client sends none. A client may send `?aid=1` only if it records, through
   `POST /api/exposure`, every exposure it shows; the pages do not yet (flyingrobots/school#51).
 - `LearningRecord.recordsExposures` says whether an adapter stores exposures. The contract's aid
   cases run only for one that does; one that does not must refuse every exposure as `unsupported`
   and report every aid as unknown. SQLite does not, and is not getting them (flyingrobots/school#49).
+  The server runs on Postgres, which does, so `POST /api/exposure` records them.
+- `SCHOOL_DATABASE_URL` picks the record: `postgres://...` is `Bun.SQL`, `pglite:<dir>` is PGlite on
+  disk, and unset the server refuses to start (exit 2): there is no default. `pglite:` is for
+  development and tests, and the server warns at startup that it is not crash-durable; every test
+  that starts School sets its own `pglite:` folder. Startup refuses a SQLite `DB_PATH`
+  (`<SCHOOL_STATE>/progress.db`) holding any answer, explanation or view, before opening Postgres
+  (`server/legacy.ts`, RFC 3 §3.3).
+- PGlite is one process's database and takes no lock of its own, so `openPglite` takes `flock` on
+  `<dir>.lock` beside the folder for as long as it is open (`server/adapters/lock.ts`); a second
+  server on the same folder exits 2 naming it, and the kernel drops the lock when the holder dies.
+  The HTTP tests read the record by stopping the server, reading as the superuser
+  (`server/testing/record.ts`, which takes the same lock), then starting it again. PGlite also does not `fsync` (its Node
+  filesystem has no fsync), so it survives the server being killed but not necessarily a power cut.
+- The Bun.SQL tests (`server/adapters/bunsql.test.ts`) need `SCHOOL_TEST_POSTGRES_URL`, a superuser
+  URL to a scratch Postgres; without it they are skipped. CI starts one. Locally:
+  `docker run -d -e POSTGRES_PASSWORD=pw -p 127.0.0.1:5432:5432 postgres:18.7`, then
+  `SCHOOL_TEST_POSTGRES_URL=postgres://postgres:pw@127.0.0.1:5432/postgres bun test`.
 - Typecheck the server with `bunx tsc -p server` after `bun install` in `server/`.
   A server file that is not TypeScript still needs adding explicitly.
 - `server/compose.yaml` names no course. Its paths come from a gitignored `server/.env`; copy
-  `server/compose.example.env` to start one.
+  `server/compose.example.env` to start one. It runs Postgres (`postgres:18.7`, pinned by digest)
+  with its data in the named volume `postgres`; `docker compose down -v` deletes the record.
 - Every `POST /api/*` needs `Content-Type: application/json` and is refused when the browser
   says it is cross-site. A new endpoint under `/api/` inherits that guard; one outside it does
   not, so keep state-changing routes under `/api/`.

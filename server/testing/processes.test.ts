@@ -18,7 +18,7 @@ function schoolEnv() {
   const root = mkdtempSync(join(tmpdir(), "school-ports-"));
   dirs.push(root);
   mkdirSync(join(root, "course", "lessons"), { recursive: true });
-  const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), HOST: "127.0.0.1" };
+  const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`, HOST: "127.0.0.1" };
   delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_URL;
   delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_TOKEN;
   return env;

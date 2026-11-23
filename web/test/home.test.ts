@@ -53,6 +53,7 @@ beforeAll(async () => {
 
   const env = (state: string) => ({
     ...process.env, HOST: "127.0.0.1", SCHOOL_STATE: join(root, state), SCHOOL_WEB: join(root, "no-web"),
+    SCHOOL_DATABASE_URL: `pglite:${join(root, state, "record")}`, // each server its own PGlite record
     SCHOOL_COURSES: ["aion", "bio", "empty", "broken"].map((c) => `${c}=${join(root, c)}`).join(","),
   })
   studied = await startSchool(env("studied"))

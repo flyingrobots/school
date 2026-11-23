@@ -11,7 +11,7 @@ import { postgresRecord } from "../adapters/postgres.ts";
 import { sqliteRecord } from "../adapters/sqlite.ts";
 import { migrate as migratePostgres } from "../db/migrate.ts";
 import { migrate as migrateSqlite } from "../migrate.ts";
-import { pgliteSql } from "../testing/pglite.ts";
+import { pgliteSql } from "../adapters/pglite.ts";
 import { learnerHistory } from "./learner-history.ts";
 
 setDefaultTimeout(30_000); // PGlite starts a whole Postgres in process.

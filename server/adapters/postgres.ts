@@ -85,9 +85,12 @@ export function postgresRecord(sql: Sql): LearningRecord {
       return { state: state(x), block: x.block satisfies ExplainBlock };
     },
 
+    // The jsonb arguments go as values, not JSON text: a driver serialises a value for a jsonb
+    // parameter, and Bun.SQL sends a string as a JSON string, so "[]" would arrive as the string
+    // "[]", not an array. PGlite and Bun.SQL agree on values (server/adapters/bunsql.test.ts).
     recordGrading: async (g, now) => Grading.parse(await value("record_grading",
-      g.submissionId, g.status, g.rubricVersion, g.promptVersion, g.adapter, g.model, JSON.stringify(g.sources),
-      g.raw, g.findings === null ? null : JSON.stringify(g.findings), g.error, now)),
+      g.submissionId, g.status, g.rubricVersion, g.promptVersion, g.adapter, g.model, g.sources,
+      g.raw, g.findings, g.error, now)),
 
     encounterExplanations: async (encounterId) =>
       (await rows("encounter_explanations", encounterId)).map((row) => state(Explained.parse(row))),

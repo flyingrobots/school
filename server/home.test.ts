@@ -27,6 +27,7 @@ beforeAll(async () => {
     JSON.stringify({ type: "page", id: "b1", title: "B", subtitle: "", children: [{ ref: "missing" }] }));
   server = await startSchool({
     ...process.env, HOST: "127.0.0.1", SCHOOL_STATE: join(root, "state"), SCHOOL_WEB: join(root, "no-web"),
+    SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`,
     SCHOOL_COURSES: ["aion", "empty", "broken"].map((c) => `${c}=${join(root, c)}`).join(","),
   });
 }, timeout(1));

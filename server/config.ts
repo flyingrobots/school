@@ -15,7 +15,13 @@ export type Config = {
   courses: Record<string, string>;
   /** Directory for this learner's private state. Never inside a course. */
   state: string;
+  /**
+   * The SQLite progress.db of the server before Postgres. Never written now: startup only reads it,
+   * to refuse to start while it holds learner work (RFC 3 v0.4.0 §3.3; server/legacy.ts).
+   */
   dbPath: string;
+  /** The learner's record, from SCHOOL_DATABASE_URL (server/adapters/database.ts). */
+  database: Target;
   /** The built web app (web/dist), served for every path that is not the API. */
   web: string;
   /** Extra read-only mounts, served at `/<name>/...`. Source material a course cites. */
@@ -24,7 +30,38 @@ export type Config = {
   port: number;
 };
 
+/** Which Postgres driver holds the record, and where. */
+export type Target = { driver: "pglite"; dir: string } | { driver: "postgres"; url: string };
+
 export class ConfigError extends Error {}
+
+/**
+ * SCHOOL_DATABASE_URL: `postgres://` (or `postgresql://`) selects Bun.SQL against a Postgres
+ * server; `pglite:<dir>` selects PGlite on disk, a relative dir resolving against `from`. There is
+ * no default: PGlite never fsyncs, so it is not crash-durable, and a learner's record goes only
+ * where it was asked to.
+ */
+export function parseDatabase(value: string | undefined, from: string): Target {
+  if (value === undefined || value === "") {
+    throw new ConfigError("SCHOOL_DATABASE_URL is not set: set it to a postgres:// URL (postgres://user:password@host:5432/db), " +
+      "or to pglite:<directory> for development and tests (not crash-durable)");
+  }
+  if (/^postgres(ql)?:\/\//.test(value)) {
+    try {
+      new URL(value);
+    } catch {
+      throw new ConfigError("SCHOOL_DATABASE_URL is not a valid postgres:// URL");
+    }
+    return { driver: "postgres", url: value };
+  }
+  if (value.startsWith("pglite:")) {
+    const dir = value.slice("pglite:".length);
+    if (dir === "" || dir.startsWith("//")) throw new ConfigError(`SCHOOL_DATABASE_URL ${JSON.stringify(value)} must be pglite:<directory>, such as pglite:/state/db`);
+    return { driver: "pglite", dir: abs(dir, from) };
+  }
+  // Not echoed: a mistyped URL may still carry a password.
+  throw new ConfigError("SCHOOL_DATABASE_URL must start with postgres://, postgresql:// or pglite:");
+}
 
 function abs(value: string, from: string): string {
   return isAbsolute(value) ? resolve(value) : resolve(from, value);
@@ -108,6 +145,7 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
   const state = abs(env.SCHOOL_STATE ?? join(framework, "state"), cwd);
 
   const dbPath = env.DB_PATH === undefined || env.DB_PATH === "" ? join(state, "progress.db") : abs(env.DB_PATH, cwd);
+  const database = parseDatabase(env.SCHOOL_DATABASE_URL, cwd);
 
   // Learner state must not land inside any course. A course is shared; performance is not.
   // Compared on resolved paths, so a symlink cannot smuggle state into a course.
@@ -117,6 +155,9 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     }
     if (within(dbPath, path)) {
       throw new ConfigError(`DB_PATH (${dbPath}) is inside course ${JSON.stringify(name)} (${path}); learner state must live outside the course`);
+    }
+    if (database.driver === "pglite" && within(database.dir, path)) {
+      throw new ConfigError(`SCHOOL_DATABASE_URL puts the record (${database.dir}) inside course ${JSON.stringify(name)} (${path}); learner state must live outside the course`);
     }
   }
 
@@ -128,6 +169,7 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     courses,
     state,
     dbPath,
+    database,
     web: abs(env.SCHOOL_WEB ?? join(framework, "web", "dist"), cwd),
     mounts: parseMounts(env.SCHOOL_MOUNTS, cwd),
     host: env.HOST ?? "127.0.0.1",
