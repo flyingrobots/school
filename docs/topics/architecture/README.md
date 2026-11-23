@@ -416,7 +416,11 @@ gap in handling a malformed reply.
 ## The web app
 
 `web/` is a stock shadcn/ui app on Vite and React, themed from theme-book through the
-`@flyingrobots` registry. A test enforces that its stylesheet holds only stock shadcn tokens, and
+`@flyingrobots` registry. The theme is the shadcn preset extended by School's theme book
+(`themes/school/school.book.ts` in the registry, `school@1.0.0`), which sets the dark surfaces
+lighter than the preset's near-black for long reading; the registry item's description records
+the exact command and the book's SHA-256, and the colors pass theme-book's WCAG AAA audit in light
+and dark. A test enforces that its stylesheet holds only stock shadcn tokens, and
 another that every component in `web/src/components/ui/` hashes to a fresh `shadcn add`
 (`web/test/fixtures/README.md` says how to regenerate the hashes). What
 exists: the theme, a light, dark and system toggle, a component sandbox at `/demo`, and three
