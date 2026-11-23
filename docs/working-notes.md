@@ -88,6 +88,13 @@ Practical notes for anyone — human or agent — changing the framework.
 - `server/compose.yaml` names no course. Its paths come from a gitignored `server/.env`; copy
   `server/compose.example.env` to start one. It runs Postgres (`postgres:18.7`, pinned by digest)
   with its data in the named volume `postgres`; `docker compose down -v` deletes the record.
+- The `backup` service in `server/compose.yaml` runs `server/backup/backup.sh` on the database's image
+  (same digest: bump both together, and the CI service's too). Its tests
+  (`server/backup/backup.test.ts`) run the script, `pg_restore` and `server/backup/verify.sql` in that
+  image with `docker run`, so they need Docker as well as `SCHOOL_TEST_POSTGRES_URL`; every case names
+  Bun.SQL, so the Postgres gate fails CI if they skip. A failed `docker run` that mounts a missing
+  path leaves a directory in its place: the test refuses to start without the script. The how-to
+  is `docs/workflows/backup-and-restore/README.md`.
 - Every `POST /api/*` needs `Content-Type: application/json` and is refused when the browser
   says it is cross-site. A new endpoint under `/api/` inherits that guard; one outside it does
   not, so keep state-changing routes under `/api/`.

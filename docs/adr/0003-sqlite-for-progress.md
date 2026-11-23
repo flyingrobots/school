@@ -1,6 +1,6 @@
 # 3. Store progress in SQLite
 
-Date: 2026-11-18 · Status: Accepted, amended by [ADR 6](0006-separate-framework-lessons-and-learner-state.md): the path is configured, and the database holds one learner's private state outside any course. Amended by [ADR 9](0009-the-learning-record-is-enforced-by-the-database.md): progress is append-only and its rules are enforced by the database itself; the schema is no longer two plain tables.
+Date: 2026-11-18 · Status: Accepted, amended by [ADR 6](0006-separate-framework-lessons-and-learner-state.md): the path is configured, and the database holds one learner's private state outside any course. Amended by [ADR 9](0009-the-learning-record-is-enforced-by-the-database.md): progress is append-only and its rules are enforced by the database itself; the schema is no longer two plain tables. Superseded in storage by [RFC 3](../rfc/0003-postgres-functions-and-generated-types.md): the record is in Postgres, so backup is no longer copying one file but a scheduled `pg_dump` ([backup and restore](../workflows/backup-and-restore/README.md), flyingrobots/school#48).
 
 ## Context
 One learner, a few hundred rows a week. The agent needs to ask questions such as "which questions have not been seen for 5 days?" and "what is first-try accuracy per lesson?".

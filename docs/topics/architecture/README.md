@@ -3,7 +3,7 @@ title: "School's architecture"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-22
 updated: 2026-11-22
-version: 1.1.0
+version: 1.2.0
 status: "Living reference. Describes flyingrobots/school at commit a959505, with the record on Postgres since flyingrobots/school#47; proposals are in RFCs 2 and 3."
 ---
 
@@ -248,7 +248,7 @@ web pages do not call it yet.*
 | The server can only call the public functions | `school_app` has `EXECUTE` on them by name and no table privilege; `EXECUTE` is revoked from `PUBLIC`; the server's record refuses any other statement | A process holding the superuser URL |
 | A resent submission stores nothing | Unique `answers.submission_id`; `school.submit` answers `duplicate`, or `conflict` for a different answer under the same id | Nothing further |
 | `correct` and `first_try` come from the snapshot | `school.submit` derives them from the encounter's stored snapshot; the client's are ignored. A partial unique index allows one first try per block and encounter, even under concurrent answers | A direct `INSERT` by the owner |
-| An acknowledged answer survives the server's crash | The 200 is sent after the function's transaction commits; a test kills the server hard and reads the answer back | On PGlite, an operating-system crash or power cut: PGlite writes through to its folder but does not `fsync`, so the last commits may be lost. Real Postgres `fsync`s each commit. Nothing makes scheduled backups yet. |
+| An acknowledged answer survives the server's crash | The 200 is sent after the function's transaction commits; a test kills the server hard and reads the answer back | On PGlite, an operating-system crash or power cut: PGlite writes through to its folder but does not `fsync`, so the last commits may be lost. Real Postgres `fsync`s each commit. Under compose, the `backup` service dumps the record every six hours and keeps 28 dumps, on the same machine ([backup and restore](../../workflows/backup-and-restore/README.md)); an answer since the last dump is not in any dump. |
 
 Every adapter of the record passes one contract suite (`server/contract/learning-record.ts`) and
 replays one learner's history (`server/contract/learner-history.ts`). Both run on PGlite in every
@@ -400,6 +400,8 @@ is currently broken.
 | `HOST`, `PORT` | Server | Listen address | `127.0.0.1:4747` |
 | `SCHOOL_ALLOWED_HOSTS` | Server | Host names answered besides `127.0.0.1`, `localhost`, `::1` and `HOST`, comma-separated; the tailnet name | none |
 | `SCHOOL_BRIDGE_URL`, `SCHOOL_BRIDGE_TOKEN` | Server | Override the saved bridge settings | none |
+| `SCHOOL_BACKUP_INTERVAL_SECONDS` | `backup` service | Seconds between dumps; the first is taken at start | `21600` |
+| `SCHOOL_BACKUP_KEEP` | `backup` service | Dumps kept; older ones are deleted after each good dump | `28` |
 | `SCHOOL_BRIDGE_TOKEN` | Bridge | Shared secret, 16 characters or more | required |
 | `SCHOOL_BRIDGE_CONFIG` | Bridge | Agents file, re-read per request | `~/.config/school/bridge.json` |
 | `SCHOOL_BRIDGE_HOST`, `SCHOOL_BRIDGE_PORT` | Bridge | Listen address; port `0` lets the OS choose, reported in the `bridge.listening` log line | `127.0.0.1:4748` |
