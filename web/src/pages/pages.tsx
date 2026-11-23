@@ -1,6 +1,6 @@
 // The routes' pages. Each one's content is its own task; until it lands, a page is a placeholder.
 // The lesson page is its own module (./lesson.tsx).
-import { Link, useParams } from "react-router"
+import { Link } from "react-router"
 
 import { Button } from "@/components/ui/button"
 import { Placeholder } from "./placeholder"
@@ -13,10 +13,7 @@ export { HomePage } from "./home"
 
 export { CoursePage } from "./course"
 
-export function ReferencePage() {
-  const { course } = useParams()
-  return <Placeholder title="Reference" crumbs={[home, { label: course!, to: `/courses/${course}` }]} />
-}
+export { ReferencePage } from "./reference"
 
 export function NotFoundPage() {
   return (

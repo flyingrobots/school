@@ -9,7 +9,7 @@ separately; a route whose page has not landed yet shows a placeholder.
 | --- | --- |
 | `/` | Home ([the home page](../home-page/README.md)) |
 | `/courses/:course` | A course ([the course page](../course-page/README.md)) |
-| `/courses/:course/reference` | A course's reference |
+| `/courses/:course/reference` | A course's reference documents ([the reference page](../reference-page/README.md)) |
 | `/courses/:course/lessons/:lesson` | A lesson ([the lesson page](../lesson-page/README.md)) |
 | `/settings` | Settings |
 | anything else | Not found |
