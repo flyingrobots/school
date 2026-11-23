@@ -64,9 +64,10 @@ beforeEach(() => {
 /** A School process, and the environment it was started with so it can be started again. */
 type Stack = { school: Started; env: Record<string, string | undefined> }
 
-async function stack(state: string, courses = NAMES.map((n) => `${n}=${COURSE}`).join(",")): Promise<Stack> {
+async function stack(state: string, courses = NAMES.map((n) => `${n}=${COURSE}`).join(","), extra: Record<string, string> = {}): Promise<Stack> {
   const env = {
     ...process.env,
+    ...extra,
     SCHOOL_COURSE: undefined,
     SCHOOL_COURSES: courses,
     SCHOOL_STATE: state,
@@ -569,7 +570,7 @@ describe("previous and next", () => {
 describe("links in lesson prose (flyingrobots/school#125)", () => {
   // The same-origin link names the page's own origin, which is known only once Vite listens, so
   // this course is written here: the fixture's orbits lesson, then a lesson whose prose links to
-  // it relatively, by School's own origin, and to another origin.
+  // it relatively, by School's own origin, to a file in a source mount, and to another origin.
   let links: Stack
   beforeAll(async () => {
     const course = join(root, "links-course")
@@ -577,11 +578,15 @@ describe("links in lesson prose (flyingrobots/school#125)", () => {
     copyFileSync(join(COURSE, "lessons", "0001-orbits.json"), join(course, "lessons", "0001-orbits.json"))
     const html =
       `<p>Read <a href="/courses/links/lessons/orbits">the relative link</a>, ` +
-      `<a href="${base}/courses/links/lessons/orbits">the same-origin link</a> and ` +
+      `<a href="${base}/courses/links/lessons/orbits">the same-origin link</a>, ` +
+      `<a href="/notes/README.md">the source link</a> and ` +
       `<a href="https://example.com/planets">the external link</a>.</p>`
     const lesson = { type: "page", id: "links", title: "Links", subtitle: "", children: [{ type: "prose", id: "links-prose", html }] }
     writeFileSync(join(course, "lessons", "0002-links.json"), JSON.stringify(lesson))
-    links = await stack(join(root, "links-state"), `links=${course}`)
+    const notes = join(root, "links-notes")
+    mkdirSync(notes, { recursive: true })
+    writeFileSync(join(notes, "README.md"), "# Notes\n\nSource material the lesson cites.\n")
+    links = await stack(join(root, "links-state"), `links=${course}`, { SCHOOL_MOUNTS: `notes=${notes}` })
   }, timeout(1))
   afterAll(() => stop(links))
 
@@ -599,6 +604,23 @@ describe("links in lesson prose (flyingrobots/school#125)", () => {
       expect(p.context().pages()).toHaveLength(1) // no new tab
       await p.context().close()
     })
+
+  // A source-mount file is not an app route: it must load as a document in the same tab, not go
+  // through the client router (which would show School's not-found page).
+  test("the source link opens the mounted file in the same tab, with no confirmation", async () => {
+    const p = await open(links, "/courses/links/lessons/links", "Links")
+    await p.context().route(/\/notes\//, async (route) => {
+      const u = new URL(route.request().url())
+      await route.fulfill({ response: await route.fetch({ url: links.school.url + u.pathname }) }).catch(() => {})
+    })
+    expect(await link(p, "the source link").getAttribute("href")).toBe("/notes/README.md")
+    await Promise.all([p.waitForURL(/\/notes\/README\.md$/), link(p, "the source link").click()])
+    await p.waitForLoadState("domcontentloaded")
+    expect(await p.locator("body").textContent()).toContain("Source material the lesson cites.")
+    expect(await modal(p).count()).toBe(0)
+    expect(p.context().pages()).toHaveLength(1) // no new tab
+    await p.context().close()
+  })
 
   test("the external link still asks first, and nothing opens until it is confirmed", async () => {
     const p = await open(links, "/courses/links/lessons/links", "Links")
