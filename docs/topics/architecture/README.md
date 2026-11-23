@@ -337,10 +337,15 @@ gap in handling a malformed reply.
 another that every component in `web/src/components/ui/` hashes to a fresh `shadcn add`
 (`web/test/fixtures/README.md` says how to regenerate the hashes). What
 exists: the theme, a light, dark and system toggle, a component sandbox at `/demo`, and three
-homepage mockups. School's pages are not built yet
-([flyingrobots/school#15](https://github.com/flyingrobots/school/issues/15)). ADR 9 describes a
-browser outbox for unsent answers; it belonged to the deleted server-rendered pages and must be
-rebuilt in the new app.
+homepage mockups, and School's pages as far as
+[flyingrobots/school#15](https://github.com/flyingrobots/school/issues/15) has built them, among
+them the lesson page. The lesson page sends every answer,
+explanation and exposure through an outbox in IndexedDB (`web/src/lib/outbox.ts`,
+[flyingrobots/school#28](https://github.com/flyingrobots/school/issues/28)): a delivery queue,
+never read as progress, emptied only by School's acknowledgement or final refusal, and resent in
+order with the original ids, so a submission made offline survives the tab closing. It replaces
+the `localStorage` outbox ADR 9 describes, which belonged to the deleted server-rendered pages. The
+[lesson page reference](../lesson-page/README.md#the-outbox) has the details.
 
 ## Trust and known defects
 

@@ -13,7 +13,7 @@ afterAll(() => GlobalRegistrator.unregister())
 const React = await import("react")
 const { act } = React
 const { createRoot } = await import("react-dom/client")
-const { Quiz, QuizView } = await import("@/components/quiz")
+const { Quiz, QuizView, QuizAnswerError } = await import("@/components/quiz")
 type QuizState = import("@/components/quiz").QuizState
 
 const quiz = {
@@ -43,11 +43,11 @@ function render(node: React.ReactNode): HTMLElement {
   return host
 }
 
-/** A server stand-in: each answer waits until the test settles it. */
+/** A server stand-in: each answer waits until the test settles it, or says it was queued. */
 function server() {
-  const calls: { choiceId: string; resolve: (v: { correct: boolean }) => void; reject: (e: unknown) => void }[] = []
-  const onAnswer = (choiceId: string) =>
-    new Promise<{ correct: boolean }>((resolve, reject) => calls.push({ choiceId, resolve, reject }))
+  const calls: { choiceId: string; resolve: (v: { correct: boolean }) => void; reject: (e: unknown) => void; queued: () => void }[] = []
+  const onAnswer = (choiceId: string, progress: { queued: () => void }) =>
+    new Promise<{ correct: boolean }>((resolve, reject) => calls.push({ choiceId, resolve, reject, queued: progress.queued }))
   return { calls, onAnswer }
 }
 
@@ -192,6 +192,7 @@ test("an answer the server did not take returns the quiz to where it was, says s
 test.each<[string, QuizState, string[]]>([
   ["unanswered", { status: "unanswered" }, ["venus", "mercury", "mars"]],
   ["in-flight", { status: "in-flight", choiceId: "venus" }, []],
+  ["queued", { status: "queued", choiceId: "venus" }, []],
   ["wrong", { status: "wrong", choiceId: "venus" }, ["mercury", "mars"]],
   ["right", { status: "right", choiceId: "mercury" }, []],
   ["settled", { status: "settled", choiceId: "mercury" }, []],
@@ -327,6 +328,7 @@ test("onWhyShown: once when a settled quiz first renders with its explanation", 
 test.each<[string, QuizState, number]>([
   ["unanswered", { status: "unanswered" }, 0],
   ["in-flight", { status: "in-flight", choiceId: "venus" }, 0],
+  ["queued", { status: "queued", choiceId: "venus" }, 0],
   ["wrong", { status: "wrong", choiceId: "venus" }, 0],
   ["right", { status: "right", choiceId: "mercury" }, 1],
   ["settled", { status: "settled", choiceId: "mercury" }, 1],
@@ -335,4 +337,78 @@ test.each<[string, QuizState, number]>([
   const host = render(<QuizView {...quiz} state={state} onChoose={() => {}} onWhyShown={() => shown.push(1)} />)
   expect(shown.length).toBe(times)
   expect(why(host) !== null).toBe(times === 1)
+})
+
+// An answer the page keeps to send later (flyingrobots/school#28): queued, shown as not sent yet,
+// until the server answers it. It is never shown as a verdict before then.
+const badge = (host: HTMLElement) => root(host).querySelector("[data-slot=badge]")?.textContent ?? null
+const errorOf = (host: HTMLElement) => host.querySelector("[data-quiz=error]")?.textContent ?? null
+
+test("queued: an answer kept to send later says it is not sent yet, keeps its spinner, offers nothing, and shows no verdict", async () => {
+  const s = server()
+  const host = render(<Quiz {...quiz} onAnswer={s.onAnswer} />)
+  act(() => click(choice(host, "venus")))
+  act(() => s.calls[0]!.queued())
+  expect(stateOf(host)).toBe("queued")
+  expect(badge(host)).toBe("Not sent yet")
+  expect(root(host).textContent).toContain("Not saved yet")
+  expect(root(host).getAttribute("aria-busy")).toBe("true")
+  expect(choice(host, "venus").querySelector("[data-slot=spinner]")).not.toBeNull()
+  expect(choice(host, "venus").dataset.verdict).toBeUndefined()
+  expect(enabled(host)).toEqual([])
+  act(() => {
+    for (const b of choices(host)) click(b)
+    press(root(host), "2")
+  })
+  expect(s.calls).toHaveLength(1)
+  expect(why(host)).toBeNull()
+  await resolve(s.calls[0]!, false)
+  expect(stateOf(host)).toBe("wrong")
+  expect(choice(host, "venus").dataset.verdict).toBe("wrong")
+})
+
+test("queued after the answer was already answered is ignored: a late `queued` never hides a verdict", async () => {
+  const s = server()
+  const host = render(<Quiz {...quiz} onAnswer={s.onAnswer} />)
+  act(() => click(choice(host, "mercury")))
+  await resolve(s.calls[0]!, true)
+  act(() => s.calls[0]!.queued())
+  expect(stateOf(host)).toBe("right")
+})
+
+test("pending: an answer kept from an earlier page starts queued over the record, then shows the verdict it gets", async () => {
+  let settle!: (v: { correct: boolean }) => void
+  const verdict = new Promise<{ correct: boolean }>((r) => (settle = r))
+  const s = server()
+  const host = render(<Quiz {...quiz} onAnswer={s.onAnswer} recorded={{ choiceId: "venus", correct: false }} pending={{ choiceId: "mars", verdict }} />)
+  expect(stateOf(host)).toBe("queued")
+  expect(choice(host, "mars").querySelector("[data-slot=spinner]")).not.toBeNull()
+  expect(enabled(host)).toEqual([])
+  await act(async () => settle({ correct: true }))
+  expect(stateOf(host)).toBe("right")
+  expect(choice(host, "mars").dataset.verdict).toBe("right")
+  expect(why(host)).toBe(quiz.why)
+  expect(s.calls).toEqual([])
+})
+
+test("a refusal says why in the page's words, returns the quiz to where it was, and allows another try", async () => {
+  const s = server()
+  const host = render(<Quiz {...quiz} onAnswer={s.onAnswer} />)
+  act(() => click(choice(host, "venus")))
+  act(() => s.calls[0]!.queued())
+  await act(async () => s.calls[0]!.reject(new QuizAnswerError("School refused this answer (conflict). It was not recorded.")))
+  expect(stateOf(host)).toBe("unanswered")
+  expect(errorOf(host)).toBe("School refused this answer (conflict). It was not recorded.")
+  expect(enabled(host)).toEqual(["venus", "mercury", "mars"])
+})
+
+test("a pending answer that is refused returns the quiz to the record as it was, with the reason", async () => {
+  let refuse!: (e: unknown) => void
+  const verdict = new Promise<{ correct: boolean }>((_, r) => (refuse = r))
+  const host = render(<Quiz {...quiz} onAnswer={server().onAnswer} recorded={{ choiceId: "venus", correct: false }} pending={{ choiceId: "mars", verdict }} />)
+  await act(async () => refuse(new QuizAnswerError("School refused this answer (rejected).")))
+  expect(stateOf(host)).toBe("wrong")
+  expect(choice(host, "venus").dataset.verdict).toBe("wrong")
+  expect(errorOf(host)).toBe("School refused this answer (rejected).")
+  expect(enabled(host)).toEqual(["mercury", "mars"])
 })
