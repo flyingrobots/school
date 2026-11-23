@@ -124,7 +124,8 @@ section names each piece as it is in the code.
 | HTTP adapter and composition root | `server/server.ts` | Parses each request with the model, calls one use case, and wires the core to its adapters; it also reads the course folders itself (`server/blocks.ts`), which are not behind a port |
 | Postgres adapter | `server/adapters/postgres.ts` | `LearningRecord` as one call of a `school.*` function per method, every result parsed by the model |
 | `Sql` port and its drivers | `server/adapters/sql.ts`, `pglite.ts`, `bunsql.ts` | One `query(text, params)`; PGlite in process, or `Bun.SQL` on a pool |
-| Opening the record | `server/adapters/database.ts`, `lock.ts` | Reads `SCHOOL_DATABASE_URL`, runs the migrations as the owner, takes `school_app`'s role, refuses any statement but a function call, and locks a PGlite folder |
+| Opening the record | `server/adapters/database.ts`, `lock.ts` | Reads `SCHOOL_DATABASE_URL`; on Postgres, refuses a login that fails any of [the login check](#the-login-check)'s listed checks; on PGlite, runs the migrations as the owner and takes `school_app`'s role; refuses any statement but a function call, and locks a PGlite folder |
+| The migrate job | `server/migrate.ts` | With `SCHOOL_MIGRATE_URL` (the owner's or superuser's URL), runs the migrations as the owner, makes `school_app` a login with `SCHOOL_APP_PASSWORD`, clears its role settings, and exits; JSON Lines on stdout and stderr |
 | Grader | `server/server.ts`, `server/grade.ts` | The bridge client; with no bridge connected, an attempt fails and says so |
 | Clock | `server/server.ts` | The system clock; tests pass a fixed one |
 
@@ -178,13 +179,67 @@ start rather than serve from its own copy.
 | Step at startup | What happens |
 | --- | --- |
 | 1. The SQLite check | If `DB_PATH` (default `<SCHOOL_STATE>/progress.db`, the old SQLite record) exists and holds any answer, explanation or view, or cannot be read as SQLite, the server exits with code 2 and names the file, before it opens Postgres. Nothing migrates from SQLite (RFC 3 §3.3). |
-| 2. Migrations, as the owner | The connecting role, which must be able to create roles (in practice the superuser), runs `server/db/migrate.ts`. On `Bun.SQL` it runs on one reserved connection; on PGlite, on its one session. |
-| 3. Requests, as `school_app` | PGlite's session runs `SET ROLE school_app` once. On `Bun.SQL`, every statement runs in its own transaction that starts with `SET LOCAL ROLE school_app`, so no pooled connection keeps the role. The server checks that `current_user` is `school_app` before it serves. |
-| 4. Function calls only | The server's record accepts only `SELECT * FROM school.<function>($1, ...)`; anything else is refused before the driver sees it. |
+| 2. Migrations, as the owner | On Postgres, not in the server: the migrate job (`server/migrate.ts`; the one-shot `migrate` service in `server/compose.yaml`, which the server waits for with `service_completed_successfully`) connects with `SCHOOL_MIGRATE_URL`, runs `server/db/migrate.ts` on one reserved connection, gives `school_app` `LOGIN` and the password `SCHOOL_APP_PASSWORD` (sent as a SCRAM verifier), clears every setting on the role (`ALTER ROLE school_app RESET ALL`, also per database), revokes `CREATE` and `TEMPORARY` on the database from `PUBLIC`, and exits. On PGlite the server runs the migrations itself, on its one session, which is the superuser. |
+| 3. The login check | On Postgres the server logs in with `school_app`'s URL and refuses to start (exit 2, naming each reason, and the host, never a password) unless every check in [the login check](#the-login-check) holds. PGlite has no login and skips this. |
+| 4. Requests, as `school_app` | PGlite's session runs `SET ROLE school_app` once. On `Bun.SQL`, every statement still runs in its own transaction that starts with `SET LOCAL ROLE school_app`. The server checks that `current_user` is `school_app` before it serves. |
+| 5. Function calls only | The server's record accepts only `SELECT * FROM school.<function>($1, ...)`; anything else is refused before the driver sees it. |
 
-Both drivers log in as the superuser and then take `school_app`'s role. A statement that resets
-the role would get the superuser back, which is why step 4 exists. That is a guard rail, not
-tamper-proofing: the server holds the superuser URL anyway, because it runs the migrations.
+On Postgres the server holds only `school_app`'s credentials (flyingrobots/school#91). Steps 4 and 5
+stay as defence in depth. PGlite's session is the superuser and takes `school_app`'s role, so there a
+statement that resets the role would get the superuser back; step 5 is what stops it, a guard
+rail, not tamper-proofing. PGlite is for development and tests only.
+
+### The login check
+
+`loginRefusals` in `server/adapters/database.ts` runs once, at startup, on the server's own
+connection, in the record's database. The server refuses to start if any of these fails:
+
+| # | Check | Covers |
+| --- | --- | --- |
+| 1 | `session_user` and `current_user` are both `school_app` | the superuser's or owner's URL, any other login |
+| 2 | Not `SUPERUSER`, `CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS` | role attributes |
+| 3 | A member of no role (`pg_auth_members`) | `school_owner`, `pg_execute_server_program`, `pg_read_all_data` and every other role |
+| 4 | Owns no schema (schema `school` included), relation, function, type or database | the owner's login, objects it created |
+| 5 | Outside `pg_catalog` and `information_schema`: no privilege on any table, view, materialized view or foreign table (`SELECT` to `MAINTAIN`), no `USAGE`, `SELECT` or `UPDATE` on any sequence, no column privilege | table, column, sequence and `MAINTAIN` grants |
+| 6 | In `pg_catalog` and `information_schema`: no write privilege on any relation (except `UPDATE` on `pg_settings`, which Postgres grants `PUBLIC` and which is `SET`), and no `SELECT` on the relations Postgres withholds from an ordinary role (`RESTRICTED_RELATIONS`: `pg_authid`, `pg_statistic`, `pg_shadow` and 20 more) | catalog grants to it or to `PUBLIC` |
+| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 18 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
+| 8 | No privilege granted to it by name on any relation, column, function (but the granted ones), schema (but `USAGE` on `school`), database, type, language, large object, foreign-data wrapper, foreign server or tablespace; no parameter privilege (`pg_parameter_acl`) granted to it or to `PUBLIC` | direct grants, `GRANT SET ON PARAMETER` |
+| 9 | No default privileges (`pg_default_acl`) granting to it or to `PUBLIC`, and none set by it | future grants |
+| 10 | No `CREATE` on any schema; no `CREATE` or `TEMPORARY` on the record's database | creating objects there |
+| 11 | Schema `school` exists | a database the migrate job has not run on |
+| 12 | Only if 1 to 11 find nothing: creating a table, inserting, truncating and `COPY ... TO PROGRAM` each fail with `insufficient_privilege`, in a transaction that is always rolled back | anything the catalog checks missed that those four statements would reach |
+
+`GRANTED_FUNCTIONS`, `RESTRICTED_FUNCTIONS` and `RESTRICTED_RELATIONS` are lists in the code; a test
+checks the first against the migrations' grants and the other two against the Postgres server the
+tests run on (18.7). Another major version may withhold a different set, and `MAINTAIN` needs 17
+or later: on an older server the check's query fails and the server exits 1 without serving.
+
+What the check cannot detect:
+
+- a grant to `PUBLIC` on a built-in object outside the two restricted lists, for example a column
+  of a catalog;
+- anything in the cluster's other databases, except what lives in the shared catalogs (roles,
+  databases, tablespaces, parameters);
+- what the granted functions themselves do with their arguments (they are `SECURITY DEFINER`);
+- authentication and network settings (`pg_hba.conf`, who can reach the port);
+- anything granted after the server started: it checks once.
+
+What `school_app` can still do, with the shipped grants, including:
+
+- call the 18 granted functions;
+- run every built-in function and read every catalog that Postgres lets any role use;
+- create, read, write and delete large objects it owns (`lo_create`, `lo_put`), in any database it
+  can connect to: Postgres has no privilege that withholds them;
+- change its own password and its own role settings (`ALTER ROLE school_app ...`); the next run of
+  the migrate job sets the password back to `SCHOOL_APP_PASSWORD` and clears every setting;
+- connect to the cluster's other databases (`postgres`, `template1`), which `PUBLIC` may, and
+  create temporary tables in `postgres`, where `PUBLIC` keeps `TEMPORARY`;
+- take advisory locks, `LISTEN` and `NOTIFY`, set user-level parameters, and use up connections and
+  time.
+
+**Never grant `school_app` anything by hand.** The migrations grant what it needs. A hand grant of
+a kind listed above stops the server at its next start; one of a kind the check cannot detect widens
+what a compromised server can do without anyone being told.
 
 The record observes aid (RFC 2 §3). Migration 0002 records exposures through
 `record_exposure`, idempotent by the client's exposure id, and derives each answer's and
@@ -301,7 +356,7 @@ lesson page calls for each help it shows.*
 | Rule | How it is enforced | What it does not cover |
 | --- | --- | --- |
 | Rows are never updated, deleted or truncated | `BEFORE UPDATE OR DELETE` row triggers and `BEFORE TRUNCATE` statement triggers on every table | The owner or the superuser can drop a trigger. Guard rails, not tamper-proofing. |
-| The server can only call the public functions | `school_app` has `EXECUTE` on them by name and no table privilege; `EXECUTE` is revoked from `PUBLIC`; the server's record refuses any other statement | A process holding the superuser URL |
+| The server can only call the public functions | `school_app` has `EXECUTE` on them by name and no table privilege; `EXECUTE` is revoked from `PUBLIC`; the server's record refuses any other statement | A process holding the superuser or owner URL: on Postgres only the migrate job and the backup service do; on PGlite the server's own session is the superuser. A hand grant to `school_app` the login check cannot detect (see [the login check](#the-login-check)) |
 | A resent submission stores nothing | Unique `answers.submission_id`; `school.submit` answers `duplicate`, or `conflict` for a different answer under the same id | Nothing further |
 | `correct` and `first_try` come from the snapshot | `school.submit` derives them from the encounter's stored snapshot; the client's are ignored. A partial unique index allows one first try per block and encounter, even under concurrent answers | A direct `INSERT` by the owner |
 | An acknowledged answer survives the server's crash | The 200 is sent after the function's transaction commits; a test kills the server hard and reads the answer back | On PGlite, an operating-system crash or power cut: PGlite writes through to its folder but does not `fsync`, so the last commits may be lost. Real Postgres `fsync`s each commit. Under compose, the `backup` service dumps the record every six hours and keeps 28 dumps, on the same machine ([backup and restore](../../workflows/backup-and-restore/README.md)); an answer since the last dump is not in any dump. |
@@ -417,9 +472,10 @@ gap in handling a malformed reply.
 
 `web/` is a stock shadcn/ui app on Vite and React, themed from theme-book through the
 `@flyingrobots` registry. The theme is the shadcn preset extended by School's theme book
-(`themes/school/school.book.ts` in the registry, `school@1.0.0`), which sets the dark surfaces
-lighter than the preset's near-black for long reading; the registry item's description records
-the exact command and the book's SHA-256, and the colors pass theme-book's WCAG AAA audit in light
+(`themes/school/school.book.ts` in the registry, `school@1.1.0`), which sets the dark surfaces
+lighter than the preset's near-black for long reading, and the dark button fill light enough that
+its black label reaches APCA Lc 60 (Lc 63.2); the registry item's description records the exact
+command and the book's SHA-256, and the colors pass theme-book's WCAG AAA and APCA audits in light
 and dark. A test enforces that its stylesheet holds only stock shadcn tokens, and
 another that every component in `web/src/components/ui/` hashes to a fresh `shadcn add`
 (`web/test/fixtures/README.md` says how to regenerate the hashes). What
@@ -458,7 +514,9 @@ is currently broken.
 | `SCHOOL_COURSES` | Server | `name=path` pairs, one per course | none |
 | `SCHOOL_COURSE` | Server | One unnamed course | none |
 | `SCHOOL_STATE` | Server | Learner state; must not be inside a course | `state/` |
-| `SCHOOL_DATABASE_URL` | Server | The record: `postgres://user:password@host:port/db` (`Bun.SQL`; the user must be able to create roles) or `pglite:<dir>` (PGlite on disk, not inside a course) | none: required |
+| `SCHOOL_DATABASE_URL` | Server | The record: `postgres://school_app:password@host:port/db` (`Bun.SQL`; `school_app`'s own login, refused if it fails [the login check](#the-login-check)) or `pglite:<dir>` (PGlite on disk, not inside a course) | none: required |
+| `SCHOOL_MIGRATE_URL` | Migrate job | The owner's URL: a role that can create roles, in practice the superuser | none: required |
+| `SCHOOL_APP_PASSWORD` | Migrate job | The password the job gives `school_app`, at least 20 letters and digits; the same one is in the server's URL | none: required |
 | `DB_PATH` | Server | The old SQLite record, only read: startup refuses while it holds learner work | `<SCHOOL_STATE>/progress.db` |
 | `SCHOOL_MOUNTS` | Server | `name=path` pairs served read-only | none |
 | `SCHOOL_WEB` | Server | The built web app | `web/dist` |

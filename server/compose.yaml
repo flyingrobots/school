@@ -5,6 +5,12 @@
 # The learner's record is in Postgres (RFC 3), in the named volume `postgres`. `docker compose down`
 # keeps it; `docker compose down -v` deletes it, and with it every answer, and the backups beside it
 # in the named volume `backups` (the `backup` service).
+#
+# Only the one-shot `migrate` job and the `backup` service hold the superuser's password
+# (flyingrobots/school#91). `migrate` applies the migrations as the owner, makes school_app a login
+# with SCHOOL_APP_PASSWORD, and exits; `school` starts only once `migrate` has exited 0 and logs in
+# as school_app. The server refuses to start on a login that fails its login check
+# (docs/topics/architecture/README.md, "The login check"). Never grant school_app anything by hand.
 services:
   postgres:
     # Pinned by tag and digest: the major version is the record's on-disk format.
@@ -21,7 +27,25 @@ services:
       interval: 2s
       timeout: 5s
       retries: 30
-    # No ports: only the school service reaches it, on the compose network.
+    # No ports: only the migrate job, the backup service and the school service reach it, on the
+    # compose network.
+  migrate:
+    # The server's image, running server/migrate.ts instead of the server. Each `docker compose up`
+    # runs it again; with nothing pending it applies nothing and exits 0.
+    build: .
+    # Built from this checkout on every `docker compose up` (layers cached), so a pulled update
+    # never runs beside an old image: docs/workflows/upgrade/README.md.
+    pull_policy: build
+    command: ["bun", "migrate.ts"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # The owner's URL: the superuser, which creates the roles and runs each file as school_owner.
+      SCHOOL_MIGRATE_URL: postgres://postgres:${SCHOOL_POSTGRES_PASSWORD}@postgres:5432/school
+      # school_app's password, which the job sets (as a SCRAM verifier) and the server logs in with.
+      SCHOOL_APP_PASSWORD: ${SCHOOL_APP_PASSWORD:?set SCHOOL_APP_PASSWORD to a long random secret of letters and digits}
   backup:
     # A custom-format pg_dump of the record every SCHOOL_BACKUP_INTERVAL_SECONDS (default six hours),
     # keeping the newest SCHOOL_BACKUP_KEEP (default 28, a week) in the named volume `backups`
@@ -46,16 +70,20 @@ services:
     # No ports: it only connects out, to the postgres service.
   school:
     build: .
+    pull_policy: build   # as for migrate: never an old image beside a new migrate job
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:4747:4747"   # local only; tailscale serve publishes it to the tailnet
     environment:
-      # The record. The server connects as the superuser, because it runs the migrations at
-      # startup; every request then runs as school_app (server/adapters/database.ts).
-      SCHOOL_DATABASE_URL: postgres://postgres:${SCHOOL_POSTGRES_PASSWORD}@postgres:5432/school
+      # The record, as school_app, which the migrations grant EXECUTE on School's functions; the
+      # server runs its login check before it serves (server/adapters/database.ts). No superuser
+      # password reaches here.
+      SCHOOL_DATABASE_URL: postgres://school_app:${SCHOOL_APP_PASSWORD}@postgres:5432/school
       # Host names School answers to besides localhost, comma-separated: the tailnet name that
       # `tailscale serve` publishes it under. Any other Host header is refused (DNS rebinding).
       SCHOOL_ALLOWED_HOSTS: ${SCHOOL_ALLOWED_HOSTS:-}
