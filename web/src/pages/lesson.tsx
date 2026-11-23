@@ -2,6 +2,8 @@
 // explanation through the API. It composes registry blocks only: @flyingrobots/lesson for the
 // frame and the reading blocks, quiz, explain and nest for the rest. On load it shows what the
 // encounter already holds; every verdict and grading on screen is the server's.
+// It records every exposure it shows (flyingrobots/school#51): the blocks say when they show help,
+// and each showing is sent once, under its own id, before the block's next submission.
 import * as React from "react"
 import { Link, useParams } from "react-router"
 
@@ -60,8 +62,36 @@ function held(lesson: api.LessonReply) {
   return { answers, explanations: new Map(lesson.explanations.map((x) => [x.blockId, x])) }
 }
 
+/**
+ * The exposures one encounter has shown and School has not yet answered. Each showing is sent at
+ * once; before a block's next answer or explanation, its unanswered exposures are resent (same id,
+ * so School stores each once) and the submission waits for them, so School always sees the help
+ * before what was written after it. While one cannot be sent, that submission fails too and the
+ * block says it was not saved. Nothing here is ever shown to the learner.
+ */
+function exposures(encounterId: string) {
+  const pending = new Map<string, { exposure: api.Exposure; sent: Promise<unknown> }>()
+  const send = (exposure: api.Exposure) => {
+    const sent = api.expose(exposure).then(() => pending.delete(exposure.exposureId))
+    sent.catch(() => {}) // kept in `pending`; resent before the block's next submission
+    pending.set(exposure.exposureId, { exposure, sent })
+    return sent
+  }
+  return {
+    show(blockId: string, kind: api.ExposureKind) {
+      void send({ exposureId: api.uuid(), encounterId, blockId, kind })
+    },
+    /** Resolves once every exposure shown for `blockId` is answered; rejects if one cannot be sent. */
+    async before(blockId: string) {
+      const mine = [...pending.values()].filter((p) => p.exposure.blockId === blockId)
+      await Promise.all(mine.map((p) => p.sent.catch(() => send(p.exposure))))
+    },
+  }
+}
+
 type Play = {
   encounterId: string
+  exposures: ReturnType<typeof exposures>
   /** When the lesson was shown, for each submission's `ms`. */
   shown: number
   answers: Map<string, QuizVerdict>
@@ -101,7 +131,11 @@ function BlockView({ block: b, play, depth }: { block: api.Block; play: Play; de
             choices={b.choices}
             why={b.why}
             recorded={play.answers.get(b.id) ?? null}
-            onAnswer={(choiceId) => api.answer({ encounterId: play.encounterId, blockId: b.id, choiceId, ms: sinceShown(play) })}
+            onWhyShown={() => play.exposures.show(b.id, "feedback")}
+            onAnswer={async (choiceId) => {
+              await play.exposures.before(b.id)
+              return api.answer({ encounterId: play.encounterId, blockId: b.id, choiceId, ms: sinceShown(play) })
+            }}
           />
         </LessonBlock>
       )
@@ -114,7 +148,12 @@ function BlockView({ block: b, play, depth }: { block: api.Block; play: Play; de
             model={b.model}
             sources={b.sources}
             saved={play.explanations.get(b.id) ?? null}
-            onSave={(text) => api.saveExplanation({ encounterId: play.encounterId, blockId: b.id, text, ms: sinceShown(play) })}
+            onModelShown={() => play.exposures.show(b.id, "model-answer")}
+            onSourceOpened={() => play.exposures.show(b.id, "reference")}
+            onSave={async (text) => {
+              await play.exposures.before(b.id)
+              return api.saveExplanation({ encounterId: play.encounterId, blockId: b.id, text, ms: sinceShown(play) })
+            }}
             onGrade={(submissionId) => api.grade(submissionId)}
           />
         </LessonBlock>
@@ -131,7 +170,9 @@ function BlockView({ block: b, play, depth }: { block: api.Block; play: Play; de
 function Played({ course, lesson }: { course: string; lesson: api.LessonReply }) {
   const page = lesson.lesson
   const [shown] = React.useState(() => Date.now())
-  const play = React.useMemo<Play>(() => ({ encounterId: lesson.encounterId, shown, ...held(lesson) }), [lesson, shown])
+  // One tracker per encounter, kept across renders, so a pending exposure is never forgotten.
+  const [tracker] = React.useState(() => exposures(lesson.encounterId))
+  const play = React.useMemo<Play>(() => ({ encounterId: lesson.encounterId, exposures: tracker, shown, ...held(lesson) }), [lesson, tracker, shown])
   const crumbs: LessonCrumb[] = [
     { label: "Home", href: "/" },
     { label: course, href: `/courses/${course}` },
