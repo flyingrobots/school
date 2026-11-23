@@ -369,3 +369,118 @@ test("the block never renders model text as HTML", async () => {
   expect(source).not.toContain("dangerouslySetInnerHTML")
   expect(source).not.toContain("innerHTML")
 })
+
+// Showing the model answer and opening a source are help the record must see (RFC 2 §3,
+// flyingrobots/school#51): the block says when it shows each, once per showing, and the page
+// records it. Strict mode runs every effect twice in development, so the counts are checked there.
+// Revising is what makes the help matter: an explanation written after the model answer was shown
+// is aided (RFC 2 Figure 4).
+const revise = (host: HTMLElement) => q<HTMLButtonElement>(host, "revise")
+
+function watched(props: Partial<React.ComponentProps<typeof Explain>> = {}) {
+  const s = server()
+  const models: number[] = []
+  const sources: string[] = []
+  const host = render(
+    <React.StrictMode>
+      <Explain {...block} onSave={s.onSave} onGrade={s.onGrade} onModelShown={() => models.push(1)} onSourceOpened={(id) => sources.push(id)} {...props} />
+    </React.StrictMode>
+  )
+  return { s, host, models, sources }
+}
+
+test("onModelShown: once when a saved explanation brings up the model answer, not again while it is graded", async () => {
+  const { s, host, models } = watched()
+  type(textarea(host)!, "Enough people to decide.")
+  act(() => click(saveButton(host)!))
+  expect(models).toEqual([]) // saving: the model answer is not shown yet
+  await act(async () => s.saves[0]!.resolve(explanation()))
+  expect(q(host, "model")!.textContent).toContain(MODEL)
+  expect(models).toEqual([1])
+  act(() => click(gradeButton(host)!))
+  await act(async () => s.grades[0]!.resolve(explanation(failed())))
+  act(() => click(gradeButton(host)!))
+  await act(async () => s.grades[1]!.resolve(explanation(succeeded())))
+  expect(stateOf(host)).toBe("graded")
+  expect(models).toEqual([1])
+})
+
+test("onModelShown: never for a save the server did not take", async () => {
+  const { s, host, models } = watched()
+  type(textarea(host)!, "Enough people to decide.")
+  act(() => click(saveButton(host)!))
+  await act(async () => s.saves[0]!.reject(new Error("offline")))
+  expect(stateOf(host)).toBe("empty")
+  expect(models).toEqual([])
+})
+
+test.each<[string, Explanation["grading"]]>([
+  ["saved", null],
+  ["graded", succeeded()],
+  ["failed", failed()],
+])("onModelShown: once when a %s explanation the record holds first renders", (_, grading) => {
+  const { models } = watched({ saved: explanation(grading) })
+  expect(models).toEqual([1])
+})
+
+test("onSourceOpened: once each time a source is opened, never on closing it", async () => {
+  const { s, host, sources } = watched()
+  await saved(s, host)
+  expect(sources).toEqual([])
+  const trigger = (title: string) => [...q(host, "sources")!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.includes(title))!
+  act(() => click(trigger("Glossary")))
+  expect(sources).toEqual(["s2"])
+  act(() => click(trigger("Robert's Rules")))
+  expect(sources).toEqual(["s2", "s1"])
+  act(() => click(trigger("Glossary"))) // closed
+  expect(sources).toEqual(["s2", "s1"])
+  act(() => click(trigger("Glossary"))) // opened again: a second showing
+  expect(sources).toEqual(["s2", "s1", "s2"])
+})
+
+test.each<[string, Explanation["grading"]]>([
+  ["saved", null],
+  ["graded", succeeded()],
+  ["failed", failed()],
+])("revise: from %s, Revise returns to writing with the saved text, hides the model answer, and saves the revision as a new explanation", async (_, grading) => {
+  const { s, host, models } = watched({ saved: explanation(grading) })
+  expect(models).toEqual([1])
+  const button = revise(host)!
+  expect(hint(button.querySelector("[data-slot=kbd]"))).toBe("R")
+  expect(button.getAttribute("aria-keyshortcuts")).toBe("R")
+  act(() => click(button))
+  expect(stateOf(host)).toBe("empty")
+  expect(textarea(host)!.value).toBe("Enough people to decide.")
+  expect(host.innerHTML.includes("MODEL-ANSWER")).toBe(false)
+  type(textarea(host)!, "A majority of the voting members, present.")
+  act(() => click(saveButton(host)!))
+  expect(s.saves.map((c) => c.arg)).toEqual(["A majority of the voting members, present."])
+  await act(async () => s.saves[0]!.resolve({ ...explanation(), submissionId: "sub-2", text: "A majority of the voting members, present." }))
+  expect(stateOf(host)).toBe("saved")
+  expect(q(host, "explanation")!.textContent).toContain("A majority of the voting members")
+  expect(models).toEqual([1, 1]) // the model answer is shown again: a second showing
+})
+
+test("revise: the r key revises while focus is in the block, not from outside, not while grading", async () => {
+  const { s, host } = watched()
+  await saved(s, host)
+  act(() => press(document.body, "r"))
+  expect(stateOf(host)).toBe("saved")
+  act(() => click(gradeButton(host)!))
+  gradeButton(host)!.focus()
+  act(() => press(gradeButton(host)!, "r"))
+  expect(stateOf(host)).toBe("grading")
+  expect(revise(host)?.disabled ?? true).toBe(true)
+  await act(async () => s.grades[0]!.resolve(explanation(failed())))
+  gradeButton(host)!.focus()
+  act(() => press(gradeButton(host)!, "r"))
+  expect(stateOf(host)).toBe("empty")
+})
+
+test("revise: nothing to revise while writing or saving", () => {
+  const { host } = watched()
+  expect(revise(host)).toBeNull()
+  type(textarea(host)!, "Enough people to decide.")
+  act(() => click(saveButton(host)!))
+  expect(revise(host)).toBeNull()
+})
