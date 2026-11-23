@@ -66,7 +66,9 @@ the shadcn CLI and never edited here. The block is ui-sdk's `createReorder` behi
 with stock `ItemGroup`, `Item`, `Button` and `Kbd`. The page itself is `web/src/pages/settings.tsx`.
 
 On a phone the cards stack; from `xl` the bridge and the agents sit side by side with the test
-below them, and from `2xl` the three share one row, the agents two columns wide.
+below them, and from `2xl` the three share one row, the agents two columns wide. A GSAP timeline brings the heading and then the cards in, animating
+opacity and position only (never visibility, so every field and button can take focus while it
+fades in), unless the viewer prefers reduced motion.
 
 ## Tests
 
@@ -75,4 +77,5 @@ below them, and from `2xl` the three share one row, the agents two columns wide.
 (`server/testing/processes.ts`). It covers each connection state, the loading skeletons, the token
 never appearing after a save or a reload, a malformed reply shown as an error, the one-time generated token, the cleared-token notice,
 the environment locks, reordering by keyboard (arrows, `j`, `Esc`) read back from the bridge's
-file, switching an agent off, and a test's attempts. It runs in `bun test` from the repository root.
+file, switching an agent off, a test's attempts, and keys pressed during the intro (`j` reaches each
+stop up to the first field, and every stop takes focus, with the page's clock held). It runs in `bun test` from the repository root.

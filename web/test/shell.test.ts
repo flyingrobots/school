@@ -75,7 +75,11 @@ describe("routing", () => {
     ["/no/such/page", "Not found"],
   ])("%s renders inside the shell", async (path, heading) => {
     const p = await open(path)
-    expect(await p.getByRole("heading", { level: 1 }).textContent()).toContain(heading)
+    // A page may show a screen-reader-only heading while it loads (the lesson page's "Loading the
+    // lesson"); wait for the page's settled heading before reading it.
+    const h1 = p.getByRole("heading", { level: 1 }).filter({ hasText: heading }).first()
+    await h1.waitFor()
+    expect(await h1.textContent()).toContain(heading)
     expect(await p.locator("[data-nav-region=sidebar]").count()).toBe(1)
     await p.context().close()
   })
