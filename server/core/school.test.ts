@@ -1,8 +1,8 @@
 // The use cases, against fake adapters: no database, network or clock.
 import { describe, expect, test } from "bun:test";
-import type { Block, GradingRecord, Outcome } from "./model.ts";
+import type { Block, DueItem, GradingRecord, Outcome } from "./model.ts";
 import type { Grader, LearningRecord } from "./ports.ts";
-import { createSchool, resumeFrom, type CourseOutline, type LessonOutline } from "./school.ts";
+import { REVIEW_DELAY_MS, REVIEW_LIMIT, REVIEW_SECTION_ID, createSchool, resumeFrom, reviewReason, type CourseOutline, type LessonOutline } from "./school.ts";
 
 const explain: Extract<Block, { type: "explain" }> = {
   type: "explain", id: "e1", prompt: "Say why.", model: "Because it is so.",
@@ -63,18 +63,88 @@ test("a grading failure is stored as failed, with no findings, never as a verdic
 test("opening a lesson passes the client's aid capture version, or null, to the record", async () => {
   const opened: unknown[] = [];
   const record = {
-    openEncounter: async (o: unknown) => (opened.push(o), { id: "e", hash: "h", resumed: false }),
+    openLessonEncounter: async (o: { page: Block }) => (opened.push(o), { encounter: { id: "e", hash: "h", resumed: false }, page: o.page }),
     encounterAnswers: async () => [],
     encounterExplanations: async () => [],
+    encounterDecisionNotes: async () => [],
   } as unknown as LearningRecord;
   const school = createSchool({ record, grader: grader({ status: "failed", error: "x" }), clock });
   const page: Block = { type: "page", id: "l1", title: "l1", subtitle: "", children: [] };
   await school.openLesson("c", page, 1);
   await school.openLesson("c", page, null);
   expect(opened).toEqual([
-    { course: "c", lesson: "l1", page, now: NOW, aidTracking: 1 },
-    { course: "c", lesson: "l1", page, now: NOW, aidTracking: null },
+    { course: "c", lesson: "l1", lessonPage: page, page, notes: [], now: NOW, aidTracking: 1 },
+    { course: "c", lesson: "l1", lessonPage: page, page, notes: [], now: NOW, aidTracking: null },
   ]);
+});
+
+describe("due review on opening a lesson (RFC 2 §5; flyingrobots/school#32)", () => {
+  const quiz = (id: string): Block => ({ type: "quiz", id, q: `${id}?`, why: ".", choices: [{ id: "a", text: "A", correct: true }] });
+  const item = (blockId: string, o: Partial<DueItem> = {}): DueItem => ({
+    blockId, rule: "due-review/wrong-first-try", answeredAt: "2026-11-20T12:00:00.000Z", corrected: true, shown: [],
+    lastSeen: "2026-11-20T12:01:00.000Z", evidence: [3, 5], ...o,
+  });
+  function reviewRecord(due: DueItem[]) {
+    const calls: { dueReview: unknown[]; opened: { page: Block; notes: unknown[] }[] } = { dueReview: [], opened: [] };
+    const record = {
+      dueReview: async (q: unknown) => (calls.dueReview.push(q), due),
+      openLessonEncounter: async (x: { page: Block; notes: unknown[] }) => (calls.opened.push(x), { encounter: { id: "e", hash: "h", resumed: false }, page: x.page }),
+      encounterAnswers: async () => [],
+      encounterExplanations: async () => [],
+      encounterDecisionNotes: async () => calls.opened.at(-1)!.notes.map((n, i) => ({
+        id: `n${i}`, seq: 100 + i, choice: { course: "c", lesson: "l2", blockId: (n as { blockId: string }).blockId }, encounterId: "e",
+        rule: (n as { rule: string }).rule, reason: (n as { reason: string }).reason, evidence: (n as { evidence: number[] }).evidence, at: NOW,
+      })),
+    } as unknown as LearningRecord;
+    return { record, calls };
+  }
+  const lessonPage: Block = { type: "page", id: "l2", title: "Two", subtitle: "", children: [quiz("own"), { type: "section", id: "s", title: "S", children: [quiz("nested")] }] };
+
+  test("the record is asked about the course's other quizzes, and the due ones go at the top in a Review section, a note each", async () => {
+    const { record, calls } = reviewRecord([item("q1"), item("q2", { rule: "due-review/unknown-aid", corrected: false })]);
+    const school = createSchool({ record, grader: grader({ status: "failed", error: "x" }), clock });
+    const opened = await school.openLesson("c", lessonPage, 1, [quiz("q1"), quiz("q2"), quiz("own"), quiz("nested"), explain, quiz("q3")]);
+    expect(calls.dueReview).toEqual([{ course: "c", blocks: ["q1", "q2", "q3"], now: NOW, delayMs: REVIEW_DELAY_MS, limit: REVIEW_LIMIT }]);
+    const shown: Block = { ...lessonPage, children: [{ type: "section", id: REVIEW_SECTION_ID, title: "Review", children: [quiz("q1"), quiz("q2")] }, ...(lessonPage as { children: Block[] }).children] };
+    expect(calls.opened[0]).toMatchObject({ course: "c", lesson: "l2", lessonPage, page: shown, now: NOW, aidTracking: 1 });
+    expect(calls.opened[0]!.notes).toEqual([
+      { blockId: "q1", rule: "due-review/wrong-first-try", reason: reviewReason(item("q1")), evidence: [3, 5] },
+      { blockId: "q2", rule: "due-review/unknown-aid", reason: reviewReason(item("q2", { rule: "due-review/unknown-aid", corrected: false })), evidence: [3, 5] },
+    ]);
+    expect(opened.page).toEqual(shown);
+    expect(opened.review.map((x) => [x.blockId, x.rule])).toEqual([["q1", "due-review/wrong-first-try"], ["q2", "due-review/unknown-aid"]]);
+  });
+
+  test("an item the course no longer has is skipped; nothing due leaves the lesson as written", async () => {
+    const { record, calls } = reviewRecord([item("gone")]);
+    const school = createSchool({ record, grader: grader({ status: "failed", error: "x" }), clock });
+    const opened = await school.openLesson("c", lessonPage, 1, [quiz("q1")]);
+    expect(calls.opened[0]).toMatchObject({ page: lessonPage, notes: [] });
+    expect(opened.review).toEqual([]);
+  });
+
+  test("a lesson whose course has no other quizzes asks for no review", async () => {
+    const { record, calls } = reviewRecord([item("q1")]);
+    await createSchool({ record, grader: grader({ status: "failed", error: "x" }), clock }).openLesson("c", lessonPage, 1, [quiz("own"), explain]);
+    expect(calls.dueReview).toEqual([]);
+    expect(calls.opened[0]).toMatchObject({ page: lessonPage, notes: [] });
+  });
+
+  test("each reason says in words why the item came back, with the day of the answer that decided it", () => {
+    expect(reviewReason(item("q", { shown: ["feedback"] })))
+      .toBe("Back because your first answer on 20 November was wrong, and the right one came after the explanation was shown.");
+    expect(reviewReason(item("q", { shown: ["model-answer", "hint"] })))
+      .toBe("Back because your first answer on 20 November was wrong, and the right one came after the model answer and a hint were shown.");
+    expect(reviewReason(item("q"))).toBe("Back because your first answer on 20 November was wrong; you put it right on a later try.");
+    expect(reviewReason(item("q", { corrected: false }))).toBe("Back because your first answer on 20 November was wrong, and it was not put right then.");
+    expect(reviewReason(item("q", { rule: "due-review/aided-first-try", corrected: false, shown: ["hint"] })))
+      .toBe("Back because on 20 November you answered it right only after a hint was shown.");
+    expect(reviewReason(item("q", { rule: "due-review/unknown-aid", corrected: false })))
+      .toBe("Back because on 20 November you answered it right while School was not recording the help it showed, so it cannot say whether you had any.");
+    for (const reason of [reviewReason(item("q")), reviewReason(item("q", { rule: "due-review/unknown-aid" }))]) {
+      expect(reason).not.toMatch(/[0-9]+ ?%|score|points?\b/i); // results in words, never scores
+    }
+  });
 });
 
 test("an exposure is recorded at the clock's time, and aid is the record's to derive", async () => {

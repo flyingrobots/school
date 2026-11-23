@@ -14,8 +14,8 @@ setDefaultTimeout(30_000); // PGlite starts a whole Postgres in process.
 
 /** The functions the port calls: every one granted to school_app. */
 const PORT_FUNCTIONS = [
-  "choice_decision_notes", "encounter_answers", "encounter_decision_notes", "encounter_evidence", "encounter_explanations",
-  "explanation", "last_studied", "lesson_progress", "open_encounter", "record_decision_note", "record_exposure", "record_grading",
+  "choice_decision_notes", "due_review", "encounter_answers", "encounter_decision_notes", "encounter_evidence", "encounter_explanations",
+  "explanation", "last_studied", "lesson_progress", "open_encounter", "open_lesson_encounter", "record_decision_note", "record_exposure", "record_grading",
   "record_view", "save_explanation", "submission_aid", "submit",
 ];
 
@@ -51,7 +51,7 @@ async function freshApp(): Promise<PGliteInterface> {
   return db;
 }
 
-learningRecordContract("postgres (PGlite)", async () => postgresRecord(functionCallsOnly(pgliteSql(await freshApp()))), { recordsExposures: true });
+learningRecordContract("postgres (PGlite)", async () => postgresRecord(functionCallsOnly(pgliteSql(await freshApp()))));
 
 test("the guard refuses table SQL, so the contract run above proves the adapter issues none", async () => {
   const guarded = functionCallsOnly({ query: async () => [] });
@@ -94,6 +94,8 @@ test("every port method is one call of its function, as school_app", async () =>
     "2026-11-21T10:00:05.000Z")).toMatchObject({ status: "stored" });
   expect(await r.decisionNotes(choice)).toHaveLength(1);
   expect(await r.encounterDecisionNotes(e.id)).toHaveLength(1);
+  await r.dueReview({ course: "c", blocks: ["q1"], now: "2026-11-23T10:00:00.000Z", delayMs: 1, limit: 3 });
+  await r.openLessonEncounter({ course: "c", lesson: "l1", lessonPage: page, page, notes: [], now: "2026-11-21T10:00:06.000Z", aidTracking: 1 });
   expect(seen.map((s) => FUNCTION_CALL.exec(s)![1]).sort()).toEqual(PORT_FUNCTIONS);
 });
 

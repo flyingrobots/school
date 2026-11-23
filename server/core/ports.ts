@@ -1,7 +1,7 @@
 // The ports: what School's core needs from the world, defined by the core (RFC 3, §4).
 // Adapters implement them; the core never imports an adapter.
 import type {
-  Aid, AidTracking, Block, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingInput,
+  Aid, AidTracking, Block, DecisionChoice, DueItem, DueReviewQuery, ReviewNote, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingInput,
   GradingRecord, LastStudied, LessonProgress, Outcome, Recorded, SaveResult, SavedExplanation, Submission, SubmitResult, ViewEvent,
 } from "./model.ts";
 
@@ -17,6 +17,18 @@ export interface LearningRecord {
    * no default. An encounter resumes only under the same value, so a change of capture starts a new one.
    */
   openEncounter(o: { course: string; lesson: string; page: Block; now: string; aidTracking: AidTracking }): Promise<Encounter>;
+  /**
+   * Open or resume an encounter with a lesson that may carry review (RFC 2 §5). `lessonPage` is the
+   * lesson as written; `page` is what is shown, the lesson with any review added. The encounter is
+   * found by the lesson as written: one inside the resume window, under the same `aidTracking`,
+   * resumes, and `page` and `notes` are ignored; `page` in the result is then its snapshot, so a
+   * reload shows the review it opened with. Otherwise `page` is snapshotted, a new encounter opened,
+   * and each note stored as a decision note for its block of this lesson and this encounter, all in
+   * one write: a note the record would refuse throws, and nothing is opened.
+   */
+  openLessonEncounter(o: {
+    course: string; lesson: string; lessonPage: Block; page: Block; notes: ReviewNote[]; now: string; aidTracking: AidTracking;
+  }): Promise<{ encounter: Encounter; page: Block }>;
   submit(s: Submission, now: string): Promise<SubmitResult>;
   /** What the learner has already answered in this encounter, oldest first. */
   encounterAnswers(encounterId: string): Promise<Recorded[]>;
@@ -35,11 +47,6 @@ export interface LearningRecord {
   /** The latest explanation per block in this encounter, each with its latest grading. */
   encounterExplanations(encounterId: string): Promise<ExplanationState[]>;
   recordView(v: ViewEvent, now: string): Promise<void>;
-  /**
-   * Whether this record stores exposures. One that does not refuses every exposure as `unsupported`
-   * and reports every aid as unknown: it never claims "no recorded aid" (RFC 2 §3).
-   */
-  readonly recordsExposures: boolean;
   /** Store help shown for a block, once per exposure id. */
   recordExposure(e: Exposure, now: string): Promise<ExposureResult>;
   /** A quiz answer's or explanation's aid, derived by the record's order; null if there is no such submission. */
@@ -55,6 +62,11 @@ export interface LearningRecord {
   decisionNotes(choice: DecisionChoice): Promise<DecisionNote[]>;
   /** The notes recorded for this encounter, oldest first. */
   encounterDecisionNotes(encounterId: string): Promise<DecisionNote[]>;
+  /**
+   * The blocks due for review among `q.blocks`, ranked, at most `q.limit` (RFC 2 §5): reads only.
+   * The rule is in server/db/migrations/0006_due_review.sql, due_review, and is the record's.
+   */
+  dueReview(q: DueReviewQuery): Promise<DueItem[]>;
 }
 
 /** Turns an explanation into findings, or an honest failure. Never throws for a grading failure. */

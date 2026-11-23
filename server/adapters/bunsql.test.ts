@@ -20,7 +20,7 @@ const SLOW = 30_000;
 const { database, fresh, track } = scratchPostgres();
 
 describe.skipIf(URL_ === undefined)("Bun.SQL on a real Postgres (SCHOOL_TEST_POSTGRES_URL)", () => {
-  learningRecordContract("postgres (Bun.SQL)", async () => postgresRecord((await fresh()).sql), { recordsExposures: true });
+  learningRecordContract("postgres (Bun.SQL)", async () => postgresRecord((await fresh()).sql));
 
   test("opening migrates on first start and applies nothing on the next", async () => {
     const url = await database();

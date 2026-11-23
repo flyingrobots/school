@@ -1,11 +1,15 @@
 // The LearningRecord contract (RFC 1, "The learning record contract"; RFC 3, §4). Every adapter
-// of the port must pass this suite, so SQLite, PGlite and real Postgres cannot drift apart.
+// of the port must pass this suite, so PGlite and real Postgres cannot drift apart.
 // It speaks only through the port; storage-level rules (append-only triggers, privileges) are
 // tested beside each adapter, since how they are enforced is the adapter's business.
 import { expect, test } from "bun:test";
 import { ExposureKind, type Block, type DecisionNoteInput, type GradingRecord } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
 
+/**
+ * Six hours: `school.open_encounter`'s resume window. 0001_init.sql's comment calls it
+ * server/record.ts RESUME_WINDOW_MS; that module went with SQLite (flyingrobots/school#49).
+ */
 export const RESUME_WINDOW_MS = 6 * 60 * 60 * 1000;
 
 const quiz = (id: string): Block => ({
@@ -37,15 +41,12 @@ const succeeded = (submissionId: string): GradingRecord => ({
 
 /**
  * Register the contract's tests for one adapter. `make` returns a fresh, empty record each time.
- * `declared.recordsExposures` is what the adapter says of itself (LearningRecord.recordsExposures):
- * an adapter that records exposures must pass the aid cases (RFC 2 §3); one that does not must
- * refuse every exposure and report every aid as unknown, never as "no recorded aid".
+ * Every adapter records exposures and must pass the aid cases (RFC 2 §3).
  */
-export function learningRecordContract(name: string, make: () => Promise<LearningRecord>, declared: { recordsExposures: boolean }): void {
+export function learningRecordContract(name: string, make: () => Promise<LearningRecord>): void {
   const t = (title: string, fn: (r: LearningRecord) => Promise<void>) => test(`${name}: ${title}`, async () => fn(await make()));
-  /** A case that holds only for an adapter that records exposures; skipped, visibly, for one that does not. */
-  const tx = (title: string, fn: (r: LearningRecord) => Promise<void>) =>
-    test.skipIf(!declared.recordsExposures)(`${name}: aid: ${title}`, async () => fn(await make()));
+  /** An aid case (RFC 2 §3). */
+  const tx = (title: string, fn: (r: LearningRecord) => Promise<void>) => test(`${name}: aid: ${title}`, async () => fn(await make()));
 
   t("wrong, then right, then a resend: correctness and first try are derived, and the resend is a duplicate", async (r) => {
     const e = await r.openEncounter({ course: "c", lesson: "l1", aidTracking: null, page: lesson("l1", [quiz("q1")]), now: at(0) });
@@ -235,27 +236,9 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
 
   // ---- Exposures and derived aid (RFC 2 §3, Listing 1; flyingrobots/school#29) ----------------
 
-  t("the adapter declares whether it records exposures, as registered", async (r) => {
-    expect(r.recordsExposures).toBe(declared.recordsExposures);
-  });
-
   const exposure = (encounterId: string, blockId: string, kind: ExposureKind = "model-answer") =>
     ({ exposureId: uuid(), encounterId, blockId, kind });
   const tracked = (r: LearningRecord, page: Block, now = at(0)) => r.openEncounter({ course: "c", lesson: "l1", page, now, aidTracking: 1 });
-
-  if (!declared.recordsExposures) {
-    t("an adapter that does not record exposures refuses them, and every aid it reports is unknown", async (r) => {
-      const e = await tracked(r, lesson("l1", [quiz("q1"), explain]));
-      const answer = uuid();
-      const explanation = uuid();
-      await r.submit({ submissionId: answer, encounterId: e.id, blockId: "q1", choiceId: "right", ms: 1 }, at(1));
-      expect(await r.recordExposure(exposure(e.id, "e1"), at(2))).toEqual({ status: "unsupported" });
-      await r.saveExplanation({ submissionId: explanation, encounterId: e.id, blockId: "e1", text: "Because.", ms: 1 }, at(3));
-      expect(await r.aid(answer)).toBe("unknown");
-      expect(await r.aid(explanation)).toBe("unknown");
-      expect(await r.aid(uuid())).toBeNull();
-    });
-  }
 
   tx("RFC 2 Figure 4: submit, reveal, revise is no recorded aid, then aided", async (r) => {
     const e = await tracked(r, lesson("l1", [explain]));
@@ -516,5 +499,213 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     expect(again!.evidence).not.toContain(regraded.id);
     // The cited grading is still in the record, though no longer the latest.
     expect(await seqs(r, e.id, "grading")).toEqual([evidence[1]!, regraded.id]);
+  });
+
+  // ---- Due review (RFC 2 §5; flyingrobots/school#32) -------------------------------------------
+  // The selector reads answers, first tries, exposures and the time each block was last answered,
+  // all by seq, and returns the blocks due with the rule that chose each and the rows it cites.
+
+  /** A case of the selector or of opening a lesson with review. */
+  const dr = (title: string, fn: (r: LearningRecord) => Promise<void>) =>
+    test(`${name}: due review: ${title}`, async () => fn(await make()));
+  const DELAY = 20 * 60 * 60 * 1000;
+  const due = (r: LearningRecord, blocks: string[], now: string, limit = 10) =>
+    r.dueReview({ course: "c", blocks, now, delayMs: DELAY, limit });
+  const answer = (r: LearningRecord, encounterId: string, blockId: string, choiceId: "right" | "wrong", now: string) =>
+    r.submit({ submissionId: uuid(), encounterId, blockId, choiceId, ms: 1 }, now);
+  /** The seqs of an encounter's rows of one kind for one block, oldest first. */
+  const rowsOf = async (r: LearningRecord, encounterId: string, kind: string, blockId: string | null) =>
+    (await r.encounterEvidence(encounterId)).filter((x) => x.kind === kind && x.blockId === blockId).map((x) => x.seq);
+
+  dr("an item answered wrong first returns after its delay, citing the wrong answer, the help shown and the correction", async (r) => {
+    const e = await tracked(r, lesson("l1", [quiz("q1"), quiz("q2")]));
+    await answer(r, e.id, "q1", "wrong", at(1));
+    await r.recordExposure(exposure(e.id, "q1", "feedback"), at(2));
+    await answer(r, e.id, "q1", "right", at(3));
+    await answer(r, e.id, "q2", "right", at(4)); // right first try, nothing shown before it: not due
+    const [wrong, right] = await rowsOf(r, e.id, "answer", "q1");
+    const [shown] = await rowsOf(r, e.id, "exposure", "q1");
+    expect(await due(r, ["q1", "q2"], at(4 + DELAY - 2))).toEqual([]); // q1 was last seen less than the delay ago
+    const items = await due(r, ["q1", "q2"], at(3 + DELAY));
+    expect(items).toEqual([{
+      blockId: "q1", rule: "due-review/wrong-first-try", answeredAt: at(1), corrected: true, shown: ["feedback"],
+      lastSeen: at(3), evidence: [wrong!, shown!, right!],
+    }]);
+    // Reading is all it does: asking again gives the same answer.
+    expect(await due(r, ["q1", "q2"], at(3 + DELAY))).toEqual(items);
+  });
+
+  dr("an item never put right returns, citing every answer in that encounter", async (r) => {
+    const e = await tracked(r, lesson("l1", [quiz("q1")]));
+    await answer(r, e.id, "q1", "wrong", at(1));
+    await answer(r, e.id, "q1", "wrong", at(2));
+    expect(await due(r, ["q1"], at(2 + DELAY))).toEqual([{
+      blockId: "q1", rule: "due-review/wrong-first-try", answeredAt: at(1), corrected: false, shown: [],
+      lastSeen: at(2), evidence: await rowsOf(r, e.id, "answer", "q1"),
+    }]);
+  });
+
+  dr("an item answered right only after an exposure returns as aided, citing the exposure and the answer", async (r) => {
+    const e = await tracked(r, lesson("l1", [quiz("q1")]));
+    await r.recordExposure(exposure(e.id, "q1", "hint"), at(1));
+    await answer(r, e.id, "q1", "right", at(2));
+    await r.recordExposure(exposure(e.id, "q1", "feedback"), at(3)); // after the answer: no part of the reason
+    const [hint] = await rowsOf(r, e.id, "exposure", "q1");
+    expect(await due(r, ["q1"], at(2 + DELAY))).toEqual([{
+      blockId: "q1", rule: "due-review/aided-first-try", answeredAt: at(2), corrected: false, shown: ["hint"],
+      lastSeen: at(2), evidence: [hint!, ...await rowsOf(r, e.id, "answer", "q1")],
+    }]);
+  });
+
+  dr("unknown aid: a right first try School was not watching returns, citing its untracked encounter, and never clears an item", async (r) => {
+    const old = await r.openEncounter({ course: "c", lesson: "l1", page: lesson("l1", [quiz("q1"), quiz("q2")]), now: at(0), aidTracking: null });
+    await answer(r, old.id, "q1", "right", at(1));
+    const [opened] = await rowsOf(r, old.id, "encounter", null);
+    expect(await due(r, ["q1"], at(1 + DELAY))).toEqual([{
+      blockId: "q1", rule: "due-review/unknown-aid", answeredAt: at(1), corrected: false, shown: [],
+      lastSeen: at(1), evidence: [opened!, ...await rowsOf(r, old.id, "answer", "q1")],
+    }]);
+    // q2 was answered wrong while School watched; a right first try a delay later, unwatched, does not clear it.
+    const e = await r.openEncounter({ course: "c", lesson: "l2", page: lesson("l2", [quiz("q2")]), now: at(2), aidTracking: 1 });
+    await answer(r, e.id, "q2", "wrong", at(3));
+    const late = await r.openEncounter({ course: "c", lesson: "l2", page: lesson("l2", [quiz("q2")]), now: at(3 + DELAY), aidTracking: null });
+    await answer(r, late.id, "q2", "right", at(4 + DELAY));
+    const [item] = await due(r, ["q2"], at(4 + 2 * DELAY));
+    expect(item).toMatchObject({ blockId: "q2", rule: "due-review/unknown-aid", answeredAt: at(4 + DELAY) });
+  });
+
+  dr("no items due: an empty record, right first tries, items seen within the delay, and blocks not asked about", async (r) => {
+    expect(await due(r, ["q1", "q2"], at(0))).toEqual([]);
+    expect(await due(r, [], at(0))).toEqual([]);
+    const e = await tracked(r, lesson("l1", [quiz("q1"), quiz("q2"), quiz("q3")]));
+    await answer(r, e.id, "q1", "right", at(1));
+    await answer(r, e.id, "q2", "wrong", at(2));
+    expect(await due(r, ["q1", "q2"], at(1 + DELAY))).toEqual([]); // q2 was seen 1 ms less than the delay ago
+    expect(await due(r, ["q1", "q3"], at(10 * DELAY))).toEqual([]); // q2 is due, but was not asked about
+    // Another course's record is not this course's.
+    expect(await r.dueReview({ course: "other", blocks: ["q2"], now: at(10 * DELAY), delayMs: DELAY, limit: 10 })).toEqual([]);
+  });
+
+  dr("a right first try with no recorded aid clears an item only once the delay has passed since it was last wrong", async (r) => {
+    const page = lesson("l1", [quiz("q1")]);
+    const first = await tracked(r, page);
+    await answer(r, first.id, "q1", "wrong", at(1));
+    // Within the delay, a new encounter of an edited lesson answers it right first try: memory of a minute ago, not a review.
+    const soon = await tracked(r, lesson("l1", [quiz("q1")], "edited"), at(60_000));
+    await answer(r, soon.id, "q1", "right", at(60_001));
+    expect((await due(r, ["q1"], at(60_001 + DELAY))).map((x) => [x.blockId, x.rule, x.lastSeen])).toEqual([["q1", "due-review/wrong-first-try", at(60_001)]]);
+    // A delay after it was last wrong, right first try with nothing shown: cleared.
+    const later = await tracked(r, page, at(1 + DELAY + 60_000));
+    await answer(r, later.id, "q1", "right", at(1 + DELAY + 60_001));
+    expect(await due(r, ["q1"], at(10 * DELAY))).toEqual([]);
+    // Wrong again in a later encounter: due again.
+    const again = await tracked(r, page, at(20 * DELAY));
+    await answer(r, again.id, "q1", "wrong", at(20 * DELAY + 1));
+    expect((await due(r, ["q1"], at(30 * DELAY))).map((x) => x.answeredAt)).toEqual([at(20 * DELAY + 1)]);
+  });
+
+  dr("order is the record's, by seq, never by `at`: first try, prior help, last seen and the order of items", async (r) => {
+    const e = await tracked(r, lesson("l1", [quiz("q1"), quiz("q2"), quiz("q3")]));
+    // Sent in this order, with clocks that disagree: an outbox flush, or a clock stepped back.
+    await answer(r, e.id, "q2", "wrong", at(5000));
+    await answer(r, e.id, "q1", "wrong", at(1000));
+    await r.recordExposure(exposure(e.id, "q3", "hint"), at(9000)); // before q3's answer by seq, after it by `at`
+    await answer(r, e.id, "q3", "right", at(2000));
+    await answer(r, e.id, "q1", "right", at(900)); // q1's last answer by seq, earliest by `at`
+    const items = await due(r, ["q1", "q2", "q3"], at(5000 + DELAY));
+    expect(items.map((x) => [x.blockId, x.rule])).toEqual([
+      ["q2", "due-review/wrong-first-try"], ["q1", "due-review/wrong-first-try"], ["q3", "due-review/aided-first-try"],
+    ]);
+    expect(items.map((x) => x.lastSeen)).toEqual([at(5000), at(900), at(2000)]);
+  });
+
+  dr("items rank by rule, wrong first tries, then aided, then unknown aid, oldest first within a rule, bounded by the limit", async (r) => {
+    const untracked = await r.openEncounter({ course: "c", lesson: "l0", page: lesson("l0", [quiz("u1")]), now: at(0), aidTracking: null });
+    await answer(r, untracked.id, "u1", "right", at(1));
+    const e = await tracked(r, lesson("l1", [quiz("a1"), quiz("w1"), quiz("w2")]), at(2));
+    await r.recordExposure(exposure(e.id, "a1", "hint"), at(3));
+    await answer(r, e.id, "a1", "right", at(4));
+    await answer(r, e.id, "w1", "wrong", at(5));
+    await answer(r, e.id, "w2", "wrong", at(6));
+    const all = ["u1", "a1", "w1", "w2"];
+    expect((await due(r, all, at(6 + DELAY))).map((x) => x.blockId)).toEqual(["w1", "w2", "a1", "u1"]);
+    expect((await due(r, all, at(6 + DELAY), 2)).map((x) => x.blockId)).toEqual(["w1", "w2"]);
+    expect(await due(r, all, at(6 + DELAY), 0)).toEqual([]);
+  });
+
+  // Opening a lesson with review: the review is snapshotted with the lesson, and its notes with the encounter.
+  const reviewSection = (blocks: Block[]): Block => ({ type: "section", id: "school:review", title: "Review", children: blocks });
+  const withReview = (page: Block, blocks: Block[]): Block =>
+    page.type === "page" ? { ...page, children: [reviewSection(blocks), ...page.children] } : page;
+
+  dr("opening a lesson with review snapshots the review and stores one note per item for the encounter", async (r) => {
+    const first = await tracked(r, lesson("l1", [quiz("q1")]));
+    await answer(r, first.id, "q1", "wrong", at(1));
+    await answer(r, first.id, "q1", "right", at(2));
+    const [item] = await due(r, ["q1"], at(2 + DELAY));
+    const l2 = lesson("l2", [quiz("q9")]);
+    const shown = withReview(l2, [quiz("q1")]);
+    const reason = "Back because your first answer was wrong.";
+    const opened = await r.openLessonEncounter({
+      course: "c", lesson: "l2", lessonPage: l2, page: shown, now: at(2 + DELAY), aidTracking: 1,
+      notes: [{ blockId: "q1", rule: item!.rule, reason, evidence: item!.evidence }],
+    });
+    expect(opened.encounter.resumed).toBe(false);
+    expect(opened.page).toEqual(shown);
+    const notes = await r.encounterDecisionNotes(opened.encounter.id);
+    expect(notes).toEqual([{
+      id: expect.any(String), seq: expect.any(Number), choice: { course: "c", lesson: "l2", blockId: "q1" },
+      encounterId: opened.encounter.id, rule: "due-review/wrong-first-try", reason, evidence: item!.evidence, at: at(2 + DELAY),
+    }]);
+    // The review block is the encounter's: it is answered there, and reads back with it.
+    expect(await answer(r, opened.encounter.id, "q1", "right", at(3 + DELAY))).toEqual({ status: "stored", correct: true, firstTry: true });
+    expect(await r.encounterAnswers(opened.encounter.id)).toEqual([{ blockId: "q1", choiceId: "right", correct: true }]);
+  });
+
+  dr("a reload inside the resume window shows the same review, whatever the selector says now", async (r) => {
+    const first = await tracked(r, lesson("l1", [quiz("q1")]));
+    await answer(r, first.id, "q1", "wrong", at(1));
+    const [item] = await due(r, ["q1"], at(1 + DELAY));
+    const l2 = lesson("l2", [quiz("q9")]);
+    const shown = withReview(l2, [quiz("q1")]);
+    const open = (page: Block, notes: { blockId: string; rule: string; reason: string; evidence: number[] }[], now: string, lessonPage = l2) =>
+      r.openLessonEncounter({ course: "c", lesson: "l2", lessonPage, page, now, aidTracking: 1, notes });
+    const opened = await open(shown, [{ blockId: "q1", rule: item!.rule, reason: "Back.", evidence: item!.evidence }], at(1 + DELAY));
+    await answer(r, opened.encounter.id, "q1", "right", at(2 + DELAY));
+    // Now nothing is due (q1 was just seen), so the page asked for has no review; the encounter still resumes, as it was.
+    const reload = await open(l2, [], at(3 + DELAY));
+    expect(reload).toEqual({ encounter: { ...opened.encounter, resumed: true }, page: shown });
+    expect(await r.encounterDecisionNotes(opened.encounter.id)).toHaveLength(1);
+    // So does a reload offered other review: its notes are not stored.
+    const other = await open(withReview(l2, [quiz("q8")]), [{ blockId: "q8", rule: item!.rule, reason: "Other.", evidence: item!.evidence }], at(4 + DELAY));
+    expect(other).toEqual({ encounter: { ...opened.encounter, resumed: true }, page: shown });
+    expect(await r.encounterDecisionNotes(opened.encounter.id)).toHaveLength(1);
+    // An edited lesson is a new encounter, and so is a reload past the window.
+    const edited = lesson("l2", [quiz("q9")], "edited");
+    expect((await open(edited, [], at(5 + DELAY), edited)).encounter.resumed).toBe(false);
+    const past = await open(l2, [], at(5 + DELAY + 2 * RESUME_WINDOW_MS));
+    expect(past.encounter.resumed).toBe(false);
+    expect(past.page).toEqual(l2);
+  });
+
+  dr("an encounter opened without review resumes when the lesson is opened with review machinery and nothing due", async (r) => {
+    const page = lesson("l1", [quiz("q1")]);
+    const e = await tracked(r, page);
+    const opened = await r.openLessonEncounter({ course: "c", lesson: "l1", lessonPage: page, page, now: at(1), aidTracking: 1, notes: [] });
+    expect(opened).toEqual({ encounter: { ...e, resumed: true }, page });
+    // The capture version still decides, as for any encounter.
+    expect((await r.openLessonEncounter({ course: "c", lesson: "l1", lessonPage: page, page, now: at(2), aidTracking: null, notes: [] })).encounter.resumed).toBe(false);
+  });
+
+  dr("opening with a note the record refuses opens nothing: the encounter and its notes are one write", async (r) => {
+    const l2 = lesson("l2", [quiz("q9")]);
+    const shown = withReview(l2, [quiz("q1")]);
+    await expect(r.openLessonEncounter({
+      course: "c", lesson: "l2", lessonPage: l2, page: shown, now: at(1), aidTracking: 1,
+      notes: [{ blockId: "q1", rule: "due-review/wrong-first-try", reason: "Back.", evidence: [1_000_000_000] }],
+    })).rejects.toThrow();
+    // Nothing was opened, so the next open is a new encounter, not a resumed one.
+    expect((await r.openLessonEncounter({ course: "c", lesson: "l2", lessonPage: l2, page: l2, now: at(2), aidTracking: 1, notes: [] })).encounter.resumed).toBe(false);
+    expect(await r.lastStudied()).toEqual({ course: "c", lesson: "l2", at: at(2) });
   });
 }

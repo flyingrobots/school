@@ -123,7 +123,7 @@ const dumps = (dir: string) => readdirSync(dir).filter((f) => /^school-\d{8}T\d{
 /** The read methods of the LearningRecord port: the contract suite's reads. */
 const READS = [
   "encounterAnswers", "lessonProgress", "lastStudied", "explanation", "encounterExplanations",
-  "aid", "encounterEvidence", "decisionNotes", "encounterDecisionNotes",
+  "aid", "encounterEvidence", "decisionNotes", "encounterDecisionNotes", "dueReview",
 ] as const;
 type Call = { method: string; args: unknown[]; result: unknown };
 
@@ -158,7 +158,7 @@ describe.skipIf(TEST_POSTGRES_URL === undefined)("backup and restore on a real P
     const original = await scratch.fresh();
     const calls: Call[] = [];
     const r = noting(postgresRecord(original.sql), calls);
-    await replayLearnerHistory(r, { recordsExposures: true });
+    await replayLearnerHistory(r);
     const encounter = (calls.findLast((c) => c.method === "openEncounter")!.result as { id: string }).id;
     await r.recordView({ course: "astronomy", lesson: "orbits" }, "2026-11-21T12:00:00.000Z");
     const evidence = await r.encounterEvidence(encounter);
@@ -197,7 +197,8 @@ describe.skipIf(TEST_POSTGRES_URL === undefined)("backup and restore on a real P
     const tables = await verify(dir, nameOf(original.url));
     expect(tables).toEqual(await verify(dir, nameOf(empty)));
     expect(tables.map((l) => l.split("|")[0])).toEqual(expect.arrayContaining(["public.schema_migrations", "school.answers", "school.decision_notes", "school.exposures"]));
-    expect(tables.find((l) => l.startsWith("school.answers|"))).toMatch(/^school\.answers\|5\|[0-9a-f]{32}$/);
+    // The story stores six answers: five over its first two days and one in review.
+    expect(tables.find((l) => l.startsWith("school.answers|"))).toMatch(/^school\.answers\|6\|[0-9a-f]{32}$/);
     // And its rules came with it: a resend of a stored answer is still a duplicate, not a new answer.
     const sent = calls.findLast((c) => c.method === "submit")!;
     expect(await again.submit(...(sent.args as Parameters<LearningRecord["submit"]>))).toMatchObject({ status: "duplicate" });

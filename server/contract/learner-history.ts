@@ -2,13 +2,12 @@
 // (flyingrobots/school#27). The contract suite proves each rule on its own; this replays them
 // together, and checks two things at every step: the facts as the port reports them, and what
 // the lesson page would show for them. It speaks only through the port, so every adapter that
-// registers it (SQLite, Postgres on PGlite, and a real Postgres through Bun.SQL in CI)
-// must tell the same story. An adapter that records no exposures (SQLite) tells it with every
-// aid unknown and every exposure refused, which is what the port requires of it; it never claims
-// "no recorded aid". The story grows as the record does.
+// registers it (Postgres on PGlite, and a real Postgres through Bun.SQL in CI) must tell the
+// same story. The story grows as the record does.
 import { expect, test } from "bun:test";
-import type { Aid, Block, ExplainBlock, ExplanationState, ExposureKind, GradingRecord, Recorded } from "../core/model.ts";
-import type { LearningRecord } from "../core/ports.ts";
+import type { Aid, Block, DueItem, ExplainBlock, ExplanationState, ExposureKind, GradingRecord, Recorded } from "../core/model.ts";
+import type { Grader, LearningRecord } from "../core/ports.ts";
+import { REVIEW_DELAY_MS, REVIEW_LIMIT, createSchool } from "../core/school.ts";
 
 // The lesson: two quizzes and one explain block.
 const closest: Block = {
@@ -25,6 +24,14 @@ const seasons: ExplainBlock = {
   sources: [{ id: "tilt", title: "Axial tilt", text: "Earth's axis is tilted about 23.4 degrees to its orbit." }],
 };
 const page: Block = { type: "page", id: "orbits", title: "Orbits", subtitle: "", children: [closest, moons, seasons] };
+// The next lesson, where the review appears.
+const rings: Block = {
+  type: "quiz", id: "rings", q: "Which planet has the brightest rings?", why: "Saturn's rings are mostly ice.",
+  choices: [{ id: "saturn", text: "Saturn", correct: true }, { id: "jupiter", text: "Jupiter", correct: false }],
+};
+const planets: Block = { type: "page", id: "planets", title: "Planets", subtitle: "", children: [rings] };
+/** The review never grades anything. */
+const noGrader: Grader = { adapter: "none", model: "", rubricVersion: "-", promptVersion: "-", grade: async () => { throw new Error("no grading in this story"); } };
 const COURSE = "astronomy";
 
 const T0 = Date.parse("2026-11-21T09:00:00Z");
@@ -62,29 +69,22 @@ export function aidReads(aid: Aid | null): string {
   return { aided: "Aided", "no-recorded-aid": "No recorded aid", unknown: "Unknown aid" }[aid];
 }
 
-/**
- * Register the story for one adapter. `make` returns a fresh, empty record. `declared` is what the
- * adapter's registration says of it, as for the contract suite.
- */
-export function learnerHistory(name: string, make: () => Promise<LearningRecord>, declared: { recordsExposures: boolean }): void {
-  test(`${name}: learner history replays, and each step reads as it happened`, async () => replayLearnerHistory(await make(), declared));
+/** Register the story for one adapter. `make` returns a fresh, empty record. */
+export function learnerHistory(name: string, make: () => Promise<LearningRecord>): void {
+  test(`${name}: learner history replays, and each step reads as it happened`, async () => replayLearnerHistory(await make()));
 }
 
 /**
  * The story itself, on one fresh record, checking every step as it goes. Exported for a test that
  * needs a record holding real history, such as the backup and restore test (server/backup/).
  */
-export async function replayLearnerHistory(r: LearningRecord, declared: { recordsExposures: boolean }): Promise<void> {
-  expect(r.recordsExposures).toBe(declared.recordsExposures);
-  const tracks = declared.recordsExposures;
-  /** The aid this record must report: the tracked answer when it records exposures, unknown when it cannot. */
-  const tracked = (aid: Aid) => (tracks ? aid : "unknown");
+export async function replayLearnerHistory(r: LearningRecord): Promise<void> {
   const aidOf = async (submissionId: string) => aidReads(await r.aid(submissionId));
   const reload = async (e: { id: string }) => pageShows(await r.encounterAnswers(e.id), await r.encounterExplanations(e.id));
-  /** The page reports help it has shown. A record that cannot store exposures refuses them. */
+  /** The page reports help it has shown, and the record stores it. */
   const shown = async (encounterId: string, blockId: string, kind: ExposureKind, now: string) =>
     expect(await r.recordExposure({ exposureId: crypto.randomUUID(), encounterId, blockId, kind }, now))
-      .toEqual({ status: tracks ? "stored" : "unsupported" });
+      .toEqual({ status: "stored" });
 
   // Day one, 20 November, 09:00. The learner opens "Orbits" on an old client that records no
   // help it shows, so the encounter is opened with aid tracking off.
@@ -111,7 +111,7 @@ export async function replayLearnerHistory(r: LearningRecord, declared: { record
   const venus = crypto.randomUUID();
   expect(await r.submit({ submissionId: venus, encounterId: e.id, blockId: "closest", choiceId: "venus", ms: 4000 }, at(60)))
     .toEqual({ status: "stored", correct: false, firstTry: true });
-  expect(await aidOf(venus)).toBe(aidReads(tracked("no-recorded-aid")));
+  expect(await aidOf(venus)).toBe(aidReads("no-recorded-aid"));
   expect(await reload(e)).toEqual({ closest: "Not quite (venus)" });
 
   // The page tells them "Not quite": that is feedback, and the page reports it as shown.
@@ -121,8 +121,8 @@ export async function replayLearnerHistory(r: LearningRecord, declared: { record
   const mercury = crypto.randomUUID();
   expect(await r.submit({ submissionId: mercury, encounterId: e.id, blockId: "closest", choiceId: "mercury", ms: 3000 }, at(120)))
     .toEqual({ status: "stored", correct: true, firstTry: false });
-  expect(await aidOf(mercury)).toBe(aidReads(tracked("aided")));
-  expect(await aidOf(venus)).toBe(aidReads(tracked("no-recorded-aid"))); // later help never reclassifies earlier work
+  expect(await aidOf(mercury)).toBe(aidReads("aided"));
+  expect(await aidOf(venus)).toBe(aidReads("no-recorded-aid")); // later help never reclassifies earlier work
   expect(await reload(e)).toEqual({ closest: "Answered (mercury)" });
 
   // 09:05. The connection drops. They answer the moons quiz twice, Mars then Venus, and both sit
@@ -134,8 +134,8 @@ export async function replayLearnerHistory(r: LearningRecord, declared: { record
   expect(await r.submit({ submissionId: mars, encounterId: e.id, blockId: "moons", choiceId: "mars", ms: 5000 }, at(600)))
     .toEqual({ status: "stored", correct: false, firstTry: true });
   expect(await r.submit(venusMoons, at(600))).toEqual({ status: "stored", correct: true, firstTry: false });
-  expect(await aidOf(mars)).toBe(aidReads(tracked("no-recorded-aid")));
-  expect(await aidOf(venusMoons.submissionId)).toBe(aidReads(tracked("no-recorded-aid")));
+  expect(await aidOf(mars)).toBe(aidReads("no-recorded-aid"));
+  expect(await aidOf(venusMoons.submissionId)).toBe(aidReads("no-recorded-aid"));
 
   // 09:10. The outbox never heard back about Venus, so it sends the same submission again. The
   // record recognises the id, stores nothing, and gives the same verdict it gave the first time.
@@ -151,7 +151,7 @@ export async function replayLearnerHistory(r: LearningRecord, declared: { record
   // 09:15. They explain the seasons. It is saved before anything grades it, with no recorded aid.
   const draft = { submissionId: crypto.randomUUID(), encounterId: e.id, blockId: "seasons", text: "Earth is closer in summer.", ms: 60_000 };
   expect(await r.saveExplanation(draft, at(900))).toEqual({ status: "stored" });
-  expect(await aidOf(draft.submissionId)).toBe(aidReads(tracked("no-recorded-aid")));
+  expect(await aidOf(draft.submissionId)).toBe(aidReads("no-recorded-aid"));
   expect((await reload(e)).seasons).toBe("Saved: Earth is closer in summer.");
 
   // Once it is saved, the page reveals the model answer beside it, and reports the reveal.
@@ -162,8 +162,8 @@ export async function replayLearnerHistory(r: LearningRecord, declared: { record
   // the revision.
   const revised = { submissionId: crypto.randomUUID(), encounterId: e.id, blockId: "seasons", text: "The tilt of Earth's axis.", ms: 30_000 };
   expect(await r.saveExplanation(revised, at(1200))).toEqual({ status: "stored" });
-  expect(await aidOf(revised.submissionId)).toBe(aidReads(tracked("aided")));
-  expect(await aidOf(draft.submissionId)).toBe(aidReads(tracked("no-recorded-aid")));
+  expect(await aidOf(revised.submissionId)).toBe(aidReads("aided"));
+  expect(await aidOf(draft.submissionId)).toBe(aidReads("no-recorded-aid"));
   expect((await r.explanation(draft.submissionId))?.state).toEqual({
     submissionId: draft.submissionId, blockId: "seasons", text: draft.text, at: at(900), grading: null,
   });
@@ -200,4 +200,62 @@ export async function replayLearnerHistory(r: LearningRecord, declared: { record
   expect(await reload(old)).toEqual({ closest: "Answered (mercury)" });
   expect(await aidOf(early)).toBe("Unknown aid");
   expect(await r.lessonProgress(COURSE)).toEqual({ orbits: ["closest", "moons"] });
+
+  // Delayed review (RFC 2 §5, flyingrobots/school#32), from the record's order and its exposures.
+  const rows = await r.encounterEvidence(e.id);
+  const seq = (kind: string, blockId: string, nth = 0) => rows.filter((x) => x.kind === kind && x.blockId === blockId)[nth]!.seq;
+  const asked = { course: COURSE, blocks: ["closest", "moons", "seasons", "rings"], delayMs: REVIEW_DELAY_MS, limit: REVIEW_LIMIT };
+
+  // Still 11:00 on day two. Nothing is due: both quizzes were last answered two hours ago.
+  expect(await r.dueReview({ ...asked, now: at(2 * 3600) })).toEqual([]);
+
+  // Day three, 22 November, 09:00. Both are due, each because its first answer yesterday was
+  // wrong. The closest planet's note names the wrong answer, the feedback shown after it and the
+  // correction; the moons' names Mars and the second try. Day one's right answer, whose aid is
+  // unknown, is older than yesterday's wrong one, so it decides nothing. The explanation is not
+  // a quiz, and this selector reads quiz answers only.
+  const closestDue: DueItem = {
+    blockId: "closest", rule: "due-review/wrong-first-try", answeredAt: at(60), corrected: true, shown: ["feedback"],
+    lastSeen: at(120), evidence: [seq("answer", "closest"), seq("exposure", "closest"), seq("answer", "closest", 1)],
+  };
+  const moonsDue: DueItem = {
+    blockId: "moons", rule: "due-review/wrong-first-try", answeredAt: at(600), corrected: true, shown: [],
+    lastSeen: at(600), evidence: [seq("answer", "moons"), seq("answer", "moons", 1)],
+  };
+  expect(await r.dueReview({ ...asked, now: at(DAY) })).toEqual([closestDue, moonsDue]);
+
+  // They open the next lesson, "Planets". School puts the two at the top of it, in a Review
+  // section, each with its reason, and snapshots them with the lesson.
+  let now = at(DAY);
+  const school = createSchool({ record: r, grader: noGrader, clock: { now: () => now } });
+  const reviewed = await school.openLesson(COURSE, planets, 1, [closest, moons, seasons, rings]);
+  expect(reviewed.encounter.resumed).toBe(false);
+  expect(reviewed.page).toEqual({ ...(planets as Extract<Block, { type: "page" }>), children: [{ type: "section", id: "school:review", title: "Review", children: [closest, moons] }, rings] });
+  expect(reviewed.review).toEqual([
+    { blockId: "closest", rule: "due-review/wrong-first-try", reason: "Back because your first answer on 21 November was wrong, and the right one came after the explanation was shown." },
+    { blockId: "moons", rule: "due-review/wrong-first-try", reason: "Back because your first answer on 21 November was wrong; you put it right on a later try." },
+  ]);
+  // One note per item, for this encounter, citing exactly the rows the selector named.
+  expect((await r.encounterDecisionNotes(reviewed.encounter.id)).map((n) => [n.choice, n.rule, n.evidence])).toEqual([
+    [{ course: COURSE, lesson: "planets", blockId: "closest" }, closestDue.rule, closestDue.evidence],
+    [{ course: COURSE, lesson: "planets", blockId: "moons" }, moonsDue.rule, moonsDue.evidence],
+  ]);
+
+  // 09:01. The closest planet, right first try, nothing shown before it: the strongest evidence
+  // School can hold, a day after it was last wrong.
+  now = at(DAY + 60);
+  const recalled = crypto.randomUUID();
+  expect(await r.submit({ submissionId: recalled, encounterId: reviewed.encounter.id, blockId: "closest", choiceId: "mercury", ms: 2000 }, now))
+    .toEqual({ status: "stored", correct: true, firstTry: true });
+  expect(await aidOf(recalled)).toBe("No recorded aid");
+
+  // 09:30. A reload is the same encounter, with the same review and the same reasons, though the
+  // closest planet would not be chosen now.
+  now = at(DAY + 1800);
+  const again = await school.openLesson(COURSE, planets, 1, [closest, moons, seasons, rings]);
+  expect(again).toEqual({ ...reviewed, encounter: { ...reviewed.encounter, resumed: true }, answers: [{ blockId: "closest", choiceId: "mercury", correct: true }] });
+  expect(await r.encounterDecisionNotes(reviewed.encounter.id)).toHaveLength(2);
+
+  // Day four. The closest planet is cleared; the moons, shown yesterday but not answered, is still due.
+  expect((await r.dueReview({ ...asked, now: at(2 * DAY + 60) })).map((x) => x.blockId)).toEqual(["moons"]);
 }

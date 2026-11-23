@@ -1,6 +1,6 @@
 // School's use cases (RFC 3, §4). Each takes values already parsed at the edge, talks only to
 // ports, and returns plain data for the driving adapter to serialise.
-import type { Aid, AidTracking, Block, Contradiction, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, Exposure, ExposureResult, ExplanationState, ExplanationSubmission, Grading, GradingRecord, LastStudied, LessonProgress, Recorded, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
+import type { Aid, AidTracking, Block, Contradiction, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, ExposureKind, ReviewNote, ReviewReason, EvidenceRow, Exposure, ExposureResult, ExplanationState, ExplanationSubmission, Grading, GradingRecord, LastStudied, LessonProgress, Recorded, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
 import type { Clock, Grader, LearningRecord } from "./ports.ts";
 
 const squash = (s: string) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim().toLowerCase();
@@ -19,14 +19,67 @@ export function checkQuotes(contradictions: readonly Contradiction[], sources: r
   });
 }
 
-export type OpenedLesson = { encounter: Encounter; answers: Recorded[]; explanations: ExplanationState[] };
+/**
+ * A lesson opened for study. `page` is what its encounter snapshotted: the lesson as written, with a
+ * Review section at its top when School brought items back. `review` is each review item's reason.
+ */
+export type OpenedLesson = { encounter: Encounter; page: Block; answers: Recorded[]; explanations: ExplanationState[]; review: ReviewReason[] };
+
+// ---- Due review (RFC 2 §5; flyingrobots/school#32) --------------------------------------------
+
+/**
+ * How long since a block was last answered before it may come back: a day, less a few hours, so an
+ * item from one day's study returns the next day even when the learner sits down a little earlier.
+ */
+export const REVIEW_DELAY_MS = 20 * 60 * 60 * 1000;
+/** At most this many items come back in one lesson. */
+export const REVIEW_LIMIT = 3;
+/** The id of the section School adds at the top of a lesson for its review items. Authored ids may not start `school:` (server/blocks.ts). */
+export const REVIEW_SECTION_ID = "school:review";
+
+const helpWords: Record<ExposureKind, string> = {
+  feedback: "the explanation", "model-answer": "the model answer", hint: "a hint", reference: "a reference",
+};
+const listed = (words: string[]) => words.length <= 1 ? words.join("") : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
+
+/**
+ * Why an item came back, in words, from the facts the selector names (RFC 2 §5: "every review item
+ * says why it came back"). The day is the answer's in the server's time zone (`TZ`).
+ */
+export function reviewReason(item: DueItem): string {
+  const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long" }).format(new Date(item.answeredAt));
+  const help = listed(item.shown.map((k) => helpWords[k]));
+  const were = item.shown.length > 1 ? "were" : "was";
+  switch (item.rule) {
+    case "due-review/wrong-first-try":
+      if (!item.corrected) return `Back because your first answer on ${day} was wrong, and it was not put right then.`;
+      return item.shown.length > 0
+        ? `Back because your first answer on ${day} was wrong, and the right one came after ${help} ${were} shown.`
+        : `Back because your first answer on ${day} was wrong; you put it right on a later try.`;
+    case "due-review/aided-first-try":
+      return `Back because on ${day} you answered it right only after ${help} ${were} shown.`;
+    case "due-review/unknown-aid":
+      return `Back because on ${day} you answered it right while School was not recording the help it showed, so it cannot say whether you had any.`;
+  }
+}
+
+const childrenOf = (b: Block): Block[] => (b.type === "page" || b.type === "section" ? b.children : []);
+/** Every quiz id in a block and everything under it. */
+function quizIdsIn(b: Block, into = new Set<string>()): Set<string> {
+  if (b.type === "quiz") into.add(b.id);
+  for (const c of childrenOf(b)) quizIdsIn(c, into);
+  return into;
+}
 
 export interface School {
   /**
    * Open or resume the learner's encounter with this page, with what is already answered in it.
    * `aidTracking` is the capture version the client declares it records exposures under, or null.
+   * `reviewable` is the course's blocks as written now: the quizzes among them that are not in this
+   * lesson may come back for review (RFC 2 §5), at the top of it, each with a decision note. A
+   * reload inside the resume window shows the review the encounter opened with.
    */
-  openLesson(course: string, page: Block, aidTracking: AidTracking): Promise<OpenedLesson>;
+  openLesson(course: string, page: Block, aidTracking: AidTracking, reviewable?: readonly Block[]): Promise<OpenedLesson>;
   submitAnswer(s: Submission): Promise<SubmitResult>;
   saveExplanation(s: ExplanationSubmission): Promise<{ result: SaveResult; explanation: ExplanationState | null }>;
   /** One grading attempt, stored whatever its outcome; null when there is no such explanation. */
@@ -49,11 +102,29 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
   const { record, grader, clock } = ports;
   const explanationNow = async (id: string) => (await record.explanation(id))?.state ?? null;
   return {
-    async openLesson(course, page, aidTracking) {
+    async openLesson(course, page, aidTracking, reviewable = []) {
       if (page.type !== "page") throw new TypeError("a lesson is a page block");
-      const encounter = await record.openEncounter({ course, lesson: page.id, page, now: clock.now(), aidTracking });
-      const [answers, explanations] = await Promise.all([record.encounterAnswers(encounter.id), record.encounterExplanations(encounter.id)]);
-      return { encounter, answers, explanations };
+      const now = clock.now();
+      const own = quizIdsIn(page);
+      const candidates = new Map(reviewable.flatMap((b) => (b.type === "quiz" && !own.has(b.id) ? [[b.id, b] as const] : [])));
+      const due = candidates.size > 0
+        ? await record.dueReview({ course, blocks: [...candidates.keys()], now, delayMs: REVIEW_DELAY_MS, limit: REVIEW_LIMIT })
+        : [];
+      const items = due.filter((d) => candidates.has(d.blockId));
+      const shown: Block = items.length === 0 ? page : {
+        ...page,
+        children: [{ type: "section", id: REVIEW_SECTION_ID, title: "Review", children: items.map((d) => candidates.get(d.blockId)!) }, ...page.children],
+      };
+      const notes: ReviewNote[] = items.map((d) => ({ blockId: d.blockId, rule: d.rule, reason: reviewReason(d), evidence: d.evidence }));
+      const opened = await record.openLessonEncounter({ course, lesson: page.id, lessonPage: page, page: shown, notes, now, aidTracking });
+      const { encounter } = opened;
+      const [answers, explanations, noted] = await Promise.all([
+        record.encounterAnswers(encounter.id), record.encounterExplanations(encounter.id),
+        record.encounterDecisionNotes(encounter.id),
+      ]);
+      const review = noted.flatMap((n) => (n.rule.startsWith("due-review/") && n.choice.blockId !== null
+        ? [{ blockId: n.choice.blockId, rule: n.rule, reason: n.reason }] : []));
+      return { encounter, page: opened.page, answers, explanations, review };
     },
     submitAnswer: (s) => record.submit(s, clock.now()),
     async saveExplanation(s) {
