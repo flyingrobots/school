@@ -14,7 +14,7 @@ afterAll(() => GlobalRegistrator.unregister())
 const React = await import("react")
 const { act } = React
 const { createRoot } = await import("react-dom/client")
-const { Explain, ExplainView } = await import("@/components/explain")
+const { Explain, ExplainView, ExplainSaveError } = await import("@/components/explain")
 const { ariaKeyshortcuts } = await import("@ui-sdk/react/shortcuts")
 // `mod` is Command on Apple platforms and Control elsewhere; ask ui-sdk which one this platform uses.
 const mod: KeyboardEventInit = ariaKeyshortcuts("mod+enter").startsWith("Meta") ? { metaKey: true } : { ctrlKey: true }
@@ -69,12 +69,13 @@ function render(node: React.ReactNode): HTMLElement {
   return host
 }
 
-type Call<A> = { arg: A; resolve: (v: Explanation) => void; reject: (e: unknown) => void }
-/** A server stand-in: each save and each grading waits until the test settles it. */
+type Call<A> = { arg: A; resolve: (v: Explanation) => void; reject: (e: unknown) => void; queued?: () => void }
+/** A server stand-in: each save and each grading waits until the test settles it; a save can say it was queued. */
 function server() {
   const saves: Call<string>[] = []
   const grades: Call<string>[] = []
-  const onSave = (text: string) => new Promise<Explanation>((resolve, reject) => saves.push({ arg: text, resolve, reject }))
+  const onSave = (text: string, progress: { queued: () => void }) =>
+    new Promise<Explanation>((resolve, reject) => saves.push({ arg: text, resolve, reject, queued: progress.queued }))
   const onGrade = (submissionId: string) => new Promise<Explanation>((resolve, reject) => grades.push({ arg: submissionId, resolve, reject }))
   return { saves, grades, onSave, onGrade }
 }
@@ -308,6 +309,7 @@ test.each<[string, Explanation["grading"], string]>([
 const views: [ExplainState, boolean][] = [
   [{ status: "empty" }, false],
   [{ status: "saving", text: "Enough people to decide." }, false],
+  [{ status: "queued", text: "Enough people to decide." }, false],
   [{ status: "saved", explanation: explanation() }, true],
   [{ status: "grading", explanation: explanation() }, true],
   [{ status: "graded", explanation: explanation(), findings }, true],
@@ -483,4 +485,67 @@ test("revise: nothing to revise while writing or saving", () => {
   type(textarea(host)!, "Enough people to decide.")
   act(() => click(saveButton(host)!))
   expect(revise(host)).toBeNull()
+})
+
+// An explanation the page keeps to send later (flyingrobots/school#28): queued, shown as not sent
+// yet, with the model answer still hidden, until the server stores it.
+const badge = (host: HTMLElement) => q(host, "root")!.querySelector("[data-slot=badge]")?.textContent ?? null
+
+test("queued: an explanation kept to send later says it is not sent yet, cannot be edited, and the model answer stays hidden", async () => {
+  const s = server()
+  const host = render(<Explain {...block} onSave={s.onSave} onGrade={s.onGrade} />)
+  type(textarea(host)!, "Enough people to decide.")
+  act(() => click(saveButton(host)!))
+  act(() => s.saves[0]!.queued!())
+  expect(stateOf(host)).toBe("queued")
+  expect(badge(host)).toBe("Not sent yet")
+  expect(q(host, "root")!.textContent).toContain("Not saved yet")
+  expect(q(host, "root")!.getAttribute("aria-busy")).toBe("true")
+  expect(textarea(host)!.disabled).toBe(true)
+  expect(textarea(host)!.value).toBe("Enough people to decide.")
+  expect(saveButton(host)!.querySelector("[data-slot=spinner]")).not.toBeNull()
+  expect(host.innerHTML).not.toContain("MODEL-ANSWER")
+  expect(revise(host)).toBeNull()
+  act(() => click(saveButton(host)!))
+  expect(s.saves).toHaveLength(1)
+  await act(async () => s.saves[0]!.resolve(explanation()))
+  expect(stateOf(host)).toBe("saved")
+  expect(q(host, "model")!.textContent).toContain(MODEL)
+})
+
+test("pending: an explanation kept from an earlier page starts queued over the record, then shows it as stored", async () => {
+  let store!: (x: Explanation) => void
+  const saved = new Promise<Explanation>((r) => (store = r))
+  const s = server()
+  const host = render(<Explain {...block} saved={explanation(succeeded())} pending={{ text: "A majority, present.", saved }} onSave={s.onSave} onGrade={s.onGrade} />)
+  expect(stateOf(host)).toBe("queued")
+  expect(textarea(host)!.value).toBe("A majority, present.")
+  expect(host.innerHTML).not.toContain("MODEL-ANSWER")
+  await act(async () => store({ ...explanation(), submissionId: "sub-2", text: "A majority, present." }))
+  expect(stateOf(host)).toBe("saved")
+  expect(q(host, "explanation")!.textContent).toContain("A majority, present.")
+  expect(s.saves).toEqual([])
+})
+
+test("a refused save says why in the page's words and keeps the text to try again", async () => {
+  const s = server()
+  const host = render(<Explain {...block} onSave={s.onSave} onGrade={s.onGrade} />)
+  type(textarea(host)!, "Enough people to decide.")
+  act(() => click(saveButton(host)!))
+  act(() => s.saves[0]!.queued!())
+  await act(async () => s.saves[0]!.reject(new ExplainSaveError("School refused this explanation (conflict). It was not saved.")))
+  expect(stateOf(host)).toBe("empty")
+  expect(q(host, "error")!.textContent).toBe("School refused this explanation (conflict). It was not saved.")
+  expect(textarea(host)!.value).toBe("Enough people to decide.")
+})
+
+test("a pending explanation that is refused goes back to writing, with its text and the reason", async () => {
+  let refuse!: (e: unknown) => void
+  const saved = new Promise<Explanation>((_, r) => (refuse = r))
+  const host = render(<Explain {...block} pending={{ text: "A majority, present.", saved }} onSave={server().onSave} onGrade={server().onGrade} />)
+  await act(async () => refuse(new ExplainSaveError("School refused this explanation (rejected).")))
+  expect(stateOf(host)).toBe("empty")
+  expect(textarea(host)!.value).toBe("A majority, present.")
+  expect(q(host, "error")!.textContent).toBe("School refused this explanation (rejected).")
+  expect(host.innerHTML).not.toContain("MODEL-ANSWER")
 })

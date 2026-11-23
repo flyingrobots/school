@@ -56,6 +56,8 @@ import { Textarea } from "@/components/ui/textarea"
 // A saved explanation can be revised: the learner writes again, starting from the saved text, and
 // saves a new explanation. `onModelShown` and `onSourceOpened` say when the model answer is shown
 // and when a source is opened, once per showing, so a page can record the help it gave.
+// An explanation the page keeps to send later (an outbox) is `queued`: it shows as not sent yet,
+// with a spinner, and the model answer stays hidden until the server has stored it.
 
 /** Material an explanation is graded against. `id` is what a contradiction's quote cites. */
 export type ExplainSource = { id: string; title: string; text: string }
@@ -105,6 +107,8 @@ export type ExplainExplanation = {
  * Where an explain block stands.
  * - `empty`: nothing saved yet; the learner is writing.
  * - `saving`: the explanation is with the server.
+ * - `queued`: the server could not be reached; the explanation is kept and will be sent. Nothing
+ *   can be edited, and the model answer stays hidden, until the server stores it.
  * - `saved`: stored, not graded; the model answer is shown.
  * - `grading`: a grading request is with the server.
  * - `graded`: the grader's findings.
@@ -112,7 +116,7 @@ export type ExplainExplanation = {
  */
 export type ExplainState =
   | { status: "empty" }
-  | { status: "saving"; text: string }
+  | { status: "saving" | "queued"; text: string }
   | { status: "saved" | "grading"; explanation: ExplainExplanation }
   | { status: "graded"; explanation: ExplainExplanation; findings: ExplainFindings }
   | { status: "failed"; explanation: ExplainExplanation; error: string }
@@ -140,6 +144,7 @@ const VERDICT: Record<ExplainVerdict, { label: string; variant: "default" | "sec
 const STATUS: Record<ExplainState["status"], { label: string; variant: "secondary" | "outline" | "default" | "destructive" } | null> = {
   empty: null,
   saving: { label: "Saving", variant: "secondary" },
+  queued: { label: "Not sent yet", variant: "secondary" },
   saved: { label: "Saved", variant: "outline" },
   grading: { label: "Grading", variant: "secondary" },
   graded: { label: "Graded", variant: "default" },
@@ -214,8 +219,9 @@ export function ExplainView({
   /** Called once each time a source is opened, with its id. */
   onSourceOpened?: (sourceId: string) => void
 }) {
-  const writing = state.status === "empty" || state.status === "saving"
-  const text = state.status === "empty" ? draft : state.status === "saving" ? state.text : state.explanation.text
+  const sending = state.status === "saving" || state.status === "queued"
+  const writing = state.status === "empty" || sending
+  const text = state.status === "empty" ? draft : "text" in state ? state.text : state.explanation.text
   const blank = text.trim() === ""
   const status = STATUS[state.status]
 
@@ -238,16 +244,18 @@ export function ExplainView({
       data-explain="root"
       data-explain-id={id}
       data-state={state.status}
-      aria-busy={state.status === "saving" || state.status === "grading"}
+      aria-busy={sending || state.status === "grading"}
       ref={root}
       className="w-full"
     >
       <CardHeader>
         <CardTitle className="text-2xl">{prompt}</CardTitle>
         <CardDescription className="text-base">
-          {writing
-            ? "Write it in your own words. The model answer appears once you save."
-            : "Compare yours with the model answer, then ask for feedback."}
+          {state.status === "queued"
+            ? "Not saved yet. Your explanation is kept and is sent when School can be reached."
+            : writing
+              ? "Write it in your own words. The model answer appears once you save."
+              : "Compare yours with the model answer, then ask for feedback."}
         </CardDescription>
         {status && (
           <CardAction>
@@ -268,7 +276,7 @@ export function ExplainView({
               placeholder="In your own words…"
               value={text}
               maxLength={MAX_LENGTH}
-              disabled={state.status === "saving"}
+              disabled={sending}
               submitShortcut={SAVE_KEYS}
               onValueChange={onDraftChange}
               onSubmit={() => {
@@ -366,13 +374,13 @@ export function ExplainView({
             <ButtonBehavior
               data-explain="save"
               render={<Button size="lg" />}
-              disabled={state.status === "saving" || blank}
+              disabled={sending || blank}
               aria-keyshortcuts={saveHint.ariaKeyshortcuts}
               onClick={() => {
                 if (state.status === "empty" && !blank) onSave()
               }}
             >
-              {state.status === "saving" && <Spinner data-icon="inline-start" />}
+              {sending && <Spinner data-icon="inline-start" />}
               Save
               <Kbd data-icon="inline-end">{saveHint.text}</Kbd>
             </ButtonBehavior>
@@ -470,29 +478,56 @@ function Findings({ findings, sources }: { findings: ExplainFindings; sources: E
 }
 
 /**
+ * A save refused in words the learner should read. When `onSave` (or a pending save) rejects with
+ * one, the block shows its message instead of its own "not saved".
+ */
+export class ExplainSaveError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "ExplainSaveError"
+  }
+}
+
+const NOT_SAVED = "Your explanation was not saved. Try again."
+const saveErrorText = (e: unknown) => (e instanceof ExplainSaveError ? e.message : NOT_SAVED)
+
+/** An explanation written earlier that the server has not stored yet, and the stored explanation when it is. */
+export type ExplainPending = { text: string; saved: Promise<ExplainExplanation> }
+
+/**
  * The explain block, saving through `onSave` and grading through `onGrade`. One request at a time:
- * while a save or a grading is in flight, no other can be sent, even from the same tick.
+ * while a save or a grading is in flight, or a save is queued, no other can be sent, even from the
+ * same tick.
  */
 export function Explain({
   onSave,
   onGrade,
   saved,
+  pending,
   onModelShown,
   onSourceOpened,
   ...content
 }: ExplainContent & {
-  /** Stores the explanation; resolves with it as saved, or rejects if it was not stored. */
-  onSave: (text: string) => Promise<ExplainExplanation>
+  /**
+   * Stores the explanation; resolves with it as saved, or rejects if it was not stored (with an
+   * `ExplainSaveError` to say why in its own words). Calls `queued` if the server could not be
+   * reached and the explanation is kept to send later; the promise then settles when it is stored.
+   */
+  onSave: (text: string, progress: { queued: () => void }) => Promise<ExplainExplanation>
   /** Asks the server to grade the saved submission; resolves with the explanation and its new grading. */
   onGrade: (submissionId: string) => Promise<ExplainExplanation>
   /** The explanation the record already holds for this block, read when the block first renders. */
   saved?: ExplainExplanation | null
+  /** An explanation kept from earlier that the server has not stored yet; it wins over `saved`. Read on first render. */
+  pending?: ExplainPending | null
   /** Called once each time the model answer is shown: when an explanation is saved, or first renders saved. */
   onModelShown?: () => void
   /** Called once each time a source is opened, with its id. */
   onSourceOpened?: (sourceId: string) => void
 }) {
-  const [state, setState] = React.useState<ExplainState>(() => (saved ? explainStateOf(saved) : { status: "empty" }))
+  const [first] = React.useState(() => ({ pending, before: saved ? explainStateOf(saved) : ({ status: "empty" } as ExplainState) }))
+  const [state, setState] = React.useState<ExplainState>(() => (pending ? { status: "queued", text: pending.text } : first.before))
+  // A refused pending explanation goes back to being written, so nothing typed is lost.
   const [draft, setDraft] = React.useState("")
   const [error, setError] = React.useState<string>()
   // The guards read this, not `state`: a second click in the same tick sees the rendered state.
@@ -503,16 +538,40 @@ export function Explain({
     setState(next)
   }
 
+  React.useEffect(() => {
+    const p = first.pending
+    if (!p) return
+    let live = true
+    p.saved.then(
+      (explanation) => {
+        if (live && current.current.status === "queued") move(explainStateOf(explanation))
+      },
+      (e: unknown) => {
+        if (!live || current.current.status !== "queued") return
+        setDraft(p.text)
+        move({ status: "empty" })
+        setError(saveErrorText(e))
+      }
+    )
+    return () => {
+      live = false
+    }
+  }, [first])
+
   const save = () => {
     const text = draft
     if (current.current.status !== "empty" || text.trim() === "") return
     setError(undefined)
-    move({ status: "saving", text })
-    onSave(text).then(
+    const sent: ExplainState = { status: "saving", text }
+    move(sent)
+    const queued = () => {
+      if (current.current === sent) move({ status: "queued", text })
+    }
+    onSave(text, { queued }).then(
       (explanation) => move(explainStateOf(explanation)),
-      () => {
+      (e: unknown) => {
         move({ status: "empty" })
-        setError("Your explanation was not saved. Try again.")
+        setError(saveErrorText(e))
       }
     )
   }

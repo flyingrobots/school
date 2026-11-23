@@ -1,4 +1,4 @@
--- 0004: the functions that serialise on an advisory lock refuse to run outside READ COMMITTED
+-- 0005: the functions that serialise on an advisory lock refuse to run outside READ COMMITTED
 -- (RFC 3 §3.2; flyingrobots/school#50, F-8 of the review of flyingrobots/school#45).
 --
 -- open_encounter and record_grading take an advisory lock and then read what the previous holder

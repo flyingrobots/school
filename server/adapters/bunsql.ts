@@ -11,7 +11,7 @@
 //
 // Each transaction begins READ COMMITTED, whatever the database's default: open_encounter and
 // record_grading read what an advisory lock's previous holder committed, which needs a snapshot per
-// statement, and refuse to run under any other level (migration 0004).
+// statement, and refuse to run under any other level (migration 0005).
 import type { Connection } from "../db/migrate.ts";
 import type { Sql } from "./sql.ts";
 
