@@ -12,6 +12,7 @@ import { chromium, type Browser, type Page } from "playwright-core"
 import { createServer, type ViteDevServer } from "vite"
 
 import { startBridge, startSchool, timeout, type Started } from "../../server/testing/processes.ts"
+import { heldIntro, opacities, pressJ, stops } from "./intro.ts"
 
 setDefaultTimeout(timeout(2) + 15_000)
 
@@ -343,6 +344,41 @@ describe("the bridge's agents", () => {
     expect(await attempts.count()).toBe(1)
     expect(await attempts.first().textContent()).toContain("fake")
     expect(await attempts.first().textContent()).toMatch(/schema/)
+    await p.context().close()
+  })
+})
+
+// flyingrobots/school#114: the intro must not swallow keys. The page's clock is paused before it
+// loads (test/intro.ts), so the cards are held before they start to fade in.
+describe("the intro", () => {
+  test("j pressed during the intro reaches each focus stop in order, and every stop can take focus", async () => {
+    const w = await world()
+    w.declare()
+    const saved = await fetch(`${w.school}/api/settings/bridge`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: w.bridge, token: TOKEN }),
+    })
+    expect(saved.status).toBe(200)
+    const c = await browser.newContext()
+    await c.route("**/api/**", async (route) => {
+      const u = new URL(route.request().url())
+      await route.fulfill({ response: await route.fetch({ url: w.school + u.pathname + u.search }) })
+    })
+    const p = await heldIntro(c, base + "/settings", (p) => p.getByRole("button", { name: "Test fake" }).waitFor({ state: "attached" }))
+    expect(await opacities(p, "[data-animate=card]")).toEqual(["0", "0", "0"])
+    // j moves through the stops up to the first text field, where it is typed instead.
+    const all = await stops(p)
+    const field = all.indexOf("bridge-address")
+    expect(field).toBeGreaterThan(0)
+    expect(await pressJ(p, field + 1)).toEqual(all.slice(0, field + 1))
+    // Every stop past it, in the cards still to fade in, can take focus too.
+    const refused = await p.locator("[data-nav-region=main] [data-nav]:not(:disabled)").evaluateAll((els) =>
+      (els as HTMLElement[]).filter((e) => (e.focus(), document.activeElement !== e)).map((e) => e.getAttribute("aria-label") ?? e.id ?? e.textContent)
+    )
+    expect(refused).toEqual([])
+    expect(await p.locator("[data-nav-region=main] [data-nav]:not(:disabled)").count()).toBeGreaterThan(field + 6)
+    expect(await opacities(p, "[data-animate=card]")).toEqual(["0", "0", "0"])
+    await p.clock.resume()
+    await p.waitForFunction(() => [...document.querySelectorAll("[data-animate=card]")].every((e) => getComputedStyle(e).opacity === "1"))
     await p.context().close()
   })
 })
