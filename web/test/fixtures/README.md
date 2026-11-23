@@ -20,7 +20,7 @@ and fails on any other addition.
 | File | Captured from |
 | --- | --- |
 | `stock-index.css` | `shadcn init -t vite -b radix -p nova` with shadcn CLI 4.23.0, file `src/index.css`, unedited. |
-| `flyingrobots-theme.json` | The `@flyingrobots/theme` registry item as built (`public/r/theme.json` in `flyingrobots/shadcn-registry`). |
+| `flyingrobots-theme.json` | The `@flyingrobots/theme` registry item as built (`public/r/theme.json` in `flyingrobots/shadcn-registry`, at f3802d4). |
 | `flyingrobots-markdown.json` | The `@flyingrobots/markdown` registry item as built (`public/r/markdown.json` in `flyingrobots/shadcn-registry`, at 7045f91). |
 
 `registry-examples.sha256` lists the SHA-256 of every `src/components/*-example.tsx` exactly as
