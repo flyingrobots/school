@@ -1,6 +1,6 @@
 // The lesson page (flyingrobots/school#42), driven in a real browser: Chrome through playwright-core,
-// against the Vite dev server proxying /api to a real School process on the development course in
-// test/fixtures/course. Oracles are the issue's acceptance items:
+// against the Vite dev server, with the page's /api requests answered by a real School process on
+// the development course in test/fixtures/course. Oracles are the issue's acceptance items:
 // - a wrong then right answer is recorded, and a reload shows what the record holds;
 // - an explanation is saved before grading, and a failed grading offers a retry;
 // - the server being down while answering never shows the answer as saved;
@@ -14,7 +14,7 @@ import { join } from "node:path"
 import { chromium, type Browser, type Page } from "playwright-core"
 import { createServer, type ViteDevServer } from "vite"
 
-import { freePort, startSchool, timeout, type Started } from "../../server/testing/processes.ts"
+import { startSchool, timeout, type Started } from "../../server/testing/processes.ts"
 
 setDefaultTimeout(30_000)
 
@@ -40,11 +40,10 @@ const findings = {
 let bridge: ReturnType<typeof Bun.serve>
 let gradings = 0
 
-/** School and a Vite dev server in front of it, as the browser sees them. */
-type Stack = { school: Started; vite: ViteDevServer; base: string; api: string; env: Record<string, string | undefined> }
+/** A School process, and the environment it was started with so it can be started again. */
+type Stack = { school: Started; env: Record<string, string | undefined> }
 
 async function stack(state: string): Promise<Stack> {
-  const port = freePort()
   const env = {
     ...process.env,
     SCHOOL_COURSE: undefined,
@@ -53,27 +52,19 @@ async function stack(state: string): Promise<Stack> {
     SCHOOL_BRIDGE_URL: bridge.url.href.replace(/\/$/, ""),
     SCHOOL_BRIDGE_TOKEN: TOKEN,
     HOST: "127.0.0.1",
-    PORT: String(port),
   }
-  const school = await startSchool(env)
-  const vite = await createServer({
-    root: web,
-    configFile: join(web, "vite.config.ts"),
-    logLevel: "silent",
-    server: { host: "127.0.0.1", port: 0, proxy: { "/api": { target: school.url, changeOrigin: true } } },
-  })
-  await vite.listen()
-  return { school, vite, base: vite.resolvedUrls!.local[0]!.replace(/\/$/, ""), api: school.url, env }
+  return { school: await startSchool(env), env }
 }
 
 async function stop(s: Stack | undefined) {
   if (!s) return
   s.school.proc.kill("SIGKILL")
   await s.school.proc.exited
-  await s.vite.close()
 }
 
 let browser: Browser
+let vite: ViteDevServer
+let base = ""
 let root: string
 let main: Stack
 
@@ -91,12 +82,16 @@ beforeAll(async () => {
   })
   root = mkdtempSync(join(tmpdir(), "school-lesson-page-"))
   main = await stack(join(root, "state"))
+  vite = await createServer({ root: web, configFile: join(web, "vite.config.ts"), logLevel: "silent", server: { host: "127.0.0.1", port: 0 } })
+  await vite.listen()
+  base = vite.resolvedUrls!.local[0]!.replace(/\/$/, "")
   // A missing Chrome fails here, loudly; it is never a skip.
   browser = await chromium.launch({ channel: "chrome" })
 }, timeout(1) + 10_000)
 
 afterAll(async () => {
   await browser?.close()
+  await vite?.close()
   await stop(main)
   bridge?.stop(true)
   rmSync(root, { recursive: true, force: true })
@@ -104,16 +99,29 @@ afterAll(async () => {
 
 const lessonPath = (course: Name, lesson = "orbits") => `/courses/${course}/lessons/${lesson}`
 
-async function newPage(): Promise<Page> {
-  const p = await (await browser.newContext({ viewport: { width: 1280, height: 720 } })).newPage()
+/**
+ * A page whose /api requests reach `s`'s School wherever it is listening now, as the course page's
+ * tests do. While School is down, they fail as a refused connection would.
+ */
+async function newPage(s: Stack = main): Promise<Page> {
+  const c = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+  await c.route(/\/api\//, async (route) => {
+    const u = new URL(route.request().url())
+    try {
+      await route.fulfill({ response: await route.fetch({ url: s.school.url + u.pathname + u.search }) })
+    } catch {
+      await route.abort("connectionrefused")
+    }
+  })
+  const p = await c.newPage()
   p.setDefaultTimeout(5_000)
   return p
 }
 
 /** Opens a lesson and waits for it to be playable: its title is the page heading. */
 async function open(s: Stack, path: string, title = "Orbits", page?: Page): Promise<Page> {
-  const p = page ?? (await newPage())
-  await p.goto(s.base + path)
+  const p = page ?? (await newPage(s))
+  await p.goto(base + path)
   await p.getByRole("heading", { level: 1, name: title, exact: true }).waitFor()
   return p
 }
@@ -124,7 +132,7 @@ const stateOf = async (l: ReturnType<Page["locator"]>) => l.getAttribute("data-s
 
 /** The lesson as the API returns it, read straight from School, bypassing the page. */
 const record = async (s: Stack, course: Name, lesson = "orbits") =>
-  (await (await fetch(`${s.api}/api/courses/${course}/lessons/${lesson}`)).json()) as {
+  (await (await fetch(`${s.school.url}/api/courses/${course}/lessons/${lesson}`)).json()) as {
     answers: { blockId: string; choiceId: string; correct: boolean }[]
     explanations: { blockId: string; text: string; grading: { status: string } | null }[]
   }
@@ -242,7 +250,7 @@ describe("not found", () => {
     ["a course that does not exist", "/courses/no-such-course/lessons/orbits"],
   ])("%s shows a not-found state", async (_, path) => {
     const p = await newPage()
-    await p.goto(main.base + path)
+    await p.goto(base + path)
     await p.getByRole("heading", { level: 1, name: "Lesson not found", exact: true }).waitFor()
     expect(await p.locator("[data-quiz=root], [data-explain=root]").count()).toBe(0)
     await p.context().close()
@@ -256,9 +264,9 @@ describe("loading", () => {
     const held = new Promise<void>((r) => (release = r))
     await p.route("**/api/courses/loading/lessons/orbits", async (route) => {
       await held
-      await route.continue()
+      await route.fallback()
     })
-    await p.goto(main.base + lessonPath("loading"))
+    await p.goto(base + lessonPath("loading"))
     await p.locator("[data-lesson=loading]").waitFor()
     expect(await p.locator("[data-lesson=loading] [data-slot=skeleton]").count()).toBeGreaterThan(0)
     expect(await p.locator("[data-lesson=loading] [data-slot=spinner], [data-lesson=loading] [role=status]").count()).toBeGreaterThan(0)
@@ -350,7 +358,7 @@ describe("the server down", () => {
       expect(await x.locator("[data-explain=draft]").inputValue()).toBe("The tilt.") // nothing typed is lost
       expect(await x.locator("[data-explain=model]").count()).toBe(0)
 
-      // School comes back on the same port and state; the same page saves both.
+      // School comes back on the same state (on a new port, which the page's route follows); the same page saves both.
       down.school = await startSchool(down.env)
       await q.locator("[data-choice=mercury]").click()
       await p.waitForFunction(() => document.querySelector("[data-quiz-id=closest]")?.getAttribute("data-state") === "right")
@@ -366,7 +374,7 @@ describe("the server down", () => {
   test("when the lesson cannot load, the page says so and offers a retry", async () => {
     const p = await newPage()
     await p.route("**/api/courses/**", (route) => route.abort())
-    await p.goto(main.base + lessonPath("golden"))
+    await p.goto(base + lessonPath("golden"))
     await p.getByRole("heading", { level: 1, name: "The lesson did not load", exact: true }).waitFor()
     await p.unroute("**/api/courses/**")
     await p.getByRole("button", { name: "Try again" }).click()

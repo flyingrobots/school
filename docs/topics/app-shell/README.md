@@ -1,15 +1,14 @@
 # The app shell
 
 Reference: the frame every page of the web app (`web/`) sits in. The pages' own content is built
-separately: the lesson route is [the lesson page](../lesson-page/README.md); every other route
-shows a placeholder.
+separately; a route whose page has not landed yet shows a placeholder.
 
 ## Routes
 
 | Path | Page |
 | --- | --- |
 | `/` | Home |
-| `/courses/:course` | A course |
+| `/courses/:course` | A course ([the course page](../course-page/README.md)) |
 | `/courses/:course/reference` | A course's reference |
 | `/courses/:course/lessons/:lesson` | A lesson ([the lesson page](../lesson-page/README.md)) |
 | `/settings` | Settings |

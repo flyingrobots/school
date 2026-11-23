@@ -6,8 +6,7 @@ import { join } from "node:path";
 import { startSchool, timeout, type Started } from "./testing/processes.ts";
 
 const root = mkdtempSync(join(tmpdir(), "school-harden-"));
-const PORT = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${PORT}`;
+let base = "";
 let server: Started | null = null;
 
 const quiz = { type: "quiz", id: "q1", q: "<img src=x onerror=alert(1)> Which?", why: "Because & so.",
@@ -43,7 +42,8 @@ beforeAll(async () => {
 
   server = await startSchool({ ...process.env, SCHOOL_COURSES: `ok=${join(root, "ok")},empty=${join(root, "empty")},broken=${join(root, "broken")},linked=${join(root, "linked")}`,
       // No built app, as on CI: the API and path checks must not depend on web/dist existing.
-      SCHOOL_STATE: join(root, "state"), SCHOOL_WEB: join(root, "no-web"), PORT: String(PORT), HOST: "127.0.0.1" });
+      SCHOOL_STATE: join(root, "state"), SCHOOL_WEB: join(root, "no-web"), HOST: "127.0.0.1" });
+  base = server.url;
 }, timeout(1));
 afterAll(async () => {
   server?.proc.kill();

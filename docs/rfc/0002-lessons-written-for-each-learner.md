@@ -3,7 +3,7 @@ title: "RFC 2: Lessons written for each learner"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-22
 updated: 2026-11-22
-version: 0.4.0
+version: 0.4.1
 status: "Draft. A second round of two external reviews (2026-11-22) approved starting steps 0–2 and required changes to steps 3–4; v0.3.0 makes them. v0.4.0 records the maintainer's decisions on results (Q3, and results in words). Builds on flyingrobots/school at commit a959505."
 supersedes: "RFC 2 v0.1.0, 'How to Build School', which is split into this RFC, RFC 3 and the architecture reference."
 ---
@@ -402,6 +402,11 @@ says why it came back.
 
 Each step starts only when the evidence from the step before exists. Calendar time alone is never a
 gate.
+
+> **Amended 2026-11-23, by the maintainer's delegated decision:** step 2 (decision notes and
+> due-review) is built before the real-use gate rather than after it, so School is complete when
+> the learner starts studying. The gate now validates step 2 instead of preceding it: real study
+> must still show a delayed review answered with its decision note (gate 2) before step 3 begins.
 
 **Figure 6. Order of work**
 

@@ -62,8 +62,9 @@ keys, a text field's typing. Tab moves into a block's controls. See the decision
 
 ## Tests
 
-`web/test/lesson.test.ts` drives the page in Chrome through playwright-core: the Vite dev server
-proxies `/api` to a real School process serving the development course in
-`web/test/fixtures/course`, and a fake bridge fails or succeeds each grading on cue. Like the shell
+`web/test/lesson.test.ts` drives the page in Chrome through playwright-core against the Vite dev
+server; each browser context answers the page's `/api` requests from a real School process serving
+the development course in `web/test/fixtures/course`, and a fake bridge fails or succeeds each
+grading on cue. Like the shell
 tests, it needs `npm ci` in `web/` and Google Chrome.
 
