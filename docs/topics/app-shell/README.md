@@ -1,7 +1,8 @@
 # The app shell
 
 Reference: the frame every page of the web app (`web/`) sits in. The pages' own content is built
-separately; today every route shows a placeholder.
+separately: Settings has its page ([the settings page](../settings-page/README.md)); every other
+route shows a placeholder.
 
 ## Routes
 

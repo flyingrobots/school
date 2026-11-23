@@ -7,6 +7,7 @@ Start here. Each page has one job; this page routes to all of them.
 | [Glossary](glossary.md) | The vocabulary. The authority on every term. Read it first. |
 | [Architecture](topics/architecture/README.md) | Reference: how School is built today, on the default branch. |
 | [App shell](topics/app-shell/README.md) | Reference: the web app's routes, keys, theme switch and layout. |
+| [Settings page](topics/settings-page/README.md) | Reference: what `/settings` shows and does, state by state. |
 | [Working notes](working-notes.md) | How-to notes for anyone changing the framework. |
 | [RFC 1: School](rfc/0001-school.md) | The original design and the learning record contract. Draft. |
 | [RFC 2: Lessons written for each learner](rfc/0002-lessons-written-for-each-learner.md) | Proposal: courses as curricula, lessons and quizzes prepared per learner, exams, completion. Draft. |
