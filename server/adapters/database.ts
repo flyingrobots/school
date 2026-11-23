@@ -19,7 +19,7 @@
 // Postgres those are defence in depth behind the login; on PGlite, whose session could
 // `RESET ROLE` back to the superuser, they are the guard rail (RFC 3 §3.1), not tamper-proofing.
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from "node:crypto";
-import { migrate, OWNER } from "../db/migrate.ts";
+import { migrate, OWNER, type OnApplied } from "../db/migrate.ts";
 import { bunSql, reservedConnection } from "./bunsql.ts";
 import { openPglite, pgliteSql } from "./pglite.ts";
 import type { Sql } from "./sql.ts";
@@ -319,9 +319,9 @@ const APP_PASSWORD = /^[A-Za-z0-9]{20,}$/;
  * login with `appPassword` and nothing else, and revoke PUBLIC's TEMPORARY on this database so the
  * server's login cannot create temporary tables. Idempotent: a second run applies nothing and sets
  * the same password again. The password reaches Postgres only as a SCRAM-SHA-256 verifier, never
- * as text, so not even a statement log holds it.
+ * as text, so not even a statement log holds it. `onApplied` hears of each migration as it commits.
  */
-export async function migrateRecord(url: string, appPassword: string): Promise<{ applied: number[] }> {
+export async function migrateRecord(url: string, appPassword: string, onApplied?: OnApplied): Promise<{ applied: number[] }> {
   if (!APP_PASSWORD.test(appPassword)) {
     throw new Error("SCHOOL_APP_PASSWORD must be at least 20 letters and digits (it goes into a URL as it is); " +
       "generate one, e.g. `openssl rand -base64 32 | tr -d '/+='`");
@@ -330,7 +330,7 @@ export async function migrateRecord(url: string, appPassword: string): Promise<{
   try {
     const conn = await reservedConnection(pool);
     try {
-      const { applied } = await migrate(conn);
+      const { applied } = await migrate(conn, undefined, onApplied);
       const who = (await conn.query<{ u: string }>("SELECT current_user AS u")).rows[0]?.u;
       if (who === OWNER || who === APP) throw new Error(`the migration connection ended as ${who}`);
       const db = (await conn.query<{ d: string }>("SELECT quote_ident(current_database()) AS d")).rows[0]!.d;
