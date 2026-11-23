@@ -10,6 +10,7 @@ import { learningRecordContract } from "../contract/learning-record.ts";
 import { APP, FUNCTION_CALL, openDatabase, redact, type Opened } from "./database.ts";
 import { bunSql } from "./bunsql.ts";
 import { postgresRecord } from "./postgres.ts";
+import { readMigrations } from "../db/migrate.ts";
 
 const URL_ = process.env.SCHOOL_TEST_POSTGRES_URL;
 const SLOW = 30_000;
@@ -65,7 +66,7 @@ describe.skipIf(URL_ === undefined || URL_ === "")("Bun.SQL on a real Postgres (
   test("opening migrates on first start and applies nothing on the next", async () => {
     const url = await database();
     const first = await openDatabase({ driver: "postgres", url });
-    expect(first.applied).toEqual([1, 2]);
+    expect(first.applied).toEqual(readMigrations().map((m) => m.version)); // every shipped migration, in order
     await first.close();
     const second = await openDatabase({ driver: "postgres", url });
     expect(second.applied).toEqual([]);
