@@ -162,6 +162,33 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     expect(await r.lessonProgress("other")).toEqual({});
   });
 
+  t("where the learner left off is null on an empty record", async (r) => {
+    expect(await r.lastStudied()).toBeNull();
+  });
+
+  t("where the learner left off is the lesson of their latest opening, answer, explanation or view", async (r) => {
+    const e1 = await r.openEncounter({ course: "c", lesson: "l1", aidTracking: null, page: lesson("l1", [quiz("q1"), explain]), now: at(0) });
+    expect(await r.lastStudied()).toEqual({ course: "c", lesson: "l1", at: at(0) });
+    const e2 = await r.openEncounter({ course: "c", lesson: "l2", aidTracking: null, page: lesson("l2", [quiz("q2")]), now: at(1000) });
+    expect(await r.lastStudied()).toEqual({ course: "c", lesson: "l2", at: at(1000) });
+    await r.submit({ submissionId: uuid(), encounterId: e1.id, blockId: "q1", choiceId: "wrong", ms: 1 }, at(2000));
+    expect(await r.lastStudied()).toEqual({ course: "c", lesson: "l1", at: at(2000) });
+    await r.submit({ submissionId: uuid(), encounterId: e2.id, blockId: "q2", choiceId: "right", ms: 1 }, at(3000));
+    expect(await r.lastStudied()).toEqual({ course: "c", lesson: "l2", at: at(3000) });
+    await r.saveExplanation({ submissionId: uuid(), encounterId: e1.id, blockId: "e1", text: "Because.", ms: 1 }, at(4000));
+    expect(await r.lastStudied()).toEqual({ course: "c", lesson: "l1", at: at(4000) });
+    await r.recordView({ course: "d", lesson: "x" }, at(5000));
+    expect(await r.lastStudied()).toEqual({ course: "d", lesson: "x", at: at(5000) });
+  });
+
+  t("an answer the record refuses does not move where the learner left off", async (r) => {
+    const e1 = await r.openEncounter({ course: "c", lesson: "l1", aidTracking: null, page: lesson("l1", [quiz("q1")]), now: at(0) });
+    await r.openEncounter({ course: "c", lesson: "l2", aidTracking: null, page: lesson("l2", [quiz("q2")]), now: at(1000) });
+    expect(await r.submit({ submissionId: uuid(), encounterId: e1.id, blockId: "no-such-quiz", choiceId: "right", ms: 1 }, at(2000)))
+      .toEqual({ status: "rejected" });
+    expect(await r.lastStudied()).toEqual({ course: "c", lesson: "l2", at: at(1000) });
+  });
+
   t("an explanation is saved once; a resend is a duplicate and different text under its id a conflict", async (r) => {
     const e = await r.openEncounter({ course: "c", lesson: "l1", aidTracking: null, page: lesson("l1", [explain]), now: at(0) });
     const s = { submissionId: uuid(), encounterId: e.id, blockId: "e1", text: "Because reasons.", ms: 10 };
