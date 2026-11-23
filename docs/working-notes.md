@@ -48,7 +48,7 @@ Practical notes for anyone — human or agent — changing the framework.
   `Bun.SQL` sends a string to a jsonb parameter as a JSON string. It opens an encounter with the
   `aid_tracking` its caller passes: the lesson API's `?aid=` capture version, or NULL (aid not
   observed) when the client sends none. A client may send `?aid=1` only if it records, through
-  `POST /api/exposure`, every exposure it shows; the pages do not yet (flyingrobots/school#51).
+  `POST /api/exposure`, every exposure it shows; the lesson page does (flyingrobots/school#51).
 - Every `LearningRecord` adapter stores exposures and must pass the contract's aid cases; there is
   no "unsupported" answer since SQLite was deleted (flyingrobots/school#49).
 - `SCHOOL_DATABASE_URL` picks the record: `postgres://...` is `Bun.SQL`, `pglite:<dir>` is PGlite on

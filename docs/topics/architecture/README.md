@@ -285,8 +285,8 @@ erDiagram
 
 *Figure 3. The learning record's tables, in schema `school`. Every row takes its `seq` from one
 shared sequence, so "before" and "after" across tables compare `seq`, never `at`. `VIEWS` is
-omitted; it records page views only. `EXPOSURES` is written only by `POST /api/exposure`, and the
-web pages do not call it yet.*
+omitted; it records page views only. `EXPOSURES` is written only by `POST /api/exposure`, which the
+lesson page calls for each help it shows.*
 
 | Rule | How it is enforced | What it does not cover |
 | --- | --- | --- |
@@ -330,14 +330,15 @@ from it, because it held no learner data, and startup step 1 checks that this is
 check, `server/legacy.ts`, is the only code that reads SQLite: read-only, through Bun's built-in
 `bun:sqlite`, and `server/docker.test.ts` fails if any other module imports it.
 
-The record can observe assistance, but nothing in the web app reports it yet. RFC 1 requires that a
-submission made after a hint or a model-answer reveal is recorded as aided[^rfc1]. The API records
-exposures and derives aid for tracked encounters, but the pages open every encounter untracked and
-post no exposure (flyingrobots/school#51), so in practice every learner's aid is unknown today.
+The record observes assistance, and the lesson page reports it. RFC 1 requires that a submission
+made after a hint or a model-answer reveal is recorded as aided[^rfc1]. The lesson page opens each
+lesson with `?aid=1` and posts every exposure it shows (flyingrobots/school#51), so a submission in
+an encounter it opened is aided or has no recorded aid. Only an encounter opened without `?aid=`,
+by an older client or another tool, reads as unknown aid.
 
 In short: the record derives correctness and first try from what was shown, refuses every update,
 delete and truncate, and lets the server do nothing but call its functions. Its guarantees stop at
-the owner and the superuser, and the web app does not yet report assistance to it.
+the owner and the superuser, and aid is known only for encounters a tracking client opened.
 
 ## The bridge
 
