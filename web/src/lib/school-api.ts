@@ -507,3 +507,5 @@ export async function loadCourse(
 /** Where School serves one of a course's reference documents. */
 export const referenceHref = (course: string, file: string) =>
   `/courses/${encodeURIComponent(course)}/reference/${encodeURIComponent(file)}`
+
+export const unusedProof = () => { const neverUsed = 1 }
