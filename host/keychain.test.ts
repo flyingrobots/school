@@ -109,3 +109,30 @@ test("SEC-K7: resolveSecret takes the environment first, then the store, and say
   // The environment is enough: the store is not even opened.
   expect(resolveSecret("SCHOOL_BRIDGE_TOKEN", { SCHOOL_BRIDGE_TOKEN: "FromEnv0123456789" }, () => { throw new Error("not opened"); })).toEqual({ value: "FromEnv0123456789", from: "environment" });
 });
+
+test("SEC-K8: a read returns nothing only for a missing item (exit 44); any other failure is an error, so no caller takes a locked Keychain for an empty one", () => {
+  const sec = fakeSecurity();
+  const failing = (exitCode: number, stderr: string): SpawnSync => (argv, opts) =>
+    argv[1] === "find-generic-password" ? { exitCode, stdout: new Uint8Array(), stderr: new TextEncoder().encode(stderr) } : sec.spawnSync(argv, opts);
+  const missing = keychainStore("school-test-k8", { platform: "darwin", spawnSync: failing(44, "security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.\n") });
+  expect(missing.get("SCHOOL_APP_PASSWORD")).toBeUndefined();
+  for (const [code, stderr] of [[36, "security: SecKeychainSearchCopyNext: User interaction is not allowed.\n"], [51, "security: SecKeychainSearchCopyNext: The user name or passphrase you entered is not correct.\n"], [1, ""]] as const) {
+    const store = keychainStore("school-test-k8", { platform: "darwin", spawnSync: failing(code, stderr) });
+    expect(() => store.get("SCHOOL_APP_PASSWORD")).toThrow(SecretError);
+    expect(() => store.get("SCHOOL_APP_PASSWORD")).toThrow(new RegExp(`could not read SCHOOL_APP_PASSWORD .*exit ${code}`));
+  }
+});
+
+test("SEC-K9: storing updates the item in place: no delete runs first, so a failed store leaves the old secret where it was", () => {
+  const sec = fakeSecurity();
+  sec.items.set("school-test-k9\u0000SCHOOL_APP_PASSWORD", "OldValue0123456789");
+  const store = keychainStore("school-test-k9", { platform: "darwin", spawnSync: sec.spawnSync });
+  store.set("SCHOOL_APP_PASSWORD", "NewValue0123456789");
+  expect(sec.items.get("school-test-k9\u0000SCHOOL_APP_PASSWORD")).toBe("NewValue0123456789");
+  expect(sec.calls.some((c) => c.argv.includes("delete-generic-password") || c.stdin?.includes("delete-generic-password"))).toBe(false);
+
+  const refusing: SpawnSync = (argv, opts) => (argv[1] === "-i" ? { exitCode: 1, stdout: new Uint8Array(), stderr: new Uint8Array() } : sec.spawnSync(argv, opts));
+  const refused = keychainStore("school-test-k9", { platform: "darwin", spawnSync: refusing });
+  expect(() => refused.set("SCHOOL_APP_PASSWORD", "Another0123456789")).toThrow(SecretError);
+  expect(sec.items.get("school-test-k9\u0000SCHOOL_APP_PASSWORD")).toBe("NewValue0123456789");
+});
