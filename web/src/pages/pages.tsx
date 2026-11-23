@@ -5,6 +5,8 @@ import { Link, useParams } from "react-router"
 import { Button } from "@/components/ui/button"
 import { Placeholder } from "./placeholder"
 
+export { SettingsPage } from "./settings"
+
 const home = { label: "Home", to: "/" }
 
 export { HomePage } from "./home"
@@ -14,10 +16,6 @@ export { CoursePage } from "./course"
 export function ReferencePage() {
   const { course } = useParams()
   return <Placeholder title="Reference" crumbs={[home, { label: course!, to: `/courses/${course}` }]} />
-}
-
-export function SettingsPage() {
-  return <Placeholder title="Settings" crumbs={[home]} />
 }
 
 export function NotFoundPage() {

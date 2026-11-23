@@ -8,6 +8,7 @@ Start here. Each page has one job; this page routes to all of them.
 | [Architecture](topics/architecture/README.md) | Reference: how School is built today, on the default branch. |
 | [App shell](topics/app-shell/README.md) | Reference: the web app's routes, keys, theme switch and layout. |
 | [Home page](topics/home-page/README.md) | Reference: what Home shows first (the lesson to study now), the courses with their progress in words, and the page's states. |
+| [Settings page](topics/settings-page/README.md) | Reference: what `/settings` shows and does, state by state. |
 | [Course page](topics/course-page/README.md) | Reference: a course's lessons, the learner's progress in words, and the page's states. |
 | [Lesson page](topics/lesson-page/README.md) | Reference: what the lesson page shows, records and reloads. |
 | [Working notes](working-notes.md) | How-to notes for anyone changing the framework. |
