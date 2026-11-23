@@ -20,9 +20,8 @@ beforeEach(async () => {
   writeFileSync(join(courseDir, "lessons", "0001.json"), JSON.stringify({ type: "page", id: "l1", title: "One", subtitle: "", children: [
     { type: "explain", id: "e1", prompt: "Say why.", model: "Because.", sources: [] },
   ] }));
-  const port = 20000 + Math.floor(Math.random() * 20000);
-  base = `http://127.0.0.1:${port}`;
-  server = await startSchool({ ...process.env, SCHOOL_COURSE: courseDir, SCHOOL_STATE: join(root, "state"), PORT: String(port), HOST: "127.0.0.1" });
+  server = await startSchool({ ...process.env, SCHOOL_COURSE: courseDir, SCHOOL_STATE: join(root, "state"), HOST: "127.0.0.1" });
+  base = server.url;
 }, timeout(1));
 afterEach(async () => {
   server?.proc.kill("SIGKILL");

@@ -7,9 +7,8 @@ import { join } from "node:path";
 import { NotStarted, startSchool, timeout } from "./testing/processes.ts";
 
 async function boot(env: Record<string, string>): Promise<{ code: number | null; up: boolean; err: string }> {
-  const port = 20000 + Math.floor(Math.random() * 20000);
   try {
-    const s = await startSchool({ ...process.env, PORT: String(port), HOST: "127.0.0.1", ...env });
+    const s = await startSchool({ ...process.env, HOST: "127.0.0.1", ...env });
     s.proc.kill();
     return { code: null, up: true, err: (await s.output()).stderr };
   } catch (e) {
