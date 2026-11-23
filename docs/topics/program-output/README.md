@@ -149,8 +149,8 @@ SCHOOL_BRIDGE_TOKEN=<shared secret> bun bridge/bridge.ts [--help | --schema] [--
 | Exit | Means |
 | --- | --- |
 | 0 | `--help` or `--schema` printed; or stopped |
-| 1 | An uncaught throw or rejection after start-up |
-| 2 | Refused to start: an unknown argument, a bad setting, or an unreadable configuration file |
+| 1 | An uncaught throw or rejection after start-up: one `bridge.error` line, its message only |
+| 2 | Refused to start: an unknown argument, a bad setting, an unreadable configuration file, or a port it cannot listen on |
 
 | `_schema.id` | `kind` | Fields beyond `_schema`, `kind`, `at` and `run` | When |
 | --- | --- | --- | --- |
@@ -163,7 +163,7 @@ SCHOOL_BRIDGE_TOKEN=<shared secret> bun bridge/bridge.ts [--help | --schema] [--
 | `school.bridge.run.end` | `bridge.run.end` | `id`, `status`, `agent` | How the run ended |
 | `school.bridge.test` | `bridge.test` | `agent`, `status` | A `POST /test` |
 | `school.bridge.config.saved` | `bridge.config.saved` | `config`, `agents` (names, in order) | An accepted `PUT /config` |
-| `school.bridge.error` | `bridge.error` | `message`; the schema also admits `host`, `port` and `code` (a system error code, or null), for a port it cannot listen on, which no line prints yet (flyingrobots/school#134) | A refusal to start |
+| `school.bridge.error` | `bridge.error` | `message`; for a port it cannot listen on also `host`, `port` and `code` (`EADDRINUSE` for a taken port, else the system's code or null) | A refusal to start, an uncaught throw or rejection, or a request handler's throw (answered 500) |
 
 No line holds a prompt or an answer. Before flyingrobots/school#135 the lines had no `_schema`
 and no `run`, and arguments were ignored.
@@ -204,8 +204,6 @@ A consumer must go by the exit status when a stream ends without the line it exp
   retention prints nothing: that dump is simply not pruned.
 - **The gate's crash line.** An uncaught throw in the gate is an `error.failed` line, but on stderr
   (it is `server/jsonl.ts`'s handler), unlike its other lines.
-- **The bridge's uncaught errors.** A taken port, or a throw or rejection after start-up, is still
-  Bun's own uncaught-error output on stderr, not a line (flyingrobots/school#134).
 - **A hard crash, or writes below `console`.** A crash inside Bun or a native module, or output
   Bun writes straight to file descriptor 1 or 2, is not a line, in the gate or the bridge. The
   bridge's agents print into pipes the bridge reads, never into its own output.

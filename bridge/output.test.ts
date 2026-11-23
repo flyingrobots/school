@@ -79,6 +79,19 @@ describe("the bridge's output", () => {
     }
   });
 
+  test("bridge, a taken port: its bridge.error line, with host, port and code EADDRINUSE, validates; exit 2", async () => {
+    const holder = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    try {
+      const r = await once([], { SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: join(dir, "none.json"), SCHOOL_BRIDGE_PORT: String(holder.port) });
+      expect({ code: r.code, stderr: r.stderr }).toEqual({ code: 2, stderr: "" });
+      const out = bridgeSchemas.validated(r.stdout);
+      expect(out.at(-1)).toMatchObject({ kind: "bridge.error", host: "127.0.0.1", port: holder.port, code: "EADDRINUSE" });
+      expect(r.stdout).not.toContain(TOKEN);
+    } finally {
+      holder.stop(true);
+    }
+  });
+
   test("bridge --help: a help line, then every schema, exit 0, without a token or listening; --schema: every schema", async () => {
     const help = await once(["--help"], {});
     expect({ code: help.code, stderr: help.stderr }).toEqual({ code: 0, stderr: "" });

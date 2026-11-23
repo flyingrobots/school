@@ -76,7 +76,7 @@ function prose(l: Record<string, any>): string {
       exit: [
         { code: 0, meaning: "--help or --schema printed; or stopped." },
         { code: 1, meaning: "An uncaught throw or rejection after start-up." },
-        { code: 2, meaning: "Refused to start: an unknown argument, a bad setting, or an unreadable configuration file." },
+        { code: 2, meaning: "Refused to start: an unknown argument, a bad setting, an unreadable configuration file, or a port it cannot listen on." },
       ],
       output: [...schemas.keys()] });
     if (!human) printSchemas();
