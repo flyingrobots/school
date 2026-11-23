@@ -11,8 +11,6 @@ import { startBridge, startSchool, timeout, type Started } from "./testing/proce
 // Every test gets its own server, bridge, state and ports, and sets up what it needs: none
 // depends on another having run first.
 let root = "";
-let PORT = 0;
-let BRIDGE_PORT = 0;
 let base = "";
 let BRIDGE_URL = "";
 const TOKEN = "settings-token-NEVER-ECHO-ME";
@@ -27,10 +25,6 @@ const verdict = {
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), "school-settings-"));
-  PORT = 20000 + Math.floor(Math.random() * 20000);
-  BRIDGE_PORT = PORT + 1;
-  base = `http://127.0.0.1:${PORT}`;
-  BRIDGE_URL = `http://127.0.0.1:${BRIDGE_PORT}`;
   writeFileSync(join(root, "verdict.json"), JSON.stringify(verdict));
   writeFileSync(join(root, "agent"), `#!/bin/sh\ncat "${root}/verdict.json"\n`);
   chmodSync(join(root, "agent"), 0o755);
@@ -39,12 +33,15 @@ beforeEach(async () => {
     type: "page", id: "l1", title: "One", subtitle: "", children: [{ type: "explain", id: "e1", prompt: "Explain.", model: "M", sources: [] }],
   }));
   // A bridge with no configuration file yet: the settings page is how it gets one.
-  procs.push(await startBridge({ ...process.env, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: join(root, "bridge", "bridge.json"), SCHOOL_BRIDGE_PORT: String(BRIDGE_PORT) }));
+  const bridge = await startBridge({ ...process.env, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: join(root, "bridge", "bridge.json") });
+  procs.push(bridge);
+  BRIDGE_URL = bridge.url;
   // A server with no bridge configured at all, as the learner's was.
-  const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), PORT: String(PORT), HOST: "127.0.0.1" };
+  const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), HOST: "127.0.0.1" };
   delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_URL;
   delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_TOKEN;
   serverOut = await startSchool(env);
+  base = serverOut.url;
   procs.push(serverOut);
 }, timeout(2));
 afterEach(async () => {
@@ -231,8 +228,7 @@ async function touchEverything(at: string) {
 
 /** A second server, with the bridge settings given in its environment. */
 async function serverWith(extra: Record<string, string>) {
-  const port = PORT + 2;
-  const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state-env"), PORT: String(port), HOST: "127.0.0.1", ...extra };
+  const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state-env"), HOST: "127.0.0.1", ...extra };
   for (const k of ["SCHOOL_BRIDGE_URL", "SCHOOL_BRIDGE_TOKEN"]) if (!(k in extra)) delete (env as Record<string, string | undefined>)[k];
   const s = await startSchool(env);
   procs.push(s);

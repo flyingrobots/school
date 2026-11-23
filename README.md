@@ -67,7 +67,7 @@ What an agent may do is set by its own command: the example turns off Claude Cod
 | --- | --- |
 | `SCHOOL_BRIDGE_TOKEN` | Required; at least 16 characters, the same value the server has. |
 | `SCHOOL_BRIDGE_CONFIG` | Default `~/.config/school/bridge.json`. Re-read on every request. |
-| `SCHOOL_BRIDGE_HOST`, `SCHOOL_BRIDGE_PORT` | Default `127.0.0.1:4748`. |
+| `SCHOOL_BRIDGE_HOST`, `SCHOOL_BRIDGE_PORT` | Default `127.0.0.1:4748`. Port `0` lets the OS choose; the `bridge.listening` log line gives the port. |
 
 `bun test` runs the suite. `server/compose.yaml` runs it in Docker behind `tailscale serve` (ADR 4); copy `server/compose.example.env` to `server/.env` and set your course, state and source paths first.
 
