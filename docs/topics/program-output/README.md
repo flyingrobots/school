@@ -22,7 +22,8 @@ The cases that pin this page are in its [test plan](test-plan.md).
   (draft 2020-12) published as `<id>.schema.json`. Each message type is versioned on its own, at
   `1.0.0` today. Each schema admits no field it does not list.
 - **Every line stands alone.** Besides `_schema` it carries `kind` and `run`, one UUID per
-  invocation (per process, for the bridge), on every line.
+  invocation (per process, for the bridge), on every line: a random (version 4) UUID, which
+  the schemas require.
 - **`--help` and `--schema`** print JSON Lines and exit 0, reading no setting and changing nothing.
   `--help` prints a `help` line (summary, usage, options, settings, exit codes, and the id of
   every message type), then one `schema` line per message type. `--schema` prints only the
@@ -84,25 +85,21 @@ succeeded was dropped.
 
 ### What the backup job printed
 
-`server/backup/backup.sh` run as compose runs it (its schemas mounted at `/backup/schemas`), in the
-service's image, against a scratch Postgres 18.7, on 2026-11-23. The schedule, then `docker stop`;
-then `once --human`; then a dump of a database that does not exist; then a bad setting. Each
-command's stdout and stderr are shown together.
+`server/backup/backup.sh` from `server/`, under the host's `/bin/sh`, on 2026-11-23: a bad setting,
+the same as prose, and an empty argument. Each command's stdout and stderr are shown together.
+These paths stop before the script touches the folder or the database, so they run outside the
+image; the lines a dump prints (`started`, `dumped`, `pruned`, `waiting`, `failed`, `stopped`) are
+checked by the tests in the image, and their fields are in the table above.
 
 ```text
-$ backup.sh   # the schedule, then docker stop
-{"_schema":{"id":"school.backup.started","version":"1.0.0"},"kind":"backup","event":"started","intervalSeconds":21600,"keep":28,"run":"62bcc427-530c-dc96-2b3f-5abec5ade945"}
-{"_schema":{"id":"school.backup.dumped","version":"1.0.0"},"kind":"backup","event":"dumped","file":"school-20261123T082433Z.dump","bytes":1105,"run":"62bcc427-530c-dc96-2b3f-5abec5ade945"}
-{"_schema":{"id":"school.backup.waiting","version":"1.0.0"},"kind":"backup","event":"waiting","seconds":21600,"run":"62bcc427-530c-dc96-2b3f-5abec5ade945"}
-{"_schema":{"id":"school.backup.stopped","version":"1.0.0"},"kind":"backup","event":"stopped","run":"62bcc427-530c-dc96-2b3f-5abec5ade945"}
-$ backup.sh once --human
-dumped school-20261123T082437Z.dump (1105 bytes)
-exit=0
-$ backup.sh once   # PGDATABASE=no_such_database
-{"_schema":{"id":"school.backup.failed","version":"1.0.0"},"kind":"backup","event":"failed","file":"school-20261123T082437Z.dump","message":"pg_dump: error: connection to server at \"host.docker.internal\" (0.250.250.254), port 55435 failed: FATAL:  database \"no_such_database\" does not exist","run":"5b3e3d22-e539-d7f7-edb7-746f10693b78"}
-exit=1
 $ backup.sh once   # SCHOOL_BACKUP_KEEP=0
-{"_schema":{"id":"school.backup.error.refused","version":"1.0.0"},"kind":"backup","event":"error","error":"refused","code":2,"message":"SCHOOL_BACKUP_KEEP must be a positive whole number, not \"0\"","run":"856d00d1-d2f0-464b-3a2d-71caf2eda8b9"}
+{"_schema":{"id":"school.backup.error.refused","version":"1.0.0"},"kind":"backup","event":"error","error":"refused","code":2,"message":"SCHOOL_BACKUP_KEEP must be a positive whole number, not \"0\"","run":"a9896083-23e8-4a18-ad6c-53828c5bb34c"}
+exit=2
+$ backup.sh once --human   # SCHOOL_BACKUP_KEEP=0
+error (refused): SCHOOL_BACKUP_KEEP must be a positive whole number, not "0"
+exit=2
+$ backup.sh ''   # an empty argument
+{"_schema":{"id":"school.backup.error.usage","version":"1.0.0"},"kind":"backup","event":"error","error":"usage","code":2,"message":"unknown argument \"\"; usage: backup.sh [once] | --help | --schema [--human]","run":"5bad2295-f786-4e8c-acf7-a4d34c8e4e11"}
 exit=2
 ```
 

@@ -27,6 +27,9 @@ In `server/backup/backup.test.ts`. The cases without Postgres run the script und
 | BK-R5 | Stopped mid-dump (real Postgres) | The schedule with a slow `pg_dump`, TERM while its `.partial` file exists: `started` then `stopped`, exit 0, stderr empty, the folder empty | implemented | `Bun.SQL: stopped mid-dump, the schedule prints a valid stopped line, exits 0 and leaves no temporary file` |
 | BK-E1 | Bad settings | `SCHOOL_BACKUP_KEEP` 0 or with a quote, backslash and the password in it, `SCHOOL_BACKUP_INTERVAL_SECONDS` -5: one `error.refused` line on stderr naming the setting, exit 2, the password never printed | implemented | `backup, a bad setting: one valid refused error line on stderr naming it, exit 2, the password never printed` |
 | BK-E2 | Usage | An unknown argument: one `error.usage` line naming it, exit 2 | implemented | `backup, an unknown argument: one valid usage error line on stderr, exit 2` |
+| BK-E3 | An empty argument | `backup.sh ''` is one `error.usage` line, exit 2, as any unknown argument | implemented | `backup, an empty argument is still an unknown argument: one valid usage error line, exit 2` |
+| BK-E4 | Escaping and scrubbing | A setting holding U+0001, CR, U+001F, a tab, a quote, a backslash and a two-line password: the message keeps each control character escaped (CR as `\r`), and the password is `(redacted)` whole | implemented | `backup, a message's control characters are escaped, \r kept as \r, and a password spanning lines is redacted whole` |
+| BK-R6 | Run ids | 20 runs: each `run` a version 4 UUID, all different | implemented | `backup, every run id is a random (version 4) UUID, different each run` |
 | BK-P1 | Prose | `--help --human` names the settings and `--schema`, `--humanize` prints the same; a refusal is `error (refused): ...`; `--schema --human` prints each schema; no line is JSON | implemented | `backup --human and --humanize: the help, a bad setting and the schemas are prose, no line JSON` |
 
 ## The Postgres gate
@@ -61,4 +64,4 @@ In `bridge/output.test.ts`, running the real process.
 
 | ID | Case | Oracle | Status | Test |
 | --- | --- | --- | --- | --- |
-| W-1 | `lineWriter` | `_schema` first, then the body as given, scrubbed; nothing added; an unpublished type throws and prints nothing | implemented | `server/jsonl.test.ts`: `lineWriter: a line is _schema first, then the body as given, scrubbed; no kind, run or time is added; an unpublished type is refused` |
+| W-1 | `lineWriter` | `_schema` first, then the body as given, scrubbed; nothing added; an unpublished type, or a body carrying its own `_schema`, throws and prints nothing | implemented | `server/jsonl.test.ts`: `lineWriter: a line is _schema first, then the body as given, scrubbed; no kind, run or time is added; an unpublished type, or a body carrying its own _schema, is refused` |

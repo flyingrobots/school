@@ -261,16 +261,14 @@ school.views|0|d41d8cd98f00b204e9800998ecf8427e
 ```
 
 The backup service's lines in that drill predate flyingrobots/school#135, which added `_schema` and
-`run` to every line. What the service prints now, from `server/backup/backup.sh` run as compose
-runs it, in the same image, against a scratch Postgres 18.7 on 2026-11-23,
-is in [the programs' output](../../topics/program-output/README.md#what-the-backup-job-printed).
-The schedule's first lines, then `docker stop`:
+`run` to every line. Each line it prints now is in
+[the programs' output](../../topics/program-output/README.md#the-backup-job), with real lines from
+2026-11-23; for example, a retention that is not a positive whole number:
 
 ```text
-{"_schema":{"id":"school.backup.started","version":"1.0.0"},"kind":"backup","event":"started","intervalSeconds":21600,"keep":28,"run":"62bcc427-530c-dc96-2b3f-5abec5ade945"}
-{"_schema":{"id":"school.backup.dumped","version":"1.0.0"},"kind":"backup","event":"dumped","file":"school-20261123T082433Z.dump","bytes":1105,"run":"62bcc427-530c-dc96-2b3f-5abec5ade945"}
-{"_schema":{"id":"school.backup.waiting","version":"1.0.0"},"kind":"backup","event":"waiting","seconds":21600,"run":"62bcc427-530c-dc96-2b3f-5abec5ade945"}
-{"_schema":{"id":"school.backup.stopped","version":"1.0.0"},"kind":"backup","event":"stopped","run":"62bcc427-530c-dc96-2b3f-5abec5ade945"}
+$ backup.sh once   # SCHOOL_BACKUP_KEEP=0
+{"_schema":{"id":"school.backup.error.refused","version":"1.0.0"},"kind":"backup","event":"error","error":"refused","code":2,"message":"SCHOOL_BACKUP_KEEP must be a positive whole number, not \"0\"","run":"a9896083-23e8-4a18-ad6c-53828c5bb34c"}
+exit=2
 ```
 
 ## How this is tested
