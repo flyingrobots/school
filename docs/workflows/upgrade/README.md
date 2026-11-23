@@ -98,7 +98,9 @@ migrate-1  | {"kind":"school.migrate","event":"done","ok":true,"where":"postgres
 school-1   | school: record in Postgres at postgres://postgres:5432/school as school_app
 ```
 
-`applied` lists the migrations this run applied; `[]` means the record was already current.
+`applied` lists the migrations this run applied; `[]` means the record was already current. A run
+that applies migrations also prints an `applied` line for each as it commits. Every line, and
+`--help` and `--schema`, are described in [the migrate job's output](../../topics/migrate-job/README.md).
 
 ## When it fails
 
@@ -107,8 +109,8 @@ school-1   | school: record in Postgres at postgres://postgres:5432/school as sc
 | What you see | What it means | What to do |
 | --- | --- | --- |
 | `required variable SCHOOL_APP_PASSWORD is missing a value`, and nothing starts | Step 3 was skipped | Do step 3, then step 4 |
-| `migrate` is `Exited (2)`, with an `error` line in `docker compose logs migrate` | A setting is missing or invalid, for example `SCHOOL_APP_PASSWORD` too short or with other characters than letters and digits. The line says which | Fix `server/.env`, then step 4 |
-| `migrate` is `Exited (1)`, with an `error` line | The database refused, for example a migration failed (the line names the file, which was rolled back) or the superuser password is wrong | Read the message. Compose does not start the new server while the job fails; whether a server container already running keeps serving was not drilled |
+| `migrate` is `Exited (2)`, with an `"error":"settings"` line in `docker compose logs migrate` | A setting is missing or invalid, for example `SCHOOL_APP_PASSWORD` too short or with other characters than letters and digits. The line says which | Fix `server/.env`, then step 4 |
+| `migrate` is `Exited (1)`, with an `"error":"failed"` line | The database refused, for example a migration failed (the line names the file, which was rolled back) or the superuser password is wrong | Read the message. Compose does not start the new server while the job fails; whether a server container already running keeps serving was not drilled |
 | `school` restarts over and over, and its log says `the server logs into Postgres only as school_app ... this one ...` | The login check refused: it names each reason. For example `school_app` was granted something by hand, or the record's database lacks the job's `REVOKE` | Undo the hand grant (never grant `school_app` anything by hand), or run step 4 so the job runs again |
 | `school` restarts over and over, and its log says `permission denied for schema public` | An old server image, from before flyingrobots/school#91, is running beside the new settings (seen in review, with a `compose.yaml` without `pull_policy: build`) | Run `docker compose up -d --build` |
 | `No such image: <project>-migrate:latest` | `up` ran with `--no-build`, so nothing was built | Run `docker compose up -d --build` |
@@ -124,7 +126,8 @@ The upgrade above was drilled on 2026-11-23 for flyingrobots/school#112. The sta
 deployment at `1a7c021`, the last layout in which the server migrated as the superuser. It held one
 answer written through School's API. Step 4 was run first as plain `docker compose up -d`, to check
 that `pull_policy: build` replaces the old server image, and then as written. The full transcript,
-with no password in it, is in that pull request. Abridged:
+with no password in it, is in that pull request. Its `migrate` lines predate
+flyingrobots/school#120, which added `_schema`, `run` and `at` to every line. Abridged:
 
 ```text
 $ docker compose up -d            # before step 3

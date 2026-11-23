@@ -179,3 +179,25 @@ test("the migration lock is taken before the ledger is touched, and released aft
     expect(held).toEqual([]);
   }
 }, SLOW);
+
+// flyingrobots/school#120: the migrate job prints a line for each file as it commits.
+test("onApplied hears of each file once its transaction commits, in order; not of a failing file; nothing on a second run", async () => {
+  const d = folder({ "0001_a.sql": "CREATE TABLE school.a (id int);", "0002_b.sql": "CREATE TABLE school.b (id int);" });
+  const db = new PGlite();
+  const heard: string[] = [];
+  expect(await migrate(db, d, (m) => heard.push(`${m.version} ${m.name}`))).toEqual({ applied: [1, 2] });
+  expect(heard).toEqual(["1 0001_a.sql", "2 0002_b.sql"]);
+  expect(await migrate(db, d, (m) => heard.push(`${m.version} ${m.name}`))).toEqual({ applied: [] });
+  expect(heard).toHaveLength(2);
+
+  const bad = folder({ "0001_a.sql": "CREATE TABLE school.a (id int);", "0002_bad.sql": "SELECT no_such_function();" });
+  const failing: string[] = [];
+  await expect(migrate(new PGlite(), bad, (m) => failing.push(m.name))).rejects.toThrow(/0002_bad\.sql/);
+  expect(failing).toEqual(["0001_a.sql"]);
+
+  // Told after COMMIT: a listener that throws stops the run, but the file it heard of stays applied.
+  const after = new PGlite();
+  await expect(migrate(after, d, () => { throw new Error("listener failed"); })).rejects.toThrow(/listener failed/);
+  expect(await ledger(after)).toEqual([{ version: 1, name: "0001_a.sql" }]);
+  expect(await tables(after)).toEqual(["a"]);
+}, SLOW);
