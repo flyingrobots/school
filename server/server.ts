@@ -11,7 +11,7 @@ import { legacyRefusal } from "./legacy.ts";
 import { AID_CAPTURE_VERSIONS, AidQuery, AidRequest, Exposure, ExplanationSubmission, GradeRequest, Submission, ViewEvent, type AidTracking } from "./core/model.ts";
 import type { Grader } from "./core/ports.ts";
 import { createSchool, resumeFrom, type CourseOutline } from "./core/school.ts";
-import { bridgeClient, bridgeStatus, effectiveBridge, loadSettings, saveSettings, settingsFile, toBridge, validToken, validUrl } from "./settings.ts";
+import { bridgeClient, bridgeStatus, effectiveBridge, loadSettings, saveSettings, settingsFile, toBridge, unpaired, UNPAIRED, validToken, validUrl } from "./settings.ts";
 import { ConfigError, course, courseNames, mountTable, parseConfig, type Course } from "./config.ts";
 import { CourseFileError, readCourseFile } from "./course-file.ts";
 import { allowedHosts, hostAllowed } from "./hosts.ts";
@@ -97,12 +97,14 @@ const grader: Grader = {
   adapter: "bridge", model: "", rubricVersion: RUBRIC_VERSION, promptVersion: PROMPT_VERSION,
   grade: async (input) => {
     const c = currentBridge();
-    return c === null ? { status: "failed", error: "no bridge is connected yet; connect one in Settings" } : callBridge(c, input);
+    if (c !== null) return callBridge(c, input);
+    return { status: "failed", error: unpaired(bridgeNow()) ? UNPAIRED : "no bridge is connected yet; connect one in Settings" };
   },
 };
 {
   const b = bridgeNow();
   console.log(b.url === null ? "school: no bridge connected; explanations are saved but not graded until one is (Settings)"
+    : unpaired(b) ? `school: not grading: ${UNPAIRED}`
     : `school: grading through the bridge at ${b.url} (from ${b.urlFrom})`);
 }
 
@@ -436,7 +438,7 @@ const http = Bun.serve({
     if (req.method === "POST" && pathname.startsWith("/api/")) return notFound();
     if (req.method !== "GET") return new Response("Method not allowed", { status: 405 });
 
-    if (pathname === "/api/settings/status") return json(await bridgeStatus(currentBridge()));
+    if (pathname === "/api/settings/status") return json(unpaired(bridgeNow()) ? { connection: "none", error: UNPAIRED, agents: [] } : await bridgeStatus(currentBridge()));
     if (pathname === "/api/settings/bridge") {
       // Whether a token is set, never the token itself.
       const b = bridgeNow();
