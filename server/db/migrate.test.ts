@@ -64,6 +64,10 @@ test("misnamed or duplicated version numbers are refused before anything runs", 
 });
 
 /** The shipped migrations, copied, plus `extra` files: a later migration as its author would write it. */
+/** The shipped versions, and the file name prefix of the next one, so these tests outlive each new migration. */
+const SHIPPED = readMigrations(MIGRATIONS).map((m) => m.version);
+const NEXT = String(SHIPPED.length + 1).padStart(4, "0");
+
 function shippedPlus(extra: Record<string, string>): string {
   const d = folder(extra);
   for (const f of readdirSync(MIGRATIONS)) copyFileSync(join(MIGRATIONS, f), join(d, f));
@@ -71,11 +75,11 @@ function shippedPlus(extra: Record<string, string>): string {
 }
 
 test("a later migration that never switches role still creates objects owned by school_owner, revoked from PUBLIC", async () => {
-  const d = shippedPlus({ "0002_later.sql": `
+  const d = shippedPlus({ [`${NEXT}_later.sql`]: `
     CREATE FUNCTION school.forgot_role() RETURNS int LANGUAGE sql SECURITY DEFINER SET search_path = school, pg_temp AS 'SELECT 1';
     CREATE TABLE school.later (id int);` });
   const db = new PGlite();
-  expect(await migrate(db, d)).toEqual({ applied: [1, 2] });
+  expect(await migrate(db, d)).toEqual({ applied: [...SHIPPED, SHIPPED.length + 1] });
   await db.exec("CREATE ROLE stranger NOLOGIN");
   const f = (await db.query<{ owner: string; app: boolean; stranger: boolean; acl: string | null }>(`
     SELECT pg_get_userbyid(proowner) AS owner, proacl::text AS acl,
@@ -87,9 +91,9 @@ test("a later migration that never switches role still creates objects owned by 
 }, SLOW);
 
 test("a later migration cannot create objects outside schema school", async () => {
-  const d = shippedPlus({ "0002_elsewhere.sql": "CREATE FUNCTION public.elsewhere() RETURNS int LANGUAGE sql AS 'SELECT 1';" });
+  const d = shippedPlus({ [`${NEXT}_elsewhere.sql`]: "CREATE FUNCTION public.elsewhere() RETURNS int LANGUAGE sql AS 'SELECT 1';" });
   const db = new PGlite();
-  await expect(migrate(db, d)).rejects.toThrow(/0002_elsewhere\.sql: permission denied for schema public/);
+  await expect(migrate(db, d)).rejects.toThrow(new RegExp(`${NEXT}_elsewhere\\.sql: permission denied for schema public`));
   expect((await db.query("SELECT 1 FROM pg_proc WHERE proname = 'elsewhere'")).rows).toEqual([]);
 }, SLOW);
 

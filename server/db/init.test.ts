@@ -4,7 +4,7 @@
 // the functions through the LearningRecord port is flyingrobots/school#46.
 import { describe, expect, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
-import { migrate } from "./migrate.ts";
+import { migrate, readMigrations } from "./migrate.ts";
 
 /** Every table of the record. Asserted equal to the schema's tables, so a new one cannot be missed. */
 const RECORD_TABLES = ["answers", "encounters", "explanations", "exposures", "gradings", "snapshots", "views"];
@@ -12,7 +12,7 @@ const RECORD_TABLES = ["answers", "encounters", "explanations", "exposures", "gr
 /** The functions `school_app` may execute, and nothing else. */
 const APP_FUNCTIONS = [
   "encounter_answers", "encounter_explanations", "explanation", "lesson_progress", "open_encounter",
-  "record_exposure", "record_grading", "record_view", "save_explanation", "submit",
+  "record_exposure", "record_grading", "record_view", "save_explanation", "submission_aid", "submit",
 ];
 
 const SLOW = 30_000; // PGlite starts a whole Postgres in process.
@@ -78,7 +78,7 @@ async function populate(db: PGlite): Promise<{ encounter: string; submission: st
     expect(await saveExplanation(db, { encounter: e.id, id: submission })).toBe("stored");
     await recordGrading(db, submission, at(3));
     await db.query("SELECT school.record_view('c', 'l1', $1)", [at(4)]);
-    await db.query("SELECT school.record_exposure($1, 'e1', 'model-answer', $2)", [e.id, at(5)]);
+    expect((await db.query<{ s: string }>("SELECT school.record_exposure($1, $2, 'e1', 'model-answer', $3) AS s", [uuid(), e.id, at(5)])).rows[0]!.s).toBe("stored");
     return { encounter: e.id, submission };
   });
 }
@@ -214,7 +214,7 @@ describe("acceptance", () => {
   test("running the migrations twice changes nothing", async () => {
     const db = new PGlite();
     const first = await migrate(db);
-    expect(first.applied).toEqual([1]);
+    expect(first.applied).toEqual(readMigrations().map((m) => m.version));
     const before = await fingerprint(db);
     const second = await migrate(db);
     expect(second.applied).toEqual([]);
@@ -465,8 +465,9 @@ describe("functions", () => {
     const db = await fresh();
     const { encounter } = await populate(db);
     await as(db, "school_app", async () => {
-      expect(await error(db.query("SELECT school.record_exposure($1, 'e1', 'peeking', $2)", [encounter, at(6)]))).toContain("exposures_kind");
-      expect(await error(db.query("SELECT school.record_exposure($1, 'e1', 'hint', $2)", [uuid(), at(6)]))).toContain("exposures_encounter_id_fkey");
+      expect(await error(db.query("SELECT school.record_exposure($1, $2, 'e1', 'peeking', $3)", [uuid(), encounter, at(6)]))).toContain("exposures_kind");
+      // No such encounter: refused before any insert (0002), so the foreign key is never reached.
+      expect((await db.query<{ s: string }>("SELECT school.record_exposure($1, $2, 'e1', 'hint', $3) AS s", [uuid(), uuid(), at(6)])).rows[0]!.s).toBe("rejected");
       const untracked = await open(db, at(0), page("l3", [quiz("q1")]), "l3");
       expect(untracked.resumed).toBe(false);
     });

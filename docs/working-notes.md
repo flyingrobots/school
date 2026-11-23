@@ -38,8 +38,13 @@ Practical notes for anyone — human or agent — changing the framework.
 - The Postgres adapter (`server/adapters/postgres.ts`) issues only `SELECT * FROM school.<function>($1, ...)`
   as `school_app`; its test refuses any other statement. It talks to a driver through the `Sql` port
   (`server/adapters/sql.ts`); the PGlite driver is a test helper in `server/testing/pglite.ts`, since
-  PGlite is a dev dependency and `testing/` is not shipped. It opens every encounter with
-  `aid_tracking` NULL (aid not observed) until exposures are recorded (flyingrobots/school#29, #51).
+  PGlite is a dev dependency and `testing/` is not shipped. It opens an encounter with the
+  `aid_tracking` its caller passes: the lesson API's `?aid=` capture version, or NULL (aid not
+  observed) when the client sends none. A client may send `?aid=1` only if it records, through
+  `POST /api/exposure`, every exposure it shows; the pages do not yet (flyingrobots/school#51).
+- `LearningRecord.recordsExposures` says whether an adapter stores exposures. The contract's aid
+  cases run only for one that does; one that does not must refuse every exposure as `unsupported`
+  and report every aid as unknown. SQLite does not, and is not getting them (flyingrobots/school#49).
 - Typecheck the server with `bunx tsc -p server` after `bun install` in `server/`.
   A server file that is not TypeScript still needs adding explicitly.
 - `server/compose.yaml` names no course. Its paths come from a gitignored `server/.env`; copy

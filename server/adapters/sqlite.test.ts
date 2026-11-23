@@ -17,4 +17,4 @@ learningRecordContract("sqlite", async () => {
   db.exec("PRAGMA foreign_keys = ON;");
   migrate(db);
   return sqliteRecord(db);
-});
+}, { recordsExposures: false }); // SQLite has no exposures table; it is being deleted (flyingrobots/school#49).

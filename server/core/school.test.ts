@@ -59,3 +59,33 @@ test("a grading failure is stored as failed, with no findings, never as a verdic
   await school.gradeExplanation("id");
   expect(stored[0]!.g).toMatchObject({ status: "failed", findings: null, error: "the bridge did not answer in time", model: null, raw: null });
 });
+
+test("opening a lesson passes the client's aid capture version, or null, to the record", async () => {
+  const opened: unknown[] = [];
+  const record = {
+    openEncounter: async (o: unknown) => (opened.push(o), { id: "e", hash: "h", resumed: false }),
+    encounterAnswers: async () => [],
+    encounterExplanations: async () => [],
+  } as unknown as LearningRecord;
+  const school = createSchool({ record, grader: grader({ status: "failed", error: "x" }), clock });
+  const page: Block = { type: "page", id: "l1", title: "l1", subtitle: "", children: [] };
+  await school.openLesson("c", page, 1);
+  await school.openLesson("c", page, null);
+  expect(opened).toEqual([
+    { course: "c", lesson: "l1", page, now: NOW, aidTracking: 1 },
+    { course: "c", lesson: "l1", page, now: NOW, aidTracking: null },
+  ]);
+});
+
+test("an exposure is recorded at the clock's time, and aid is the record's to derive", async () => {
+  const calls: unknown[] = [];
+  const record = {
+    recordExposure: async (e: unknown, now: string) => (calls.push([e, now]), { status: "stored" }),
+    aid: async (id: string) => (calls.push(id), "aided"),
+  } as unknown as LearningRecord;
+  const school = createSchool({ record, grader: grader({ status: "failed", error: "x" }), clock });
+  const x = { exposureId: "x", encounterId: "e", blockId: "e1", kind: "model-answer" } as const;
+  expect(await school.recordExposure(x)).toEqual({ status: "stored" });
+  expect(await school.submissionAid("s")).toBe("aided");
+  expect(calls).toEqual([[x, NOW], "s"]);
+});
