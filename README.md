@@ -82,7 +82,7 @@ What an agent may do is set by its own command: the example turns off Claude Cod
 
 The record lives in Postgres, and `SCHOOL_DATABASE_URL` says where; the server refuses to start without it. For a learner's record, use a Postgres server, as `server/compose.yaml` does: the migrate job applies the migrations as the owner and sets `school_app`'s password, and the server logs in as `school_app` (`postgres://school_app:password@host:5432/db`). `pglite:<dir>` keeps it in PGlite, a Postgres inside the server's process, for development and tests only: PGlite does not fsync, so a power cut can lose answers, and the server says so when it starts.
 
-`bun test` runs the suite. `server/compose.yaml` runs School in Docker behind `tailscale serve` (ADR 4), with a Postgres server beside it; copy `server/compose.example.env` to `server/.env` and set your course, state and source paths and the two Postgres passwords (the superuser's, which only the one-shot `migrate` service gets, and `school_app`'s) first.
+`bun test` runs the suite. `server/compose.yaml` runs School in Docker behind `tailscale serve` (ADR 4), with a Postgres server beside it; copy `server/compose.example.env` to `server/.env` and set your course, state and source paths and the two Postgres passwords (the superuser's, which only the one-shot `migrate` service and the `backup` service get, and `school_app`'s) first.
 
 ## How it is put together
 

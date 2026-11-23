@@ -1,0 +1,246 @@
+---
+title: "Back up and restore the learning record"
+author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
+created: 2026-11-22
+updated: 2026-11-22
+status: "How-to. Describes the `backup` service in server/compose.yaml (flyingrobots/school#48)."
+---
+
+# Back up and restore the learning record
+
+This page is a how-to for the operator of a School deployment under `docker compose`. It covers
+checking that backups run, drilling a restore, and restoring for real, either over a damaged
+database or after losing the database's volume.
+
+## What runs
+
+The `backup` service in `server/compose.yaml` runs `server/backup/backup.sh` in the database's own
+image, `postgres:18.7` pinned by digest, so `pg_dump` is always the same major version as the
+server it dumps.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `SCHOOL_BACKUP_INTERVAL_SECONDS` | `21600` (six hours) | Time between dumps. The first dump is taken when the service starts. |
+| `SCHOOL_BACKUP_KEEP` | `28` (a week at the default interval) | How many dumps are kept. After each good dump, older ones are deleted. |
+
+Set either in `server/.env`. The service refuses to start (exit 2) if either is not a positive
+whole number.
+
+- **Format.** Each dump is `pg_dump --format=custom` of database `school`, saved as
+  `/backups/school-<UTC time>.dump`, for example `school-20261123T041319Z.dump`, in the named
+  volume `backups`.
+- **Atomicity.** `pg_dump` writes to a hidden `.partial` file, which is renamed only once it
+  succeeds. A dump that fails leaves no file, deletes nothing, and is tried again five minutes later.
+- **Retention.** Only files named `school-<UTC time>.dump` are counted and pruned. A copy saved
+  under any other name in the volume is never touched.
+- **File modes.** The folder is `0700` and every dump `0600`, owned by root in the container.
+- **Secrets.** The password comes from `SCHOOL_POSTGRES_PASSWORD` in the environment, as it does
+  for the database. Nothing the service prints contains it.
+- **Output.** Every line is one JSON object with `"kind":"backup"` and an `event`: `started`,
+  `dumped` (with `file` and `bytes`), `pruned`, `waiting`, `failed` (with pg_dump's `message`),
+  `error` or `stopped`.
+
+> [!WARNING]
+> The dumps live on the same machine as the database. `docker compose down -v` deletes the
+> `backups` volume along with the record. Copying dumps off the machine is out of scope here
+> (flyingrobots/school#48). To keep one elsewhere, copy it out of the volume yourself (step 3).
+
+## Before you start
+
+Run every command from `server/`, with the deployment's `server/.env` in place. Compose names the
+project after the folder, so its volumes are `server_postgres` and `server_backups` unless you set
+`COMPOSE_PROJECT_NAME`. `docker volume ls` shows them.
+
+## 1. Check that backups run
+
+```sh
+docker compose logs backup
+docker compose exec backup ls -l /backups
+```
+
+Expect a `dumped` line no older than the interval, and dumps of growing size as the record grows.
+A `failed` line carries pg_dump's own message.
+
+## 2. Take a dump now
+
+Do this before anything risky, and at the start of a drill:
+
+```sh
+docker compose exec backup /bin/sh /backup/backup.sh once
+```
+
+It takes one dump and applies the retention, then exits: `0` if the dump succeeded, `1` if it failed.
+
+## 3. Copy a dump out of the volume
+
+```sh
+docker compose cp backup:/backups/school-20261123T041319Z.dump ./
+chmod 600 school-20261123T041319Z.dump
+```
+
+The copy holds the learner's whole record. Keep it as private as the record.
+
+## 4. Drill a restore
+
+A drill restores a dump beside the live database, checks that it holds the same record, and leaves
+the live database untouched. Run one after changing anything about the deployment, and on a
+schedule you will keep.
+
+1. Stop the server, so the record does not change between the dump and the check:
+
+   ```sh
+   docker compose stop school
+   ```
+
+2. Take a dump (step 2) and note the file it names.
+
+3. Check that the archive reads, and restore it into a new, empty database:
+
+   ```sh
+   docker compose exec backup pg_restore --list /backups/<file> | grep -c 'TABLE DATA'
+   docker compose exec backup createdb school_restore
+   docker compose exec backup pg_restore --exit-on-error --single-transaction --dbname=school_restore /backups/<file>
+   ```
+
+   `--single-transaction` with `--exit-on-error` restores everything or nothing; a silent exit
+   status `0` means everything.
+
+4. Verify. `server/backup/verify.sql` prints every table of the record with its row count and a
+   digest of its rows, so two databases holding the same record print the same lines:
+
+   ```sh
+   docker compose exec -T backup psql --dbname=school --tuples-only --no-align < backup/verify.sql > /tmp/school.verify
+   docker compose exec -T backup psql --dbname=school_restore --tuples-only --no-align < backup/verify.sql > /tmp/school_restore.verify
+   diff /tmp/school.verify /tmp/school_restore.verify && echo identical
+   ```
+
+5. End the drill, either by dropping the copy and starting the server again:
+
+   ```sh
+   docker compose exec postgres psql --username=postgres --dbname=postgres --command='DROP DATABASE school_restore'
+   docker compose start school
+   ```
+
+   or by switching to it (step 5), which proves the switch as well.
+
+## 5. Restore over the live database
+
+Use this when the volume is fine but the record in it is not, for example after a bad change.
+Choose the newest dump from before the damage (step 1), then:
+
+1. Stop everything that connects to the database. The backup service is stopped too, so it does
+   not dump the damaged record over good dumps while you work:
+
+   ```sh
+   docker compose stop school backup
+   ```
+
+2. Restore the dump into `school_restore` (step 4.3), and check that `verify.sql` lists every table
+   with plausible counts (step 4.4, against `school_restore` only).
+
+3. Switch: keep the damaged database under another name, and give the restored one the live name.
+
+   ```sh
+   docker compose exec postgres psql --username=postgres --dbname=postgres \
+     --command='ALTER DATABASE school RENAME TO school_before_restore' \
+     --command='ALTER DATABASE school_restore RENAME TO school'
+   docker compose up -d school backup
+   ```
+
+   `up` runs the one-shot `migrate` service first, since the server depends on it. Its `done` line
+   lists no applied migration when the dump came from the same version of School; a dump from an
+   older version is migrated forward. It also revokes `TEMPORARY` from `PUBLIC` on the renamed
+   database, which the restored copy was created without, before the server logs in as
+   `school_app`.
+
+4. Once the server answers with the record you expect, drop the damaged copy:
+
+   ```sh
+   docker compose exec postgres psql --username=postgres --dbname=postgres --command='DROP DATABASE school_before_restore'
+   ```
+
+## 6. Restore after losing the database's volume
+
+Use this when the `postgres` volume is gone or unusable but the `backups` volume, or a copy of a
+dump, survives. The roles `school_owner` and `school_app` belong to the Postgres server, not to a
+database, so a dump does not hold them: create them before restoring.
+
+1. Stop everything, and remove the database's volume only if it is still there and unusable.
+   Never pass `-v`, which would delete the backups too.
+
+   ```sh
+   docker compose down
+   docker volume rm server_postgres
+   ```
+
+2. Start the database alone. It creates an empty `school` database with the password in
+   `server/.env`.
+
+   ```sh
+   docker compose up -d postgres
+   ```
+
+3. Create the roles, as the migrations would, then restore into `school`. `docker compose run`
+   starts a one-off container of the backup service with its volume and connection settings,
+   without starting its schedule, which would otherwise dump the empty database first.
+
+   ```sh
+   docker compose run --rm --entrypoint ls backup -l /backups
+   docker compose exec postgres psql --username=postgres --dbname=school \
+     --command='CREATE ROLE school_owner NOLOGIN' --command='CREATE ROLE school_app NOLOGIN'
+   docker compose run --rm --entrypoint pg_restore backup --exit-on-error --single-transaction --dbname=school /backups/<file>
+   docker compose run --rm -T --entrypoint psql backup --tuples-only --no-align < backup/verify.sql
+   ```
+
+   If the `backups` volume is gone too but you kept a copy (step 3), put it back first:
+   `docker compose up -d backup`, then `docker compose cp <file> backup:/backups/`, then
+   `docker compose stop backup`. Starting the service dumps the empty database once; that dump
+   is harmless, but do not restore it.
+
+4. Start the rest:
+
+   ```sh
+   docker compose up -d
+   ```
+
+   The `migrate` service runs before the server. It applies nothing, because the dump holds the
+   migration history, and it gives `school_app` its `LOGIN` and the password `SCHOOL_APP_PASSWORD`
+   from `server/.env`, so the server can log in again.
+
+## What a drill printed
+
+These are abridged from the drill of 2026-11-22, run for flyingrobots/school#48 against a
+throwaway course with three answers written through School's API. The full transcript is in that
+pull request.
+
+Step 4, the verification of the restored database (the `diff` printed `identical`):
+
+```text
+public.schema_migrations|5|2f6d0b614432060504c37bb893f6ebb0
+school.answers|3|49a7d9c8e27f3227000dd6defce51e42
+school.decision_notes|0|d41d8cd98f00b204e9800998ecf8427e
+school.encounters|1|b9b2c55e8fc4fa350f43f681ca024a89
+school.explanations|0|d41d8cd98f00b204e9800998ecf8427e
+school.exposures|0|d41d8cd98f00b204e9800998ecf8427e
+school.gradings|0|d41d8cd98f00b204e9800998ecf8427e
+school.snapshots|1|5db55c5e0b50269d07deb29d778f3b07
+school.views|0|d41d8cd98f00b204e9800998ecf8427e
+```
+
+The backup service after the restore of step 6:
+
+```text
+{"kind":"backup","event":"started","intervalSeconds":21600,"keep":28}
+{"kind":"backup","event":"dumped","file":"school-20261123T041350Z.dump","bytes":63957}
+{"kind":"backup","event":"waiting","seconds":21600}
+```
+
+## How this is tested
+
+`server/backup/backup.test.ts` runs the script and the restore of step 4 in the same image, against
+a real Postgres. It writes the learner-history story, a view and a decision note through the
+server's functions, dumps the database, restores the dump into an empty database, and checks that
+every read of the `LearningRecord` port, and `verify.sql`, return the same on both. It also checks
+the file modes, the retention, a failed dump and the settings' validation. Those cases name Bun.SQL,
+so CI's Postgres gate fails a run in which they skipped (`server/testing/postgres-gate.ts`).
+Step 6's role creation is drilled, not tested.
