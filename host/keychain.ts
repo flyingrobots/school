@@ -60,7 +60,9 @@ export class StdinSecretRunner implements CommandRunner {
     try {
       r = this.spawnSync([command, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     } catch {
-      // No such program (no `secret-tool` on a Linux CI runner): the item is not there.
+      // No such program. For `secret-tool` (absent on a Linux CI runner) the item is not there. For
+      // `security` it is a read that failed, never a missing item: recorded, so the store throws.
+      if (command === "security" && args[0] === "find-generic-password") this.lastRead = { status: 127, stderr: "could not run security" };
       return { status: 127, stdout: "", stderr: "" };
     }
     const result = { status: r.exitCode, stdout: text(r.stdout), stderr: text(r.stderr) };

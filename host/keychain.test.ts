@@ -136,3 +136,12 @@ test("SEC-K9: storing updates the item in place: no delete runs first, so a fail
   expect(() => refused.set("SCHOOL_APP_PASSWORD", "Another0123456789")).toThrow(SecretError);
   expect(sec.items.get("school-test-k9\u0000SCHOOL_APP_PASSWORD")).toBe("NewValue0123456789");
 });
+
+test("SEC-K10: a `security` that cannot be run at all is a failed read, not a missing item; an absent `secret-tool` on Linux still reads as missing", () => {
+  const noSecurity: SpawnSync = () => { throw new Error("ENOENT: security"); };
+  const darwin = keychainStore("school-test-k10", { platform: "darwin", spawnSync: noSecurity });
+  expect(() => darwin.get("SCHOOL_APP_PASSWORD")).toThrow(SecretError);
+  expect(() => darwin.get("SCHOOL_APP_PASSWORD")).toThrow(/could not read SCHOOL_APP_PASSWORD .*could not run security/);
+  const linux = keychainStore("school-test-k10", { platform: "linux", spawnSync: noSecurity });
+  expect(linux.get("SCHOOL_APP_PASSWORD")).toBeUndefined();
+});
