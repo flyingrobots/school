@@ -1,4 +1,4 @@
-// Migration 0003 on PGlite: decision notes, append-only and checked against the evidence they cite
+// Migration 0004 on PGlite: decision notes, append-only and checked against the evidence they cite
 // (RFC 2 §3 and §5; flyingrobots/school#31). Behaviour through the port is the contract's
 // (server/contract/learning-record.ts); these are the SQL-level facts the port cannot see.
 import { expect, test } from "bun:test";

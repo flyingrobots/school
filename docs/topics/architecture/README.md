@@ -111,7 +111,7 @@ writes against ordinary cross-site requests, and hands learning-record work to P
 ## The learning record
 
 The record is Postgres, built by the numbered migrations in `server/db/migrations/` (`0001_init.sql`,
-`0002_exposures.sql`, `0003_decision_notes.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
+`0002_exposures.sql`, `0004_decision_notes.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -144,7 +144,7 @@ no longer used by the server, declares that it records none: it refuses them and
 as unknown. The lesson page opens lessons with `?aid=1` and posts each exposure it shows (see
 [the lesson page](../lesson-page/README.md#the-help-it-records)).
 
-Decisions are notes that name their evidence (RFC 2 §3 and §5). Migration 0003 adds
+Decisions are notes that name their evidence (RFC 2 §3 and §5). Migration 0004 adds
 `decision_notes`: what School chose (a course, a lesson, or a block of a lesson), the rule that
 chose it as a stable id of the form `<selector>/<rule>` (for example `due-review/wrong-first-try`),
 a reason a person can read, optionally the encounter the choice was made for, and the rows it

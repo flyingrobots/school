@@ -1,4 +1,4 @@
--- 0003: decision notes, why School chose what it brings back (RFC 2 §3 and §5; flyingrobots/school#31).
+-- 0004: decision notes, why School chose what it brings back (RFC 2 §3 and §5; flyingrobots/school#31).
 --
 -- RFC 2 §3 separates what the record holds: observations are stored, judgments are derived or
 -- appended, and decisions (what to review next) are notes that name their evidence. A note says
