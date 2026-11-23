@@ -16,6 +16,18 @@ export const READY_MS = 10_000;
 export const WORK_MS = 5_000;
 export const timeout = (starts: number) => starts * READY_MS + WORK_MS;
 
+/**
+ * A TCP port on 127.0.0.1 that was free a moment ago: the kernel picks it, so no test hard-codes
+ * one or guesses at random. Another process could take it before the caller binds it; nothing
+ * on a test machine races for ports that fast, and a taken port fails start() loudly.
+ */
+export function freePort(): number {
+  const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+  const { port } = probe;
+  probe.stop(true);
+  return port;
+}
+
 const SERVER = join(import.meta.dir, "..", "server.ts");
 const BRIDGE = join(import.meta.dir, "..", "..", "bridge", "bridge.ts");
 
