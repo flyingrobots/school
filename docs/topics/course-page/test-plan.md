@@ -18,4 +18,4 @@ server whose progress the test records through `POST /api/answer`.
 | COURSE-10 | Unknown course | A 404 shows "There is no course called …" | implemented | `states > a course that does not exist says so` |
 | COURSE-11 | Unreachable server | A refused connection shows "This course could not be loaded", not endless loading | implemented | `states > a server that cannot be reached is reported, not shown as loading forever` |
 | COURSE-12 | Try again | After a failure, Try again asks again and shows the lessons | implemented | `states > Try again asks the server again and shows the lessons once it answers` |
-| COURSE-13 | Reference with unreadable lessons | A course whose lessons fail validation still shows the Reference button to `/courses/:c/reference` (flyingrobots/school#115) | implemented | `states > an unreadable course still offers its reference documents` |
+| COURSE-14 | Reference with unreadable lessons | A course whose lessons fail validation still shows the Reference button to `/courses/:c/reference` (flyingrobots/school#115) | implemented | `states > an unreadable course still offers its reference documents` |
