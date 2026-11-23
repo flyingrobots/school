@@ -1,6 +1,8 @@
 // The config checks, exercised through the real server process and Bun's actual database
 // creation rather than parseConfig alone (review of #8, P2), and the refusal to start on a SQLite
-// progress.db that holds learner work (RFC 3 v0.4.0 §3.3; flyingrobots/school#47).
+// progress.db that holds learner work (RFC 3 v0.4.0 §3.3; flyingrobots/school#47). Every start
+// here passes record: "server", so the server, not the test helper's migrated template, makes the
+// record (server/testing/processes.ts, flyingrobots/school#129).
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -12,7 +14,7 @@ import { ownerQuery } from "./testing/record.ts";
 
 async function boot(env: Record<string, string | undefined>): Promise<{ code: number | null; up: boolean; err: string }> {
   try {
-    const s = await startSchool({ ...process.env, HOST: "127.0.0.1", ...env });
+    const s = await startSchool({ ...process.env, HOST: "127.0.0.1", ...env }, { record: "server" });
     s.proc.kill();
     return { code: null, up: true, err: (await s.output()).stderr };
   } catch (e) {
@@ -57,7 +59,7 @@ test("without SCHOOL_DATABASE_URL the server refuses to start, saying what to se
 test("a first run on an explicit pglite: record creates it outside the course, and warns that it is not crash-durable", () => inRoot(async (root) => {
   const port = probePort();
   const s = await startSchool({ ...process.env, HOST: "127.0.0.1", PORT: String(port), SCHOOL_COURSES: `c=${join(root, "course")}`,
-    SCHOOL_STATE: join(root, "fresh", "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "fresh", "state", "db")}` });
+    SCHOOL_STATE: join(root, "fresh", "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "fresh", "state", "db")}` }, { record: "server" });
   s.proc.kill();
   const { stdout, stderr } = await s.output();
   expect(existsSync(join(root, "fresh", "state", "db", "PG_VERSION"))).toBe(true);
@@ -70,7 +72,7 @@ test("a first run on an explicit pglite: record creates it outside the course, a
 test("a second server on the same pglite: record refuses to start before serving, and the first keeps every answer", () => inRoot(async (root) => {
   writeFileSync(join(root, "course", "lessons", "0001.json"), JSON.stringify(page));
   const env = { SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}` };
-  const first = await startSchool({ ...process.env, HOST: "127.0.0.1", ...env });
+  const first = await startSchool({ ...process.env, HOST: "127.0.0.1", ...env }, { record: "server" });
   try {
     const answer = async () => {
       const { encounterId } = await (await fetch(`${first.url}/api/courses/c/lessons/l1`)).json();

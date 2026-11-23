@@ -148,18 +148,21 @@ function verify(migrations: Migration[], recorded: Map<number, Applied>): void {
   }
 }
 
+/** Told of each migration as soon as its transaction commits: the migrate job prints a line for each. */
+export type OnApplied = (m: { version: number; name: string }) => void;
+
 /**
  * Apply every migration in `dir` not yet recorded, in order. Returns the versions applied by this
  * call, so a second run returns none. A failing file rolls back and throws, naming the file;
- * files before it stay applied.
+ * files before it stay applied. `onApplied` hears of each file once it is committed.
  */
-export async function migrate(db: Connection, dir: string = MIGRATIONS): Promise<{ applied: number[] }> {
+export async function migrate(db: Connection, dir: string = MIGRATIONS, onApplied?: OnApplied): Promise<{ applied: number[] }> {
   const migrations = readMigrations(dir);
   // One runner at a time, from before the ledger is created or read until the last file: a
   // concurrent CREATE TABLE IF NOT EXISTS is not race-free. Held for the session, released below.
   await db.exec(`SELECT pg_advisory_lock(${LOCK})`);
   try {
-    return await apply(db, migrations);
+    return await apply(db, migrations, onApplied);
   } finally {
     await db.exec(`SELECT pg_advisory_unlock(${LOCK})`);
   }
@@ -167,7 +170,7 @@ export async function migrate(db: Connection, dir: string = MIGRATIONS): Promise
 
 const LOCK = "hashtext('school.schema_migrations')";
 
-async function apply(db: Connection, migrations: Migration[]): Promise<{ applied: number[] }> {
+async function apply(db: Connection, migrations: Migration[], onApplied?: OnApplied): Promise<{ applied: number[] }> {
   await db.exec(`CREATE TABLE IF NOT EXISTS public.schema_migrations (
     version integer PRIMARY KEY,
     name text NOT NULL,
@@ -205,6 +208,7 @@ async function apply(db: Connection, migrations: Migration[]): Promise<{ applied
       const message = (e as Error).message;
       throw new Error(message.startsWith(`${m.name} `) ? message : `${m.name}: ${message}`, { cause: e });
     }
+    if (applied.at(-1) === m.version) onApplied?.({ version: m.version, name: m.name });
   }
   return { applied };
 }
