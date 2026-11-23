@@ -138,6 +138,13 @@ describe("connecting the bridge", () => {
     await close(p.context())
   })
 
+  test("the browser title is Settings · School", async () => {
+    const w = await world()
+    const p = await open(w)
+    expect(await p.title()).toBe("Settings · School")
+    await p.context().close()
+  })
+
   test("while the status loads, the page shows skeletons", async () => {
     const w = await world()
     let release!: () => void

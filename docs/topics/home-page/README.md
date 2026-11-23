@@ -77,3 +77,5 @@ Item, Empty, Alert, Skeleton, Spinner, Kbd). The server side is `resumeFrom` and
 use case in `server/core/school.ts`, the port method in both adapters, migration
 `server/db/migrations/0003_last_studied.sql`, and `coursesJson` and `resumeJson` in
 `server/server.ts`. [The test plan](test-plan.md) lists every case and its test.
+
+The page sets the browser title to `School`, through `useDocumentTitle` (see [the app shell](../app-shell/README.md#browser-titles)).

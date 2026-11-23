@@ -163,6 +163,13 @@ and hjkl move between slides"); a slide taller than the window scrolls with the 
 
 The slides view shows the same three states.
 
+## Browser title
+
+The tab reads `<lesson title> · <course> · School` in both views, `Lesson not found · <course> · School`
+when the lesson is missing, and `<course> · School` while it loads or when it did not load. Checked by
+`browser title > names the lesson, its course and School, in the web view and in slides` and
+`browser title > a lesson that is not found says so in the title` in `web/test/lesson.test.ts`.
+
 ## Keys
 
 Each section heading and each block is a focus stop for the app shell's key layer, outside the Tab

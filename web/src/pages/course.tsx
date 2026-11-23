@@ -23,6 +23,7 @@ import { Item, ItemContent, ItemDescription, ItemFooter, ItemGroup, ItemTitle } 
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
+import { useDocumentTitle } from "@/lib/document-title"
 import { titleOf, useCourse } from "@/lib/course"
 import { useCourseTitle } from "@/lib/courses"
 import type { Course, CourseLoad } from "@/lib/school-api"
@@ -48,6 +49,7 @@ export function CoursePage() {
   const { course: name } = useParams()
   const [state, retry] = useCourse(name!)
   const title = titleOf(state, useCourseTitle(name!))
+  useDocumentTitle(title)
   const scope = React.useRef<HTMLDivElement>(null)
 
   useGSAP(

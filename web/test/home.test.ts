@@ -122,6 +122,12 @@ const words = (c: CourseJson) =>
   : `${c.answeredCorrectly} of ${c.quizzes} ${c.quizzes === 1 ? "quiz" : "quizzes"} answered correctly`
 
 describe("a learner who has studied", () => {
+  test("the browser title is School", async () => {
+    const p = await open()
+    expect(await p.title()).toBe("School")
+    await p.context().close()
+  })
+
   test("lists every course, in order, with its progress in words, matching the API", async () => {
     const expected = await api<CourseJson[]>(studied, "/api/courses")
     expect(expected.map((c) => c.name)).toEqual(["aion", "bio", "broken", "empty"]) // the server lists courses by name

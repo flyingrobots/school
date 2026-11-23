@@ -117,3 +117,12 @@ under `visibility: hidden` cannot take focus and `j` pressed during the intro wo
 server. It runs in `bun test` from the repository root and needs `npm ci` in `web/` and Google
 Chrome installed. The sidebar's course list is `web/test/sidebar.test.ts`, against a real School;
 its cases are in [the test plan](test-plan.md).
+
+## Browser titles
+
+Every page names itself in the browser tab, history and tab switcher with `useDocumentTitle`
+(`web/src/lib/document-title.ts`), School's own hook rather than an installed component. It joins the
+parts it is given, most specific first, with ` · ` and ends with `School`: Home `School`, a course
+`<course> · School`, a lesson `<lesson> · <course> · School`, `Reference · <course> · School`,
+`Settings · School`, `Not found · School`. `web/index.html` carries `School` as the title before
+any page runs. Each page's test reads `page.title()`; see that page's test plan.

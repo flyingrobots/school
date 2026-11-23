@@ -29,6 +29,7 @@ import { Item, ItemContent, ItemDescription, ItemFooter, ItemGroup, ItemMedia, I
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
+import { useDocumentTitle } from "@/lib/document-title"
 import { useCourses, useCourseTitle, type CoursesLoad } from "@/lib/courses"
 import type { CourseSummary } from "@/lib/school-api"
 
@@ -109,6 +110,7 @@ function ago(iso: string, now = Date.now()): string {
 const heading = "font-heading font-semibold tracking-tight"
 
 export function HomePage() {
+  useDocumentTitle()
   // Shared with the sidebar, and asked again on each visit here so the progress is current.
   const [courses, retryCourses] = useCourses({ fresh: true })
   const [resume, retryResume] = useJson("/api/resume", ResumeJson)
