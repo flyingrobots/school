@@ -1,4 +1,4 @@
--- 0005: due review, the blocks School brings back for delayed review, each with its reason
+-- 0006: due review, the blocks School brings back for delayed review, each with its reason
 -- (RFC 2 §5; flyingrobots/school#32).
 --
 -- RFC 2 §5: a correct answer with no recorded aid, after a delay, is the strongest evidence School
@@ -150,7 +150,8 @@ $$;
 -- now. Otherwise `content` is stored as a snapshot and a new encounter opened on it, and each note,
 -- a jsonb array of {blockId, rule, reason, evidence}, is stored as a decision note for that block
 -- of this lesson and this encounter (record_decision_note), under a new note id. A note that
--- record_decision_note would not store raises, and nothing is opened or stored.
+-- record_decision_note would not store raises, and nothing is opened or stored. Like open_encounter
+-- (0005), it refuses to run outside READ COMMITTED (invalid_transaction_state).
 CREATE FUNCTION school.open_lesson_encounter(p_course text, p_lesson text, p_lesson_content text, p_content text, p_at timestamptz,
                                              p_aid_tracking integer, p_notes jsonb)
 RETURNS TABLE (id uuid, hash text, resumed boolean, content jsonb)
@@ -164,6 +165,9 @@ DECLARE
   v_note jsonb;
   v_status text;
 BEGIN
+  -- It serialises on an advisory lock and then reads what the previous holder committed, which
+  -- holds only under READ COMMITTED (0005, school.require_read_committed).
+  PERFORM school.require_read_committed('school.open_lesson_encounter');
   IF jsonb_typeof(p_notes) IS DISTINCT FROM 'array' THEN
     RAISE EXCEPTION 'open_lesson_encounter: notes must be a jsonb array' USING ERRCODE = 'invalid_parameter_value';
   END IF;

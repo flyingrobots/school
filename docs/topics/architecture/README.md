@@ -112,8 +112,8 @@ writes against ordinary cross-site requests, and hands learning-record work to P
 ## The learning record
 
 The record is Postgres, built by the numbered migrations in `server/db/migrations/` (`0001_init.sql`,
-`0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_due_review.sql`) and reached only through the
-functions they define[^rfc3]. Its rules are SQL so
+`0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_read_committed.sql`,
+`0006_due_review.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -160,7 +160,7 @@ note may cite; `choice_decision_notes` and `encounter_decision_notes` read notes
 due-review selector writes them, one per item it brings back (see [due review](../due-review/README.md)).
 The SQLite adapter keeps no notes, and the contract's note cases do not run on it.
 
-Delayed review is migration 0005 (RFC 2 §5). `due_review` reads quiz answers, first tries,
+Delayed review is migration 0006 (RFC 2 §5). `due_review` reads quiz answers, first tries,
 exposures and the time each block was last answered, by `seq`, and returns the blocks due with the
 rule that chose each and the rows it cites; it writes nothing. `open_lesson_encounter` opens a
 lesson with the items chosen at its top, snapshotted with it, and stores their decision notes with
@@ -264,8 +264,32 @@ Every adapter of the record passes one contract suite (`server/contract/learning
 replays one learner's history (`server/contract/learner-history.ts`). Both run on PGlite in every
 test run, and in CI also on a real Postgres server through `Bun.SQL`, the driver the server uses;
 CI fails the build if any of the real-Postgres cases skipped or a PGlite case has no `Bun.SQL`
-counterpart (`server/testing/postgres-gate.ts`). Those runs are sequential: no test yet races two
-writers against real Postgres, so the concurrent cases in the table above rest on the SQL.
+counterpart (`server/testing/postgres-gate.ts`).
+
+The concurrent cases run against real Postgres too, in the same CI job and under the same gate
+(`server/adapters/bunsql.concurrency.test.ts`). Each race is held inside the database: a
+controller connection locks the table the function reaches first, the callers start on separate
+connections, and the lock is released only once `pg_stat_activity` shows every caller's backend
+waiting inside its call, which proves the calls overlapped. Each case runs 50 times:
+
+| Race | Outcome |
+| --- | --- |
+| Two different first answers to one block | Exactly one is `first_try`; the other is stored as not first |
+| 20 answers to one block | One `first_try` among 20 rows |
+| The same submission twice | One row; one caller gets `stored`, the other `duplicate`, with the same `correct` and `first_try` |
+| One submission id for two different answers | One is stored, the other is a `conflict` |
+| Two opens of one lesson and snapshot | One encounter; one caller opened it, the other resumed it |
+| Two gradings of one explanation | One chain: the second supersedes the first |
+| Two opens of one lesson with review | One encounter, opened by one and resumed by the other, with one set of decision notes |
+
+`school.open_encounter` and `school.record_grading` take an advisory lock and then read what the
+previous holder committed, so they need READ COMMITTED, which takes a snapshot per statement.
+Under REPEATABLE READ the snapshot predates the lock: two concurrent opens made two encounters
+every time. `school.open_lesson_encounter` (migration 0006) works the same way. A function cannot
+set its own isolation level, so all three refuse any other level with
+`invalid_transaction_state` (migration 0005), and the Bun.SQL adapter begins every request READ
+COMMITTED whatever the database's default. `school.submit` needs neither: its partial unique
+index decides first try whatever the snapshot saw, and that case also holds under REPEATABLE READ.
 
 An encounter resumes when the learner reopens the same lesson with the same snapshot, it is that
 lesson's latest encounter, its aid tracking is unchanged, and its **opening, latest answer or
@@ -347,10 +371,15 @@ gap in handling a malformed reply.
 another that every component in `web/src/components/ui/` hashes to a fresh `shadcn add`
 (`web/test/fixtures/README.md` says how to regenerate the hashes). What
 exists: the theme, a light, dark and system toggle, a component sandbox at `/demo`, and three
-homepage mockups. School's pages are not built yet
-([flyingrobots/school#15](https://github.com/flyingrobots/school/issues/15)). ADR 9 describes a
-browser outbox for unsent answers; it belonged to the deleted server-rendered pages and must be
-rebuilt in the new app.
+homepage mockups, and School's pages as far as
+[flyingrobots/school#15](https://github.com/flyingrobots/school/issues/15) has built them, among
+them the lesson page. The lesson page sends every answer,
+explanation and exposure through an outbox in IndexedDB (`web/src/lib/outbox.ts`,
+[flyingrobots/school#28](https://github.com/flyingrobots/school/issues/28)): a delivery queue,
+never read as progress, emptied only by School's acknowledgement or final refusal, and resent in
+order with the original ids, so a submission made offline survives the tab closing. It replaces
+the `localStorage` outbox ADR 9 describes, which belonged to the deleted server-rendered pages. The
+[lesson page reference](../lesson-page/README.md#the-outbox) has the details.
 
 ## Trust and known defects
 

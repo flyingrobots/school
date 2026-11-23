@@ -69,7 +69,7 @@ export interface LearningRecord {
   encounterDecisionNotes(encounterId: string): Promise<DecisionNote[]>;
   /**
    * The blocks due for review among `q.blocks`, ranked, at most `q.limit` (RFC 2 §5): reads only.
-   * The rule is in server/db/migrations/0005_due_review.sql, due_review, and is the record's.
+   * The rule is in server/db/migrations/0006_due_review.sql, due_review, and is the record's.
    */
   dueReview(q: DueReviewQuery): Promise<DueItem[]>;
 }

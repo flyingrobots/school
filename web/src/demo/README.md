@@ -20,10 +20,11 @@ Every example on the page is a shadcn registry item (`@shadcn/<component>-exampl
 with `shadcn add` and never edited. Three come from School's own registry instead, each showing
 a block the lesson page will use:
 
-- `@flyingrobots/quiz-example`, for the `@flyingrobots/quiz` block (`src/components/quiz.tsx`).
+- `@flyingrobots/quiz-example`, for the `@flyingrobots/quiz` block (`src/components/quiz.tsx`),
+  including an answer not sent yet.
 - `@flyingrobots/explain-example`, for the `@flyingrobots/explain` block
-  (`src/components/explain.tsx`): empty, saving, saved, grading, graded, not enough to judge,
-  failed and not saved. The block's behaviour (field, textarea, buttons, disclosures, shortcuts)
+  (`src/components/explain.tsx`): empty, saving, not sent yet, saved, grading, graded, not enough to
+  judge, failed and not saved. The block's behaviour (field, textarea, buttons, disclosures, shortcuts)
   comes from ui-sdk and its look from stock shadcn components.
 - `@flyingrobots/nest-example`, for the `@flyingrobots/nest` block (`src/components/nest.tsx`): a
   lesson's nest tree drawn with d3, at three levels, four levels and a single box. Below room for a

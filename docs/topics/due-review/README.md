@@ -9,7 +9,7 @@ that need another look come back at the top of it, each with its reason.
 
 ## The rule
 
-`school.due_review(course, blocks, at, delay_ms, limit)` in `server/db/migrations/0005_due_review.sql`
+`school.due_review(course, blocks, at, delay_ms, limit)` in `server/db/migrations/0006_due_review.sql`
 is the rule. It reads only, and orders everything by `seq`, never by `at`. `at` is read only to
 measure how long ago something happened.
 
@@ -82,7 +82,7 @@ block ids may not start with `school:` (`server/blocks.ts`).
 `School.openLesson` asks the selector, builds that page, and calls the port's `openLessonEncounter`,
 which is `school.open_lesson_encounter`. It finds the encounter to resume by the **lesson as
 written**: `encounters.lesson_hash` when School added review, or the snapshot's hash when it added
-none, including every encounter opened before migration 0005. The resume rule is otherwise the
+none, including every encounter opened before migration 0006. The resume rule is otherwise the
 usual one: the same aid capture version, and activity within six hours.
 
 - **On a resume,** what is shown now and the notes offered are ignored. The page is the encounter's

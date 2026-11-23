@@ -49,7 +49,7 @@ Practical notes for anyone — human or agent — changing the framework.
   `aid_tracking` its caller passes: the lesson API's `?aid=` capture version, or NULL (aid not
   observed) when the client sends none. A client may send `?aid=1` only if it records, through
   `POST /api/exposure`, every exposure it shows; the pages do not yet (flyingrobots/school#51).
-- Due review (`server/db/migrations/0005_due_review.sql`, `docs/topics/due-review/`) puts items in
+- Due review (`server/db/migrations/0006_due_review.sql`, `docs/topics/due-review/`) puts items in
   a section with id `school:review` at the top of a lesson, so authored block ids may not start
   `school:` (`server/blocks.ts`). The web view opens lessons through `open_lesson_encounter`, which
   finds the encounter to resume by the lesson as written, not by the snapshot's hash; the old
@@ -72,7 +72,8 @@ Practical notes for anyone — human or agent — changing the framework.
   The HTTP tests read the record by stopping the server, reading as the superuser
   (`server/testing/record.ts`, which takes the same lock), then starting it again. PGlite also does not `fsync` (its Node
   filesystem has no fsync), so it survives the server being killed but not necessarily a power cut.
-- The real-Postgres tests (`server/adapters/bunsql.test.ts`, and the `Bun.SQL` registration of the
+- The real-Postgres tests (`server/adapters/bunsql.test.ts`, the concurrency races in
+  `server/adapters/bunsql.concurrency.test.ts`, and the `Bun.SQL` registration of the
   learner-history story in `server/contract/learner-history.test.ts`) need `SCHOOL_TEST_POSTGRES_URL`,
   a superuser URL to a scratch Postgres; without it they are skipped. Each test gets a database of its
   own, copied from a migrated template and dropped when its file ends (`server/testing/postgres.ts`:
@@ -86,6 +87,9 @@ Practical notes for anyone — human or agent — changing the framework.
   `bun run server/testing/postgres-gate.ts junit.xml`. Every `DROP DATABASE` waits for a checkpoint,
   about three seconds under Docker on macOS on a loaded machine, so each test's database is
   dropped in the background while the next test runs, and the file's teardown waits for them.
+  A new race goes through `race()` in the concurrency file: it holds every caller at a table lock
+  and opens it only once `pg_stat_activity` shows them all waiting, so the test proves overlap
+  rather than hoping for it. Never synchronise a race with a sleep.
 - Typecheck the server with `bunx tsc -p server` after `bun install` in `server/`.
   A server file that is not TypeScript still needs adding explicitly.
 - `server/compose.yaml` names no course. Its paths come from a gitignored `server/.env`; copy

@@ -6,11 +6,14 @@
 // and each showing is sent once, under its own id, before the block's next submission.
 // Items School brought back for review (flyingrobots/school#32) arrive in the lesson, in a Review
 // section at its top; each is shown with its reason, in a stock Alert, above the block.
+// Every submission and exposure goes through the outbox (flyingrobots/school#28), in the order it
+// was made: while School cannot be reached, a block shows its submission as not sent yet, and it
+// is sent when School is back, even from a later tab. The outbox is never read as progress.
 import * as React from "react"
 import { HistoryIcon } from "lucide-react"
 import { Link, useParams } from "react-router"
 
-import { Explain } from "@/components/explain"
+import { Explain, ExplainSaveError, type ExplainPending } from "@/components/explain"
 import {
   Lesson,
   LessonAside,
@@ -25,16 +28,17 @@ import {
   type LessonLinkProps,
 } from "@/components/lesson"
 import { Nest } from "@/components/nest"
-import { Quiz, type QuizVerdict } from "@/components/quiz"
+import { Quiz, QuizAnswerError, type QuizPending, type QuizVerdict } from "@/components/quiz"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { NotKept, outbox, Refused, type Waiting } from "@/lib/outbox"
 import * as api from "@/lib/school-api"
 
 const renderLink = ({ href, ...props }: LessonLinkProps) => <Link to={href} {...props} />
 
 type Load =
   | { status: "loading" }
-  | { status: "ready"; lesson: api.LessonReply }
+  | { status: "ready"; lesson: api.LessonReply; waiting: Waiting[] }
   | { status: "missing" | "failed"; message: string }
 
 function useLesson(course: string, lesson: string) {
@@ -42,8 +46,15 @@ function useLesson(course: string, lesson: string) {
   const [attempt, setAttempt] = React.useState(0)
   React.useEffect(() => {
     const abort = new AbortController()
-    api.openLesson(course, lesson, abort.signal).then(
-      (reply) => setLoad({ status: "ready", lesson: reply }),
+    // What waits in the outbox is read before the record, so a submission delivered in between is
+    // still shown (pending, then settled at once) rather than in neither.
+    const opened = async () => {
+      const waiting = await outbox().waiting()
+      const reply = await api.openLesson(course, lesson, abort.signal)
+      return { reply, waiting: waiting.filter((w) => w.body.encounterId === reply.encounterId) }
+    }
+    opened().then(
+      ({ reply, waiting }) => setLoad({ status: "ready", lesson: reply, waiting }),
       (e) => {
         if (abort.signal.aborted) return
         setLoad(e instanceof api.LessonUnavailable ? { status: e.reason, message: e.message } : { status: "failed", message: String(e) })
@@ -71,41 +82,49 @@ function held(lesson: api.LessonReply) {
 }
 
 /**
- * The exposures one encounter has shown and School has not yet answered. Each showing is sent at
- * once; before a block's next answer or explanation, its unanswered exposures are resent (same id,
- * so School stores each once) and the submission waits for them, so School always sees the help
- * before what was written after it. While one cannot be sent, that submission fails too and the
- * block says it was not saved. Nothing here is ever shown to the learner.
+ * What the outbox still holds for this encounter, by block: the latest waiting answer and
+ * explanation, shown as not sent yet until School answers them. Never a verdict of its own.
  */
-function exposures(encounterId: string) {
-  const pending = new Map<string, { exposure: api.Exposure; sent: Promise<unknown> }>()
-  const send = (exposure: api.Exposure) => {
-    const sent = api.expose(exposure).then(() => pending.delete(exposure.exposureId))
-    sent.catch(() => {}) // kept in `pending`; resent before the block's next submission
-    pending.set(exposure.exposureId, { exposure, sent })
-    return sent
+function waitingByBlock(waiting: Waiting[]) {
+  const answers = new Map<string, QuizPending>()
+  const explanations = new Map<string, ExplainPending>()
+  for (const w of waiting) {
+    if (w.kind === "answer") answers.set(w.body.blockId, { choiceId: w.body.choiceId, verdict: w.settled.catch((e: unknown) => Promise.reject(answerError(e))) })
+    else explanations.set(w.body.blockId, { text: w.body.text, saved: w.settled.catch((e: unknown) => Promise.reject(explanationError(e))) })
   }
-  return {
-    show(blockId: string, kind: api.ExposureKind) {
-      void send({ exposureId: api.uuid(), encounterId, blockId, kind })
-    },
-    /** Resolves once every exposure shown for `blockId` is answered; rejects if one cannot be sent. */
-    async before(blockId: string) {
-      const mine = [...pending.values()].filter((p) => p.exposure.blockId === blockId)
-      await Promise.all(mine.map((p) => p.sent.catch(() => send(p.exposure))))
-    },
-  }
+  return { answers, explanations }
 }
+
+/** Why a submission was not recorded, in the learner's words. */
+function refusal(what: "answer" | "explanation", e: unknown) {
+  if (e instanceof Refused)
+    return `School refused this ${what} (${e.reason}), so it was not recorded and will not be sent again. ${what === "answer" ? "Choose again" : "Save it again"} to send a new one.`
+  if (e instanceof NotKept)
+    return `School could not be reached, and this browser cannot keep your ${what} to send later (private browsing can prevent it). It was not recorded. Try again when School is back.`
+  return null
+}
+const answerError = (e: unknown) => {
+  const m = refusal("answer", e)
+  return m === null ? e : new QuizAnswerError(m)
+}
+const explanationError = (e: unknown) => {
+  const m = refusal("explanation", e)
+  return m === null ? e : new ExplainSaveError(m)
+}
+
+/** Records one showing of help, through the outbox, ahead of the block's next submission. */
+const show = (encounterId: string, blockId: string, kind: api.ExposureKind) =>
+  outbox().record({ exposureId: api.uuid(), encounterId, blockId, kind })
 
 type Play = {
   encounterId: string
-  exposures: ReturnType<typeof exposures>
   /** When the lesson was shown, for each submission's `ms`. */
   shown: number
   answers: Map<string, QuizVerdict>
   explanations: Map<string, api.Explanation>
   /** Why each review item came back, by block. */
   reasons: Map<string, string>
+  pending: ReturnType<typeof waitingByBlock>
 }
 
 const sinceShown = (play: Play) => Math.max(0, Math.round(Date.now() - play.shown))
@@ -149,10 +168,13 @@ function BlockView({ block: b, play, depth }: { block: api.Block; play: Play; de
             choices={b.choices}
             why={b.why}
             recorded={play.answers.get(b.id) ?? null}
-            onWhyShown={() => play.exposures.show(b.id, "feedback")}
-            onAnswer={async (choiceId) => {
-              await play.exposures.before(b.id)
-              return api.answer({ encounterId: play.encounterId, blockId: b.id, choiceId, ms: sinceShown(play) })
+            pending={play.pending.answers.get(b.id) ?? null}
+            onWhyShown={() => show(play.encounterId, b.id, "feedback")}
+            onAnswer={(choiceId, progress) => {
+              const body = { submissionId: api.uuid(), encounterId: play.encounterId, blockId: b.id, choiceId, ms: sinceShown(play) }
+              return outbox()
+                .submit({ kind: "answer", id: body.submissionId, body }, progress)
+                .catch((e: unknown) => Promise.reject(answerError(e)))
             }}
           />
         </LessonBlock>
@@ -167,11 +189,14 @@ function BlockView({ block: b, play, depth }: { block: api.Block; play: Play; de
             model={b.model}
             sources={b.sources}
             saved={play.explanations.get(b.id) ?? null}
-            onModelShown={() => play.exposures.show(b.id, "model-answer")}
-            onSourceOpened={() => play.exposures.show(b.id, "reference")}
-            onSave={async (text) => {
-              await play.exposures.before(b.id)
-              return api.saveExplanation({ encounterId: play.encounterId, blockId: b.id, text, ms: sinceShown(play) })
+            pending={play.pending.explanations.get(b.id) ?? null}
+            onModelShown={() => show(play.encounterId, b.id, "model-answer")}
+            onSourceOpened={() => show(play.encounterId, b.id, "reference")}
+            onSave={(text, progress) => {
+              const body = { submissionId: api.uuid(), encounterId: play.encounterId, blockId: b.id, text, ms: sinceShown(play) }
+              return outbox()
+                .submit({ kind: "explanation", id: body.submissionId, body }, progress)
+                .catch((e: unknown) => Promise.reject(explanationError(e)))
             }}
             onGrade={(submissionId) => api.grade(submissionId)}
           />
@@ -186,12 +211,13 @@ function BlockView({ block: b, play, depth }: { block: api.Block; play: Play; de
   }
 }
 
-function Played({ course, lesson }: { course: string; lesson: api.LessonReply }) {
+function Played({ course, lesson, waiting }: { course: string; lesson: api.LessonReply; waiting: Waiting[] }) {
   const page = lesson.lesson
   const [shown] = React.useState(() => Date.now())
-  // One tracker per encounter, kept across renders, so a pending exposure is never forgotten.
-  const [tracker] = React.useState(() => exposures(lesson.encounterId))
-  const play = React.useMemo<Play>(() => ({ encounterId: lesson.encounterId, exposures: tracker, shown, ...held(lesson) }), [lesson, tracker, shown])
+  const play = React.useMemo<Play>(
+    () => ({ encounterId: lesson.encounterId, shown, ...held(lesson), pending: waitingByBlock(waiting) }),
+    [lesson, waiting, shown]
+  )
   const crumbs: LessonCrumb[] = [
     { label: "Home", href: "/" },
     { label: course, href: `/courses/${course}` },
@@ -254,7 +280,7 @@ function LessonRoute({ course, lesson }: { course: string; lesson: string }) {
         />
       )
     case "ready":
-      return <Played course={course} lesson={load.lesson} />
+      return <Played course={course} lesson={load.lesson} waiting={load.waiting} />
   }
 }
 

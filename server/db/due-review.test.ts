@@ -1,4 +1,4 @@
-// Migration 0005 at the SQL level: the due-review selector reads and never writes, and a year of
+// Migration 0006 at the SQL level: the due-review selector reads and never writes, and a year of
 // synthetic history is read within a bounded time on PGlite and on a real Postgres through Bun.SQL
 // (RFC 2 §5; flyingrobots/school#32). What the selector returns is the contract's
 // (server/contract/learning-record.ts); these are the facts the port cannot see.
