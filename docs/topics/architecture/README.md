@@ -222,6 +222,13 @@ web pages do not call it yet.*
 | `correct` and `first_try` come from the snapshot | `school.submit` derives them from the encounter's stored snapshot; the client's are ignored. A partial unique index allows one first try per block and encounter, even under concurrent answers | A direct `INSERT` by the owner |
 | An acknowledged answer survives the server's crash | The 200 is sent after the function's transaction commits; a test kills the server hard and reads the answer back | On PGlite, an operating-system crash or power cut: PGlite writes through to its folder but does not `fsync`, so the last commits may be lost. Real Postgres `fsync`s each commit. Nothing makes scheduled backups yet. |
 
+Every adapter of the record passes one contract suite (`server/contract/learning-record.ts`) and
+replays one learner's history (`server/contract/learner-history.ts`). Both run on PGlite in every
+test run, and in CI also on a real Postgres server through `Bun.SQL`, the driver the server uses;
+CI fails the build if any of the real-Postgres cases skipped or a PGlite case has no `Bun.SQL`
+counterpart (`server/testing/postgres-gate.ts`). Those runs are sequential: no test yet races two
+writers against real Postgres, so the concurrent cases in the table above rest on the SQL.
+
 An encounter resumes when the learner reopens the same lesson with the same snapshot, it is that
 lesson's latest encounter, its aid tracking is unchanged, and its **opening, latest answer or
 latest explanation** is within six hours. A grading is not the learner's activity and does not
