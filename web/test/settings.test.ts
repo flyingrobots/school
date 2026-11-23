@@ -62,7 +62,7 @@ async function world(env: (bridge: string) => Record<string, string> = () => ({}
     ...process.env,
     SCHOOL_COURSES: `c=${join(root, "course")}`,
     SCHOOL_STATE: join(root, "state"),
-    SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`, // its own PGlite record; School refuses to start without one
+    SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`,
     HOST: "127.0.0.1",
   }
   delete schoolEnv.SCHOOL_BRIDGE_URL
