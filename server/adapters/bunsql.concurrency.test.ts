@@ -198,6 +198,31 @@ describe.skipIf(URL_ === undefined)("Bun.SQL concurrency on a real Postgres (SCH
     }
   }, SLOW);
 
+  // Due review (flyingrobots/school#32): open_lesson_encounter takes the same kind of lock, keyed by the lesson as written.
+  test(`two opens of one lesson with review at once: one encounter, one set of notes (${REPS} times)`, async () => {
+    const s = await setup(2);
+    for (let i = 0; i < REPS; i++) {
+      const src = await open(s.record, `src${i}`);
+      await s.record.submit({ submissionId: uuid(), encounterId: src.id, blockId: "q1", choiceId: "wrong", ms: 1 }, NOW);
+      const evidence = (await s.record.encounterEvidence(src.id)).filter((x) => x.kind === "answer").map((x) => x.seq);
+      const written: Block = { type: "page", id: `l${i}`, title: "l", subtitle: "", children: [] };
+      const shown: Block = { ...written, children: [{ type: "section", id: "school:review", title: "Review", children: [(page as { children: Block[] }).children[0]!] }] };
+      const openReview = () => s.record.openLessonEncounter({
+        course: "c", lesson: `l${i}`, lessonPage: written, page: shown, now: NOW, aidTracking: 1,
+        notes: [{ blockId: "q1", rule: "due-review/wrong-first-try", reason: "Back.", evidence }],
+      });
+      // The snapshots table is what open_lesson_encounter writes first, after its advisory lock.
+      const { results, waiting } = await race(s, "school.snapshots", "open_lesson_encounter", [openReview, openReview]);
+      expect(waiting.size).toBe(2);
+      const [a, b] = values(results);
+      expect(a!.encounter.id).toBe(b!.encounter.id);
+      expect([a!.encounter.resumed, b!.encounter.resumed].sort()).toEqual([false, true]);
+      expect(a!.page).toEqual(b!.page);
+      expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.encounters WHERE lesson = $1", [`l${i}`]))[0].n).toBe(1);
+      expect(await s.record.encounterDecisionNotes(a!.encounter.id)).toHaveLength(1);
+    }
+  }, SLOW);
+
   test(`two gradings of one explanation at once: one chain, the second superseding the first (${REPS} times)`, async () => {
     const s = await setup(2);
     const grading = (submissionId: string) => () => s.record.recordGrading({
@@ -235,6 +260,14 @@ describe.skipIf(URL_ === undefined)("Bun.SQL concurrency on a real Postgres (SCH
         submissionId: id, status: "failed", findings: null, error: "x", rubricVersion: "r", promptVersion: "p", adapter: "test", model: null, sources: [], raw: null,
       }, NOW)).rejects.toThrow(/READ COMMITTED/);
       expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.gradings"))[0].n).toBe(0);
+    }, SLOW);
+
+    test("open_lesson_encounter refuses to run under it, and stores nothing", async () => {
+      const s = await setup(1);
+      const rr = postgresRecord(repeatableRead(s.pool));
+      await expect(rr.openLessonEncounter({ course: "c", lesson: "l", lessonPage: page, page, now: NOW, aidTracking: 1, notes: [] }))
+        .rejects.toThrow(/READ COMMITTED/);
+      expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.encounters"))[0].n).toBe(0);
     }, SLOW);
 
     test("the adapter runs every request READ COMMITTED even when the database defaults to REPEATABLE READ", async () => {

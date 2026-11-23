@@ -12,7 +12,7 @@
 // end as the model's ISO form, 2026-11-21T10:00:00.000Z.
 import { z } from "zod";
 import {
-  Aid, Block, DecisionNote, DecisionNoteResult, Encounter, EvidenceKind, EvidenceRow, ExplanationState, ExposureResult, Grading,
+  Aid, Block, DecisionNote, DecisionNoteResult, DueItem, Encounter, EvidenceKind, EvidenceRow, ExplanationState, ExposureResult, Grading,
   LastStudied, LessonProgress, Recorded, SaveResult, Seq, SubmitResult, type ExplainBlock,
 } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
@@ -49,6 +49,8 @@ const bigint = z.union([z.number(), z.bigint(), z.string().regex(/^[0-9]+$/)]).t
 const Evidence = z.object({ seq: bigint, kind: EvidenceKind, block_id: z.string().nullable() });
 const Noted = z.object({ status: z.string(), note: DecisionNote.nullable() });
 const NoteRow = z.object({ note: DecisionNote });
+const OpenedLesson = Opened.extend({ content: Block });
+const Due = z.object({ item: DueItem });
 const Studied = z.object({ course: z.string(), lesson: z.string(), at: time });
 
 /** `SELECT * FROM school.fn($1, ..., $n)`: the only statement shape this adapter issues. */
@@ -73,6 +75,14 @@ export function postgresRecord(sql: Sql): LearningRecord {
     // aid_tracking is the caller's: the capture version its client declared, or NULL (not observed).
     openEncounter: async (o) =>
       Encounter.parse(Opened.parse(await one("open_encounter", o.course, o.lesson, canonical(o.page), o.now, o.aidTracking))),
+
+    // The notes go as a value for their jsonb parameter. The function finds the encounter by the
+    // lesson as written, so the review it was opened with comes back on a reload.
+    openLessonEncounter: async (o) => {
+      const r = OpenedLesson.parse(await one("open_lesson_encounter", o.course, o.lesson, canonical(o.lessonPage), canonical(o.page),
+        o.now, o.aidTracking, o.notes));
+      return { encounter: Encounter.parse({ id: r.id, hash: r.hash, resumed: r.resumed }), page: r.content };
+    },
 
     submit: async (s, now) => {
       const r = Submitted.parse(await one("submit", s.submissionId, s.encounterId, s.blockId, s.choiceId, s.ms, now));
@@ -147,5 +157,9 @@ export function postgresRecord(sql: Sql): LearningRecord {
 
     encounterDecisionNotes: async (encounterId) =>
       (await rows("encounter_decision_notes", encounterId)).map((row) => NoteRow.parse(row).note),
+
+    // blocks goes as a value for its jsonb parameter, like a note's evidence.
+    dueReview: async (q) =>
+      (await rows("due_review", q.course, q.blocks, q.now, q.delayMs, q.limit)).map((row) => Due.parse(row).item),
   };
 }
