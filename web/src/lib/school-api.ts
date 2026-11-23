@@ -113,8 +113,6 @@ async function post<T>(path: string, body: unknown, reply: z.ZodType<T>): Promis
   return reply.parse(await res.json())
 }
 
-const Stored = z.enum(["stored", "duplicate"])
-
 /** A v4 UUID, made here so that a resend carries the same id and is stored once. randomUUID exists only in a secure context, and a tailnet name over http is not one. */
 export function uuid(): string {
   if (typeof crypto.randomUUID === "function") return crypto.randomUUID()
@@ -125,16 +123,52 @@ export function uuid(): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
 }
 
-/** Records one answer; resolves with the server's verdict only once it is committed. */
-export async function answer(a: { encounterId: string; blockId: string; choiceId: string; ms: number }): Promise<{ correct: boolean }> {
-  const r = await post("/api/answer", { submissionId: uuid(), ...a }, z.object({ status: Stored, correct: z.boolean() }))
-  return { correct: r.correct }
+/**
+ * What School said to one submission or exposure, as the outbox needs it (web/src/lib/outbox.ts).
+ * - `delivered`: stored, or a resend of the same id (`duplicate`); never stored twice.
+ * - `refused`: School answered 400 or 409 (and 501 for an exposure), which the same body would get
+ *   again, so it is final: `conflict` (that id already names something else), `rejected` (no such
+ *   encounter, or the block or choice is not in its snapshot), `invalid`, or `unsupported`.
+ * - `unreachable`: School could not be reached, failed otherwise, or replied in a shape the page
+ *   cannot read. A resend with the same id is safe (ADR 9), so it is kept and sent again.
+ */
+export type Delivery<T> =
+  | { status: "delivered"; value: T }
+  | { status: "refused"; reason: string }
+  | { status: "unreachable"; error: string }
+
+async function deliver<T>(path: string, body: unknown, reply: z.ZodType<T>, final: number[] = [400, 409]): Promise<Delivery<T>> {
+  let res: Response
+  try {
+    res = await fetch(path, { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(body) })
+  } catch {
+    return { status: "unreachable", error: "School could not be reached." }
+  }
+  const json: unknown = await res.json().catch(() => null)
+  if (res.ok) {
+    const parsed = reply.safeParse(json)
+    return parsed.success ? { status: "delivered", value: parsed.data } : { status: "unreachable", error: `${path}'s reply was not understood.` }
+  }
+  if (final.includes(res.status)) {
+    const said = z.object({ status: z.string() }).safeParse(json)
+    return { status: "refused", reason: said.success ? said.data.status : `answered ${res.status}` }
+  }
+  return { status: "unreachable", error: `${path} answered ${res.status}.` }
 }
 
-/** Saves one explanation; resolves with it as stored, before anything grades it. */
-export async function saveExplanation(x: { encounterId: string; blockId: string; text: string; ms: number }): Promise<Explanation> {
-  const r = await post("/api/explanation", { submissionId: uuid(), ...x }, z.object({ status: Stored, explanation: Explanation }))
-  return r.explanation
+const Stored = z.enum(["stored", "duplicate"])
+
+export type AnswerBody = { submissionId: string; encounterId: string; blockId: string; choiceId: string; ms: number }
+export type ExplanationBody = { submissionId: string; encounterId: string; blockId: string; text: string; ms: number }
+
+/** Sends one answer once; delivered with the server's verdict only once it is committed. */
+export function sendAnswer(body: AnswerBody): Promise<Delivery<{ correct: boolean }>> {
+  return deliver("/api/answer", body, z.object({ status: Stored, correct: z.boolean() }).transform((r) => ({ correct: r.correct })))
+}
+
+/** Sends one explanation once; delivered with it as stored, before anything grades it. */
+export function sendExplanation(body: ExplanationBody): Promise<Delivery<Explanation>> {
+  return deliver("/api/explanation", body, z.object({ status: Stored, explanation: Explanation }).transform((r) => r.explanation))
 }
 
 /** One grading attempt for a saved explanation; resolves with the explanation and its new grading. */
@@ -147,15 +181,9 @@ export type ExposureKind = "hint" | "model-answer" | "feedback" | "reference"
 export type Exposure = { exposureId: string; encounterId: string; blockId: string; kind: ExposureKind }
 
 /**
- * Records that the page showed help for a block. Resolves once School has an answer that a resend
- * would not change: stored or a duplicate; 501, from a record that stores no exposures (not the server on Postgres), so
- * the encounter is not tracked; or a refusal (400, 409), which the same body would get again.
- * Rejects when School could not be reached or failed otherwise, so the caller can resend it.
+ * Records once that the page showed help for a block. Besides 400 and 409, a 501 is final: a record
+ * that stores no exposures (not the server on Postgres) answers it, and the encounter is not tracked.
  */
-export async function expose(x: Exposure): Promise<"recorded" | "not-tracked" | "refused"> {
-  const res = await fetch("/api/exposure", { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(x) })
-  if (res.ok) return "recorded"
-  if (res.status === 501) return "not-tracked"
-  if (res.status === 400 || res.status === 409) return "refused"
-  throw new Error(`/api/exposure answered ${res.status}`)
+export function sendExposure(x: Exposure): Promise<Delivery<null>> {
+  return deliver("/api/exposure", x, z.unknown().transform(() => null), [400, 409, 501])
 }

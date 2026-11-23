@@ -8,13 +8,17 @@
 // And flyingrobots/school#51's: the page opens lessons with ?aid=1 and records each kind of help it
 // shows exactly once per showing, and RFC 2 Figure 4 (submit, reveal, revise) reaches the server in
 // that order.
+// And flyingrobots/school#28's: a submission made while School cannot be reached waits in the
+// outbox, shown as not sent yet, and is stored exactly once when School is reachable again, even
+// from a new tab after the first was closed; a refusal is shown and never retried; without
+// browser storage it is send-or-fail with an honest message; queued answers keep their order.
 // What a reload shows is the learner history's oracle (server/contract/learner-history.ts,
 // `pageShows`): each quiz by its latest answer, each explanation by its latest grading.
 import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { chromium, type Browser, type Page } from "playwright-core"
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core"
 import { createServer, type ViteDevServer } from "vite"
 
 import { startSchool, timeout, type Started } from "../../server/testing/processes.ts"
@@ -27,7 +31,7 @@ const TOKEN = "lesson-page-test-token"
 
 // Each test that writes to the record uses its own course name, all served from the one fixture,
 // so no test resumes an encounter another test opened.
-const NAMES = ["golden", "wrong", "saved", "failed", "keys", "aid", "pager", "loading", "down", "feedback", "model", "source", "trace", "figure4", "resend", "final-501", "final-400", "final-409"] as const
+const NAMES = ["golden", "wrong", "saved", "failed", "keys", "aid", "pager", "loading", "down", "feedback", "model", "source", "trace", "figure4", "resend", "final-501", "final-400", "final-409", "ob-golden", "ob-lost", "ob-private", "ob-409", "ob-400", "ob-order", "ob-50"] as const
 type Name = (typeof NAMES)[number]
 
 /** A fake bridge: answers each grading with the next reply queued, or a failure when none is. */
@@ -109,14 +113,35 @@ afterAll(async () => {
 
 const lessonPath = (course: Name, lesson = "orbits") => `/courses/${course}/lessons/${lesson}`
 
+/** Browser contexts whose /api requests fail as they would with no network (flyingrobots/school#28). */
+const offline = new WeakSet<BrowserContext>()
+
+/** Takes a context off the network, or puts it back and says so, as the browser's `online` event does. */
+async function network(c: BrowserContext, on: boolean) {
+  if (on) offline.delete(c)
+  else offline.add(c)
+  if (on) for (const p of c.pages()) await p.evaluate(() => window.dispatchEvent(new Event("online"))).catch(() => {})
+}
+
+/** Closes the tab and opens a new one in the same browser profile, which keeps its IndexedDB. */
+async function reopen(p: Page): Promise<Page> {
+  const c = p.context()
+  await p.close()
+  const next = await c.newPage()
+  next.setDefaultTimeout(5_000)
+  return next
+}
+
 /**
  * A page whose /api requests reach `s`'s School wherever it is listening now, as the course page's
  * tests do. While School is down, they fail as a refused connection would.
  */
-async function newPage(s: Stack = main): Promise<Page> {
+async function newPage(s: Stack = main, init?: () => void): Promise<Page> {
   const c = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+  if (init) await c.addInitScript(init)
   await c.route(/\/api\//, async (route) => {
     const u = new URL(route.request().url())
+    if (offline.has(c)) return route.abort("internetdisconnected")
     try {
       await route.fulfill({ response: await route.fetch({ url: s.school.url + u.pathname + u.search }) })
     } catch {
@@ -145,6 +170,7 @@ const stateOf = async (l: ReturnType<Page["locator"]>) => l.getAttribute("data-s
 const record = async (s: Stack, course: Name, lesson = "orbits") =>
   // With the page's ?aid=1, so it resumes the page's encounter: a different aid opens another (RFC 2 §3).
   (await (await fetch(`${s.school.url}/api/courses/${course}/lessons/${lesson}?aid=1`)).json()) as {
+    encounterId: string
     answers: { blockId: string; choiceId: string; correct: boolean }[]
     explanations: { blockId: string; text: string; grading: { status: string } | null }[]
   }
@@ -487,18 +513,20 @@ describe("an exposure that did not reach School (flyingrobots/school#51)", () =>
     expect(first!.kind).toBe("model-answer")
     expect(await x.locator("[data-explain=error]").count()).toBe(0) // the learner is not told about bookkeeping
 
-    // Still down: the revision is not sent, since School would not know it came after the model answer.
+    // Still down: the revision is not sent, since School would not know it came after the model
+    // answer. It waits behind the exposure in the outbox (flyingrobots/school#28), not sent yet.
     await x.locator("[data-explain=revise]").click()
     await x.locator("[data-explain=draft]").fill("Because of the tilt.")
     await x.locator("[data-explain=save]").click()
-    await x.locator("[data-explain=error]").waitFor()
-    expect(await stateOf(x)).toBe("empty")
+    await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "queued")
     expect(await x.locator("[data-explain=draft]").inputValue()).toBe("Because of the tilt.")
+    expect(await x.locator("[data-explain=model]").count()).toBe(0)
+    await p.waitForTimeout(1_500) // several resends of the exposure, none of the revision
     expect(seen.sent.filter((s) => s.path === "/api/explanation")).toHaveLength(1)
 
-    // Back: the same exposure goes first, then the revision.
+    // Back: the same exposure goes first, then the revision, with nothing asked of the learner.
     down = false
-    await x.locator("[data-explain=save]").click()
+    await network(p.context(), true)
     await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "saved")
     const after = seen.sent.slice(seen.sent.findIndex((s) => s.path === "/api/explanation" && s.body.text === "Because of the tilt.") - 1)
     expect(after.slice(0, 2).map((s) => [s.path, s.body.exposureId ?? s.body.text])).toEqual([
@@ -559,7 +587,9 @@ describe("keys (flyingrobots/school#84)", () => {
 })
 
 describe("the server down", () => {
-  test("while answering, the answer is never shown as saved; once it is back, it is", async () => {
+  // Before flyingrobots/school#28 the block said it was not saved and the learner tried again; now
+  // the submission waits in the outbox and is sent by itself once School is back.
+  test("while answering, nothing is shown as saved: it waits as not sent yet, and once School is back it is sent and shown", async () => {
     const down = await stack(join(root, "down-state"))
     try {
       const p = await open(down, lessonPath("down"))
@@ -568,25 +598,23 @@ describe("the server down", () => {
 
       const q = quiz(p, "closest")
       await q.locator("[data-choice=mercury]").click()
-      await q.locator("[data-quiz=error]").waitFor()
-      expect(await stateOf(q)).toBe("unanswered")
+      await p.waitForFunction(() => document.querySelector("[data-quiz-id=closest]")?.getAttribute("data-state") === "queued")
+      expect(await q.locator("[data-slot=badge]").textContent()).toBe("Not sent yet")
       expect(await q.locator("[data-verdict]").count()).toBe(0)
       expect(await q.locator("[data-quiz=why]").count()).toBe(0)
 
       const x = explain(p, "seasons")
       await x.locator("[data-explain=draft]").fill("The tilt.")
       await x.locator("[data-explain=save]").click()
-      await x.locator("[data-explain=error]").waitFor()
-      expect(await stateOf(x)).toBe("empty")
+      await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "queued")
       expect(await x.locator("[data-explain=draft]").inputValue()).toBe("The tilt.") // nothing typed is lost
       expect(await x.locator("[data-explain=model]").count()).toBe(0)
 
-      // School comes back on the same state (on a new port, which the page's route follows); the same page saves both.
+      // School comes back on the same state (on a new port, which the page's route follows); the
+      // same page sends both, in order, without being asked again.
       down.school = await startSchool(down.env)
-      await q.locator("[data-choice=mercury]").click()
-      await p.waitForFunction(() => document.querySelector("[data-quiz-id=closest]")?.getAttribute("data-state") === "right")
-      await x.locator("[data-explain=save]").click()
-      await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "saved")
+      await p.waitForFunction(() => document.querySelector("[data-quiz-id=closest]")?.getAttribute("data-state") === "right", null, { timeout: 15_000 })
+      await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "saved", null, { timeout: 15_000 })
       expect((await record(down, "down")).answers).toEqual([{ blockId: "closest", choiceId: "mercury", correct: true }])
       await p.context().close()
     } finally {
@@ -604,4 +632,217 @@ describe("the server down", () => {
     await p.getByRole("heading", { level: 1, name: "Orbits", exact: true }).waitFor()
     await p.context().close()
   })
+})
+
+const until = (p: Page, kind: "quiz" | "explain", id: string, state: string, timeout = 10_000) =>
+  p.waitForFunction(([k, i, st]) => document.querySelector(`[data-${k}-id="${i}"]`)?.getAttribute("data-state") === st, [kind, id, state] as const, { timeout })
+
+/** The outbox's items, read through the app's own module in the page. */
+const outboxOf = (p: Page) =>
+  p.evaluate(async () => {
+    const url = "/src/lib/outbox.ts"
+    const m = (await import(/* @vite-ignore */ url)) as typeof import("../src/lib/outbox.ts")
+    return (await m.outbox().waiting()).map((w) => w.body.submissionId)
+  })
+
+/** Every answer School replied to, with its reply. */
+function replies_(p: Page) {
+  const got: { body: Record<string, string>; reply: { status: string; correct?: boolean; firstTry?: boolean } }[] = []
+  p.on("response", async (r) => {
+    if (r.request().method() !== "POST" || !r.url().endsWith("/api/answer")) return
+    got.push({ body: r.request().postDataJSON(), reply: await r.json().catch(() => ({ status: `http ${r.status()}` })) })
+  })
+  return got
+}
+
+async function eventually(check: () => Promise<boolean> | boolean, ms = 10_000) {
+  for (const t = Date.now(); Date.now() - t < ms; await new Promise((r) => setTimeout(r, 50))) if (await check()) return
+  throw new Error("timed out")
+}
+
+describe("the outbox (flyingrobots/school#28)", () => {
+  test("golden: an answer and an explanation made offline, the tab closed, then reopened online, are each stored exactly once", async () => {
+    let p = await newPage()
+    const before = posts(p)
+    await open(main, lessonPath("ob-golden"), "Orbits", p)
+    await network(p.context(), false)
+
+    const q = quiz(p, "closest")
+    await q.locator("[data-choice=mercury]").click()
+    await until(p, "quiz", "closest", "queued")
+    // Pending, and said so: a spinner on the choice, never a verdict or the explanation.
+    expect(await q.locator("[data-slot=badge]").textContent()).toBe("Not sent yet")
+    expect(await q.locator("[data-choice=mercury] [data-slot=spinner]").count()).toBe(1)
+    expect(await q.locator("[data-verdict]").count()).toBe(0)
+    expect(await q.locator("[data-quiz=why]").count()).toBe(0)
+    const x = explain(p, "seasons")
+    await x.locator("[data-explain=draft]").fill("The tilt of the axis.")
+    await x.locator("[data-explain=save]").click()
+    await until(p, "explain", "seasons", "queued")
+    expect(await x.locator("[data-slot=badge]").first().textContent()).toBe("Not sent yet")
+    expect(await x.locator("[data-explain=model]").count()).toBe(0)
+    expect(await record(main, "ob-golden")).toMatchObject({ answers: [], explanations: [] })
+    // Kept in the outbox under the ids they were made with; the answer was tried, and the explanation waits behind it.
+    const ids = await outboxOf(p)
+    expect(ids).toHaveLength(2)
+    expect(before.sent.filter((s) => s.path === "/api/answer").map((s) => s.body.submissionId)).toContain(ids[0]!)
+
+    p = await reopen(p)
+    await network(p.context(), true)
+    const after = posts(p)
+    await open(main, lessonPath("ob-golden"), "Orbits", p)
+    await eventually(async () => (await record(main, "ob-golden")).explanations.length === 1)
+    expect((await record(main, "ob-golden")).answers).toEqual([{ blockId: "closest", choiceId: "mercury", correct: true }])
+    expect((await record(main, "ob-golden")).explanations).toMatchObject([{ blockId: "seasons", text: "The tilt of the axis." }])
+    // The new tab sent each under the id it was made with, once, in the order made.
+    expect(after.sent.filter((s) => s.path !== "/api/exposure").map((s) => s.body.submissionId)).toEqual(ids)
+    // The page shows what School holds; nothing is left waiting.
+    await p.waitForFunction(() => ["right", "settled"].includes(document.querySelector("[data-quiz-id=closest]")?.getAttribute("data-state") ?? ""))
+    await until(p, "explain", "seasons", "saved")
+    expect(await outboxOf(p)).toEqual([])
+    await p.context().close()
+  })
+
+  test("a reply lost after School stored the answer: the resend is a duplicate, never a second row", async () => {
+    const p = await newPage()
+    const got = replies_(p)
+    let lose = 1
+    await p.route("**/api/answer", async (route) => {
+      if (lose-- <= 0) return route.fallback()
+      // School stores it; the reply never reaches the page.
+      const u = new URL(route.request().url())
+      await route.fetch({ url: main.school.url + u.pathname })
+      await route.abort("connectionreset")
+    })
+    await open(main, lessonPath("ob-lost"), "Orbits", p)
+    await quiz(p, "closest").locator("[data-choice=venus]").click()
+    await until(p, "quiz", "closest", "wrong")
+    expect(got.map((g) => g.reply.status)).toEqual(["duplicate"])
+    expect((await record(main, "ob-lost")).answers).toEqual([{ blockId: "closest", choiceId: "venus", correct: false }])
+    await p.context().close()
+  })
+
+  test("without browser storage (private mode), an answer is send-or-fail: sent at once, and refused honestly when School cannot be reached", async () => {
+    const p = await newPage(main, () => {
+      Object.defineProperty(window, "indexedDB", {
+        configurable: true,
+        get() {
+          throw new DOMException("The user denied permission to access the database.", "SecurityError")
+        },
+      })
+    })
+    await open(main, lessonPath("ob-private"), "Orbits", p)
+    const q = quiz(p, "closest")
+    await q.locator("[data-choice=venus]").click()
+    await until(p, "quiz", "closest", "wrong")
+
+    await network(p.context(), false)
+    await q.locator("[data-choice=mercury]").click()
+    await q.locator("[data-quiz=error]").waitFor()
+    expect(await q.locator("[data-quiz=error]").textContent()).toContain("this browser cannot keep your answer")
+    expect(await q.locator("[data-quiz=error]").textContent()).toContain("It was not recorded")
+    expect(await stateOf(q)).toBe("wrong") // back where it was, never "not sent yet"
+
+    await network(p.context(), true)
+    await p.waitForTimeout(1_000) // nothing was kept, so nothing is sent by itself
+    expect((await record(main, "ob-private")).answers).toEqual([{ blockId: "closest", choiceId: "venus", correct: false }])
+    await q.locator("[data-choice=mercury]").click()
+    await until(p, "quiz", "closest", "right")
+    await p.context().close()
+  })
+
+  test.each([[409, "conflict"], [400, "rejected"]] as const)("a queued answer School answers %i (%s) is shown as refused and never sent again", async (status, reply) => {
+    const name = `ob-${status}` as Name
+    let p = await newPage()
+    await open(main, lessonPath(name), "Orbits", p)
+    await network(p.context(), false)
+    await quiz(p, "closest").locator("[data-choice=mercury]").click()
+    await until(p, "quiz", "closest", "queued")
+
+    p = await reopen(p)
+    let asked = 0
+    await p.route("**/api/answer", (route) => {
+      asked += 1
+      return route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ status: reply }) })
+    })
+    await network(p.context(), true)
+    await open(main, lessonPath(name), "Orbits", p)
+    const q = quiz(p, "closest")
+    await q.locator("[data-quiz=error]").waitFor()
+    expect(await q.locator("[data-quiz=error]").textContent()).toContain(`School refused this answer (${reply})`)
+    expect(await stateOf(q)).toBe("unanswered")
+    await p.waitForTimeout(2_000) // past several backoff periods
+    expect(asked).toBe(1)
+    expect(await outboxOf(p)).toEqual([])
+    await p.context().close()
+  })
+
+  test("two answers to one block, queued from two tabs, are sent in the order they were made: the first stays the first try", async () => {
+    const a = await newPage()
+    await open(main, lessonPath("ob-order"), "Orbits", a)
+    const b = await a.context().newPage()
+    b.setDefaultTimeout(5_000)
+    await open(main, lessonPath("ob-order"), "Orbits", b)
+    await network(a.context(), false)
+    await quiz(a, "closest").locator("[data-choice=venus]").click()
+    await until(a, "quiz", "closest", "queued")
+    await quiz(b, "closest").locator("[data-choice=mercury]").click()
+    await until(b, "quiz", "closest", "queued")
+    await b.close()
+
+    const p = await reopen(a)
+    const got = replies_(p)
+    await network(p.context(), true)
+    await open(main, lessonPath("ob-order"), "Orbits", p)
+    await eventually(async () => (await record(main, "ob-order")).answers.length === 2)
+    expect((await record(main, "ob-order")).answers).toEqual([
+      { blockId: "closest", choiceId: "venus", correct: false },
+      { blockId: "closest", choiceId: "mercury", correct: true },
+    ])
+    await eventually(() => got.filter((g) => g.reply.status === "stored").length === 2)
+    expect(got.filter((g) => g.reply.status === "stored").map((g) => [g.body.choiceId, g.reply.firstTry])).toEqual([["venus", true], ["mercury", false]])
+    await p.waitForFunction(() => ["right", "settled"].includes(document.querySelector("[data-quiz-id=closest]")?.getAttribute("data-state") ?? ""))
+    await p.context().close()
+  })
+
+  test("50 queued submissions are flushed at once: every one stored once, in the order made", async () => {
+    let p = await newPage()
+    await open(main, lessonPath("ob-50"), "Orbits", p)
+    const { encounterId } = await record(main, "ob-50")
+    await network(p.context(), false)
+    const choices = Array.from({ length: 50 }, (_, i) => ["venus", "mars", "mercury"][i % 3]!)
+    const made = await p.evaluate(
+      async ([encounterId, choices]) => {
+        const url = "/src/lib/outbox.ts"
+        const m = (await import(/* @vite-ignore */ url)) as typeof import("../src/lib/outbox.ts")
+        const ids: string[] = []
+        const queued: Promise<void>[] = []
+        for (const [i, choiceId] of choices.entries()) {
+          const submissionId = crypto.randomUUID()
+          ids.push(submissionId)
+          queued.push(
+            new Promise<void>((queued) => {
+              void m.outbox().submit({ kind: "answer", id: submissionId, body: { submissionId, encounterId, blockId: "closest", choiceId, ms: i } }, { queued }).catch(() => {})
+            })
+          )
+        }
+        await Promise.all(queued)
+        return ids
+      },
+      [encounterId, choices] as const
+    )
+    expect(made).toHaveLength(50)
+
+    p = await reopen(p)
+    const seen = posts(p)
+    await network(p.context(), true)
+    await open(main, lessonPath("ob-50"), "Orbits", p)
+    await eventually(async () => (await record(main, "ob-50")).answers.length >= 50, 30_000)
+    await eventually(async () => (await outboxOf(p)).length === 0)
+    const answers = (await record(main, "ob-50")).answers
+    expect(answers.map((a) => a.choiceId)).toEqual(choices)
+    const sent = seen.sent.filter((s) => s.path === "/api/answer").map((s) => s.body.submissionId)
+    expect(sent).toEqual(made) // each once, in order, under the id it was made with
+    await p.context().close()
+  }, 60_000)
 })
