@@ -65,10 +65,19 @@ Practical notes for anyone — human or agent — changing the framework.
   The HTTP tests read the record by stopping the server, reading as the superuser
   (`server/testing/record.ts`, which takes the same lock), then starting it again. PGlite also does not `fsync` (its Node
   filesystem has no fsync), so it survives the server being killed but not necessarily a power cut.
-- The Bun.SQL tests (`server/adapters/bunsql.test.ts`) need `SCHOOL_TEST_POSTGRES_URL`, a superuser
-  URL to a scratch Postgres; without it they are skipped. CI starts one. Locally:
-  `docker run -d -e POSTGRES_PASSWORD=pw -p 127.0.0.1:5432:5432 postgres:18.7`, then
-  `SCHOOL_TEST_POSTGRES_URL=postgres://postgres:pw@127.0.0.1:5432/postgres bun test`.
+- The real-Postgres tests (`server/adapters/bunsql.test.ts`, and the `Bun.SQL` registration of the
+  learner-history story in `server/contract/learner-history.test.ts`) need `SCHOOL_TEST_POSTGRES_URL`,
+  a superuser URL to a scratch Postgres; without it they are skipped. Each test gets a database of its
+  own, copied from a migrated template and dropped when its file ends (`server/testing/postgres.ts`:
+  call `scratchPostgres()` once per file). CI starts the server, writes a JUnit report, and runs
+  `server/testing/postgres-gate.ts` on it, which fails the build if any `Bun.SQL` test skipped or
+  any `postgres (PGlite): <title>` case has no passing `postgres (Bun.SQL): <title>`: register a
+  new story or contract on both drivers. Locally:
+  `docker run -d --rm --name school-pg -e POSTGRES_PASSWORD=pw -p 127.0.0.1:5432:5432 postgres:18.7`, then
+  `SCHOOL_TEST_POSTGRES_URL=postgres://postgres:pw@127.0.0.1:5432/postgres bun test`. To check
+  the gate as CI does, add `CI=true`, `--reporter=junit --reporter-outfile=junit.xml`, then
+  `bun run server/testing/postgres-gate.ts junit.xml`. Every `DROP DATABASE` waits for a checkpoint,
+  which is slow under Docker on macOS; the teardown drops a file's databases together for that reason.
 - Typecheck the server with `bunx tsc -p server` after `bun install` in `server/`.
   A server file that is not TypeScript still needs adding explicitly.
 - `server/compose.yaml` names no course. Its paths come from a gitignored `server/.env`; copy
