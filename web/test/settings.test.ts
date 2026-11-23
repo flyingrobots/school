@@ -85,12 +85,14 @@ async function world(env: (bridge: string) => Record<string, string> = () => ({}
 }
 
 /** The settings page, with its /api requests answered by `w`'s School. */
-async function open(w: World, hold?: Promise<void>): Promise<Page> {
+/** The settings page, with its /api requests answered by `w`'s School, except any path in `replace`. */
+async function open(w: World, hold?: Promise<void>, replace: Record<string, unknown> = {}): Promise<Page> {
   const p = await (await browser.newContext()).newPage()
   p.setDefaultTimeout(8_000)
   await p.route("**/api/**", async (route) => {
     const u = new URL(route.request().url())
     if (hold && u.pathname === "/api/settings/status") await hold
+    if (u.pathname in replace) return route.fulfill({ json: replace[u.pathname] })
     const response = await route.fetch({ url: w.school + u.pathname + u.search })
     await route.fulfill({ response })
   })
@@ -171,6 +173,27 @@ describe("connecting the bridge", () => {
     const p = await open(w)
     await connect(p, "http://127.0.0.1:9")
     await status(p).getByText(/could not reach/i).waitFor()
+    await p.context().close()
+  })
+
+  // Each reply is parsed with Zod (web/src/lib/settings-api.ts): a reply of the wrong shape is the
+  // page's error state, never a status or an agent list.
+  test.each([
+    ["/api/settings/status", { connection: "sideways", agents: [] }],
+    ["/api/settings/status", { connection: "ok", agents: [{ name: "fake", enabled: "yes", found: true }] }],
+    ["/api/settings/bridge", { url: 7, urlFrom: "settings", tokenSet: true, tokenFrom: "settings" }],
+  ])("a malformed reply from %s is shown as an error, not as a state", async (path, body) => {
+    const w = await world()
+    const p = await open(w, undefined, { [path]: body })
+    const error = p.locator("[data-settings=error]")
+    await error.getByText(/not what the page expects/).waitFor()
+    expect(await error.textContent()).toContain(path)
+    if (path === "/api/settings/status") {
+      expect(await status(p).textContent()).not.toMatch(/Connected|No bridge is connected/)
+      expect(await p.getByRole("list", { name: "Agents" }).count()).toBe(0)
+    } else {
+      expect(await address(p).count()).toBe(0) // no form built from a reply it could not read
+    }
     await p.context().close()
   })
 
