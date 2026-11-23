@@ -63,9 +63,18 @@ class Output {
     return t;
   }
 
+  /** Every string in `v`, at any depth, scrubbed: done before serialising, because JSON.stringify
+   * escapes a `"` or `\` in a secret, and the escaped form is not what scrub looks for. */
+  private scrubbed(v: unknown): unknown {
+    if (typeof v === "string") return this.scrub(v);
+    if (Array.isArray(v)) return v.map((x) => this.scrubbed(x));
+    if (v !== null && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, this.scrubbed(x)]));
+    return v;
+  }
+
   line(stream: "out" | "err", fields: Record<string, unknown>, prose: string) {
     const write = stream === "out" ? this.deps.out : this.deps.err;
-    write(this.scrub(this.human ? prose : JSON.stringify({ kind: this.kind, ...fields })));
+    write(this.human ? this.scrub(prose) : JSON.stringify(this.scrubbed({ kind: this.kind, ...fields })));
   }
   error(code: 1 | 2, message: string, extra: Record<string, unknown> = {}) {
     this.line("err", { event: "error", code, message, ...extra }, `error: ${message}`);
@@ -80,17 +89,22 @@ const SOURCE_PROSE: Record<Source, string> = {
   generated: "generated and stored in the Keychain",
 };
 
-/** The secret keys server/.env still assigns, in file order. Values are never returned. */
-function dotenvSecrets(text: string): { name: SecretName; value: string; line: number }[] {
+/**
+ * The secret keys server/.env still assigns, in file order, with `=` or with `:`, both of which
+ * compose reads. `quote` is the quote the value was in, if any: compose interpolates `$` in an
+ * unquoted or double-quoted value and keeps a single-quoted one literal.
+ */
+function dotenvSecrets(text: string): { name: SecretName; value: string; quote: "'" | '"' | null; line: number }[] {
   const names = new Set<string>(SECRETS.map((s) => s.name));
-  const found: { name: SecretName; value: string; line: number }[] = [];
+  const found: { name: SecretName; value: string; quote: "'" | '"' | null; line: number }[] = [];
   text.split("\n").forEach((raw, line) => {
-    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(raw);
+    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*[=:](.*)$/.exec(raw);
     if (m === null || !names.has(m[1]!)) return;
     let value = m[2]!.trim();
+    let quote: "'" | '"' | null = null;
     const q = value[0];
-    if ((q === "'" || q === '"') && value.length >= 2 && value.endsWith(q)) value = value.slice(1, -1);
-    found.push({ name: m[1] as SecretName, value, line });
+    if ((q === "'" || q === '"') && value.length >= 2 && value.endsWith(q)) [value, quote] = [value.slice(1, -1), q];
+    found.push({ name: m[1] as SecretName, value, quote, line });
   });
   return found;
 }
@@ -193,6 +207,11 @@ async function importDotenv(deps: Deps, o: Output): Promise<number> {
   for (const f of found) {
     if (names.has(f.name)) return o.error(2, `${dotenv} sets ${f.name} more than once; keep one line and run \`school import\` again`, { name: f.name });
     names.add(f.name);
+    // Compose would substitute a `$` here, so the text on the line is not the password compose
+    // passes; working out what it does pass means reimplementing compose's interpolation. Refused.
+    if (f.quote !== "'" && f.value.includes("$")) {
+      return o.error(2, `${f.name} in ${dotenv} contains \`$\`, which compose interpolates, so the line is not the value compose uses; nothing was changed. Replace it with the literal value (or put it in single quotes if the \`$\` is meant literally) and run \`school import\` again`, { name: f.name });
+    }
     if (!storable(f.value)) return o.error(2, `${f.name} in ${dotenv} must be printable ASCII with no space, double quote or backslash to be stored in the Keychain; nothing was changed`, { name: f.name });
     const there = store.get(f.name);
     if (there !== undefined) o.know(there);

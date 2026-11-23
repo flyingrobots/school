@@ -301,3 +301,53 @@ describe("the command line", () => {
     contract(r, []);
   });
 });
+
+describe("scrubbing and server/.env, flyingrobots/school#132 review", () => {
+  test("SEC-L19: a secret with a double quote or backslash is scrubbed from compose's output before it is serialised, not after", async () => {
+    // From the environment, so storable() never sees it: JSON.stringify would escape the quote
+    // and backslash, and a scrub of the serialised line would miss the escaped form.
+    const env = { SCHOOL_POSTGRES_PASSWORD: 'Quote"d\\Back0123456789', SCHOOL_APP_PASSWORD: "EnvApp01234567890123456", SCHOOL_BRIDGE_TOKEN: "EnvBridge0123456789" };
+    const r = await run(["up"], { env, composeLines: [{ stream: "stdout", line: `SCHOOL_POSTGRES_PASSWORD=${env.SCHOOL_POSTGRES_PASSWORD}` }] });
+    expect(r.code).toBe(0);
+    expect(parsed(r.stdout).filter((e) => e.event === "compose")).toEqual([{ kind: "school.up", event: "compose", stream: "stdout", line: "SCHOOL_POSTGRES_PASSWORD=(redacted)" }]);
+    const escaped = JSON.stringify(env.SCHOOL_POSTGRES_PASSWORD).slice(1, -1);
+    for (const l of all(r)) expect(l).not.toContain(escaped);
+    contract(r, Object.values(env));
+  });
+
+  test("SEC-L20: a `KEY: value` line in server/.env, which compose also reads, is a leak to `school up` and is moved by `school import`", async () => {
+    const value = "ColonSuperuser0123456789";
+    const dotenv = `SCHOOL_COURSE_DIR=../c\nSCHOOL_POSTGRES_PASSWORD: ${value}\n`;
+    const up = await run(["up"], { readText: () => dotenv });
+    expect(up.code).toBe(2);
+    expect(up.spawned).toEqual([]);
+    expect(parsed(up.stderr).at(-1)).toMatchObject({ kind: "school.up", event: "error", code: 2, keys: ["SCHOOL_POSTGRES_PASSWORD"] });
+    contract(up, [value]);
+
+    const { store, items } = fakeStore();
+    const written: string[] = [];
+    const imp = await run(["import"], { store: () => store, readText: () => dotenv, writeText: (_, text) => { written.push(text); } });
+    expect(imp.code).toBe(0);
+    expect(items.get("SCHOOL_POSTGRES_PASSWORD")).toBe(value);
+    expect(written).toEqual(["SCHOOL_COURSE_DIR=../c\n"]);
+    contract(imp, [value]);
+  });
+
+  test("SEC-L21: `school import` refuses a value compose would interpolate (a `$` unquoted or in double quotes), changing nothing; a single-quoted one is literal", async () => {
+    for (const line of ["SCHOOL_POSTGRES_PASSWORD=${PG_SEED}", 'SCHOOL_POSTGRES_PASSWORD="Pre$PG_SEED"', "SCHOOL_POSTGRES_PASSWORD=Old$Superuser0123"]) {
+      const { store, calls } = fakeStore();
+      const r = await run(["import"], { store: () => store, readText: () => `PG_SEED=Seed0123456789abcdef\n${line}\n` });
+      expect(r.code).toBe(2);
+      expect(calls.set).toEqual([]);
+      const e = parsed(r.stderr).at(-1)!;
+      expect(e).toMatchObject({ kind: "school.import", event: "error", code: 2, name: "SCHOOL_POSTGRES_PASSWORD" });
+      expect(String(e.message)).toContain("$");
+      expect(String(e.message)).toContain("literal");
+      contract(r, ["Seed0123456789abcdef"]);
+    }
+    const { store, items } = fakeStore();
+    const r = await run(["import"], { store: () => store, readText: () => "SCHOOL_POSTGRES_PASSWORD='Lit$eral0123456789'\n", writeText: () => {} });
+    expect(r.code).toBe(0);
+    expect(items.get("SCHOOL_POSTGRES_PASSWORD")).toBe("Lit$eral0123456789");
+  });
+});
