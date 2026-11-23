@@ -91,6 +91,9 @@ describe("loaded", () => {
       expect(await hrefs(p)).toEqual(expected.map((n) => `/courses/${n}`))
       expect(await skeletons(p).count()).toBe(0)
       expect(await sidebar(p).getByRole("alert").count()).toBe(0)
+      // The page may still be loading its own content (the lesson, on a lesson page); a request
+      // still in its route when the context closes is not this test's concern.
+      await p.context().unrouteAll({ behavior: "ignoreErrors" })
       await p.context().close()
     }
   )
