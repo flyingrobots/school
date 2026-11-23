@@ -19,6 +19,8 @@ import { Spinner } from "@/components/ui/spinner"
 // A multiple-choice quiz that answers through a callback and shows the verdict it is given.
 // It never decides correctness: the verdict comes from `onAnswer` (the server) or `recorded`.
 // The choices are ui-sdk's radio group (roles, name, roving focus) rendered as shadcn buttons.
+// `onWhyShown` says when the explanation is shown, once per showing, so a page can record the
+// help it gave.
 
 export type QuizChoice = { id: string; text: string }
 
@@ -60,6 +62,27 @@ function canChoose(state: QuizState, choiceId: string): boolean {
   return state.status === "wrong" && state.choiceId !== choiceId
 }
 
+/**
+ * Calls `onShown` once each time `shown` turns true, including on the first render. A ref, not
+ * state, guards it, so strict mode's second run of the effect calls nothing.
+ */
+function useShowing(shown: boolean, onShown: (() => void) | undefined) {
+  const fired = React.useRef(false)
+  const latest = React.useRef(onShown)
+  React.useEffect(() => {
+    latest.current = onShown
+  })
+  React.useEffect(() => {
+    if (!shown) {
+      fired.current = false
+      return
+    }
+    if (fired.current) return
+    fired.current = true
+    latest.current?.()
+  }, [shown])
+}
+
 /** The quiz as given: renders any state and offers only the choices that state allows. */
 export function QuizView({
   id,
@@ -69,11 +92,14 @@ export function QuizView({
   state,
   error,
   onChoose,
+  onWhyShown,
 }: QuizContent & {
   state: QuizState
   /** Shown when the last answer did not reach the server. */
   error?: string
   onChoose: (choiceId: string) => void
+  /** Called once each time the explanation (`why`) is shown. */
+  onWhyShown?: () => void
 }) {
   const choose = (choiceId: string) => {
     if (canChoose(state, choiceId)) onChoose(choiceId)
@@ -90,6 +116,7 @@ export function QuizView({
   const status = STATUS[state.status]
   const done = state.status === "right" || state.status === "settled"
   const title = React.useId()
+  useShowing(done, onWhyShown)
 
   return (
     <Card data-quiz="root" data-quiz-id={id} data-state={state.status} aria-busy={state.status === "in-flight"} onKeyDown={onKeyDown} className="w-full">
@@ -182,6 +209,8 @@ export function Quiz({
   onAnswer: (choiceId: string) => Promise<{ correct: boolean }>
   /** The latest answer the record holds for this quiz, read when the quiz first renders. */
   recorded?: QuizVerdict | null
+  /** Called once each time the explanation (`why`) is shown. */
+  onWhyShown?: () => void
 }) {
   const [state, setState] = React.useState<QuizState>(() => initial(recorded))
   const [error, setError] = React.useState<string>()

@@ -56,6 +56,9 @@ export type ViewEvent = z.infer<typeof ViewEvent>;
 
 export const GradeRequest = z.object({ submissionId: uuid });
 
+/** A submission id as a path segment, for GET /api/aid/:submissionId. */
+export const AidRequest = z.object({ submissionId: uuid });
+
 /**
  * The versions of aid capture this server knows (RFC 2 §3). A client that records every exposure it
  * shows says which version it follows when it opens a lesson; an encounter opened without one has

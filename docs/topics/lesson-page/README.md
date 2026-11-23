@@ -39,11 +39,36 @@ blocks to the API.
   This is `pageShows` in `server/contract/learner-history.ts`. Every answer stays in the record; a
   quiz answered wrong then right shows as settled on the right one.
 - Each submission's `ms` is the time since the lesson was shown.
-- The page opens the lesson without `?aid=`: it does not record the help it shows, so its
-  encounters have aid tracking off (flyingrobots/school#51).
+- A saved explanation can be revised (Revise, or `r`): the learner writes again from the saved
+  text and saves a new explanation. Both stay in the record.
 - There is no outbox yet: an answer made while School is down is not queued
   (flyingrobots/school#28).
 
+## The help it records
+
+The page opens every lesson with `?aid=1`: it declares aid capture version 1 (RFC 2 §3), so its
+encounters are tracked. It then records, through `POST /api/exposure`, each time it shows help for
+a block:
+
+| Kind | When the page records it |
+| --- | --- |
+| `feedback` | A quiz shows its explanation ("Why"): after a right answer, or on load for a quiz already answered right |
+| `model-answer` | An explain block shows its model answer: after an explanation is saved, or on load for one already saved |
+| `reference` | One of an explain block's sources is opened |
+| `hint` | Never: no block type carries a hint yet |
+
+- Each showing is recorded once, under a UUID the page makes, so a resend is stored once. Showing
+  the same help again (a reload, or the model answer after a revision) is a new showing and a new
+  record. Collapsing and reopening the model answer is not; closing and reopening a source is.
+- The quiz and explain blocks say when they show help (`onWhyShown`, `onModelShown`,
+  `onSourceOpened`); `web/src/pages/lesson.tsx` turns each call into one exposure.
+- Before a block's next answer or explanation, the page resends any of that block's exposures that
+  School has not answered and waits for them, so School sees the help before the work that came
+  after it. While one cannot be sent, the submission is not sent either, and the block says it was
+  not saved.
+- An exposure School answers 400 or 409 is final and not resent, and so is 501, which a record that
+  stores no exposures would answer (the server on Postgres never does). Nothing about exposures is
+  ever shown to the learner.
 ## States
 
 | State | Shows |
@@ -68,3 +93,12 @@ the development course in `web/test/fixtures/course`, and a fake bridge fails or
 grading on cue. Like the shell
 tests, it needs `npm ci` in `web/` and Google Chrome.
 
+The help the page records is tested at two levels. `web/test/quiz.test.tsx` and
+`web/test/explain.test.tsx` check that each block calls `onWhyShown`, `onModelShown` and
+`onSourceOpened` exactly once per showing, under React strict mode, and that Revise works. In
+`web/test/lesson.test.ts`, against School on `pglite:`, the "aid tracking", "every exposure the
+page shows is recorded once per showing", "RFC 2 Figure 4 over the page" and "an exposure that did
+not reach School" groups check `?aid=1`, one exposure per kind and showing, the order submit,
+model answer, revision, resends by the same id, and that 400, 409 and 501 are final. The Figure 4
+case reads the derived aid from `GET /api/aid/:submissionId`: no recorded aid for the first
+explanation, aided for the revision.
