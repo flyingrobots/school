@@ -7,7 +7,7 @@ import { lastValidLoader, quizIds, type Block } from "./blocks.ts";
 import { migrate, snapshot } from "./migrate.ts";
 import { PROMPT_VERSION, RUBRIC_VERSION, bridgeConfig, callBridge } from "./grade.ts";
 import { sqliteRecord } from "./adapters/sqlite.ts";
-import { ExplanationSubmission, GradeRequest, Submission, ViewEvent } from "./core/model.ts";
+import { AID_CAPTURE_VERSIONS, AidQuery, Exposure, ExplanationSubmission, GradeRequest, Submission, ViewEvent, type AidTracking } from "./core/model.ts";
 import type { Grader } from "./core/ports.ts";
 import { createSchool } from "./core/school.ts";
 import { bridgeClient, bridgeStatus, effectiveBridge, loadSettings, saveSettings, settingsFile, toBridge, validToken, validUrl } from "./settings.ts";
@@ -205,10 +205,22 @@ async function courseJson(c: Course): Promise<Response> {
 }
 
 /**
+ * The lesson API's `aid`: the capture version the client records exposures under (RFC 2 §3), given
+ * once, or null when absent, so the encounter is untracked. Only the client knows what it shows,
+ * so only its declaration can make an encounter tracked (flyingrobots/school#29, #51).
+ */
+function aidParam(params: URLSearchParams): { aid: AidTracking } | null {
+  const given = params.getAll("aid");
+  if (given.length === 0) return { aid: null };
+  const v = given.length === 1 ? AidQuery.safeParse(given[0]) : null;
+  return v?.success ? { aid: v.data } : null;
+}
+
+/**
  * One lesson. In the web view this opens or resumes the learner's encounter and includes what is
  * already answered in it, which is what opening the page used to do. The slides view records nothing.
  */
-async function lessonJson(c: Course, id: string, viewParam: string | null): Promise<Response> {
+async function lessonJson(c: Course, id: string, viewParam: string | null, aidTracking: AidTracking): Promise<Response> {
   const view = isView(viewParam) ? viewParam : "web";
   const { library, error } = lessons(c);
   if (library === null) return json({ error: error?.message ?? "the lessons could not be loaded" }, 500);
@@ -218,7 +230,7 @@ async function lessonJson(c: Course, id: string, viewParam: string | null): Prom
   if (page === undefined) return json({ error: "no such lesson" }, 404);
   const base = { course: c.name, view, lesson: page, prev: summary(pages[i - 1]), next: summary(pages[i + 1]), hasReference: referenceDocs(c).length > 0 };
   if (view !== "web") return json(base);
-  const opened = await school.openLesson(c.name, page);
+  const opened = await school.openLesson(c.name, page, aidTracking);
   return json({ ...base, encounterId: opened.encounter.id, answers: opened.answers, explanations: opened.explanations },
     200, { "cache-control": "no-store" });
 }
@@ -283,6 +295,15 @@ Bun.serve({
       const g = await school.gradeExplanation(body.data.submissionId);
       if (g === null) return json({ status: "unknown submission" }, 404);
       return json({ status: g.grading.status, explanation: g.explanation });
+    }
+    if (req.method === "POST" && pathname === "/api/exposure") {
+      const e = Exposure.safeParse(await readJson(req));
+      if (!e.success) return json({ status: "invalid" }, 400);
+      const r = await school.recordExposure(e.data);
+      if (r.status === "rejected") return json(r, 400);
+      if (r.status === "conflict") return json(r, 409);
+      if (r.status === "unsupported") return json(r, 501);
+      return json(r);
     }
     if (req.method === "POST" && pathname === "/api/settings/bridge") {
       const body = (await readJson(req)) as Record<string, unknown> | null;
@@ -365,7 +386,10 @@ Bun.serve({
     if (api !== null) {
       const c = course(config, api[1]!);
       if (c === null) return json({ error: "no such course" }, 404);
-      return api[2] === undefined ? courseJson(c) : lessonJson(c, api[2], url.searchParams.get("view"));
+      if (api[2] === undefined) return courseJson(c);
+      const aid = aidParam(url.searchParams);
+      if (aid === null) return json({ status: "invalid", error: `aid must be a known capture version: ${AID_CAPTURE_VERSIONS.join(", ")}` }, 400);
+      return lessonJson(c, api[2], url.searchParams.get("view"), aid.aid);
     }
     if (pathname.startsWith("/api/")) return json({ error: "not found" }, 404);
 

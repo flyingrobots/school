@@ -1,6 +1,6 @@
 // School's use cases (RFC 3, §4). Each takes values already parsed at the edge, talks only to
 // ports, and returns plain data for the driving adapter to serialise.
-import type { Block, Contradiction, Encounter, ExplanationState, ExplanationSubmission, Grading, GradingRecord, LessonProgress, Recorded, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
+import type { Aid, AidTracking, Block, Contradiction, Encounter, Exposure, ExposureResult, ExplanationState, ExplanationSubmission, Grading, GradingRecord, LessonProgress, Recorded, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
 import type { Clock, Grader, LearningRecord } from "./ports.ts";
 
 const squash = (s: string) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim().toLowerCase();
@@ -22,23 +22,28 @@ export function checkQuotes(contradictions: readonly Contradiction[], sources: r
 export type OpenedLesson = { encounter: Encounter; answers: Recorded[]; explanations: ExplanationState[] };
 
 export interface School {
-  /** Open or resume the learner's encounter with this page, with what is already answered in it. */
-  openLesson(course: string, page: Block): Promise<OpenedLesson>;
+  /**
+   * Open or resume the learner's encounter with this page, with what is already answered in it.
+   * `aidTracking` is the capture version the client declares it records exposures under, or null.
+   */
+  openLesson(course: string, page: Block, aidTracking: AidTracking): Promise<OpenedLesson>;
   submitAnswer(s: Submission): Promise<SubmitResult>;
   saveExplanation(s: ExplanationSubmission): Promise<{ result: SaveResult; explanation: ExplanationState | null }>;
   /** One grading attempt, stored whatever its outcome; null when there is no such explanation. */
   gradeExplanation(submissionId: string): Promise<{ grading: Grading; explanation: ExplanationState | null } | null>;
   lessonProgress(course: string): Promise<LessonProgress>;
   recordView(v: ViewEvent): Promise<void>;
+  recordExposure(e: Exposure): Promise<ExposureResult>;
+  submissionAid(submissionId: string): Promise<Aid | null>;
 }
 
 export function createSchool(ports: { record: LearningRecord; grader: Grader; clock: Clock }): School {
   const { record, grader, clock } = ports;
   const explanationNow = async (id: string) => (await record.explanation(id))?.state ?? null;
   return {
-    async openLesson(course, page) {
+    async openLesson(course, page, aidTracking) {
       if (page.type !== "page") throw new TypeError("a lesson is a page block");
-      const encounter = await record.openEncounter({ course, lesson: page.id, page, now: clock.now() });
+      const encounter = await record.openEncounter({ course, lesson: page.id, page, now: clock.now(), aidTracking });
       const [answers, explanations] = await Promise.all([record.encounterAnswers(encounter.id), record.encounterExplanations(encounter.id)]);
       return { encounter, answers, explanations };
     },
@@ -66,5 +71,7 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
     },
     lessonProgress: (course) => record.lessonProgress(course),
     recordView: (v) => record.recordView(v, clock.now()),
+    recordExposure: (e) => record.recordExposure(e, clock.now()),
+    submissionAid: (id) => record.aid(id),
   };
 }
