@@ -29,10 +29,9 @@ blocks to the API.
 
 - Every verdict and grading on screen is the server's. The lesson JSON carries each choice's
   `correct` flag; the page's parser drops it, so nothing in the page can read it.
-- An answer, a saved explanation and a grading attempt are each one request. The page shows a
-  verdict or a saved state only after the server answered with it; a request that fails (School
-  down, a refusal, a reply of the wrong shape) leaves the block as it was, with an error, and the
-  learner can try again. Typed text is kept.
+- The page shows a verdict or a saved state only after the server answered with it. An answer or
+  explanation goes through the outbox (below); a grading attempt is one request, and one that fails
+  leaves the block as it was, with an error and a retry. Typed text is kept.
 - On load the page shows what the encounter holds: each quiz by its latest answer (settled when it
   is right, wrong with the other choices open when it is not), each explain block by its latest
   explanation and that explanation's latest grading (saved, graded, or not graded with a retry).
@@ -41,8 +40,39 @@ blocks to the API.
 - Each submission's `ms` is the time since the lesson was shown.
 - A saved explanation can be revised (Revise, or `r`): the learner writes again from the saved
   text and saves a new explanation. Both stay in the record.
-- There is no outbox yet: an answer made while School is down is not queued
-  (flyingrobots/school#28).
+
+## The outbox
+
+Every answer, explanation and exposure goes through an outbox (`web/src/lib/outbox.ts`,
+flyingrobots/school#28) so that a submission made while School cannot be reached survives the tab
+closing. It is a delivery queue, never a record of progress.
+
+- Each item is written to IndexedDB (`school-outbox`, committed with strict durability) under the
+  id it will be stored with, before it is sent. It leaves the outbox only when School has answered
+  it for good: stored or `duplicate` (delivered), or refused (400 or 409; for an exposure also
+  501). Because the id is the one it was made with, a resend is stored once (ADR 9).
+- Items are sent one at a time in the order they were made, across tabs. A pass stops at the first
+  item School cannot be reached for, so an exposure is always sent before the submission made after
+  it, and two answers to one block arrive in order and the first stays the first try.
+- It is resent at once, then with backoff (0.5 s doubling to 5 s), when the browser fires `online`,
+  when the tab is shown again, and when any page of the app is opened (`web/src/main.tsx`).
+- While a submission waits, its block shows it as **Not sent yet** with a Spinner: the quiz on the
+  chosen answer, the explain block on Save, the text kept and the model answer still hidden. Nothing
+  else can be chosen or saved in that block until School answers. The registry blocks' `queued`
+  state and `pending` prop do this.
+- On load the page reads the outbox before the lesson, then shows what School's record holds plus
+  the waiting submissions of the same encounter, each marked not sent yet until School answers it.
+  The outbox never supplies a verdict or a saved explanation; those come from School's reply.
+- A refusal is shown in the block, "School refused this answer (conflict) …", and the submission is
+  dropped, never retried. A refusal of a submission from a tab that is gone is shown the next time
+  a lesson page in this tab opens; it is held in memory only, so if every tab closes first it is not
+  shown.
+- When this browser will not keep it (IndexedDB missing, refusing or failing, as in some private
+  modes), items are kept in memory only, and a submission is send-or-fail: if School cannot be
+  reached at once, it is dropped and the block says that School could not be reached, that this
+  browser cannot keep it to send later, and that it was not recorded.
+- Pending items of another encounter (a lesson whose encounter changed while they waited) are still
+  sent to their own encounter but are not shown on the new one.
 
 ## The help it records
 
@@ -62,10 +92,9 @@ a block:
   record. Collapsing and reopening the model answer is not; closing and reopening a source is.
 - The quiz and explain blocks say when they show help (`onWhyShown`, `onModelShown`,
   `onSourceOpened`); `web/src/pages/lesson.tsx` turns each call into one exposure.
-- Before a block's next answer or explanation, the page resends any of that block's exposures that
-  School has not answered and waits for them, so School sees the help before the work that came
-  after it. While one cannot be sent, the submission is not sent either, and the block says it was
-  not saved.
+- Exposures go through the outbox ahead of anything submitted after them, so School sees the help
+  before the work that came after it. While one cannot be sent, the submission waits behind it and
+  the block shows it as not sent yet.
 - An exposure School answers 400 or 409 is final and not resent, and so is 501, which a record that
   stores no exposures would answer (the server on Postgres never does). Nothing about exposures is
   ever shown to the learner.
@@ -99,6 +128,17 @@ The help the page records is tested at two levels. `web/test/quiz.test.tsx` and
 `web/test/lesson.test.ts`, against School on `pglite:`, the "aid tracking", "every exposure the
 page shows is recorded once per showing", "RFC 2 Figure 4 over the page" and "an exposure that did
 not reach School" groups check `?aid=1`, one exposure per kind and showing, the order submit,
-model answer, revision, resends by the same id, and that 400, 409 and 501 are final. The Figure 4
+model answer, revision, resends by the same id, and that 400, 409 and 501 are final.
+
+The outbox is tested in the "the outbox (flyingrobots/school#28)" group, with each context's
+network switched off in its `/api` route and tabs closed and reopened in one browser profile: an
+answer and an explanation made offline, the tab closed and reopened online, each stored once under
+its own id; a lost reply resent as a `duplicate`, one row; no IndexedDB (private mode) as
+send-or-fail with its message; a queued answer answered 409 or 400 shown and never resent; two
+answers to one block queued from two tabs, stored in order with the first as the first try; and 50
+queued answers flushed at once, each sent once, in order. "the server down" and "an exposure that
+did not reach School" check that a submission waits as not sent yet and goes by itself once School
+is back. The blocks' queued state and pending prop are tested in `web/test/quiz.test.tsx` and
+`web/test/explain.test.tsx`. The Figure 4
 case reads the derived aid from `GET /api/aid/:submissionId`: no recorded aid for the first
 explanation, aided for the revision.
