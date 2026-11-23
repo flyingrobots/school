@@ -150,6 +150,10 @@ Practical notes for anyone — human or agent — changing the framework.
   been disposed" into the run, on a loaded machine only (flyingrobots/school#121). `close` waits for
   the context's and its pages' handlers to finish first; `web/test/routes.test.ts` holds one across
   the close.
+- A browser test file that starts the Vite dev server calls `warm` from `web/test/vite.ts` in its
+  `beforeAll`, after launching Chrome. Vite transforms the app's modules on their first request, so
+  without it the first page a file opens takes about twice as long as the rest and, on a loaded
+  machine, runs past the test's 5 s page timeout (flyingrobots/school#121).
 - The bridge (`bridge/`) is a separate host process, deliberately outside the Docker image
   and its allowlist. It has no dependencies beyond Bun and is started by hand:
   `SCHOOL_BRIDGE_TOKEN=... bun bridge/bridge.ts`. Its tests write fake agent scripts and

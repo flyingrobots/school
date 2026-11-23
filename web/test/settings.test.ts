@@ -14,6 +14,7 @@ import { createServer, type ViteDevServer } from "vite"
 import { startBridge, startSchool, timeout, type Started } from "../../server/testing/processes.ts"
 import { heldIntro, opacities, pressJ, stops } from "./intro.ts"
 import { close } from "./routes.ts"
+import { warm } from "./vite.ts"
 
 setDefaultTimeout(timeout(2) + 15_000)
 
@@ -29,7 +30,8 @@ beforeAll(async () => {
   await vite.listen()
   base = vite.resolvedUrls!.local[0]!.replace(/\/$/, "")
   browser = await chromium.launch({ channel: "chrome" })
-})
+  await warm(browser, base)
+}, 60_000)
 
 afterAll(async () => {
   await browser?.close()
