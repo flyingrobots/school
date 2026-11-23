@@ -15,10 +15,12 @@
 // And flyingrobots/school#43's: the slides view sends no write request and opens no encounter (the
 // record's latest activity stays empty), its keys move between slides, reduced motion skips the
 // animation, and the link to the web view goes there and back.
+// And flyingrobots/school#125's: a relative or same-origin link in lesson prose opens in the same
+// tab with no confirmation, and a link to another origin still asks first.
 // What a reload shows is the learner history's oracle (server/contract/learner-history.ts,
 // `pageShows`): each quiz by its latest answer, each explanation by its latest grading.
 import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core"
@@ -62,11 +64,11 @@ beforeEach(() => {
 /** A School process, and the environment it was started with so it can be started again. */
 type Stack = { school: Started; env: Record<string, string | undefined> }
 
-async function stack(state: string): Promise<Stack> {
+async function stack(state: string, courses = NAMES.map((n) => `${n}=${COURSE}`).join(",")): Promise<Stack> {
   const env = {
     ...process.env,
     SCHOOL_COURSE: undefined,
-    SCHOOL_COURSES: NAMES.map((n) => `${n}=${COURSE}`).join(","),
+    SCHOOL_COURSES: courses,
     SCHOOL_STATE: state,
     SCHOOL_DATABASE_URL: `pglite:${join(state, "record")}`, // its own PGlite record beside its state
     SCHOOL_BRIDGE_URL: bridge.url.href.replace(/\/$/, ""),
@@ -560,6 +562,52 @@ describe("previous and next", () => {
     await p.locator("a[rel=prev]").first().click()
     await p.getByRole("heading", { level: 1, name: "Orbits", exact: true }).waitFor()
     expect(await p.evaluate(() => (window as unknown as { marker?: number }).marker)).toBe(1)
+    await p.context().close()
+  })
+})
+
+describe("links in lesson prose (flyingrobots/school#125)", () => {
+  // The same-origin link names the page's own origin, which is known only once Vite listens, so
+  // this course is written here: the fixture's orbits lesson, then a lesson whose prose links to
+  // it relatively, by School's own origin, and to another origin.
+  let links: Stack
+  beforeAll(async () => {
+    const course = join(root, "links-course")
+    mkdirSync(join(course, "lessons"), { recursive: true })
+    copyFileSync(join(COURSE, "lessons", "0001-orbits.json"), join(course, "lessons", "0001-orbits.json"))
+    const html =
+      `<p>Read <a href="/courses/links/lessons/orbits">the relative link</a>, ` +
+      `<a href="${base}/courses/links/lessons/orbits">the same-origin link</a> and ` +
+      `<a href="https://example.com/planets">the external link</a>.</p>`
+    const lesson = { type: "page", id: "links", title: "Links", subtitle: "", children: [{ type: "prose", id: "links-prose", html }] }
+    writeFileSync(join(course, "lessons", "0002-links.json"), JSON.stringify(lesson))
+    links = await stack(join(root, "links-state"), `links=${course}`)
+  }, timeout(1))
+  afterAll(() => stop(links))
+
+  const link = (p: Page, name: string) => p.locator("[data-lesson-block=prose] [data-streamdown=link]", { hasText: name })
+  const modal = (p: Page) => p.locator("[data-streamdown=link-safety-modal]")
+
+  for (const name of ["the relative link", "the same-origin link"])
+    test(`${name} opens the lesson in the same tab, with no confirmation`, async () => {
+      const p = await open(links, "/courses/links/lessons/links", "Links")
+      expect(await link(p, name).getAttribute("href")).toMatch(/\/courses\/links\/lessons\/orbits$/)
+      await link(p, name).click()
+      await p.getByRole("heading", { level: 1, name: "Orbits", exact: true }).waitFor()
+      expect(new URL(p.url()).pathname).toBe("/courses/links/lessons/orbits")
+      expect(await modal(p).count()).toBe(0)
+      expect(p.context().pages()).toHaveLength(1) // no new tab
+      await p.context().close()
+    })
+
+  test("the external link still asks first, and nothing opens until it is confirmed", async () => {
+    const p = await open(links, "/courses/links/lessons/links", "Links")
+    await link(p, "the external link").click()
+    await modal(p).waitFor()
+    expect(await modal(p).textContent()).toContain("Open external link?")
+    expect(await modal(p).textContent()).toContain("https://example.com/planets")
+    expect(new URL(p.url()).pathname).toBe("/courses/links/lessons/links")
+    expect(p.context().pages()).toHaveLength(1)
     await p.context().close()
   })
 })
