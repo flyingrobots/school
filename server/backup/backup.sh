@@ -13,7 +13,10 @@
 # nothing. The folder is closed to everyone but its owner (0700) and every file is 0600.
 #
 # The connection comes from libpq's environment (PGHOST, PGPORT, PGUSER, PGDATABASE, PGPASSWORD);
-# nothing here prints it, and every message is scrubbed of PGPASSWORD before it is printed.
+# nothing here prints it, and every message is scrubbed of PGPASSWORD before it is printed. Under
+# compose the password is a file instead (flyingrobots/school#123): PGPASSWORD_FILE names it, it
+# wins over a plain PGPASSWORD, and it is read into this process's environment only, never the
+# container's.
 #
 # Output (flyingrobots/school#135; docs/topics/program-output/README.md): every line, on stdout or
 # stderr, is one JSON object naming its published schema (`_schema: {id, version}`), a file in
@@ -155,6 +158,13 @@ fi
 whole() { case $1 in '' | *[!0-9]* | 0*) return 1 ;; *) return 0 ;; esac; }
 whole "$KEEP" || refuse "SCHOOL_BACKUP_KEEP must be a positive whole number, not \"$KEEP\""
 whole "$INTERVAL" || refuse "SCHOOL_BACKUP_INTERVAL_SECONDS must be a positive whole number, not \"$INTERVAL\""
+if [ -n "${PGPASSWORD_FILE:-}" ]; then
+  { [ -f "$PGPASSWORD_FILE" ] && [ -r "$PGPASSWORD_FILE" ]; } || refuse "PGPASSWORD_FILE ($PGPASSWORD_FILE) cannot be read"
+  # $(...) drops the trailing newline.
+  PGPASSWORD=$(cat "$PGPASSWORD_FILE")
+  [ -n "$PGPASSWORD" ] || refuse "PGPASSWORD_FILE ($PGPASSWORD_FILE) is empty"
+  export PGPASSWORD
+fi
 chmod 700 "$DIR" 2>/dev/null || refuse "cannot close $DIR to others (chmod 700)"
 
 # Stopped mid-dump (docker compose stop): remove this run's temporary files, and no one else's.

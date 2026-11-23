@@ -23,7 +23,11 @@ export type Outgoing =
 export type Kept = Outgoing & { seq: number }
 
 /** What delivered submissions resolve with. */
-type Value<K extends Outgoing["kind"]> = K extends "answer" ? { correct: boolean } : K extends "explanation" ? api.Explanation : null
+type Value<K extends Outgoing["kind"]> = K extends "answer"
+  ? { correct: boolean }
+  : K extends "explanation"
+    ? api.Explanation
+    : null
 
 /** School answered for good and said no: the same body would be refused again, so it is not resent. */
 export class Refused extends Error {
@@ -88,13 +92,23 @@ export async function indexedDbStore(timeoutMs = 3_000): Promise<Store | null> {
   let db: IDBDatabase
   try {
     const open = indexedDB.open(DB, 1)
-    open.onupgradeneeded = () => open.result.createObjectStore(STORE, { keyPath: "seq", autoIncrement: true })
-    db = await Promise.race([done(open), new Promise<never>((_, reject) => setTimeout(() => reject(new Error("IndexedDB did not open")), timeoutMs))])
+    open.onupgradeneeded = () =>
+      open.result.createObjectStore(STORE, {
+        keyPath: "seq",
+        autoIncrement: true,
+      })
+    db = await Promise.race([
+      done(open),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("IndexedDB did not open")), timeoutMs)
+      ),
+    ])
   } catch {
     return null
   }
   // Committed to disk before an item counts as kept, so "not sent yet" means it survives the tab.
-  const tx = (mode: IDBTransactionMode) => db.transaction(STORE, mode, { durability: "strict" })
+  const tx = (mode: IDBTransactionMode) =>
+    db.transaction(STORE, mode, { durability: "strict" })
   const committed = (t: IDBTransaction) =>
     new Promise<void>((resolve, reject) => {
       t.oncomplete = () => resolve()
@@ -120,7 +134,10 @@ export async function indexedDbStore(timeoutMs = 3_000): Promise<Store | null> {
   }
 }
 
-type Settled = { status: "delivered"; value: unknown } | { status: "refused"; reason: string } | { status: "not-kept"; error: string }
+type Settled =
+  | { status: "delivered"; value: unknown }
+  | { status: "refused"; reason: string }
+  | { status: "not-kept"; error: string }
 
 type Send = (item: Outgoing) => Promise<api.Delivery<unknown>>
 
@@ -137,8 +154,16 @@ const sendOne: Send = (item) => {
 
 /** A submission still waiting, as the page shows it on load: its body, and what School will say. */
 export type Waiting =
-  | { kind: "answer"; body: api.AnswerBody; settled: Promise<{ correct: boolean }> }
-  | { kind: "explanation"; body: api.ExplanationBody; settled: Promise<api.Explanation> }
+  | {
+      kind: "answer"
+      body: api.AnswerBody
+      settled: Promise<{ correct: boolean }>
+    }
+  | {
+      kind: "explanation"
+      body: api.ExplanationBody
+      settled: Promise<api.Explanation>
+    }
 
 export type Outbox = ReturnType<typeof createOutbox>
 
@@ -146,7 +171,11 @@ export function createOutbox({
   store: opening = indexedDbStore().then((s) => s ?? memoryStore()),
   send = sendOne,
   backoff = { first: 500, max: 5_000 },
-}: { store?: Promise<Store>; send?: Send; backoff?: { first: number; max: number } } = {}) {
+}: {
+  store?: Promise<Store>
+  send?: Send
+  backoff?: { first: number; max: number }
+} = {}) {
   /** Items this tab has kept or seen and not yet settled. Resent even if another tab removed them, to learn the outcome. */
   const known = new Map<string, Kept>()
   /** What each settled item came to, this session, so a late listener still hears it. */
@@ -169,7 +198,14 @@ export function createOutbox({
   const settle = (item: Outgoing, s: Settled) => {
     const id = item.id
     // Not one a page is showing (it has no listener yet), so the next page to read `waiting` shows it.
-    if (s.status !== "delivered" && item.kind !== "exposure" && !mine.has(id) && !listeners.has(id) && "seq" in item) unshown.set(id, item as Kept)
+    if (
+      s.status !== "delivered" &&
+      item.kind !== "exposure" &&
+      !mine.has(id) &&
+      !listeners.has(id) &&
+      "seq" in item
+    )
+      unshown.set(id, item as Kept)
     known.delete(id)
     onQueued.delete(id)
     outcomes.set(id, s)
@@ -220,7 +256,12 @@ export function createOutbox({
         return false
       }
       await store.remove(item.seq).catch(() => {}) // a later resend is a duplicate, which is harmless
-      settle(item, d.status === "delivered" ? { status: "delivered", value: d.value } : { status: "refused", reason: d.reason })
+      settle(
+        item,
+        d.status === "delivered"
+          ? { status: "delivered", value: d.value }
+          : { status: "refused", reason: d.reason }
+      )
     }
     return true
   }
@@ -271,7 +312,10 @@ export function createOutbox({
      * Keeps a submission and sends it. Resolves with School's answer once it is delivered, which may
      * be after `queued` was called; rejects with `Refused`, or `NotKept` when it could not be kept.
      */
-    async submit<K extends "answer" | "explanation">(item: Outgoing & { kind: K }, progress: { queued: () => void }): Promise<Value<K>> {
+    async submit<K extends "answer" | "explanation">(
+      item: Outgoing & { kind: K },
+      progress: { queued: () => void }
+    ): Promise<Value<K>> {
       const settled = result<Value<K>>(item.id)
       onQueued.set(item.id, progress.queued)
       mine.add(item.id)
@@ -282,7 +326,14 @@ export function createOutbox({
         // This browser would not keep it: send it once, and say so if that fails.
         onQueued.delete(item.id)
         const d = await send(item)
-        settle(item, d.status === "delivered" ? { status: "delivered", value: d.value } : d.status === "refused" ? { status: "refused", reason: d.reason } : { status: "not-kept", error: d.error })
+        settle(
+          item,
+          d.status === "delivered"
+            ? { status: "delivered", value: d.value }
+            : d.status === "refused"
+              ? { status: "refused", reason: d.reason }
+              : { status: "not-kept", error: d.error }
+        )
         return settled
       }
       void flush()
@@ -303,16 +354,31 @@ export function createOutbox({
     async waiting(): Promise<Waiting[]> {
       const store = await opening
       await adding
-      const items = [...(await queue(store)).filter((k) => !outcomes.has(k.id)), ...unshown.values()].sort((a, b) => a.seq - b.seq)
+      const items = [
+        ...(await queue(store)).filter((k) => !outcomes.has(k.id)),
+        ...unshown.values(),
+      ].sort((a, b) => a.seq - b.seq)
       unshown.clear()
       for (const k of items) if (!outcomes.has(k.id)) known.set(k.id, k)
       // Handled here too, so a refusal no page is showing is not an unhandled rejection.
       const handled = <T>(p: Promise<T>) => (p.catch(() => {}), p)
       return items.flatMap((k): Waiting[] =>
         k.kind === "answer"
-          ? [{ kind: "answer", body: k.body, settled: handled(result<{ correct: boolean }>(k.id)) }]
+          ? [
+              {
+                kind: "answer",
+                body: k.body,
+                settled: handled(result<{ correct: boolean }>(k.id)),
+              },
+            ]
           : k.kind === "explanation"
-            ? [{ kind: "explanation", body: k.body, settled: handled(result<api.Explanation>(k.id)) }]
+            ? [
+                {
+                  kind: "explanation",
+                  body: k.body,
+                  settled: handled(result<api.Explanation>(k.id)),
+                },
+              ]
             : []
       )
     },

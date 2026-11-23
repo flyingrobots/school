@@ -29,8 +29,9 @@ The cases that pin this page are in its [test plan](test-plan.md).
   `schema` lines.
 - **Prose only on request.** `--human` (alias `--humanize`) prints the same messages as prose.
   Nothing else changes the format.
-- **No secret, ever.** The backup job scrubs `PGPASSWORD` from every message; the bridge scrubs
-  `SCHOOL_BRIDGE_TOKEN` from every line. Either is replaced by `(redacted)`.
+- **No secret, ever.** The backup job scrubs `PGPASSWORD` (read from `PGPASSWORD_FILE` under
+  compose) from every message; the bridge scrubs its token, from the environment or the Keychain,
+  from every line. Either is replaced by `(redacted)`.
 - **Additive.** Each line keeps every field it had before flyingrobots/school#135: a consumer that
   matched on `kind` and `event` still matches.
 
@@ -157,7 +158,7 @@ SCHOOL_BRIDGE_TOKEN=<shared secret> bun bridge/bridge.ts [--help | --schema] [--
 | `school.bridge.help` | `bridge.help` | `command`, `usage`, `summary`, `options`, `environment`, `exit`, `output` | First line of `--help` |
 | `school.bridge.schema` | `bridge.schema` | `id`, `version`, `schema` | `--schema`, and `--help` after its help line |
 | `school.bridge.start` | `bridge.start` | `host`, `port`, `config`, `agents` (name, enabled, program; null with no file yet) | Once, the settings accepted |
-| `school.bridge.listening` | `bridge.listening` | `host`, `port` | Once it listens |
+| `school.bridge.listening` | `bridge.listening` | `host`, `port`, `tokenFrom` (`environment` or `keychain`) | Once it listens |
 | `school.bridge.run.start` | `bridge.run.start` | `id` | A `POST /run` accepted |
 | `school.bridge.attempt` | `bridge.attempt` | `id`, `agent`, `status`, `ms`, `exit_code`, `error` | Each agent tried in that run |
 | `school.bridge.run.end` | `bridge.run.end` | `id`, `status`, `agent` | How the run ended |
@@ -170,22 +171,22 @@ and no `run`, and arguments were ignored.
 
 ### What the bridge printed
 
-`bun bridge/bridge.ts` from the repository on 2026-11-23, with a configuration of two agents, one
+`bun bridge/bridge.ts` from the repository on 2026-11-23, the token in the environment, with a configuration of two agents, one
 missing and one a script that answers `{"ok": true}`: one `POST /run`, one `POST /test` and one
 `PUT /config`, then stopped. The temporary folder holding the configuration is shown as `$DIR`;
 nothing else is changed. Then a refusal, as JSON and as prose.
 
 ```text
-{"_schema":{"id":"school.bridge.start","version":"1.0.0"},"kind":"bridge.start","at":"2026-11-23T08:28:11.387Z","host":"127.0.0.1","port":47135,"config":"$DIR/bridge.json","agents":[{"name":"missing","enabled":true,"program":"no-such-cli-qqq"},{"name":"good","enabled":true,"program":"$DIR/good"}],"run":"ca39b5a7-04f7-4e0f-abad-1298478acc84"}
-{"_schema":{"id":"school.bridge.listening","version":"1.0.0"},"kind":"bridge.listening","at":"2026-11-23T08:28:11.387Z","host":"127.0.0.1","port":47135,"run":"ca39b5a7-04f7-4e0f-abad-1298478acc84"}
-{"_schema":{"id":"school.bridge.run.start","version":"1.0.0"},"kind":"bridge.run.start","at":"2026-11-23T08:28:11.513Z","id":"587123e3-f1f1-44f7-83ec-9a90c83f11ff","run":"ca39b5a7-04f7-4e0f-abad-1298478acc84"}
-{"_schema":{"id":"school.bridge.attempt","version":"1.0.0"},"kind":"bridge.attempt","at":"2026-11-23T08:28:11.910Z","id":"587123e3-f1f1-44f7-83ec-9a90c83f11ff","agent":"missing","status":"skipped","ms":0,"exit_code":null,"error":"no-such-cli-qqq: not found on PATH","run":"ca39b5a7-04f7-4e0f-abad-1298478acc84"}
-{"_schema":{"id":"school.bridge.attempt","version":"1.0.0"},"kind":"bridge.attempt","at":"2026-11-23T08:28:11.910Z","id":"587123e3-f1f1-44f7-83ec-9a90c83f11ff","agent":"good","status":"succeeded","ms":395,"exit_code":0,"error":null,"run":"ca39b5a7-04f7-4e0f-abad-1298478acc84"}
-{"_schema":{"id":"school.bridge.run.end","version":"1.0.0"},"kind":"bridge.run.end","at":"2026-11-23T08:28:11.910Z","id":"587123e3-f1f1-44f7-83ec-9a90c83f11ff","status":"succeeded","agent":"good","run":"ca39b5a7-04f7-4e0f-abad-1298478acc84"}
-{"_schema":{"id":"school.bridge.test","version":"1.0.0"},"kind":"bridge.test","at":"2026-11-23T08:28:11.930Z","agent":"good","status":"succeeded","run":"ca39b5a7-04f7-4e0f-abad-1298478acc84"}
-{"_schema":{"id":"school.bridge.config.saved","version":"1.0.0"},"kind":"bridge.config.saved","at":"2026-11-23T08:28:11.940Z","config":"$DIR/bridge.json","agents":["good","missing"],"run":"ca39b5a7-04f7-4e0f-abad-1298478acc84"}
+{"_schema":{"id":"school.bridge.start","version":"1.0.0"},"kind":"bridge.start","at":"2026-11-23T10:57:25.808Z","host":"127.0.0.1","port":47135,"config":"$DIR/bridge.json","agents":[{"name":"missing","enabled":true,"program":"no-such-cli-qqq"},{"name":"good","enabled":true,"program":"$DIR/good"}],"run":"1c73fe6a-2e1c-4176-b147-a18fb671da53"}
+{"_schema":{"id":"school.bridge.listening","version":"1.0.0"},"kind":"bridge.listening","at":"2026-11-23T10:57:25.809Z","host":"127.0.0.1","port":47135,"tokenFrom":"environment","run":"1c73fe6a-2e1c-4176-b147-a18fb671da53"}
+{"_schema":{"id":"school.bridge.run.start","version":"1.0.0"},"kind":"bridge.run.start","at":"2026-11-23T10:57:25.815Z","id":"3b85662c-704a-4139-aac5-079ba7ae5cb7","run":"1c73fe6a-2e1c-4176-b147-a18fb671da53"}
+{"_schema":{"id":"school.bridge.attempt","version":"1.0.0"},"kind":"bridge.attempt","at":"2026-11-23T10:57:25.981Z","id":"3b85662c-704a-4139-aac5-079ba7ae5cb7","agent":"missing","status":"skipped","ms":0,"exit_code":null,"error":"no-such-cli-qqq: not found on PATH","run":"1c73fe6a-2e1c-4176-b147-a18fb671da53"}
+{"_schema":{"id":"school.bridge.attempt","version":"1.0.0"},"kind":"bridge.attempt","at":"2026-11-23T10:57:25.981Z","id":"3b85662c-704a-4139-aac5-079ba7ae5cb7","agent":"good","status":"succeeded","ms":165,"exit_code":0,"error":null,"run":"1c73fe6a-2e1c-4176-b147-a18fb671da53"}
+{"_schema":{"id":"school.bridge.run.end","version":"1.0.0"},"kind":"bridge.run.end","at":"2026-11-23T10:57:25.981Z","id":"3b85662c-704a-4139-aac5-079ba7ae5cb7","status":"succeeded","agent":"good","run":"1c73fe6a-2e1c-4176-b147-a18fb671da53"}
+{"_schema":{"id":"school.bridge.test","version":"1.0.0"},"kind":"bridge.test","at":"2026-11-23T10:57:25.996Z","agent":"good","status":"succeeded","run":"1c73fe6a-2e1c-4176-b147-a18fb671da53"}
+{"_schema":{"id":"school.bridge.config.saved","version":"1.0.0"},"kind":"bridge.config.saved","at":"2026-11-23T10:57:26.004Z","config":"$DIR/bridge.json","agents":["good","missing"],"run":"1c73fe6a-2e1c-4176-b147-a18fb671da53"}
 $ SCHOOL_BRIDGE_TOKEN=short bun bridge/bridge.ts
-{"_schema":{"id":"school.bridge.error","version":"1.0.0"},"kind":"bridge.error","at":"2026-11-23T08:28:11.955Z","message":"set SCHOOL_BRIDGE_TOKEN to a shared secret of at least 16 characters; the server sends the same one","run":"9bb0153d-eaa6-4697-b3d9-3f9f350f722e"}
+{"_schema":{"id":"school.bridge.error","version":"1.0.0"},"kind":"bridge.error","at":"2026-11-23T10:57:26.020Z","message":"set SCHOOL_BRIDGE_TOKEN to a shared secret of at least 16 characters; the server sends the same one","run":"1bdfc7b1-e39f-4cb3-9874-cc7191a15924"}
 exit=2
 $ SCHOOL_BRIDGE_TOKEN=short bun bridge/bridge.ts --human
 error: set SCHOOL_BRIDGE_TOKEN to a shared secret of at least 16 characters; the server sends the same one

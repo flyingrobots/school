@@ -50,9 +50,10 @@ export type Writer = {
  * fields of their own besides `_schema` (the bridge's `kind` is the message type, not the program).
  */
 export function lineWriter(o: { schemas: Schemas; human?: boolean; prose?: (line: Record<string, unknown>) => string; secrets?: string[]; write?: Write }): Writer {
-  const secrets = (o.secrets ?? []).filter((s) => s !== "");
+  // Read on every line, so a caller may add a secret it learns later (the bridge's Keychain token).
+  const secrets = () => (o.secrets ?? []).filter((s) => s !== "");
   const write = o.write ?? fds;
-  const scrubText = (t: string) => secrets.reduce((acc, s) => acc.replaceAll(s, "(redacted)"), t);
+  const scrubText = (t: string) => secrets().reduce((acc, s) => acc.replaceAll(s, "(redacted)"), t);
   const scrub = (v: unknown): unknown => typeof v === "string" ? scrubText(v)
     : Array.isArray(v) ? v.map(scrub)
     : v !== null && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, scrub(x)]))

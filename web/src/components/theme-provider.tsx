@@ -25,7 +25,9 @@ const ThemeProviderContext = createContext<ThemeProviderState>(initialState)
 function readTheme(key: string): Theme | null {
   try {
     const stored = localStorage.getItem(key)
-    return stored === "dark" || stored === "light" || stored === "system" ? stored : null
+    return stored === "dark" || stored === "light" || stored === "system"
+      ? stored
+      : null
   } catch {
     return null
   }

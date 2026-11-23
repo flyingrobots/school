@@ -40,9 +40,19 @@ export function effectiveBridge(env: Record<string, string | undefined>, saved: 
   return { url: url?.replace(/\/+$/, "") ?? null, token, urlFrom, tokenFrom };
 }
 
-/** What the grading client needs, or null when the bridge is not fully configured. */
+/**
+ * A token from the environment (under compose, the Keychain's, mounted as SCHOOL_BRIDGE_TOKEN_FILE)
+ * with a URL that is not: the pair School will not use. That URL was saved on the page, perhaps
+ * before the token was mounted, by anyone who could reach School, and was never paired with this
+ * token (flyingrobots/school#60, #132). A token from the environment goes only to a URL from it.
+ */
+export const unpaired = (e: Effective) => e.tokenFrom === "environment" && e.url !== null && e.urlFrom !== "environment";
+
+export const UNPAIRED = "SCHOOL_BRIDGE_TOKEN comes from the environment, but the bridge URL from the settings page: School sends that token only to an address set beside it, so set SCHOOL_BRIDGE_URL";
+
+/** What the grading client needs, or null when the bridge is not fully configured or not paired. */
 export function bridgeClient(e: Effective, deadlineMs: number): BridgeClientConfig | null {
-  return e.url === null || e.token === null ? null : { url: e.url, token: e.token, deadlineMs };
+  return e.url === null || e.token === null || unpaired(e) ? null : { url: e.url, token: e.token, deadlineMs };
 }
 
 export const validUrl = (u: string) => /^https?:\/\/[^\s/]+/.test(u);

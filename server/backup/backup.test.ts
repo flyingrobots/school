@@ -54,11 +54,14 @@ describe("the backup service in compose.yaml", () => {
     expect(backup!.environment!.SCHOOL_BACKUP_KEEP).toBe("${SCHOOL_BACKUP_KEEP:-28}");
   });
 
-  test("takes the password from the environment only, and names the database without it", () => {
+  test("takes the password from a compose secret file only, never its environment, and names the database without it", () => {
+    // flyingrobots/school#123: the password is the file /run/secrets/postgres_password
+    // (server/compose-secrets.test.ts checks every service's secrets).
     const env = backup!.environment!;
-    expect(env.PGPASSWORD).toMatch(/^\$\{SCHOOL_POSTGRES_PASSWORD:\?/);
+    expect(env.PGPASSWORD_FILE).toBe("/run/secrets/postgres_password");
+    expect(env.PGPASSWORD).toBeUndefined();
     expect(env).toMatchObject({ PGHOST: "postgres", PGUSER: "postgres", PGDATABASE: "school" });
-    for (const [k, v] of Object.entries(env)) if (k !== "PGPASSWORD") expect(v).not.toContain("SCHOOL_POSTGRES_PASSWORD");
+    for (const v of Object.values(env)) expect(v).not.toContain("SCHOOL_POSTGRES_PASSWORD");
   });
 });
 
@@ -326,6 +329,30 @@ describe.skipIf(TEST_POSTGRES_URL === undefined)("backup and restore on a real P
       expect(out.filter((l) => l.event === "schema").map((l) => l.schema)).toEqual(backupSchemas.published.map((p) => p.schema) as never);
     }
     expect(statSync(dir).mode & 0o777).toBe(0o755); // --help and --schema touch nothing
+  });
+
+  // flyingrobots/school#123 (SEC-B1): under compose the password is a file, never the container's environment.
+  test("Bun.SQL: SEC-B1: PGPASSWORD_FILE is read and wins over a plain PGPASSWORD; a missing or empty file is refused, exit 2, naming no password", async () => {
+    const { url } = await scratch.fresh();
+    const dir = folder();
+    cleanup.push(dir);
+    const secrets = mkdtempSync(join(tmpdir(), "school-backup-secret-"));
+    cleanup.push(secrets);
+    const real = connection("x").env.PGPASSWORD!;
+    writeFileSync(join(secrets, "postgres_password"), `${real}\n`, { mode: 0o600 });
+    writeFileSync(join(secrets, "empty"), "\n", { mode: 0o600 });
+    const mount = ["-v", `${secrets}:/run/secrets:ro`];
+    const wrong = "not-the-password-0123456789";
+    const ran = await inImage(dir, nameOf(url), ["/bin/sh", "/backup/backup.sh", "once"], { PGPASSWORD: wrong, PGPASSWORD_FILE: "/run/secrets/postgres_password" }, { docker: mount });
+    expect({ code: ran.code, stderr: ran.stderr }).toEqual({ code: 0, stderr: "" });
+    expect(dumps(dir)).toHaveLength(1);
+    for (const file of ["/run/secrets/missing", "/run/secrets/empty"]) {
+      const refused = await inImage(dir, nameOf(url), ["/bin/sh", "/backup/backup.sh", "once"], { PGPASSWORD: real, PGPASSWORD_FILE: file }, { docker: mount });
+      expect(refused.code).toBe(2);
+      expect(lines(refused).at(-1)).toMatchObject({ kind: "backup", event: "error" });
+      expect(refused.stdout + refused.stderr).not.toContain(real);
+    }
+    expect(dumps(dir)).toHaveLength(1); // the refusals dumped nothing
   });
 
   test("Bun.SQL: retention keeps the newest SCHOOL_BACKUP_KEEP dumps and deletes only older dumps", async () => {

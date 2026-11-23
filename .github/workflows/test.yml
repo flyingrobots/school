@@ -33,11 +33,21 @@ jobs:
       - run: bun install --frozen-lockfile
         working-directory: server
       - run: bunx tsc -p server
+      # The host processes, the launcher (`./school`) and the vault it and the bridge read secrets
+      # through (flyingrobots/school#123). CI has no Keychain: its tests use a fake vault, and
+      # everything else keeps plain environment variables.
+      - run: bun install --frozen-lockfile
+        working-directory: host
+      - run: bunx tsc -p host
       # The web tests render components (web/test/quiz.test.tsx) and drive the app in Chrome,
       # preinstalled on the runner, through playwright-core (web/test/shell.test.ts); both need web's packages.
       - run: npm ci
         working-directory: web
       - run: npx tsc -b
+        working-directory: web
+      - run: npm run lint
+        working-directory: web
+      - run: npx prettier --check "**/*.{ts,tsx}"
         working-directory: web
       # The JUnit report feeds the gate below; the console output is unchanged.
       - run: bun test --reporter=junit --reporter-outfile=${{ runner.temp }}/junit.xml

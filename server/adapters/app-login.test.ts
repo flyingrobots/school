@@ -6,7 +6,7 @@
 // Roles are cluster-wide, so a test that gives school_owner LOGIN, or makes a role of its own,
 // undoes it in `finally`.
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NotStarted, startSchool, timeout } from "../testing/processes.ts";
@@ -101,6 +101,48 @@ describe.skipIf(URL_ === undefined)("Bun.SQL on a real Postgres, logged in as sc
     const again = await migrateCommand({ SCHOOL_MIGRATE_URL: url, SCHOOL_APP_PASSWORD: TEST_APP_PASSWORD });
     expect(again.code).toBe(0);
     expect(lines(again.stdout).at(-1)).toMatchObject({ event: "done", ok: true, applied: [] });
+  }, SLOW);
+
+  // flyingrobots/school#123: under compose both passwords are files (server/secrets.ts), and the URL names no password.
+  test("SEC-M1: the migrate command reads both passwords from *_FILE, preferred over the plain variables, and prints neither", async () => {
+    const url = await database();
+    const superPassword = decodeURIComponent(new URL(url).password);
+    const dir = mkdtempSync(join(tmpdir(), "school-migrate-secrets-"));
+    try {
+      writeFileSync(join(dir, "postgres_password"), `${superPassword}\n`, { mode: 0o600 });
+      writeFileSync(join(dir, "app_password"), `${TEST_APP_PASSWORD}\n`, { mode: 0o600 });
+      const bare = new URL(url);
+      bare.password = "";
+      const r = await migrateCommand({
+        SCHOOL_MIGRATE_URL: bare.toString(),
+        SCHOOL_MIGRATE_PASSWORD_FILE: join(dir, "postgres_password"),
+        SCHOOL_APP_PASSWORD: "aWrongPlainPassword0123456789", // the file wins
+        SCHOOL_APP_PASSWORD_FILE: join(dir, "app_password"),
+      });
+      expect({ code: r.code, stderr: r.stderr }).toEqual({ code: 0, stderr: "" });
+      expect(lines(r.stdout).at(-1)).toMatchObject({ kind: "school.migrate", event: "done", ok: true });
+      for (const text of [r.stdout, r.stderr]) {
+        expect(text).not.toContain(TEST_APP_PASSWORD);
+        if (superPassword !== "") expect(text).not.toContain(superPassword);
+      }
+      // The job set school_app's password from the file, not the plain variable.
+      const app = track(new Bun.SQL(appUrl(url)));
+      expect((await app.unsafe("SELECT current_user AS u"))[0]).toEqual({ u: APP });
+      // A password in the URL and in a file is refused, exit 2, before connecting.
+      const twice = await migrateCommand({ SCHOOL_MIGRATE_URL: url, SCHOOL_MIGRATE_PASSWORD_FILE: join(dir, "postgres_password"), SCHOOL_APP_PASSWORD_FILE: join(dir, "app_password") });
+      expect(twice.code).toBe(2);
+      expect(lines(twice.stderr).at(-1)).toMatchObject({ kind: "school.migrate", event: "error", code: 2 });
+      // A missing file is refused, exit 2, naming the variable.
+      const missing = await migrateCommand({ SCHOOL_MIGRATE_URL: bare.toString(), SCHOOL_MIGRATE_PASSWORD_FILE: join(dir, "nope"), SCHOOL_APP_PASSWORD_FILE: join(dir, "app_password") });
+      expect(missing.code).toBe(2);
+      expect(String(lines(missing.stderr).at(-1)!.message)).toContain("SCHOOL_MIGRATE_PASSWORD_FILE");
+      for (const text of [twice.stdout, twice.stderr, missing.stdout, missing.stderr]) {
+        expect(text).not.toContain(TEST_APP_PASSWORD);
+        if (superPassword !== "") expect(text).not.toContain(superPassword);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }, SLOW);
 
   test("the migrate command refuses to run without its owner URL or school_app's password, exit 2, as a JSON line", async () => {
@@ -364,6 +406,24 @@ describe.skipIf(URL_ === undefined)("Bun.SQL on a real Postgres, logged in as sc
       expect((e as NotStarted).stderr).toContain("is a superuser");
       const password = new URL(url).password;
       if (password !== "") expect((e as NotStarted).stderr).not.toContain(password);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, timeout(1));
+
+  test("SEC-S1: the server process starts on school_app's URL with its password from SCHOOL_DATABASE_PASSWORD_FILE, and prints no password", async () => {
+    const { appUrl: app } = await fresh();
+    const root = mkdtempSync(join(tmpdir(), "school-login-"));
+    try {
+      mkdirSync(join(root, "course", "lessons"), { recursive: true });
+      writeFileSync(join(root, "app_password"), `${TEST_APP_PASSWORD}\n`, { mode: 0o600 });
+      const bare = new URL(app);
+      bare.password = "";
+      const s = await startSchool({ ...process.env, HOST: "127.0.0.1", SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: bare.toString(), SCHOOL_DATABASE_PASSWORD_FILE: join(root, "app_password") });
+      s.proc.kill();
+      const { stdout, stderr } = await s.output();
+      expect(stdout).toContain(`as ${APP}`);
+      expect(stdout + stderr).not.toContain(TEST_APP_PASSWORD);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

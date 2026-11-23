@@ -18,7 +18,12 @@ import { useShortcut } from "@ui-sdk/react/shortcuts"
 import { HistoryIcon, PresentationIcon } from "lucide-react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
 
-import { Explain, ExplainReadOnly, ExplainSaveError, type ExplainPending } from "@/components/explain"
+import {
+  Explain,
+  ExplainReadOnly,
+  ExplainSaveError,
+  type ExplainPending,
+} from "@/components/explain"
 import {
   Lesson,
   LessonAside,
@@ -34,7 +39,13 @@ import {
   type LessonLinkProps,
 } from "@/components/lesson"
 import { Nest } from "@/components/nest"
-import { Quiz, QuizAnswerError, QuizReadOnly, type QuizPending, type QuizVerdict } from "@/components/quiz"
+import {
+  Quiz,
+  QuizAnswerError,
+  QuizReadOnly,
+  type QuizPending,
+  type QuizVerdict,
+} from "@/components/quiz"
 import { Slides, type Slide } from "@/components/slides"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -44,7 +55,9 @@ import { useCourseTitle } from "@/lib/courses"
 import { NotKept, outbox, Refused, type Waiting } from "@/lib/outbox"
 import * as api from "@/lib/school-api"
 
-const renderLink = ({ href, ...props }: LessonLinkProps) => <Link to={href} {...props} />
+const renderLink = ({ href, ...props }: LessonLinkProps) => (
+  <Link to={href} {...props} />
+)
 
 type Load =
   | { status: "loading" }
@@ -61,13 +74,23 @@ function useLesson(course: string, lesson: string) {
     const opened = async () => {
       const waiting = await outbox().waiting()
       const reply = await api.openLesson(course, lesson, abort.signal)
-      return { reply, waiting: waiting.filter((w) => w.body.encounterId === reply.encounterId) }
+      return {
+        reply,
+        waiting: waiting.filter(
+          (w) => w.body.encounterId === reply.encounterId
+        ),
+      }
     }
     opened().then(
-      ({ reply, waiting }) => setLoad({ status: "ready", lesson: reply, waiting }),
+      ({ reply, waiting }) =>
+        setLoad({ status: "ready", lesson: reply, waiting }),
       (e) => {
         if (abort.signal.aborted) return
-        setLoad(e instanceof api.LessonUnavailable ? { status: e.reason, message: e.message } : { status: "failed", message: String(e) })
+        setLoad(
+          e instanceof api.LessonUnavailable
+            ? { status: e.reason, message: e.message }
+            : { status: "failed", message: String(e) }
+        )
       }
     )
     return () => abort.abort()
@@ -83,7 +106,8 @@ function useLesson(course: string, lesson: string) {
 /** What the encounter holds, by block: each quiz's latest answer and each explain block's latest explanation. */
 function held(lesson: api.LessonReply) {
   const answers = new Map<string, QuizVerdict>()
-  for (const a of lesson.answers) answers.set(a.blockId, { choiceId: a.choiceId, correct: a.correct })
+  for (const a of lesson.answers)
+    answers.set(a.blockId, { choiceId: a.choiceId, correct: a.correct })
   return {
     answers,
     explanations: new Map(lesson.explanations.map((x) => [x.blockId, x])),
@@ -99,8 +123,20 @@ function waitingByBlock(waiting: Waiting[]) {
   const answers = new Map<string, QuizPending>()
   const explanations = new Map<string, ExplainPending>()
   for (const w of waiting) {
-    if (w.kind === "answer") answers.set(w.body.blockId, { choiceId: w.body.choiceId, verdict: w.settled.catch((e: unknown) => Promise.reject(answerError(e))) })
-    else explanations.set(w.body.blockId, { text: w.body.text, saved: w.settled.catch((e: unknown) => Promise.reject(explanationError(e))) })
+    if (w.kind === "answer")
+      answers.set(w.body.blockId, {
+        choiceId: w.body.choiceId,
+        verdict: w.settled.catch((e: unknown) =>
+          Promise.reject(answerError(e))
+        ),
+      })
+    else
+      explanations.set(w.body.blockId, {
+        text: w.body.text,
+        saved: w.settled.catch((e: unknown) =>
+          Promise.reject(explanationError(e))
+        ),
+      })
   }
   return { answers, explanations }
 }
@@ -137,20 +173,43 @@ type Play = {
   pending: ReturnType<typeof waitingByBlock>
 }
 
-const sinceShown = (play: Play) => Math.max(0, Math.round(Date.now() - play.shown))
+const sinceShown = (play: Play) =>
+  Math.max(0, Math.round(Date.now() - play.shown))
 
 /** A lesson's blocks. With `play` they are studied and recorded; without it (the slides view) they are shown to read only. */
-function Blocks({ blocks, play, depth }: { blocks: api.Block[]; play: Play | null; depth: number }) {
-  return blocks.map((b, i) => <BlockView key={`${b.id}-${i}`} block={b} play={play} depth={depth} />)
+function Blocks({
+  blocks,
+  play,
+  depth,
+}: {
+  blocks: api.Block[]
+  play: Play | null
+  depth: number
+}) {
+  return blocks.map((b, i) => (
+    <BlockView key={`${b.id}-${i}`} block={b} play={play} depth={depth} />
+  ))
 }
 
-function BlockView({ block: b, play, depth }: { block: api.Block; play: Play | null; depth: number }) {
+function BlockView({
+  block: b,
+  play,
+  depth,
+}: {
+  block: api.Block
+  play: Play | null
+  depth: number
+}) {
   switch (b.type) {
     case "page":
       return <Blocks blocks={b.children} play={play} depth={depth} />
     case "section":
       return (
-        <LessonSection id={b.id} title={b.title} level={Math.min(depth + 2, 6) as 2 | 3 | 4 | 5 | 6}>
+        <LessonSection
+          id={b.id}
+          title={b.title}
+          level={Math.min(depth + 2, 6) as 2 | 3 | 4 | 5 | 6}
+        >
           <Blocks blocks={b.children} play={play} depth={depth + 1} />
         </LessonSection>
       )
@@ -176,7 +235,9 @@ function BlockView({ block: b, play, depth }: { block: api.Block; play: Play | n
             <Alert className="mb-4 text-base">
               <HistoryIcon />
               <AlertTitle className="text-lg">Back for review</AlertTitle>
-              <AlertDescription className="text-base">{reason}</AlertDescription>
+              <AlertDescription className="text-base">
+                {reason}
+              </AlertDescription>
             </Alert>
           )}
           <Quiz
@@ -188,9 +249,18 @@ function BlockView({ block: b, play, depth }: { block: api.Block; play: Play | n
             pending={play.pending.answers.get(b.id) ?? null}
             onWhyShown={() => show(play.encounterId, b.id, "feedback")}
             onAnswer={(choiceId, progress) => {
-              const body = { submissionId: api.uuid(), encounterId: play.encounterId, blockId: b.id, choiceId, ms: sinceShown(play) }
+              const body = {
+                submissionId: api.uuid(),
+                encounterId: play.encounterId,
+                blockId: b.id,
+                choiceId,
+                ms: sinceShown(play),
+              }
               return outbox()
-                .submit({ kind: "answer", id: body.submissionId, body }, progress)
+                .submit(
+                  { kind: "answer", id: body.submissionId, body },
+                  progress
+                )
                 .catch((e: unknown) => Promise.reject(answerError(e)))
             }}
           />
@@ -216,9 +286,18 @@ function BlockView({ block: b, play, depth }: { block: api.Block; play: Play | n
             onModelShown={() => show(play.encounterId, b.id, "model-answer")}
             onSourceOpened={() => show(play.encounterId, b.id, "reference")}
             onSave={(text, progress) => {
-              const body = { submissionId: api.uuid(), encounterId: play.encounterId, blockId: b.id, text, ms: sinceShown(play) }
+              const body = {
+                submissionId: api.uuid(),
+                encounterId: play.encounterId,
+                blockId: b.id,
+                text,
+                ms: sinceShown(play),
+              }
               return outbox()
-                .submit({ kind: "explanation", id: body.submissionId, body }, progress)
+                .submit(
+                  { kind: "explanation", id: body.submissionId, body },
+                  progress
+                )
                 .catch((e: unknown) => Promise.reject(explanationError(e)))
             }}
             onGrade={(submissionId) => api.grade(submissionId)}
@@ -234,13 +313,26 @@ function BlockView({ block: b, play, depth }: { block: api.Block; play: Play | n
   }
 }
 
-function Played({ course, lesson, waiting }: { course: string; lesson: api.LessonReply; waiting: Waiting[] }) {
+function Played({
+  course,
+  lesson,
+  waiting,
+}: {
+  course: string
+  lesson: api.LessonReply
+  waiting: Waiting[]
+}) {
   const page = lesson.lesson
   const title = useCourseTitle(course)
   useDocumentTitle(page.type === "page" ? page.title : "", title)
   const [shown] = React.useState(() => Date.now())
   const play = React.useMemo<Play>(
-    () => ({ encounterId: lesson.encounterId, shown, ...held(lesson), pending: waitingByBlock(waiting) }),
+    () => ({
+      encounterId: lesson.encounterId,
+      shown,
+      ...held(lesson),
+      pending: waitingByBlock(waiting),
+    }),
     [lesson, waiting, shown]
   )
   const crumbs: LessonCrumb[] = [
@@ -250,17 +342,25 @@ function Played({ course, lesson, waiting }: { course: string; lesson: api.Lesso
   const href = (id: string) => `/courses/${course}/lessons/${id}`
   const navigate = useNavigate()
   const slides = `${href(page.id)}?view=slides`
-  useShortcut("p", () => navigate(slides), { description: "Present the lesson as slides" })
+  useShortcut("p", () => navigate(slides), {
+    description: "Present the lesson as slides",
+  })
   if (page.type !== "page") return null
-  const outline = page.children.flatMap((c) => (c.type === "section" ? [{ id: c.id, title: c.title }] : []))
+  const outline = page.children.flatMap((c) =>
+    c.type === "section" ? [{ id: c.id, title: c.title }] : []
+  )
   return (
     <Lesson
       title={page.title}
       subtitle={page.subtitle || undefined}
       crumbs={crumbs}
       outline={outline}
-      prev={lesson.prev && { href: href(lesson.prev.id), title: lesson.prev.title }}
-      next={lesson.next && { href: href(lesson.next.id), title: lesson.next.title }}
+      prev={
+        lesson.prev && { href: href(lesson.prev.id), title: lesson.prev.title }
+      }
+      next={
+        lesson.next && { href: href(lesson.next.id), title: lesson.next.title }
+      }
       renderLink={renderLink}
       actions={
         <Button asChild variant="outline" size="lg">
@@ -279,12 +379,24 @@ function Played({ course, lesson, waiting }: { course: string; lesson: api.Lesso
 
 function LessonRoute({ course, lesson }: { course: string; lesson: string }) {
   const { load, retry } = useLesson(course, lesson)
-  if (load.status === "ready") return <Played course={course} lesson={load.lesson} waiting={load.waiting} />
+  if (load.status === "ready")
+    return (
+      <Played course={course} lesson={load.lesson} waiting={load.waiting} />
+    )
   return <NotReady course={course} load={load} retry={retry} />
 }
 
 /** Loading, not found or not loaded, in either view. Nothing was recorded in any of them. */
-function NotReady({ course, load, retry }: { course: string; load: { status: "loading" } | { status: "missing" | "failed"; message: string }; retry: () => void }) {
+function NotReady({
+  course,
+  load,
+  retry,
+}: {
+  course: string
+  load:
+    { status: "loading" } | { status: "missing" | "failed"; message: string }
+  retry: () => void
+}) {
   const title = useCourseTitle(course)
   const crumbs: LessonCrumb[] = [
     { label: "Home", href: "/" },
@@ -327,7 +439,10 @@ function NotReady({ course, load, retry }: { course: string; load: { status: "lo
   }
 }
 
-type SlidesLoad = { status: "loading" } | { status: "ready"; reply: api.SlidesReply } | { status: "missing" | "failed"; message: string }
+type SlidesLoad =
+  | { status: "loading" }
+  | { status: "ready"; reply: api.SlidesReply }
+  | { status: "missing" | "failed"; message: string }
 
 /** The lesson in the slides view: one GET, which opens no encounter. The outbox is never read. */
 function useSlides(course: string, lesson: string) {
@@ -339,7 +454,11 @@ function useSlides(course: string, lesson: string) {
       (reply) => setLoad({ status: "ready", reply }),
       (e) => {
         if (abort.signal.aborted) return
-        setLoad(e instanceof api.LessonUnavailable ? { status: e.reason, message: e.message } : { status: "failed", message: String(e) })
+        setLoad(
+          e instanceof api.LessonUnavailable
+            ? { status: e.reason, message: e.message }
+            : { status: "failed", message: String(e) }
+        )
       }
     )
     return () => abort.abort()
@@ -368,7 +487,13 @@ function labelOf(b: api.Block): string {
   }
 }
 
-function Presented({ course, reply }: { course: string; reply: api.SlidesReply }) {
+function Presented({
+  course,
+  reply,
+}: {
+  course: string
+  reply: api.SlidesReply
+}) {
   const navigate = useNavigate()
   const title = useCourseTitle(course)
   const page = reply.lesson
@@ -389,7 +514,13 @@ function Presented({ course, reply }: { course: string; reply: api.SlidesReply }
     <Slides
       title={page.title}
       slides={slides}
-      header={<LessonCrumbs crumbs={crumbs} current={page.title} renderLink={renderLink} />}
+      header={
+        <LessonCrumbs
+          crumbs={crumbs}
+          current={page.title}
+          renderLink={renderLink}
+        />
+      }
       exit={{ label: "Web view", onExit: () => navigate(web) }}
     />
   )
@@ -397,7 +528,8 @@ function Presented({ course, reply }: { course: string; reply: api.SlidesReply }
 
 function SlidesRoute({ course, lesson }: { course: string; lesson: string }) {
   const { load, retry } = useSlides(course, lesson)
-  if (load.status === "ready") return <Presented course={course} reply={load.reply} />
+  if (load.status === "ready")
+    return <Presented course={course} reply={load.reply} />
   return <NotReady course={course} load={load} retry={retry} />
 }
 
@@ -408,5 +540,9 @@ export function LessonPage() {
   const view = params.get("view") === "slides" ? "slides" : "web"
   // A new lesson, or a new view of it, is a new page: no block keeps the state of the one before.
   const key = `${course}/${lesson}/${view}`
-  return view === "slides" ? <SlidesRoute key={key} course={course!} lesson={lesson!} /> : <LessonRoute key={key} course={course!} lesson={lesson!} />
+  return view === "slides" ? (
+    <SlidesRoute key={key} course={course!} lesson={lesson!} />
+  ) : (
+    <LessonRoute key={key} course={course!} lesson={lesson!} />
+  )
 }

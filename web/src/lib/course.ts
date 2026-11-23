@@ -9,18 +9,30 @@ export function useCourse(name: string): [CourseLoad, () => void] {
   const [attempt, setAttempt] = React.useState(0)
   // Until the current request answers, it is loading.
   const key = `${attempt} ${name}`
-  const [answer, setAnswer] = React.useState<{ key: string; state: CourseLoad } | null>(null)
+  const [answer, setAnswer] = React.useState<{
+    key: string
+    state: CourseLoad
+  } | null>(null)
 
   React.useEffect(() => {
     const abort = new AbortController()
-    loadCourse(name, abort.signal).then((state) => abort.signal.aborted || setAnswer({ key, state }))
+    loadCourse(name, abort.signal).then(
+      (state) => abort.signal.aborted || setAnswer({ key, state })
+    )
     return () => abort.abort()
   }, [name, key])
 
-  return [answer?.key === key ? answer.state : { kind: "loading" }, () => setAttempt((n) => n + 1)]
+  return [
+    answer?.key === key ? answer.state : { kind: "loading" },
+    () => setAttempt((n) => n + 1),
+  ]
 }
 
 /** What a page calls the course: the title its own reply gives, or `listed` (the course list's, or the slug) before that. */
 export function titleOf(state: CourseLoad, listed: string): string {
-  return state.kind === "ready" ? state.course.title : state.kind === "unreadable" ? state.title : listed
+  return state.kind === "ready"
+    ? state.course.title
+    : state.kind === "unreadable"
+      ? state.title
+      : listed
 }

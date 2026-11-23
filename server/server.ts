@@ -11,19 +11,25 @@ import { legacyRefusal } from "./legacy.ts";
 import { AID_CAPTURE_VERSIONS, AidQuery, AidRequest, Exposure, ExplanationSubmission, GradeRequest, Submission, ViewEvent, type AidTracking } from "./core/model.ts";
 import type { Grader } from "./core/ports.ts";
 import { createSchool, resumeFrom, type CourseOutline } from "./core/school.ts";
-import { bridgeClient, bridgeStatus, effectiveBridge, loadSettings, saveSettings, settingsFile, toBridge, validToken, validUrl } from "./settings.ts";
+import { bridgeClient, bridgeStatus, effectiveBridge, loadSettings, saveSettings, settingsFile, toBridge, unpaired, UNPAIRED, validToken, validUrl } from "./settings.ts";
 import { ConfigError, course, courseNames, mountTable, parseConfig, type Course } from "./config.ts";
 import { CourseFileError, readCourseFile } from "./course-file.ts";
 import { allowedHosts, hostAllowed } from "./hosts.ts";
+import { withSecretFiles } from "./secrets.ts";
 import { agentOrder, agentTest } from "./agents.ts";
 
 let config;
 let bridgeCfg;
 let hosts: string[];
+// The environment, with each secret given as a file (`*_FILE`, as compose mounts them under
+// /run/secrets/) read in; the file wins over a plain variable (server/secrets.ts). Only this
+// process holds the values: nothing writes them back to the environment or passes them on.
+let env: Record<string, string | undefined> = {};
 try {
-  config = parseConfig(process.env, join(import.meta.dir, ".."));
-  bridgeCfg = bridgeConfig(process.env);
-  hosts = allowedHosts(config, process.env);
+  env = withSecretFiles(process.env);
+  config = parseConfig(env, join(import.meta.dir, ".."));
+  bridgeCfg = bridgeConfig(env);
+  hosts = allowedHosts(config, env);
 } catch (e) {
   if (e instanceof ConfigError) {
     console.error(`school: ${e.message}`);
@@ -85,18 +91,20 @@ console.log(`school: record in ${database.where}${database.applied.length > 0 ? 
 // saved values, so saving settings takes effect without a restart.
 const SETTINGS = settingsFile(config.state);
 const deadlineMs = bridgeCfg?.deadlineMs ?? 240_000;
-const bridgeNow = () => effectiveBridge(process.env, loadSettings(SETTINGS));
+const bridgeNow = () => effectiveBridge(env, loadSettings(SETTINGS));
 const currentBridge = () => bridgeClient(bridgeNow(), deadlineMs);
 const grader: Grader = {
   adapter: "bridge", model: "", rubricVersion: RUBRIC_VERSION, promptVersion: PROMPT_VERSION,
   grade: async (input) => {
     const c = currentBridge();
-    return c === null ? { status: "failed", error: "no bridge is connected yet; connect one in Settings" } : callBridge(c, input);
+    if (c !== null) return callBridge(c, input);
+    return { status: "failed", error: unpaired(bridgeNow()) ? UNPAIRED : "no bridge is connected yet; connect one in Settings" };
   },
 };
 {
   const b = bridgeNow();
   console.log(b.url === null ? "school: no bridge connected; explanations are saved but not graded until one is (Settings)"
+    : unpaired(b) ? `school: not grading: ${UNPAIRED}`
     : `school: grading through the bridge at ${b.url} (from ${b.urlFrom})`);
 }
 
@@ -405,7 +413,7 @@ const http = Bun.serve({
       // tokenSet is the token in effect, from the environment or settings, as the GET reports it
       // (flyingrobots/school#61). A generated token is returned once, so the learner can start
       // the bridge with it. Never again.
-      return json({ status: "saved", tokenSet: effectiveBridge(process.env, after).token !== null, ...(generated === undefined ? {} : { generated }) });
+      return json({ status: "saved", tokenSet: effectiveBridge(env, after).token !== null, ...(generated === undefined ? {} : { generated }) });
     }
     // Agents are declared, commands and all, only in the bridge's file on its host. From here
     // they can be reordered, switched on and off, and tested; only those fields reach the bridge.
@@ -430,7 +438,7 @@ const http = Bun.serve({
     if (req.method === "POST" && pathname.startsWith("/api/")) return notFound();
     if (req.method !== "GET") return new Response("Method not allowed", { status: 405 });
 
-    if (pathname === "/api/settings/status") return json(await bridgeStatus(currentBridge()));
+    if (pathname === "/api/settings/status") return json(unpaired(bridgeNow()) ? { connection: "none", error: UNPAIRED, agents: [] } : await bridgeStatus(currentBridge()));
     if (pathname === "/api/settings/bridge") {
       // Whether a token is set, never the token itself.
       const b = bridgeNow();

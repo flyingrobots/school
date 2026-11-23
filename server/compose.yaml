@@ -2,6 +2,14 @@
 # the course, the learner's state and any source material come from the environment, usually
 # a gitignored server/.env beside this file. See compose.example.env.
 #
+# Start it with `./school up` from the checkout (host/school.ts), not `docker compose up`
+# (flyingrobots/school#123). The three secrets live in the macOS Keychain; the launcher reads them
+# and runs compose with them in compose's environment only. Compose copies each one into the
+# services that need it as a file under /run/secrets/ (top-level `secrets:` below), and each
+# service's environment names only that file's path, so no secret is in server/.env, in argv or in
+# `docker inspect`. Run without the launcher, compose stops: `environment variable
+# "SCHOOL_POSTGRES_PASSWORD" required by secret ... is not set`. docs/topics/secrets/README.md.
+#
 # The learner's record is in Postgres (RFC 3), in the named volume `postgres`. `docker compose down`
 # keeps it; `docker compose down -v` deletes it, and with it every answer, and the backups beside it
 # in the named volume `backups` (the `backup` service).
@@ -19,7 +27,10 @@ services:
     environment:
       POSTGRES_DB: school
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${SCHOOL_POSTGRES_PASSWORD:?set SCHOOL_POSTGRES_PASSWORD to a long random secret}
+      # The image's entrypoint reads it, as root, before it starts the server as `postgres`.
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - { source: postgres_password, mode: 0o400 }
     volumes:
       - postgres:/var/lib/postgresql   # Postgres 18's image keeps its data under here
     healthcheck:
@@ -43,9 +54,15 @@ services:
         condition: service_healthy
     environment:
       # The owner's URL: the superuser, which creates the roles and runs each file as school_owner.
-      SCHOOL_MIGRATE_URL: postgres://postgres:${SCHOOL_POSTGRES_PASSWORD}@postgres:5432/school
+      # Its password is the file below, which the job puts into the URL (server/secrets.ts).
+      SCHOOL_MIGRATE_URL: postgres://postgres@postgres:5432/school
+      SCHOOL_MIGRATE_PASSWORD_FILE: /run/secrets/postgres_password
       # school_app's password, which the job sets (as a SCRAM verifier) and the server logs in with.
-      SCHOOL_APP_PASSWORD: ${SCHOOL_APP_PASSWORD:?set SCHOOL_APP_PASSWORD to a long random secret of letters and digits}
+      SCHOOL_APP_PASSWORD_FILE: /run/secrets/app_password
+    secrets:
+      # Read by the image's user, `school` (uid 1000, server/Dockerfile), and no one else.
+      - { source: postgres_password, uid: "1000", gid: "1000", mode: 0o400 }
+      - { source: app_password, uid: "1000", gid: "1000", mode: 0o400 }
   backup:
     # A custom-format pg_dump of the record every SCHOOL_BACKUP_INTERVAL_SECONDS (default six hours),
     # keeping the newest SCHOOL_BACKUP_KEEP (default 28, a week) in the named volume `backups`
@@ -61,9 +78,12 @@ services:
       PGHOST: postgres
       PGUSER: postgres
       PGDATABASE: school
-      PGPASSWORD: ${SCHOOL_POSTGRES_PASSWORD:?set SCHOOL_POSTGRES_PASSWORD to a long random secret}
+      # backup.sh reads it into its own environment, as root, for pg_dump.
+      PGPASSWORD_FILE: /run/secrets/postgres_password
       SCHOOL_BACKUP_INTERVAL_SECONDS: ${SCHOOL_BACKUP_INTERVAL_SECONDS:-21600}
       SCHOOL_BACKUP_KEEP: ${SCHOOL_BACKUP_KEEP:-28}
+    secrets:
+      - { source: postgres_password, mode: 0o400 }
     volumes:
       - ./backup/backup.sh:/backup/backup.sh:ro
       # Its published output schemas, which --help and --schema print (flyingrobots/school#135).
@@ -83,18 +103,23 @@ services:
       - "127.0.0.1:4747:4747"   # local only; tailscale serve publishes it to the tailnet
     environment:
       # The record, as school_app, which the migrations grant EXECUTE on School's functions; the
-      # server runs its login check before it serves (server/adapters/database.ts). No superuser
-      # password reaches here.
-      SCHOOL_DATABASE_URL: postgres://school_app:${SCHOOL_APP_PASSWORD}@postgres:5432/school
+      # server runs its login check before it serves (server/adapters/database.ts). Its password is
+      # the file below, which the server puts into the URL. No superuser password reaches here.
+      SCHOOL_DATABASE_URL: postgres://school_app@postgres:5432/school
+      SCHOOL_DATABASE_PASSWORD_FILE: /run/secrets/app_password
       # Host names School answers to besides localhost, comma-separated: the tailnet name that
       # `tailscale serve` publishes it under. Any other Host header is refused (DNS rebinding).
       SCHOOL_ALLOWED_HOSTS: ${SCHOOL_ALLOWED_HOSTS:-}
       # Read-only source material the course cites, as name=path pairs inside the container.
       SCHOOL_MOUNTS: ${SCHOOL_MOUNTS:-}
       # Explanation grading through the bridge on the host (bridge/bridge.ts). Optional: without
-      # SCHOOL_BRIDGE_URL, explanations are saved but not graded.
+      # SCHOOL_BRIDGE_URL, explanations are saved but not graded. The token is the one the bridge
+      # reads from the same Keychain item.
       SCHOOL_BRIDGE_URL: ${SCHOOL_BRIDGE_URL:-}
-      SCHOOL_BRIDGE_TOKEN: ${SCHOOL_BRIDGE_TOKEN:-}
+      SCHOOL_BRIDGE_TOKEN_FILE: /run/secrets/bridge_token
+    secrets:
+      - { source: app_password, uid: "1000", gid: "1000", mode: 0o400 }
+      - { source: bridge_token, uid: "1000", gid: "1000", mode: 0o400 }
     extra_hosts:
       - "host.docker.internal:host-gateway"   # the bridge runs on the host, outside Docker
     volumes:
@@ -102,6 +127,15 @@ services:
       - ${SCHOOL_COURSE_DIR:?set SCHOOL_COURSE_DIR to the course repository}:/course:ro
       - ${SCHOOL_STATE_DIR:?set SCHOOL_STATE_DIR to the private learner-state directory}:/state
       - ${SCHOOL_SOURCES_DIR:?set SCHOOL_SOURCES_DIR to the course's source material, or to an empty directory}:/sources:ro
+# Each from the launcher's environment (host/school.ts), which read it from the Keychain. Compose
+# copies each into the services that list it, at /run/secrets/<name>.
+secrets:
+  postgres_password:
+    environment: SCHOOL_POSTGRES_PASSWORD
+  app_password:
+    environment: SCHOOL_APP_PASSWORD
+  bridge_token:
+    environment: SCHOOL_BRIDGE_TOKEN
 volumes:
   postgres:
   # The dumps. `docker compose down -v` deletes this volume too, with the record: copy a dump
