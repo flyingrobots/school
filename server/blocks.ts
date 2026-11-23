@@ -115,6 +115,8 @@ function parseRaw(v: unknown, where: string, ctx: Ctx): Raw {
     default:
       throw new BlockError(`${at}: unknown block type "${type}"`);
   }
+  // School adds blocks of its own to what it shows (the Review section, server/core/school.ts), under ids an author cannot write.
+  if (id.startsWith("school:")) throw new BlockError(`${at}: block id "${id}" is School's own: ids may not start "school:"`);
   if (out.has(id)) throw new BlockError(`${at}: duplicate block id`);
   out.set(id, block);
   return { kind: "block", block };

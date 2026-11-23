@@ -64,6 +64,13 @@ test("an indirect cycle across two files is rejected, naming the path", () => {
   expect(loadError(dir)).toMatch(/cycle: (a > b > a|b > a > b)/);
 });
 
+test("a block id under school: is School's own, for what it adds to a lesson (its Review section), and is rejected", () => {
+  for (const id of ["school:review", "school:x"]) {
+    expect(loadError(lessons({ "0001.json": page("p1", [section(id, [quiz("q")])]) }))).toContain(`"${id}"`);
+  }
+  expect(() => loadLibrary(lessons({ "0001.json": page("p1", [section("schoolwork", [quiz("q")])]) }))).not.toThrow();
+});
+
 test("a choice without an id is rejected", () => {
   const dir = lessons({ "0001.json": page("p1", [quiz("q", [{ text: "A", correct: true } as never])]) });
   expect(loadError(dir)).toContain("q");

@@ -162,8 +162,8 @@ contract suite holds every driver under it to the same behaviour.
 ## The learning record
 
 The record is Postgres, built by the numbered migrations in `server/db/migrations/` (`0001_init.sql`,
-`0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_read_committed.sql`)
-and reached only through the functions they define[^rfc3]. Its rules are SQL so
+`0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_read_committed.sql`,
+`0006_due_review.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -204,8 +204,17 @@ evidence of another course than the choice's; an encounter it names must be of t
 and lesson and hold its block. The table checks that a note cites at least one row and that every
 cited `seq` is smaller than its own. Notes cite rows, never judgments, so a later regrading leaves
 a note pointing at the grading it named. `encounter_evidence` lists the rows of an encounter a
-note may cite; `choice_decision_notes` and `encounter_decision_notes` read notes back. Nothing
-writes notes yet: the due-review selector will ([flyingrobots/school#32](https://github.com/flyingrobots/school/issues/32)).
+note may cite; `choice_decision_notes` and `encounter_decision_notes` read notes back. The
+due-review selector writes them, one per item it brings back (see [due review](../due-review/README.md)).
+
+Delayed review is migration 0006 (RFC 2 §5). `due_review` reads quiz answers, first tries,
+exposures and the time each block was last answered, by `seq`, and returns the blocks due with the
+rule that chose each and the rows it cites; it writes nothing. `open_lesson_encounter` opens a
+lesson with the items chosen at its top, snapshotted with it, and stores their decision notes with
+the new encounter in the same transaction. It finds an encounter to resume by the lesson as written
+(`encounters.lesson_hash`, or the snapshot's hash when no review was added), so a reload inside the
+resume window shows the review it opened with. The rule, the reasons and the page are in
+[due review](../due-review/README.md).
 
 Where the learner left off is the port's `lastStudied()`: the course, lesson and time of the latest
 encounter opened, answer or explanation stored, or view recorded. It is `school.last_studied()`
@@ -232,6 +241,7 @@ erDiagram
         text lesson
         text snapshot_hash FK
         integer aid_tracking "NULL: aid not observed"
+        text lesson_hash "the lesson as written; NULL: the snapshot is"
         timestamptz at
     }
     ANSWERS {
@@ -316,11 +326,13 @@ waiting inside its call, which proves the calls overlapped. Each case runs 50 ti
 | One submission id for two different answers | One is stored, the other is a `conflict` |
 | Two opens of one lesson and snapshot | One encounter; one caller opened it, the other resumed it |
 | Two gradings of one explanation | One chain: the second supersedes the first |
+| Two opens of one lesson with review | One encounter, opened by one and resumed by the other, with one set of decision notes |
 
 `school.open_encounter` and `school.record_grading` take an advisory lock and then read what the
 previous holder committed, so they need READ COMMITTED, which takes a snapshot per statement.
 Under REPEATABLE READ the snapshot predates the lock: two concurrent opens made two encounters
-every time. A function cannot set its own isolation level, so both refuse any other level with
+every time. `school.open_lesson_encounter` (migration 0006) works the same way. A function cannot
+set its own isolation level, so all three refuse any other level with
 `invalid_transaction_state` (migration 0005), and the Bun.SQL adapter begins every request READ
 COMMITTED whatever the database's default. `school.submit` needs neither: its partial unique
 index decides first try whatever the snapshot saw, and that case also holds under REPEATABLE READ.
