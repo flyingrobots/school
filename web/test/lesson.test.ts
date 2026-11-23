@@ -15,12 +15,15 @@
 // What a reload shows is the learner history's oracle (server/contract/learner-history.ts,
 // `pageShows`): each quiz by its latest answer, each explanation by its latest grading.
 import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core"
 import { createServer, type ViteDevServer } from "vite"
 
+import { loadLibrary } from "../../server/blocks.ts"
+import { openDatabase } from "../../server/adapters/database.ts"
+import { postgresRecord } from "../../server/adapters/postgres.ts"
 import { startSchool, timeout, type Started } from "../../server/testing/processes.ts"
 
 setDefaultTimeout(30_000)
@@ -31,7 +34,7 @@ const TOKEN = "lesson-page-test-token"
 
 // Each test that writes to the record uses its own course name, all served from the one fixture,
 // so no test resumes an encounter another test opened.
-const NAMES = ["golden", "wrong", "saved", "failed", "keys", "aid", "pager", "loading", "down", "feedback", "model", "source", "trace", "figure4", "resend", "final-501", "final-400", "final-409", "ob-golden", "ob-lost", "ob-private", "ob-409", "ob-400", "ob-order", "ob-50"] as const
+const NAMES = ["golden", "wrong", "saved", "failed", "keys", "aid", "pager", "loading", "down", "feedback", "model", "source", "trace", "figure4", "resend", "final-501", "final-400", "final-409", "ob-golden", "ob-lost", "ob-private", "ob-409", "ob-400", "ob-order", "ob-50", "review"] as const
 type Name = (typeof NAMES)[number]
 
 /** A fake bridge: answers each grading with the next reply queued, or a failure when none is. */
@@ -848,4 +851,46 @@ describe("the outbox (flyingrobots/school#28)", () => {
     expect(sent).toEqual(made) // each once, in order, under the id it was made with
     await p.context().close()
   }, 60_000)
+})
+
+describe("delayed review (flyingrobots/school#32)", () => {
+  test("an item answered wrong first comes back at the top of the next lesson with its reason in words, and a reload shows the same", async () => {
+    // Two days ago, in the record School is about to open: the closest planet, Venus then Mercury.
+    const state = join(root, "review-state")
+    mkdirSync(state, { recursive: true })
+    const db = await openDatabase({ driver: "pglite", dir: join(state, "record") })
+    const r = postgresRecord(db.sql)
+    const orbits = loadLibrary(join(COURSE, "lessons")).pages.find((p) => p.id === "orbits")!
+    const then = Date.now() - 2 * 24 * 3600 * 1000
+    const e = await r.openEncounter({ course: "review", lesson: "orbits", page: orbits, now: new Date(then).toISOString(), aidTracking: 1 })
+    for (const [choiceId, ms] of [["venus", 1000], ["mercury", 2000]] as const) {
+      await r.submit({ submissionId: crypto.randomUUID(), encounterId: e.id, blockId: "closest", choiceId, ms: 10 }, new Date(then + ms).toISOString())
+    }
+    await db.close()
+    const s = await stack(state)
+    try {
+      const p = await open(s, lessonPath("review", "moons"), "Moons")
+      // The Review section comes first, with the item in it, then the lesson's own quiz.
+      await p.getByRole("heading", { level: 2, name: "Review", exact: true }).waitFor()
+      const order = () => p.locator("[data-quiz=root]").evaluateAll((els) => els.map((el) => el.getAttribute("data-quiz-id")))
+      expect(await order()).toEqual(["closest", "moons-none"])
+      const why = p.getByRole("alert").filter({ hasText: "Back for review" })
+      expect(await why.count()).toBe(1)
+      expect(await why.textContent()).toMatch(/Back because your first answer on \d{1,2} [A-Z][a-z]+ was wrong; you put it right on a later try\./)
+      const reason = await why.textContent()
+
+      // Answered in this lesson, right first try; a reload is the same encounter, with the same review.
+      await quiz(p, "closest").locator("[data-choice=mercury]").click()
+      await p.waitForFunction(() => document.querySelector("[data-quiz-id=closest]")?.getAttribute("data-state") === "right")
+      await open(s, lessonPath("review", "moons"), "Moons", p)
+      await p.getByRole("heading", { level: 2, name: "Review", exact: true }).waitFor()
+      expect(await order()).toEqual(["closest", "moons-none"])
+      expect(await stateOf(quiz(p, "closest"))).toBe("settled")
+      expect(await p.getByRole("alert").filter({ hasText: "Back for review" }).textContent()).toBe(reason)
+      expect((await record(s, "review", "moons")).answers).toEqual([{ blockId: "closest", choiceId: "mercury", correct: true }])
+      await p.context().close()
+    } finally {
+      await stop(s)
+    }
+  }, timeout(1) + 15_000)
 })

@@ -49,6 +49,13 @@ Practical notes for anyone — human or agent — changing the framework.
   `aid_tracking` its caller passes: the lesson API's `?aid=` capture version, or NULL (aid not
   observed) when the client sends none. A client may send `?aid=1` only if it records, through
   `POST /api/exposure`, every exposure it shows; the lesson page does (flyingrobots/school#51).
+- Due review (`server/db/migrations/0006_due_review.sql`, `docs/topics/due-review/`) puts items in
+  a section with id `school:review` at the top of a lesson, so authored block ids may not start
+  `school:` (`server/blocks.ts`). The web view opens lessons through `open_lesson_encounter`, which
+  finds the encounter to resume by the lesson as written, not by the snapshot's hash; the old
+  `open_encounter` stays for the contract. A reason names a day in the server's time zone:
+  `bun test` runs in UTC, but a School it starts inherits the host's `TZ` unless the test sets
+  one, as `server/review.test.ts` does.
 - Every `LearningRecord` adapter stores exposures and must pass the contract's aid cases; there is
   no "unsupported" answer since SQLite was deleted (flyingrobots/school#49).
 - `SCHOOL_DATABASE_URL` picks the record: `postgres://...` is `Bun.SQL`, `pglite:<dir>` is PGlite on
@@ -90,6 +97,13 @@ Practical notes for anyone — human or agent — changing the framework.
 - `server/compose.yaml` names no course. Its paths come from a gitignored `server/.env`; copy
   `server/compose.example.env` to start one. It runs Postgres (`postgres:18.7`, pinned by digest)
   with its data in the named volume `postgres`; `docker compose down -v` deletes the record.
+- The `backup` service in `server/compose.yaml` runs `server/backup/backup.sh` on the database's image
+  (same digest: bump both together, and the CI service's too). Its tests
+  (`server/backup/backup.test.ts`) run the script, `pg_restore` and `server/backup/verify.sql` in that
+  image with `docker run`, so they need Docker as well as `SCHOOL_TEST_POSTGRES_URL`; every case names
+  Bun.SQL, so the Postgres gate fails CI if they skip. A failed `docker run` that mounts a missing
+  path leaves a directory in its place: the test refuses to start without the script. The how-to
+  is `docs/workflows/backup-and-restore/README.md`.
 - Every `POST /api/*` needs `Content-Type: application/json` and is refused when the browser
   says it is cross-site. A new endpoint under `/api/` inherits that guard; one outside it does
   not, so keep state-changing routes under `/api/`.
