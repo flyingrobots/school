@@ -35,8 +35,10 @@ beforeAll(async () => {
   symlinkSync(join(root, "private"), join(root, "linked", "reference"));
   // empty: a course with no lessons directory at all.
   mkdirSync(join(root, "empty"), { recursive: true });
-  // broken: never valid, with an error message carrying markup.
+  // broken: never valid, with an error message carrying markup, and a reference document.
   mkdirSync(join(root, "broken", "lessons"), { recursive: true });
+  mkdirSync(join(root, "broken", "reference"), { recursive: true });
+  writeFileSync(join(root, "broken", "reference", "kept.html"), "<p>kept</p>");
   writeFileSync(join(root, "broken", "lessons", "0001.json"),
     JSON.stringify({ type: "page", id: "b1", title: "B", subtitle: "", children: [{ ref: "<x>&\"" }] }));
 
@@ -105,6 +107,17 @@ test("a lesson error reports the whole message as data", async () => {
   const res = await fetch(base + "/api/courses/broken/lessons/b1");
   expect(res.status).toBe(500);
   expect((await res.json()).error).toContain('unknown ref "<x>&\""');
+});
+
+// flyingrobots/school#115: lessons that fail validation do not hide the course's reference documents.
+// The course still answers 200; its lessons are null and their error, whole, is data beside them.
+test("a course whose lessons fail validation still lists its reference documents, with the lesson error as data", async () => {
+  const res = await fetch(base + "/api/courses/broken");
+  expect(res.status).toBe(200);
+  const course = await res.json();
+  expect(course).toMatchObject({ name: "broken", reference: ["kept.html"], lessons: null });
+  expect(course.lessonsError).toContain('unknown ref "<x>&\""');
+  expect((await fetch(base + "/courses/broken/reference/kept.html")).status).toBe(200);
 });
 
 
