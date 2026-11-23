@@ -89,3 +89,33 @@ test("an exposure is recorded at the clock's time, and aid is the record's to de
   expect(await school.submissionAid("s")).toBe("aided");
   expect(calls).toEqual([[x, NOW], "s"]);
 });
+
+test("a decision note is recorded at the clock's time; reading notes and evidence is the record's", async () => {
+  const calls: unknown[] = [];
+  const record = {
+    recordDecisionNote: async (n: unknown, now: string) => (calls.push(["record", n, now]), { status: "rejected" }),
+    decisionNotes: async (c: unknown) => (calls.push(["choice", c]), []),
+    encounterDecisionNotes: async (id: string) => (calls.push(["encounter", id]), []),
+    encounterEvidence: async (id: string) => (calls.push(["evidence", id]), []),
+  } as unknown as LearningRecord;
+  const school = createSchool({ record, grader: grader({ status: "failed", error: "x" }), clock });
+  const choice = { course: "c", lesson: "l1", blockId: "q1" };
+  const n = { noteId: "n", choice, encounterId: null, rule: "due-review/wrong-first-try", reason: "Because.", evidence: [1] };
+  expect(await school.recordDecisionNote(n)).toEqual({ status: "rejected" });
+  expect(await school.decisionNotes(choice)).toEqual([]);
+  expect(await school.encounterDecisionNotes("e")).toEqual([]);
+  expect(await school.encounterEvidence("e")).toEqual([]);
+  expect(calls).toEqual([["record", n, NOW], ["choice", choice], ["encounter", "e"], ["evidence", "e"]]);
+});
+
+test("a decision note's shape is checked at the edge: evidence, rule and choice", async () => {
+  const { DecisionNoteInput } = await import("./model.ts");
+  const ok = { noteId: crypto.randomUUID(), choice: { course: "c", lesson: "l1", blockId: "q1" }, encounterId: null,
+    rule: "due-review/wrong-first-try", reason: "  Because.  ", evidence: [3, 1] };
+  expect(DecisionNoteInput.parse(ok)).toEqual({ ...ok, reason: "Because." });
+  for (const bad of [
+    { evidence: [] }, { evidence: [1, 1] }, { evidence: [0] }, { evidence: [1.5] },
+    { rule: "due-review" }, { rule: "Due/Review" }, { rule: "due review/x" }, { reason: "   " },
+    { choice: { course: "c", lesson: null, blockId: "q1" } }, { choice: { course: "", lesson: null, blockId: null } },
+  ]) expect(`${JSON.stringify(bad)}: ${DecisionNoteInput.safeParse({ ...ok, ...bad }).success}`).toBe(`${JSON.stringify(bad)}: false`);
+});

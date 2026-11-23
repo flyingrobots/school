@@ -28,5 +28,10 @@ export function sqliteRecord(db: Database): LearningRecord {
     recordsExposures: false,
     recordExposure: async () => ({ status: "unsupported" }),
     aid: async (id) => (submissionExists.get({ id })!.n > 0 ? "unknown" : null),
+    // Nor decision notes (flyingrobots/school#31): their cases run only on a record that stores exposures.
+    encounterEvidence: async () => { throw new Error("the SQLite record keeps no decision notes"); },
+    recordDecisionNote: async () => { throw new Error("the SQLite record keeps no decision notes"); },
+    decisionNotes: async () => { throw new Error("the SQLite record keeps no decision notes"); },
+    encounterDecisionNotes: async () => { throw new Error("the SQLite record keeps no decision notes"); },
   };
 }

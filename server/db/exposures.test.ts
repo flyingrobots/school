@@ -7,7 +7,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MIGRATIONS, migrate } from "./migrate.ts";
+import { MIGRATIONS, migrate, readMigrations } from "./migrate.ts";
 
 const SLOW = 30_000;
 const dirs: string[] = [];
@@ -58,7 +58,8 @@ test("a database with exposures recorded under 0001 migrates, and those exposure
     await db.query("SELECT school.record_exposure($1, 'e1', 'model-answer', $2)", [id, at(1)]);
     return id;
   });
-  expect(await migrate(db)).toEqual({ applied: [2] });
+  // 0002 and every migration after it.
+  expect(await migrate(db)).toEqual({ applied: readMigrations().map((m) => m.version).filter((v) => v > 1) });
   const aid = await as(db, "school_app", async () => {
     const s = uuid();
     await db.query("SELECT school.save_explanation($1, $2, 'e1', 'After.', 1, $3)", [s, e, at(2)]);

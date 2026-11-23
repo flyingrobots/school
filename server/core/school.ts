@@ -1,6 +1,6 @@
 // School's use cases (RFC 3, §4). Each takes values already parsed at the edge, talks only to
 // ports, and returns plain data for the driving adapter to serialise.
-import type { Aid, AidTracking, Block, Contradiction, Encounter, Exposure, ExposureResult, ExplanationState, ExplanationSubmission, Grading, GradingRecord, LessonProgress, Recorded, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
+import type { Aid, AidTracking, Block, Contradiction, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, Exposure, ExposureResult, ExplanationState, ExplanationSubmission, Grading, GradingRecord, LessonProgress, Recorded, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
 import type { Clock, Grader, LearningRecord } from "./ports.ts";
 
 const squash = (s: string) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim().toLowerCase();
@@ -35,6 +35,12 @@ export interface School {
   recordView(v: ViewEvent): Promise<void>;
   recordExposure(e: Exposure): Promise<ExposureResult>;
   submissionAid(submissionId: string): Promise<Aid | null>;
+  /** The rows of an encounter a decision note may cite (RFC 2 §3), oldest first. */
+  encounterEvidence(encounterId: string): Promise<EvidenceRow[]>;
+  /** Record why School chose something, citing its evidence; refused if a cited row is not evidence of the choice's course. */
+  recordDecisionNote(n: DecisionNoteInput): Promise<DecisionNoteResult>;
+  decisionNotes(choice: DecisionChoice): Promise<DecisionNote[]>;
+  encounterDecisionNotes(encounterId: string): Promise<DecisionNote[]>;
 }
 
 export function createSchool(ports: { record: LearningRecord; grader: Grader; clock: Clock }): School {
@@ -73,5 +79,9 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
     recordView: (v) => record.recordView(v, clock.now()),
     recordExposure: (e) => record.recordExposure(e, clock.now()),
     submissionAid: (id) => record.aid(id),
+    encounterEvidence: (id) => record.encounterEvidence(id),
+    recordDecisionNote: (n) => record.recordDecisionNote(n, clock.now()),
+    decisionNotes: (c) => record.decisionNotes(c),
+    encounterDecisionNotes: (id) => record.encounterDecisionNotes(id),
   };
 }

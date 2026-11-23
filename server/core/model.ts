@@ -158,3 +158,70 @@ export type ExplanationState = z.infer<typeof ExplanationState>;
 
 /** A saved explanation with the explain block it answers, as its encounter's snapshot holds it. */
 export type SavedExplanation = { state: ExplanationState; block: ExplainBlock };
+
+// ---- Decision notes (RFC 2 §3 and §5; flyingrobots/school#31) ---------------------------------
+
+/** A row of the record, by its place in the record's one shared order (RFC 3 §3.4). */
+export const Seq = z.int().positive();
+
+/** What kind of row of an encounter's evidence a seq names. */
+export const EvidenceKind = z.enum(["encounter", "answer", "explanation", "grading", "exposure"]);
+export type EvidenceKind = z.infer<typeof EvidenceKind>;
+
+/** One row an encounter holds, which a decision note may cite. `blockId` is null for the encounter itself. */
+export const EvidenceRow = z.object({ seq: Seq, kind: EvidenceKind, blockId: z.string().nullable() });
+export type EvidenceRow = z.infer<typeof EvidenceRow>;
+
+/**
+ * What School chose: a course, a lesson in it, or a block in that lesson. A block is always chosen
+ * within a lesson, so `blockId` names a lesson's block, never a bare one.
+ */
+export const DecisionChoice = z.object({
+  course: z.string().min(1).max(200),
+  lesson: z.string().min(1).max(200).nullable(),
+  blockId: blockId.nullable(),
+}).refine((c) => c.blockId === null || c.lesson !== null, { message: "a block is chosen within a lesson", path: ["lesson"] });
+export type DecisionChoice = z.infer<typeof DecisionChoice>;
+
+/** The rule that made a decision: `<selector>/<rule>`, lowercase words joined by hyphens, e.g. `due-review/wrong-first-try`. */
+export const RuleId = z.string().max(100).regex(/^[a-z0-9]+(-[a-z0-9]+)*(\/[a-z0-9]+(-[a-z0-9]+)*)+$/);
+
+/**
+ * A decision note to store: why School chose something, naming the rows that justify it (RFC 2 §3:
+ * decisions are notes that name their evidence). `noteId` is the caller's, so a resend is stored
+ * once. `evidence` is at least one distinct seq, each a row of the record in the choice's course.
+ * `encounterId`, when given, is the encounter the choice was made for, in the same course and lesson.
+ */
+export const DecisionNoteInput = z.object({
+  noteId: uuid,
+  choice: DecisionChoice,
+  encounterId: uuid.nullable(),
+  rule: RuleId,
+  reason: z.string().trim().min(1).max(2000),
+  evidence: z.array(Seq).min(1).max(100).refine((s) => new Set(s).size === s.length, { message: "evidence names each row once" }),
+});
+export type DecisionNoteInput = z.infer<typeof DecisionNoteInput>;
+
+/** A decision note as stored: never updated, and its evidence rows always precede it. */
+export const DecisionNote = z.object({
+  id: z.string(),
+  seq: Seq,
+  choice: z.object({ course: z.string(), lesson: z.string().nullable(), blockId: z.string().nullable() }),
+  encounterId: z.string().nullable(),
+  rule: z.string(),
+  reason: z.string(),
+  evidence: z.array(Seq),
+  at: timestamp,
+});
+export type DecisionNote = z.infer<typeof DecisionNote>;
+
+/**
+ * `rejected`: a cited row does not exist, is not evidence (a snapshot or another note), or is
+ * evidence of another course than the choice's; or the encounter named is not of the choice's
+ * course and lesson, or does not hold its block. `conflict`: the note id already names another note.
+ */
+export const DecisionNoteResult = z.discriminatedUnion("status", [
+  z.object({ status: z.enum(["stored", "duplicate"]), note: DecisionNote }),
+  z.object({ status: z.enum(["conflict", "rejected"]) }),
+]);
+export type DecisionNoteResult = z.infer<typeof DecisionNoteResult>;

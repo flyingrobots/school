@@ -14,8 +14,9 @@ setDefaultTimeout(30_000); // PGlite starts a whole Postgres in process.
 
 /** The functions the port calls: every one granted to school_app. */
 const PORT_FUNCTIONS = [
-  "encounter_answers", "encounter_explanations", "explanation", "lesson_progress", "open_encounter",
-  "record_exposure", "record_grading", "record_view", "save_explanation", "submission_aid", "submit",
+  "choice_decision_notes", "encounter_answers", "encounter_decision_notes", "encounter_evidence", "encounter_explanations",
+  "explanation", "lesson_progress", "open_encounter", "record_decision_note", "record_exposure", "record_grading",
+  "record_view", "save_explanation", "submission_aid", "submit",
 ];
 
 /** A function call and nothing else: no table, no second statement, every argument a parameter. */
@@ -86,6 +87,12 @@ test("every port method is one call of its function, as school_app", async () =>
   await r.aid(id);
   await r.encounterExplanations(e.id);
   await r.recordView({ course: "c", lesson: "l1" }, "2026-11-21T10:00:04.000Z");
+  const evidence = (await r.encounterEvidence(e.id)).map((x) => x.seq);
+  const choice = { course: "c", lesson: "l1", blockId: "q1" };
+  expect(await r.recordDecisionNote({ noteId: crypto.randomUUID(), choice, encounterId: e.id, rule: "due-review/x", reason: "Because.", evidence },
+    "2026-11-21T10:00:05.000Z")).toMatchObject({ status: "stored" });
+  expect(await r.decisionNotes(choice)).toHaveLength(1);
+  expect(await r.encounterDecisionNotes(e.id)).toHaveLength(1);
   expect(seen.map((s) => FUNCTION_CALL.exec(s)![1]).sort()).toEqual(PORT_FUNCTIONS);
 });
 

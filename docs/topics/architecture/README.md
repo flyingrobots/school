@@ -110,7 +110,7 @@ writes against ordinary cross-site requests, and hands learning-record work to P
 ## The learning record
 
 The record is Postgres, built by the numbered migrations in `server/db/migrations/` (`0001_init.sql`,
-`0002_exposures.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
+`0002_exposures.sql`, `0003_decision_notes.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -141,6 +141,20 @@ explanation's aid in `submission_aid`: **unknown** when the encounter's `aid_tra
 The server runs on this record, so `POST /api/exposure` stores exposures. The SQLite adapter,
 no longer used by the server, declares that it records none: it refuses them and reports every aid
 as unknown.
+
+Decisions are notes that name their evidence (RFC 2 §3 and §5). Migration 0003 adds
+`decision_notes`: what School chose (a course, a lesson, or a block of a lesson), the rule that
+chose it as a stable id of the form `<selector>/<rule>` (for example `due-review/wrong-first-try`),
+a reason a person can read, optionally the encounter the choice was made for, and the rows it
+cites as `seq` values. `record_decision_note` stores a note once per note id and refuses one that
+cites a row that does not exist, a row that is not evidence (a snapshot, or another note), or
+evidence of another course than the choice's; an encounter it names must be of the choice's course
+and lesson and hold its block. The table checks that a note cites at least one row and that every
+cited `seq` is smaller than its own. Notes cite rows, never judgments, so a later regrading leaves
+a note pointing at the grading it named. `encounter_evidence` lists the rows of an encounter a
+note may cite; `choice_decision_notes` and `encounter_decision_notes` read notes back. Nothing
+writes notes yet: the due-review selector will ([flyingrobots/school#32](https://github.com/flyingrobots/school/issues/32)).
+The SQLite adapter keeps no notes, and the contract's note cases do not run on it.
 
 **Figure 2. The learning record's tables**
 
@@ -196,6 +210,19 @@ erDiagram
         uuid encounter_id FK
         text block_id
         text kind "hint, model-answer, feedback, reference"
+        timestamptz at
+    }
+    ENCOUNTERS |o--o{ DECISION_NOTES : "is chosen for"
+    DECISION_NOTES {
+        bigint seq PK
+        uuid note_id UK "caller UUID"
+        text course
+        text lesson "NULL for a course"
+        text block_id "NULL for a course or lesson"
+        uuid encounter_id FK "nullable"
+        text rule "selector/rule"
+        text reason
+        bigint_array evidence "cited seqs, each smaller than seq"
         timestamptz at
     }
 ```

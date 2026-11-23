@@ -1,7 +1,7 @@
 // The Postgres adapter of the LearningRecord port (RFC 3, §4; flyingrobots/school#46).
 //
 // It holds no SQL that reads or writes a table: every method is one call of a function from
-// migration 0001 (server/db/migrations/0001_init.sql), `SELECT * FROM school.<function>(...)`,
+// the migrations (server/db/migrations/), `SELECT * FROM school.<function>(...)`,
 // which school_app, the role it connects as, may EXECUTE and nothing more. The rules (correctness
 // from the snapshot, first try, resume, append-only) are the functions'; this module hands them
 // their inputs and parses every value that comes back with the core's Zod schemas, so a driver
@@ -12,8 +12,8 @@
 // end as the model's ISO form, 2026-11-21T10:00:00.000Z.
 import { z } from "zod";
 import {
-  Aid, Block, Encounter, ExplanationState, ExposureResult, Grading, LessonProgress, Recorded, SaveResult, SubmitResult,
-  type ExplainBlock,
+  Aid, Block, DecisionNote, DecisionNoteResult, Encounter, EvidenceKind, EvidenceRow, ExplanationState, ExposureResult, Grading,
+  LessonProgress, Recorded, SaveResult, Seq, SubmitResult, type ExplainBlock,
 } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
 import { canonical } from "../record.ts";
@@ -27,6 +27,11 @@ const Submitted = z.object({ status: z.string(), correct: z.boolean().nullable()
 const Answer = z.object({ block_id: z.string(), choice_id: z.string(), correct: z.boolean() });
 const Explained = z.object({ submission_id: z.string(), block_id: z.string(), text: z.string(), at: time, grading: Grading.nullable() });
 const ExplanationRow = Explained.extend({ block: Block });
+/** A bigint column: PGlite may return a number or a bigint, Bun.SQL a string. All end as the model's Seq. */
+const bigint = z.union([z.number(), z.bigint(), z.string().regex(/^[0-9]+$/)]).transform(Number).pipe(Seq);
+const Evidence = z.object({ seq: bigint, kind: EvidenceKind, block_id: z.string().nullable() });
+const Noted = z.object({ status: z.string(), note: DecisionNote.nullable() });
+const NoteRow = z.object({ note: DecisionNote });
 
 /** `SELECT * FROM school.fn($1, ..., $n)`: the only statement shape this adapter issues. */
 const call = (fn: string, args: readonly unknown[]) =>
@@ -101,5 +106,24 @@ export function postgresRecord(sql: Sql): LearningRecord {
       if (r.length > 1) throw new Error(`school.submission_aid returned ${r.length} rows: an answer and an explanation share submission ${submissionId}`);
       return Aid.parse(r[0]!.aid);
     },
+
+    encounterEvidence: async (encounterId) =>
+      (await rows("encounter_evidence", encounterId)).map((row) => {
+        const x = Evidence.parse(row);
+        return EvidenceRow.parse({ seq: x.seq, kind: x.kind, blockId: x.block_id });
+      }),
+
+    // evidence goes as a value for its jsonb parameter, like a grading's sources.
+    recordDecisionNote: async (n, now) => {
+      const r = Noted.parse(await one("record_decision_note", n.noteId, n.choice.course, n.choice.lesson, n.choice.blockId,
+        n.encounterId, n.rule, n.reason, n.evidence, now));
+      return DecisionNoteResult.parse(r.status === "stored" || r.status === "duplicate" ? { status: r.status, note: r.note } : { status: r.status });
+    },
+
+    decisionNotes: async (c) =>
+      (await rows("choice_decision_notes", c.course, c.lesson, c.blockId)).map((row) => NoteRow.parse(row).note),
+
+    encounterDecisionNotes: async (encounterId) =>
+      (await rows("encounter_decision_notes", encounterId)).map((row) => NoteRow.parse(row).note),
   };
 }
