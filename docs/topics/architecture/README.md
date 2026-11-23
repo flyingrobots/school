@@ -112,8 +112,8 @@ writes against ordinary cross-site requests, and hands learning-record work to P
 ## The learning record
 
 The record is Postgres, built by the numbered migrations in `server/db/migrations/` (`0001_init.sql`,
-`0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`) and reached only through the
-functions they define[^rfc3]. Its rules are SQL so
+`0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_read_committed.sql`)
+and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -254,8 +254,30 @@ Every adapter of the record passes one contract suite (`server/contract/learning
 replays one learner's history (`server/contract/learner-history.ts`). Both run on PGlite in every
 test run, and in CI also on a real Postgres server through `Bun.SQL`, the driver the server uses;
 CI fails the build if any of the real-Postgres cases skipped or a PGlite case has no `Bun.SQL`
-counterpart (`server/testing/postgres-gate.ts`). Those runs are sequential: no test yet races two
-writers against real Postgres, so the concurrent cases in the table above rest on the SQL.
+counterpart (`server/testing/postgres-gate.ts`).
+
+The concurrent cases run against real Postgres too, in the same CI job and under the same gate
+(`server/adapters/bunsql.concurrency.test.ts`). Each race is held inside the database: a
+controller connection locks the table the function reaches first, the callers start on separate
+connections, and the lock is released only once `pg_stat_activity` shows every caller's backend
+waiting inside its call, which proves the calls overlapped. Each case runs 50 times:
+
+| Race | Outcome |
+| --- | --- |
+| Two different first answers to one block | Exactly one is `first_try`; the other is stored as not first |
+| 20 answers to one block | One `first_try` among 20 rows |
+| The same submission twice | One row; one caller gets `stored`, the other `duplicate`, with the same `correct` and `first_try` |
+| One submission id for two different answers | One is stored, the other is a `conflict` |
+| Two opens of one lesson and snapshot | One encounter; one caller opened it, the other resumed it |
+| Two gradings of one explanation | One chain: the second supersedes the first |
+
+`school.open_encounter` and `school.record_grading` take an advisory lock and then read what the
+previous holder committed, so they need READ COMMITTED, which takes a snapshot per statement.
+Under REPEATABLE READ the snapshot predates the lock: two concurrent opens made two encounters
+every time. A function cannot set its own isolation level, so both refuse any other level with
+`invalid_transaction_state` (migration 0005), and the Bun.SQL adapter begins every request READ
+COMMITTED whatever the database's default. `school.submit` needs neither: its partial unique
+index decides first try whatever the snapshot saw, and that case also holds under REPEATABLE READ.
 
 An encounter resumes when the learner reopens the same lesson with the same snapshot, it is that
 lesson's latest encounter, its aid tracking is unchanged, and its **opening, latest answer or
