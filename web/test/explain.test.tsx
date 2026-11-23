@@ -14,7 +14,7 @@ afterAll(() => GlobalRegistrator.unregister())
 const React = await import("react")
 const { act } = React
 const { createRoot } = await import("react-dom/client")
-const { Explain, ExplainView, ExplainSaveError } = await import("@/components/explain")
+const { Explain, ExplainView, ExplainSaveError, ExplainReadOnly } = await import("@/components/explain")
 const { ariaKeyshortcuts } = await import("@ui-sdk/react/shortcuts")
 // `mod` is Command on Apple platforms and Control elsewhere; ask ui-sdk which one this platform uses.
 const mod: KeyboardEventInit = ariaKeyshortcuts("mod+enter").startsWith("Meta") ? { metaKey: true } : { ctrlKey: true }
@@ -53,10 +53,10 @@ const succeeded = (f: Findings = findings): Explanation["grading"] =>
 const failed = (error = "The grader timed out."): Explanation["grading"] =>
   ({ id: 1, status: "failed", error, model: "grader-model", supersedes: null, at: "2026-11-22T12:01:00.000Z" })
 
-let unmount: (() => void) | undefined
+// Every root a test renders is unmounted after it, so none keeps a shortcut registered into the next file.
+const unmounts: (() => void)[] = []
 afterEach(() => {
-  act(() => unmount?.())
-  unmount = undefined
+  act(() => unmounts.splice(0).forEach((u) => u()))
   document.body.innerHTML = ""
 })
 
@@ -65,7 +65,7 @@ function render(node: React.ReactNode): HTMLElement {
   document.body.appendChild(host)
   const root = createRoot(host)
   act(() => root.render(node))
-  unmount = () => root.unmount()
+  unmounts.push(() => root.unmount())
   return host
 }
 
@@ -548,4 +548,22 @@ test("a pending explanation that is refused goes back to writing, with its text 
   expect(textarea(host)!.value).toBe("A majority, present.")
   expect(q(host, "error")!.textContent).toBe("School refused this explanation (rejected).")
   expect(host.innerHTML).not.toContain("MODEL-ANSWER")
+})
+
+// The slides view shows an explain block to read only (flyingrobots/school#43): its prompt, and no
+// field, model answer or source, so there is nothing to save and no help shown to record.
+test("read only: the prompt alone, with no field, no Save, no model answer and no sources", () => {
+  const host = render(<ExplainReadOnly id={block.id} prompt={block.prompt} />)
+  const root = q(host, "root")!
+  expect(root.dataset.readOnly).toBe("true")
+  expect(root.dataset.explainId).toBe("e1")
+  expect(root.textContent).toContain(block.prompt)
+  expect(root.textContent).toContain("To read only")
+  expect(badge(host)).toBe("Read only")
+  expect(textarea(host)).toBeNull()
+  expect(saveButton(host)).toBeNull()
+  expect(gradeButton(host)).toBeNull()
+  expect(host.querySelectorAll("button, textarea, input").length).toBe(0)
+  expect(host.textContent).not.toContain(MODEL)
+  expect(q(host, "sources")).toBeNull()
 })

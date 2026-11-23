@@ -22,6 +22,8 @@ import { Spinner } from "@/components/ui/spinner"
 // `onWhyShown` says when the explanation is shown, once per showing, so a page can record the
 // help it gave. An answer the page keeps to send later (an outbox) is `queued`: it shows as not
 // sent yet, with a spinner, until the server's verdict comes back or the server refuses it.
+// A `readOnly` quiz (QuizReadOnly) shows the question and its choices to read, with nothing to
+// choose: no choice can be pressed, no key answers, and the explanation is never shown.
 
 export type QuizChoice = { id: string; text: string }
 
@@ -60,6 +62,8 @@ const STATUS: Record<QuizState["status"], { label: string; variant: "secondary" 
   settled: { label: "Answered", variant: "outline" },
 }
 
+const READ_ONLY = { label: "Read only", variant: "outline" } as const
+
 /** Whether `choiceId` can be chosen in `state`. */
 function canChoose(state: QuizState, choiceId: string): boolean {
   if (state.status === "unanswered") return true
@@ -97,6 +101,7 @@ export function QuizView({
   error,
   onChoose,
   onWhyShown,
+  readOnly = false,
 }: QuizContent & {
   state: QuizState
   /** Shown when the last answer did not reach the server. */
@@ -104,9 +109,12 @@ export function QuizView({
   onChoose: (choiceId: string) => void
   /** Called once each time the explanation (`why`) is shown. */
   onWhyShown?: () => void
+  /** Shows the question and choices to read only: nothing can be chosen, by click or key. */
+  readOnly?: boolean
 }) {
+  const allowed = (choiceId: string) => !readOnly && canChoose(state, choiceId)
   const choose = (choiceId: string) => {
-    if (canChoose(state, choiceId)) onChoose(choiceId)
+    if (allowed(choiceId)) onChoose(choiceId)
   }
   const onKeyDown = (event: React.KeyboardEvent) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return
@@ -117,8 +125,8 @@ export function QuizView({
     choose(target.id)
   }
   const chosen = state.status === "unanswered" ? undefined : state.choiceId
-  const status = STATUS[state.status]
-  const done = state.status === "right" || state.status === "settled"
+  const status = readOnly ? READ_ONLY : STATUS[state.status]
+  const done = !readOnly && (state.status === "right" || state.status === "settled")
   const title = React.useId()
   useShowing(done, onWhyShown)
 
@@ -127,6 +135,7 @@ export function QuizView({
       data-quiz="root"
       data-quiz-id={id}
       data-state={state.status}
+      data-read-only={readOnly || undefined}
       aria-busy={state.status === "in-flight" || state.status === "queued"}
       onKeyDown={onKeyDown}
       className="w-full"
@@ -136,7 +145,9 @@ export function QuizView({
           {q}
         </CardTitle>
         <CardDescription className="text-base">
-          {state.status === "wrong"
+          {readOnly
+            ? "To read only: nothing is answered here."
+            : state.status === "wrong"
             ? "Not quite. Try another answer."
             : state.status === "queued"
               ? "Not saved yet. Your answer is kept and is sent when School can be reached."
@@ -174,8 +185,8 @@ export function QuizView({
               data-quiz="choice"
               data-choice={c.id}
               data-verdict={verdict}
-              aria-keyshortcuts={key}
-              disabled={!canChoose(state, c.id)}
+              aria-keyshortcuts={readOnly ? undefined : key}
+              disabled={!allowed(c.id)}
               render={(props) => (
                 <Button
                   {...props}
@@ -187,7 +198,7 @@ export function QuizView({
                   {mine && (state.status === "in-flight" || state.status === "queued") ? (
                     <Spinner data-icon="inline-start" />
                   ) : (
-                    key && <Kbd data-icon="inline-start">{key}</Kbd>
+                    key && !readOnly && <Kbd data-icon="inline-start">{key}</Kbd>
                   )}
                   {c.text}
                 </Button>
@@ -310,3 +321,14 @@ export function Quiz({
 
   return <QuizView {...content} state={state} error={error} onChoose={answer} />
 }
+
+/**
+ * The quiz to read only, as a slides view shows it: the question and its choices, nothing to
+ * choose, no explanation, and no callback, so nothing it shows can be recorded.
+ */
+export function QuizReadOnly({ id, q, choices }: Pick<QuizContent, "id" | "q" | "choices">) {
+  return <QuizView id={id} q={q} choices={choices} why="" state={UNANSWERED} onChoose={ignore} readOnly />
+}
+
+const UNANSWERED: QuizState = { status: "unanswered" }
+const ignore = () => {}

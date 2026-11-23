@@ -13,7 +13,7 @@ afterAll(() => GlobalRegistrator.unregister())
 const React = await import("react")
 const { act } = React
 const { createRoot } = await import("react-dom/client")
-const { Quiz, QuizView, QuizAnswerError } = await import("@/components/quiz")
+const { Quiz, QuizView, QuizAnswerError, QuizReadOnly } = await import("@/components/quiz")
 type QuizState = import("@/components/quiz").QuizState
 
 const quiz = {
@@ -411,4 +411,24 @@ test("a pending answer that is refused returns the quiz to the record as it was,
   expect(choice(host, "venus").dataset.verdict).toBe("wrong")
   expect(errorOf(host)).toBe("School refused this answer (rejected).")
   expect(enabled(host)).toEqual(["mercury", "mars"])
+})
+
+// The slides view shows a quiz to read only (flyingrobots/school#43): it records nothing, so the
+// quiz offers nothing to choose and shows no explanation, which would be help nobody recorded.
+test("read only: the question and every choice, none of them choosable by click or key, no key hints and no explanation", () => {
+  const host = render(<QuizReadOnly id={quiz.id} q={quiz.q} choices={quiz.choices} />)
+  expect(root(host).dataset.readOnly).toBe("true")
+  expect(root(host).textContent).toContain(quiz.q)
+  expect(root(host).textContent).toContain("To read only")
+  expect(root(host).querySelector("[data-slot=badge]")?.textContent).toBe("Read only")
+  expect(choices(host).map((b) => b.textContent)).toEqual(["Venus", "Mercury", "Mars"])
+  expect(choices(host).map((b) => b.getAttribute("aria-keyshortcuts"))).toEqual([null, null, null])
+  expect(enabled(host)).toEqual([])
+  act(() => {
+    click(choice(host, "mercury"))
+    press(root(host), "2")
+  })
+  expect(stateOf(host)).toBe("unanswered")
+  expect(why(host)).toBeNull()
+  expect(host.querySelector("[data-quiz=why]")).toBeNull()
 })
