@@ -9,8 +9,6 @@ import { ownerQuery, recordBytes } from "./testing/record.ts";
 // Every test gets its own server, bridge, state and ports, and sets up what it needs: none
 // depends on another having run first.
 let root = "";
-let PORT = 0;
-let BRIDGE_PORT = 0;
 let base = "";
 const KEY = "bridge-token-NEVER-STORE-ME";
 let server: Started | null = null;
@@ -29,9 +27,6 @@ let agentPath = "";
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), "school-grading-"));
-  PORT = 20000 + Math.floor(Math.random() * 20000);
-  BRIDGE_PORT = PORT + 1;
-  base = `http://127.0.0.1:${PORT}`;
   agentPath = join(root, "fake-agent");
   writeFileSync(join(root, "verdict.json"), JSON.stringify(verdict));
   writeFileSync(agentPath, `#!/bin/sh\nif [ -e "${root}/down" ]; then echo "model overloaded" >&2; exit 1; fi\ncat "${root}/verdict.json"\n`);
@@ -44,9 +39,10 @@ beforeEach(async () => {
       sources: [{ id: "readme", title: "README", text: "The unit of storage should be the transformation, not the state." }],
     }],
   }));
-  bridge = await startBridge({ ...process.env, SCHOOL_BRIDGE_TOKEN: KEY, SCHOOL_BRIDGE_CONFIG: join(root, "bridge.json"), SCHOOL_BRIDGE_PORT: String(BRIDGE_PORT) });
-  server = await startSchool({ ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`, PORT: String(PORT), HOST: "127.0.0.1",
-    SCHOOL_BRIDGE_URL: `http://127.0.0.1:${BRIDGE_PORT}`, SCHOOL_BRIDGE_TOKEN: KEY });
+  bridge = await startBridge({ ...process.env, SCHOOL_BRIDGE_TOKEN: KEY, SCHOOL_BRIDGE_CONFIG: join(root, "bridge.json") });
+  server = await startSchool({ ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`, HOST: "127.0.0.1",
+    SCHOOL_BRIDGE_URL: bridge.url, SCHOOL_BRIDGE_TOKEN: KEY });
+  base = server.url;
 }, timeout(2));
 afterEach(async () => {
   for (const p of [server, bridge]) { p?.proc.kill(); await p?.proc.exited; }

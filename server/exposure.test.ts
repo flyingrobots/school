@@ -21,10 +21,9 @@ beforeEach(async () => {
   writeFileSync(join(courseDir, "lessons", "0001.json"), JSON.stringify({ type: "page", id: "l1", title: "One", subtitle: "", children: [
     { type: "explain", id: "e1", prompt: "Say why.", model: "Because.", sources: [] },
   ] }));
-  const port = 20000 + Math.floor(Math.random() * 20000);
-  base = `http://127.0.0.1:${port}`;
-  env = { ...process.env, SCHOOL_COURSE: courseDir, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`, PORT: String(port), HOST: "127.0.0.1" };
+  env = { ...process.env, SCHOOL_COURSE: courseDir, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`, HOST: "127.0.0.1" };
   server = await startSchool(env);
+  base = server.url;
 }, timeout(1));
 afterEach(async () => {
   server?.proc.kill("SIGKILL");
@@ -82,6 +81,7 @@ test("on Postgres a valid exposure in a tracked encounter is stored once; a rese
     "SELECT exposure_id, encounter_id, block_id, kind FROM school.exposures ORDER BY seq");
   expect(rows).toEqual([{ exposure_id: exposure.exposureId, encounter_id: encounterId, block_id: "e1", kind: "model-answer" }]);
   server = await startSchool(env);
+  base = server.url;
 }, timeout(2));
 
 test("on Postgres an exposure is rejected, and nothing stored, in an untracked encounter or for a block the lesson lacks", async () => {
@@ -97,4 +97,5 @@ test("on Postgres an exposure is rejected, and nothing stored, in an untracked e
   await server!.proc.exited;
   expect(await ownerQuery(join(root, "record"), "SELECT * FROM school.exposures")).toEqual([]);
   server = await startSchool(env);
+  base = server.url;
 }, timeout(2));

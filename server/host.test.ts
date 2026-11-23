@@ -2,38 +2,38 @@
 // 127.0.0.1 and become same-origin with School; the JSON-body guard cannot tell. What it cannot
 // change is the Host header, which still names the attacker's site. So every request whose Host
 // is not one of School's own names is refused before routing, and changes nothing.
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { allowedHosts, hostAllowed } from "./hosts.ts";
-import { startSchool, timeout, type Started } from "./testing/processes.ts";
+import { startSchool, type Started } from "./testing/processes.ts";
 
 const root = mkdtempSync(join(tmpdir(), "school-host-"));
-const PORT = 20000 + Math.floor(Math.random() * 20000);
-const base = `http://127.0.0.1:${PORT}`;
 const TAILNET = "school.tail1234.ts.net";
-let server: Started | null = null;
 
-beforeAll(async () => {
-  mkdirSync(join(root, "course", "lessons"), { recursive: true });
-  mkdirSync(join(root, "course", "reference"), { recursive: true });
-  mkdirSync(join(root, "papers"), { recursive: true });
-  writeFileSync(join(root, "papers", "p.html"), "<p>paper</p>");
-  writeFileSync(join(root, "course", "reference", "r.html"), "<p>ref</p>");
-  writeFileSync(join(root, "course", "lessons", "0001.json"), JSON.stringify({
-    type: "page", id: "l1", title: "One", subtitle: "",
-    children: [{ type: "quiz", id: "q1", q: "Which?", why: "So.", choices: [{ id: "a", text: "A", correct: true }, { id: "b", text: "B", correct: false }] }],
-  }));
-  const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_MOUNTS: `papers=${join(root, "papers")}`,
-    SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`, SCHOOL_WEB: join(root, "no-web"), PORT: String(PORT), HOST: "127.0.0.1", SCHOOL_ALLOWED_HOSTS: TAILNET };
-  delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_URL;
-  delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_TOKEN;
-  server = await startSchool(env);
-}, timeout(1));
+// Started at load rather than in beforeAll, because the Host headers below name the port School
+// actually got (flyingrobots/school#82). A failed start fails this file with the helper's reason.
+mkdirSync(join(root, "course", "lessons"), { recursive: true });
+mkdirSync(join(root, "course", "reference"), { recursive: true });
+mkdirSync(join(root, "papers"), { recursive: true });
+writeFileSync(join(root, "papers", "p.html"), "<p>paper</p>");
+writeFileSync(join(root, "course", "reference", "r.html"), "<p>ref</p>");
+writeFileSync(join(root, "course", "lessons", "0001.json"), JSON.stringify({
+  type: "page", id: "l1", title: "One", subtitle: "",
+  children: [{ type: "quiz", id: "q1", q: "Which?", why: "So.", choices: [{ id: "a", text: "A", correct: true }, { id: "b", text: "B", correct: false }] }],
+}));
+const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_MOUNTS: `papers=${join(root, "papers")}`,
+  SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`, SCHOOL_WEB: join(root, "no-web"), HOST: "127.0.0.1", SCHOOL_ALLOWED_HOSTS: TAILNET };
+delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_URL;
+delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_TOKEN;
+const server: Started = await startSchool(env).catch((e) => { rmSync(root, { recursive: true, force: true }); throw e; });
+const PORT = server.port;
+const base = server.url;
+
 afterAll(async () => {
-  server?.proc.kill();
-  await server?.proc.exited;
+  server.proc.kill();
+  await server.proc.exited;
   rmSync(root, { recursive: true, force: true });
 });
 

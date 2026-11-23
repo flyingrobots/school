@@ -86,6 +86,13 @@ Practical notes for anyone — human or agent — changing the framework.
   `redirect: "error"`, because fetch keeps the Authorization header across a redirect. A new
   call to the bridge must do the same.
 - Tests are `bun test` from the repository root. No `package.json`, no build step (ADR 2).
+  The web app's browser tests (`web/test/shell.test.ts`) also need `npm ci` in `web/` and Google
+  Chrome, which they drive through playwright-core; without either they fail rather than skip.
+- A test that starts School or the bridge goes through `server/testing/processes.ts` and never picks a
+  port: it reads `url` and `port` from what the helper returns. The bridge is started on port 0 and
+  announces its port in `bridge.listening`; School refuses `PORT=0`, so the helper probes a free port
+  and retries a start that exits with EADDRINUSE (flyingrobots/school#82). Start the bridge first
+  when School needs its URL.
 - The bridge (`bridge/`) is a separate host process, deliberately outside the Docker image
   and its allowlist. It has no dependencies beyond Bun and is started by hand:
   `SCHOOL_BRIDGE_TOKEN=... bun bridge/bridge.ts`. Its tests write fake agent scripts and

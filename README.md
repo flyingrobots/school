@@ -67,7 +67,7 @@ What an agent may do is set by its own command: the example turns off Claude Cod
 | --- | --- |
 | `SCHOOL_BRIDGE_TOKEN` | Required; at least 16 characters, the same value the server has. |
 | `SCHOOL_BRIDGE_CONFIG` | Default `~/.config/school/bridge.json`. Re-read on every request. |
-| `SCHOOL_BRIDGE_HOST`, `SCHOOL_BRIDGE_PORT` | Default `127.0.0.1:4748`. |
+| `SCHOOL_BRIDGE_HOST`, `SCHOOL_BRIDGE_PORT` | Default `127.0.0.1:4748`. Port `0` lets the OS choose; the `bridge.listening` log line gives the port. |
 
 The record lives in Postgres. Run directly, the server keeps it in PGlite, a Postgres inside the server's process, in `<SCHOOL_STATE>/db`, so nothing else needs installing; `SCHOOL_DATABASE_URL` points it elsewhere (`postgres://...` or `pglite:<dir>`).
 
