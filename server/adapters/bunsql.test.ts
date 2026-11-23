@@ -48,11 +48,14 @@ async function fresh(): Promise<Opened & { url: string }> {
 }
 
 afterAll(async () => {
-  // Bun.SQL pools close lazily; dropping a database waits for none of them (WITH (FORCE)).
-  for (const o of opened.splice(0)) await o.close();
+  // A pool's graceful close once hung past this hook's timeout on a loaded machine, leaving every
+  // database behind. So each close gets two seconds, then DROP ... WITH (FORCE) ends whatever
+  // connections are left, and the databases always go.
+  const bounded = (p: Promise<unknown>) => Promise.race([p, Bun.sleep(2_000)]);
+  for (const o of opened.splice(0)) await bounded(o.close());
   if (admin !== undefined) {
     for (const name of made.reverse()) await admin.unsafe(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
-    await admin.close();
+    await bounded(admin.close());
   }
 }, SLOW);
 
@@ -118,10 +121,12 @@ describe.skipIf(URL_ === undefined || URL_ === "")("Bun.SQL on a real Postgres (
   });
 });
 
-test("the log names a postgres URL without its password", () => {
-  expect(redact("postgres://school:s3cret@db:5432/school")).toBe("postgres://school:***@db:5432/school");
+test("the log names a postgres URL by scheme, host, port and database only: never its user, password or query", () => {
+  expect(redact("postgres://school:s3cret@db:5432/school")).toBe("postgres://db:5432/school");
   expect(redact("postgres://db/school")).toBe("postgres://db/school");
-  expect(redact("postgres://school:s3cret@db:5432/school")).not.toContain("s3cret");
+  expect(redact("postgresql://db:5432/school?user=school&password=s3cret&sslmode=require")).toBe("postgresql://db:5432/school");
+  expect(redact("postgres://school@db/school#frag")).toBe("postgres://db/school");
+  expect(redact("postgres://u:p@[bad")).not.toContain("p@");
 });
 
 // Skipping is for a laptop without Postgres; on CI a missing URL would silently drop this file.

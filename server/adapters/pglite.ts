@@ -7,6 +7,7 @@
 // parses each with Zod either way.
 import { PGlite, type PGliteInterface } from "@electric-sql/pglite";
 import { mkdirSync } from "node:fs";
+import { lockFolder } from "./lock.ts";
 import type { Sql } from "./sql.ts";
 
 /** `db` as the Sql port. It runs statements in whatever role the session holds; the caller sets it. */
@@ -16,8 +17,21 @@ export function pgliteSql(db: Pick<PGliteInterface, "query">): Sql {
   };
 }
 
-/** PGlite on disk in `dir`, created with its parents on first use. Its one session starts as the superuser. */
+/**
+ * PGlite on disk in `dir`, created with its parents on first use, locked for as long as it is open
+ * (server/adapters/lock.ts): a second open anywhere throws InUse before PGlite touches the folder.
+ * Its one session starts as the superuser. Closing it releases the lock.
+ */
 export async function openPglite(dir: string): Promise<PGlite> {
-  mkdirSync(dir, { recursive: true });
-  return PGlite.create(dir);
+  const lock = lockFolder(dir);
+  try {
+    mkdirSync(dir, { recursive: true });
+    const db = await PGlite.create(dir);
+    const close = db.close.bind(db);
+    db.close = async () => { try { await close(); } finally { lock.release(); } };
+    return db;
+  } catch (e) {
+    lock.release();
+    throw e;
+  }
 }

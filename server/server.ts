@@ -4,7 +4,8 @@ import { join, normalize, sep } from "node:path";
 import { readdirSync, realpathSync, statSync } from "node:fs";
 import { lastValidLoader, quizIds, type Block } from "./blocks.ts";
 import { PROMPT_VERSION, RUBRIC_VERSION, bridgeConfig, callBridge } from "./grade.ts";
-import { openDatabase } from "./adapters/database.ts";
+import { openDatabase, redact } from "./adapters/database.ts";
+import { InUse } from "./adapters/lock.ts";
 import { postgresRecord } from "./adapters/postgres.ts";
 import { legacyRefusal } from "./legacy.ts";
 import { AID_CAPTURE_VERSIONS, AidQuery, Exposure, ExplanationSubmission, GradeRequest, Submission, ViewEvent, type AidTracking } from "./core/model.ts";
@@ -46,8 +47,17 @@ let database;
 try {
   database = await openDatabase(config.database);
 } catch (e) {
-  console.error(`school: cannot open the record (${config.database.driver === "pglite" ? `PGlite at ${config.database.dir}` : "the Postgres in SCHOOL_DATABASE_URL"}): ${(e as Error).message}`);
+  // A record held by another server is a refusal to start, like a bad configuration: exit 2.
+  if (e instanceof InUse) {
+    console.error(`school: ${e.message}`);
+    process.exit(2);
+  }
+  console.error(`school: cannot open the record (${config.database.driver === "pglite" ? `PGlite at ${config.database.dir}` : `Postgres at ${redact(config.database.url)}`}): ${(e as Error).message}`);
   process.exit(1);
+}
+if (config.database.driver === "pglite") {
+  console.warn(`school: warning: the record is PGlite at ${config.database.dir}, which does not fsync and so is not crash-durable: ` +
+    "a power cut or an operating-system crash can lose acknowledged answers. Use it for development and tests; use a postgres:// SCHOOL_DATABASE_URL for a learner's record.");
 }
 console.log(`school: record in ${database.where}${database.applied.length > 0 ? `; applied migration(s) ${database.applied.join(", ")}` : ""}`);
 

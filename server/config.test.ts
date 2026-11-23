@@ -2,9 +2,13 @@
 // learner state cannot be placed inside a course.
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { ConfigError, course, courseNames, mountTable, parseConfig, parseMounts } from "./config.ts";
+import { ConfigError, course, courseNames, mountTable, parseConfig as parseConfigFrom, parseMounts } from "./config.ts";
 
 const FRAMEWORK = "/opt/school";
+
+/** The config, with a record named: there is no default, and most of these tests are about something else. */
+const parseConfig = (env: Record<string, string | undefined>, framework: string) =>
+  parseConfigFrom({ SCHOOL_DATABASE_URL: "postgres://db/school", ...env }, framework);
 
 test("no course configured is a valid state, not a crash", () => {
   const c = parseConfig({}, FRAMEWORK);
@@ -54,9 +58,10 @@ test("the database defaults inside the state directory", () => {
   expect(parseConfig({ SCHOOL_STATE: "/var/school", DB_PATH: "/tmp/other.db" }, FRAMEWORK).dbPath).toBe("/tmp/other.db");
 });
 
-test("the record defaults to PGlite in the state directory; SCHOOL_DATABASE_URL picks the driver", () => {
-  expect(parseConfig({ SCHOOL_STATE: "/var/school" }, FRAMEWORK).database).toEqual({ driver: "pglite", dir: "/var/school/db" });
-  expect(parseConfig({ SCHOOL_STATE: "/var/school", SCHOOL_DATABASE_URL: "" }, FRAMEWORK).database).toEqual({ driver: "pglite", dir: "/var/school/db" });
+test("SCHOOL_DATABASE_URL picks the driver, and there is no default", () => {
+  for (const env of [{ SCHOOL_STATE: "/var/school" }, { SCHOOL_STATE: "/var/school", SCHOOL_DATABASE_URL: "" }]) {
+    expect(() => parseConfigFrom(env, FRAMEWORK)).toThrow(/SCHOOL_DATABASE_URL is not set.*postgres:\/\/.*pglite:/);
+  }
   expect(parseConfig({ SCHOOL_DATABASE_URL: "pglite:/srv/record" }, FRAMEWORK).database).toEqual({ driver: "pglite", dir: "/srv/record" });
   expect(parseConfig({ SCHOOL_DATABASE_URL: "pglite:record" }, FRAMEWORK).database).toEqual({ driver: "pglite", dir: join(process.cwd(), "record") });
   for (const url of ["postgres://school:pw@db:5432/school", "postgresql://db/school"]) {

@@ -24,6 +24,19 @@ test("pglite: migrates on first open, applies nothing on the next, and keeps wha
   expect(await ownerQuery(dir, "SELECT course, lesson FROM school.views")).toEqual([{ course: "c", lesson: "l1" }]);
 }, SLOW);
 
+test("pglite: a record already open is refused, naming its folder, until the first closes it", async () => {
+  const dir = join(root, "locked");
+  const first = await openDatabase({ driver: "pglite", dir });
+  try {
+    await expect(openDatabase({ driver: "pglite", dir })).rejects.toThrow(new RegExp(`${dir}.*in use`));
+    await expect(ownerQuery(dir, "SELECT 1")).rejects.toThrow(/in use/); // the test helper takes the same lock
+  } finally {
+    await first.close();
+  }
+  const again = await openDatabase({ driver: "pglite", dir });
+  await again.close();
+}, SLOW);
+
 test("pglite: the server's record refuses any statement but a function call, so it cannot take the superuser back", async () => {
   const o = await openDatabase({ driver: "pglite", dir: join(root, "b") });
   try {

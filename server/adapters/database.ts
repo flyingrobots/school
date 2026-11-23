@@ -33,12 +33,14 @@ export type Opened = {
   close(): Promise<void>;
 };
 
-/** A postgres:// URL with its password removed, for the log. */
+/**
+ * A postgres:// URL as the log names it: scheme, host, port and database only. Never the user or
+ * password, which may be in the user info or in the query string (?password=...), nor the query.
+ */
 export function redact(url: string): string {
   try {
     const u = new URL(url);
-    if (u.password !== "") u.password = "***";
-    return u.toString();
+    return `${u.protocol}//${u.host}${u.pathname}`;
   } catch {
     return "postgres://(unparseable URL)";
   }

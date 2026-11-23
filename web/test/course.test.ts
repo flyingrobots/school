@@ -51,7 +51,7 @@ beforeAll(async () => {
   school = await startSchool({
     ...process.env,
     SCHOOL_COURSES: ["aion", "empty", "broken"].map((c) => `${c}=${join(root, c)}`).join(","),
-    SCHOOL_STATE: join(root, "state"), SCHOOL_WEB: join(root, "no-web"), PORT: String(port), HOST: "127.0.0.1",
+    SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`, SCHOOL_WEB: join(root, "no-web"), PORT: String(port), HOST: "127.0.0.1",
   })
 
   // Progress, recorded the way the lesson page records it: l1 has q1 right (after a wrong try),

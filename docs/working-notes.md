@@ -54,12 +54,16 @@ Practical notes for anyone — human or agent — changing the framework.
   and report every aid as unknown. SQLite does not, and is not getting them (flyingrobots/school#49).
   The server runs on Postgres, which does, so `POST /api/exposure` records them.
 - `SCHOOL_DATABASE_URL` picks the record: `postgres://...` is `Bun.SQL`, `pglite:<dir>` is PGlite on
-  disk, and unset it is `pglite:<SCHOOL_STATE>/db`. Startup refuses a SQLite `DB_PATH`
+  disk, and unset the server refuses to start (exit 2): there is no default. `pglite:` is for
+  development and tests, and the server warns at startup that it is not crash-durable; every test
+  that starts School sets its own `pglite:` folder. Startup refuses a SQLite `DB_PATH`
   (`<SCHOOL_STATE>/progress.db`) holding any answer, explanation or view, before opening Postgres
   (`server/legacy.ts`, RFC 3 §3.3).
-- PGlite is one process's database and takes no lock on its folder. Never open a PGlite folder
-  while a server has it open: the HTTP tests stop the server, read the record as the superuser
-  (`server/testing/record.ts`), then start it again. PGlite also does not `fsync` (its Node
+- PGlite is one process's database and takes no lock of its own, so `openPglite` takes `flock` on
+  `<dir>.lock` beside the folder for as long as it is open (`server/adapters/lock.ts`); a second
+  server on the same folder exits 2 naming it, and the kernel drops the lock when the holder dies.
+  The HTTP tests read the record by stopping the server, reading as the superuser
+  (`server/testing/record.ts`, which takes the same lock), then starting it again. PGlite also does not `fsync` (its Node
   filesystem has no fsync), so it survives the server being killed but not necessarily a power cut.
 - The Bun.SQL tests (`server/adapters/bunsql.test.ts`) need `SCHOOL_TEST_POSTGRES_URL`, a superuser
   URL to a scratch Postgres; without it they are skipped. CI starts one. Locally:

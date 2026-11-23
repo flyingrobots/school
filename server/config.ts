@@ -37,11 +37,15 @@ export class ConfigError extends Error {}
 
 /**
  * SCHOOL_DATABASE_URL: `postgres://` (or `postgresql://`) selects Bun.SQL against a Postgres
- * server; `pglite:<dir>` selects PGlite on disk, a relative dir resolving against `from`. Unset or
- * empty, it is `pglite:<state>/db`, so a learner needs no Postgres to run School.
+ * server; `pglite:<dir>` selects PGlite on disk, a relative dir resolving against `from`. There is
+ * no default: PGlite never fsyncs, so it is not crash-durable, and a learner's record goes only
+ * where it was asked to.
  */
-export function parseDatabase(value: string | undefined, state: string, from: string): Target {
-  if (value === undefined || value === "") return { driver: "pglite", dir: join(state, "db") };
+export function parseDatabase(value: string | undefined, from: string): Target {
+  if (value === undefined || value === "") {
+    throw new ConfigError("SCHOOL_DATABASE_URL is not set: set it to a postgres:// URL (postgres://user:password@host:5432/db), " +
+      "or to pglite:<directory> for development and tests (not crash-durable)");
+  }
   if (/^postgres(ql)?:\/\//.test(value)) {
     try {
       new URL(value);
@@ -141,7 +145,7 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
   const state = abs(env.SCHOOL_STATE ?? join(framework, "state"), cwd);
 
   const dbPath = env.DB_PATH === undefined || env.DB_PATH === "" ? join(state, "progress.db") : abs(env.DB_PATH, cwd);
-  const database = parseDatabase(env.SCHOOL_DATABASE_URL, state, cwd);
+  const database = parseDatabase(env.SCHOOL_DATABASE_URL, cwd);
 
   // Learner state must not land inside any course. A course is shared; performance is not.
   // Compared on resolved paths, so a symlink cannot smuggle state into a course.

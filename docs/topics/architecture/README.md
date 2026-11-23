@@ -35,7 +35,7 @@ framework, a course, and one learner's state[^adr6]. This section shows how they
 | --- | --- | --- | --- |
 | Framework | Server, block model, bridge, web app, docs | Public | This repository |
 | Course | Objectives, resources, lessons as block JSON, reference documents | Public by default | Its own repository |
-| Learner state | Mission, notes, learning records, the record (`db/`, PGlite, by default), `settings.json` | Private | Its own folder; the server refuses to start if it, or a PGlite record, is inside a course |
+| Learner state | Mission, notes, learning records, `settings.json` (the record is in Postgres) | Private | Its own folder; the server refuses to start if it, or a PGlite record, is inside a course |
 
 **Figure 1. How the three parts meet at run time**
 
@@ -114,10 +114,13 @@ The record is Postgres, built by the numbered migrations in `server/db/migration
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
-`SCHOOL_DATABASE_URL` picks where the record is. `pglite:<dir>` is PGlite, a whole Postgres inside
-the server's process, on disk in one folder: that is the default, `pglite:<SCHOOL_STATE>/db`, so a
-learner runs School with no database server. `postgres://` is a real Postgres server through
-`Bun.SQL`; `server/compose.yaml` runs one beside the server.
+`SCHOOL_DATABASE_URL` picks where the record is, and the server refuses to start without it.
+`postgres://` is a real Postgres server through `Bun.SQL`, which is where a learner's record
+belongs; `server/compose.yaml` runs one beside the server. `pglite:<dir>` is PGlite, a whole
+Postgres inside the server's process, on disk in one folder, for development and tests: it does
+not `fsync`, so the server warns at startup that it is not crash-durable. A PGlite folder is
+locked (`flock` on `<dir>.lock`) while a server has it open, so a second server on it refuses to
+start rather than serve from its own copy.
 
 | Step at startup | What happens |
 | --- | --- |
@@ -319,7 +322,7 @@ is currently broken.
 | `SCHOOL_COURSES` | Server | `name=path` pairs, one per course | none |
 | `SCHOOL_COURSE` | Server | One unnamed course | none |
 | `SCHOOL_STATE` | Server | Learner state; must not be inside a course | `state/` |
-| `SCHOOL_DATABASE_URL` | Server | The record: `postgres://user:password@host:port/db` (`Bun.SQL`; the user must be able to create roles) or `pglite:<dir>` (PGlite on disk, not inside a course) | `pglite:<SCHOOL_STATE>/db` |
+| `SCHOOL_DATABASE_URL` | Server | The record: `postgres://user:password@host:port/db` (`Bun.SQL`; the user must be able to create roles) or `pglite:<dir>` (PGlite on disk, not inside a course) | none: required |
 | `DB_PATH` | Server | The old SQLite record, only read: startup refuses while it holds learner work | `<SCHOOL_STATE>/progress.db` |
 | `SCHOOL_MOUNTS` | Server | `name=path` pairs served read-only | none |
 | `SCHOOL_WEB` | Server | The built web app | `web/dist` |
