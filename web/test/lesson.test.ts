@@ -12,6 +12,9 @@
 // outbox, shown as not sent yet, and is stored exactly once when School is reachable again, even
 // from a new tab after the first was closed; a refusal is shown and never retried; without
 // browser storage it is send-or-fail with an honest message; queued answers keep their order.
+// And flyingrobots/school#43's: the slides view sends no write request and opens no encounter (the
+// record's latest activity stays empty), its keys move between slides, reduced motion skips the
+// animation, and the link to the web view goes there and back.
 // What a reload shows is the learner history's oracle (server/contract/learner-history.ts,
 // `pageShows`): each quiz by its latest answer, each explanation by its latest grading.
 import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
@@ -34,7 +37,7 @@ const TOKEN = "lesson-page-test-token"
 
 // Each test that writes to the record uses its own course name, all served from the one fixture,
 // so no test resumes an encounter another test opened.
-const NAMES = ["golden", "wrong", "saved", "failed", "keys", "aid", "pager", "loading", "down", "feedback", "model", "source", "trace", "figure4", "resend", "final-501", "final-400", "final-409", "ob-golden", "ob-lost", "ob-private", "ob-409", "ob-400", "ob-order", "ob-50", "review"] as const
+const NAMES = ["golden", "wrong", "saved", "failed", "keys", "aid", "pager", "loading", "down", "feedback", "model", "source", "trace", "figure4", "resend", "final-501", "final-400", "final-409", "ob-golden", "ob-lost", "ob-private", "ob-409", "ob-400", "ob-order", "ob-50", "review", "slides-none", "slides-keys", "slides-motion", "slides-trip"] as const
 type Name = (typeof NAMES)[number]
 
 /** A fake bridge: answers each grading with the next reply queued, or a failure when none is. */
@@ -139,8 +142,8 @@ async function reopen(p: Page): Promise<Page> {
  * A page whose /api requests reach `s`'s School wherever it is listening now, as the course page's
  * tests do. While School is down, they fail as a refused connection would.
  */
-async function newPage(s: Stack = main, init?: () => void): Promise<Page> {
-  const c = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+async function newPage(s: Stack = main, init?: () => void, options: { reducedMotion?: "reduce" | "no-preference" } = {}): Promise<Page> {
+  const c = await browser.newContext({ viewport: { width: 1280, height: 720 }, ...options })
   if (init) await c.addInitScript(init)
   await c.route(/\/api\//, async (route) => {
     const u = new URL(route.request().url())
@@ -893,4 +896,145 @@ describe("delayed review (flyingrobots/school#32)", () => {
       await stop(s)
     }
   }, timeout(1) + 15_000)
+})
+
+describe("the slides view (flyingrobots/school#43)", () => {
+  const slidesPath = (course: Name, lesson = "orbits") => `${lessonPath(course, lesson)}?view=slides`
+  const slides = (p: Page) => p.locator("[data-slides=root]")
+  const shown = (p: Page) => p.locator("[data-slides=slide]").evaluateAll((els) => els.map((el) => el.getAttribute("data-slide-id")))
+  const position = (p: Page) => p.locator("[data-slides=position]").textContent()
+  /** Opens a lesson's slides and waits for the first slide. */
+  async function present(s: Stack, path: string, page?: Page) {
+    const p = await open(s, path, "Orbits", page)
+    await slides(p).waitFor()
+    return p
+  }
+
+  test("records nothing: no write request is sent, every request is a slides-view read without ?aid=, and the record holds no encounter", async () => {
+    // A School of its own, so its record's latest activity can only come from this test.
+    const state = join(root, "slides-state")
+    mkdirSync(state, { recursive: true })
+    let s = await stack(state)
+    try {
+      const p = await newPage(s)
+      const writes: string[] = []
+      const lessonReads: string[] = []
+      p.on("request", (r) => {
+        if (r.method() !== "GET") writes.push(`${r.method()} ${r.url()}`)
+        if (r.url().includes("/api/courses/slides-none/lessons/")) lessonReads.push(r.url())
+      })
+      await present(s, slidesPath("slides-none"), p)
+      // Every slide, with its quiz and explain block shown to read only: nothing to choose or write.
+      expect(await shown(p)).toEqual(["orbits-where"])
+      const q = quiz(p, "closest")
+      expect(await q.getAttribute("data-read-only")).toBe("true")
+      expect(await q.locator("[data-quiz=choice]:not([disabled])").count()).toBe(0)
+      await q.locator("[data-choice=mercury]").click({ force: true })
+      await p.keyboard.press("l")
+      expect(await shown(p)).toEqual(["orbits-seasons"])
+      const e = explain(p, "seasons")
+      expect(await e.getAttribute("data-read-only")).toBe("true")
+      expect(await e.locator("textarea, button").count()).toBe(0)
+      expect(await p.locator("[data-explain=model], [data-explain=sources], [data-quiz=why]").count()).toBe(0)
+      // Long enough for a write sent on a timer, or by the outbox on a later pass, to be seen.
+      await p.waitForTimeout(1_000)
+      expect(writes).toEqual([])
+      expect(lessonReads.length).toBeGreaterThan(0)
+      expect(lessonReads.map((u) => [new URL(u).searchParams.get("view"), new URL(u).searchParams.getAll("aid")])).toEqual(lessonReads.map(() => ["slides", []]))
+      await p.context().close()
+
+      // Through the API: where the learner left off is still nothing at all.
+      expect(((await (await fetch(`${s.school.url}/api/resume`)).json()) as { lastStudied: string | null }).lastStudied).toBeNull()
+      // And in the record itself, read with School stopped: no encounter opened, nothing stored, no view.
+      await stop(s)
+      const db = await openDatabase({ driver: "pglite", dir: join(state, "record") })
+      try {
+        expect(await postgresRecord(db.sql).lastStudied()).toBeNull()
+      } finally {
+        await db.close()
+      }
+      // The oracle can see an encounter: the web view of the same lesson opens one.
+      s = await stack(state)
+      await open(s, lessonPath("slides-none")).then((w) => w.context().close())
+      expect(((await (await fetch(`${s.school.url}/api/resume`)).json()) as { lastStudied: string | null }).lastStudied).not.toBeNull()
+    } finally {
+      await stop(s)
+    }
+  }, timeout(2) + 20_000)
+
+  test.each([
+    ["→ and ←", "ArrowRight", "ArrowLeft"],
+    ["l and h", "l", "h"],
+    ["↓ and ↑", "ArrowDown", "ArrowUp"],
+    ["j and k", "j", "k"],
+    ["PageDown and PageUp", "PageDown", "PageUp"],
+  ])("%s move between slides, saying where they are in words, and Home and End go to the ends", async (_, on, back) => {
+    const p = await present(main, slidesPath("slides-keys"))
+    expect(await position(p)).toBe("Slide 1 of 2")
+    await p.keyboard.press(on)
+    expect(await shown(p)).toEqual(["orbits-seasons"])
+    expect(await position(p)).toBe("Slide 2 of 2")
+    await p.keyboard.press(on) // nothing after the last
+    expect(await shown(p)).toEqual(["orbits-seasons"])
+    await p.keyboard.press(back)
+    expect(await shown(p)).toEqual(["orbits-where"])
+    expect(await position(p)).toBe("Slide 1 of 2")
+    await p.keyboard.press("End")
+    expect(await shown(p)).toEqual(["orbits-seasons"])
+    await p.keyboard.press("Home")
+    expect(await shown(p)).toEqual(["orbits-where"])
+    // The keys' hints are on screen, and the page never scrolled away from the slides.
+    for (const hint of ["←", "→", "h", "l", "Home", "End", "Esc"]) expect(await p.locator("[data-slides=keys] [data-slot=kbd]", { hasText: hint }).count()).toBeGreaterThan(0)
+    await p.context().close()
+  })
+
+  /** Moves on one slide and reads the new slide's opacity in the first frame after the key. */
+  const firstFrame = (p: Page) =>
+    p.evaluate(async () => {
+      document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }))
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+      const slide = document.querySelector("[data-slides=slide]")!
+      return { id: slide.getAttribute("data-slide-id"), opacity: Number(getComputedStyle(slide).opacity) }
+    })
+
+  test("a slide comes in with a GSAP timeline, and with reduced motion it is simply there", async () => {
+    const moving = await present(main, slidesPath("slides-motion"))
+    const animated = await firstFrame(moving)
+    expect(animated.id).toBe("orbits-seasons")
+    expect(animated.opacity).toBeLessThan(1)
+    await moving.context().close()
+
+    const still = await present(main, slidesPath("slides-motion"), await newPage(main, undefined, { reducedMotion: "reduce" }))
+    expect(await still.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true)
+    const plain = await firstFrame(still)
+    expect(plain.id).toBe("orbits-seasons")
+    expect(plain.opacity).toBe(1)
+    expect(await still.locator("[data-slides=slide]").evaluate((el) => getComputedStyle(el).transform)).toBe("none")
+    await still.context().close()
+  })
+
+  test("the web view's Slides link goes to the slides, and Esc or Web view comes back, on the client", async () => {
+    const p = await open(main, lessonPath("slides-trip"))
+    await p.evaluate(() => ((window as unknown as { marker: number }).marker = 1))
+    const toSlides = p.locator("[data-lesson=actions] a", { hasText: "Slides" })
+    expect(await toSlides.locator("[data-slot=kbd]").textContent()).toBe("P")
+    await toSlides.click()
+    await slides(p).waitFor()
+    expect(new URL(p.url()).search).toBe("?view=slides")
+    expect(await position(p)).toBe("Slide 1 of 2")
+
+    await p.keyboard.press("Escape")
+    await p.locator("[data-lesson=root]").waitFor()
+    expect(new URL(p.url()).search).toBe("")
+    expect(await slides(p).count()).toBe(0)
+
+    await p.keyboard.press("p")
+    await slides(p).waitFor()
+    expect(new URL(p.url()).search).toBe("?view=slides")
+    await p.locator("[data-slides=exit]").click()
+    await p.locator("[data-lesson=root]").waitFor()
+    expect(new URL(p.url()).pathname + new URL(p.url()).search).toBe(lessonPath("slides-trip"))
+    expect(await p.evaluate(() => (window as unknown as { marker?: number }).marker)).toBe(1)
+    await p.context().close()
+  })
 })
