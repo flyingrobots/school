@@ -1,10 +1,14 @@
 // The agent chain: each configured command is tried in order until one returns output that
 // matches the schema. Fake agents are small shell scripts written per test; none contacts a model.
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig, runChain, type BridgeConfig } from "./run.ts";
+
+// Bun's own 5 s per-test limit would race process start-up on a loaded machine; every test here
+// either finishes on its own or is bounded by the agent timeouts below, so the limit is generous.
+setDefaultTimeout(60_000);
 
 const dir = mkdtempSync(join(tmpdir(), "school-bridge-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -25,12 +29,17 @@ const schema = {
 const fails = agent("fails", 'echo "boom" >&2; exit 3');
 const garbage = agent("garbage", 'echo "I think the answer is yes"');
 const wrongShape = agent("wrong-shape", 'echo \'{"answer": "maybe"}\'');
-const hangs = agent("hangs", `sleep 30 & echo $! > "${dir}/hangs-child.pid"; sleep 30`);
+// Starts a background child, then reports its pid to the file named by $1, written whole (via
+// rename) so a reader never sees it half-written: the file existing is the agent's readiness signal.
+// Both sleeps outlive any test's time limit, so only a kill can end them before the test does.
+const hangs = agent("hangs", 'sleep 600 & echo $! > "$1.tmp" && mv "$1.tmp" "$1"; sleep 600');
 const fromStdin = agent("from-stdin", `read -r line; printf '%s\\n' "$line" > "${dir}/stdin-saw.txt"; echo '\`\`\`json'; echo '{"answer": "yes"}'; echo '\`\`\`'`);
 const fromArg = agent("from-arg", `printf '%s' "$2" > "${dir}/arg-saw.txt"; echo '{"answer": "no"}'`);
 const toFile = agent("to-file", `echo "progress chatter"; echo '{"answer": "yes"}' > "$2"`);
 
-const cfg = (agents: { name: string; command: string; output?: string; enabled?: boolean }[], timeout = 5): BridgeConfig =>
+// The default agent timeout is for agents that exit on their own: it is not what those tests check,
+// so it is long enough that a slow process start cannot trip it. Tests of timeouts pass their own.
+const cfg = (agents: { name: string; command: string; output?: string; enabled?: boolean }[], timeout = 60): BridgeConfig =>
   loadConfig({ timeout_seconds: timeout, agents: agents.map((a) => ({ output: "text", ...a })) });
 
 test("falls through failing agents in order and returns the first valid output", async () => {
@@ -73,13 +82,24 @@ test("{output_file} is read instead of stdout", async () => {
 });
 
 test("a hung agent is killed with its whole process tree, then the next agent runs", async () => {
-  const r = await runChain(cfg([{ name: "hangs", command: hangs }, { name: "good", command: `${fromArg} x {prompt}` }], 1), { prompt: "p", schema });
-  expect(r.attempts[0]).toMatchObject({ agent: "hangs", status: "failed" });
-  expect(r.attempts[0]!.error).toMatch(/timed out/);
-  expect(r.status).toBe("succeeded");
-  const child = Number(readFileSync(join(dir, "hangs-child.pid"), "utf8"));
-  await Bun.sleep(100);
-  expect(() => process.kill(child, 0)).toThrow(); // the background child is gone too
+  // The tree kill is only shown if the agent had started its child before the timeout fired. On a
+  // loaded machine a shell can take longer than the timeout just to start, so the timeout is
+  // derived from the agent's readiness: a run in which the agent never reported its child proves
+  // nothing about the tree and is repeated with double the timeout. Each run has its own pid file,
+  // so a pid from an earlier run (or another test) can never stand in for this one's.
+  for (const seconds of [1, 2, 4, 8, 16]) {
+    const pidFile = join(dir, `hangs-child-${seconds}s.pid`);
+    const r = await runChain(cfg([{ name: "hangs", command: `${hangs} ${pidFile}` }, { name: "good", command: `${fromArg} x {prompt}` }], seconds), { prompt: "p", schema });
+    expect(r.attempts[0]).toMatchObject({ agent: "hangs", status: "failed" });
+    expect(r.attempts[0]!.error).toMatch(/timed out/);
+    expect(r.status).toBe("succeeded");
+    if (!existsSync(pidFile)) continue; // killed before it was ready: inconclusive, not a pass
+    const child = Number(readFileSync(pidFile, "utf8"));
+    await Bun.sleep(100);
+    expect(() => process.kill(child, 0)).toThrow(); // the background child is gone too
+    return;
+  }
+  throw new Error("the hung agent never reported its child, even with a 16 s timeout");
 });
 
 test("a missing program or a disabled agent is skipped and recorded, not fatal", async () => {
@@ -99,7 +119,7 @@ test("when every agent fails, the chain fails with every attempt kept", async ()
 });
 
 test("an overall deadline stops the chain rather than running past it", async () => {
-  const r = await runChain(cfg([{ name: "hangs", command: hangs }, { name: "good", command: `${fromArg} x {prompt}` }], 5), { prompt: "p", schema, deadlineMs: 800 });
+  const r = await runChain(cfg([{ name: "hangs", command: `${hangs} ${join(dir, "deadline-child.pid")}` }, { name: "good", command: `${fromArg} x {prompt}` }], 5), { prompt: "p", schema, deadlineMs: 800 });
   expect(r.status).toBe("failed");
   expect(r.attempts.at(-1)!.error).toMatch(/deadline|timed out/);
 });
