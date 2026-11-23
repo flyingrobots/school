@@ -3,7 +3,8 @@
 # a gitignored server/.env beside this file. See compose.example.env.
 #
 # The learner's record is in Postgres (RFC 3), in the named volume `postgres`. `docker compose down`
-# keeps it; `docker compose down -v` deletes it, and with it every answer.
+# keeps it; `docker compose down -v` deletes it, and with it every answer, and the backups beside it
+# in the named volume `backups` (the `backup` service).
 services:
   postgres:
     # Pinned by tag and digest: the major version is the record's on-disk format.
@@ -21,6 +22,28 @@ services:
       timeout: 5s
       retries: 30
     # No ports: only the school service reaches it, on the compose network.
+  backup:
+    # A custom-format pg_dump of the record every SCHOOL_BACKUP_INTERVAL_SECONDS (default six hours),
+    # keeping the newest SCHOOL_BACKUP_KEEP (default 28, a week) in the named volume `backups`
+    # (backup/backup.sh). The same image as the database, so pg_dump matches its major version.
+    # Restoring: docs/workflows/backup-and-restore/README.md.
+    image: postgres:18.7@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/backup/backup.sh"]
+    environment:
+      PGHOST: postgres
+      PGUSER: postgres
+      PGDATABASE: school
+      PGPASSWORD: ${SCHOOL_POSTGRES_PASSWORD:?set SCHOOL_POSTGRES_PASSWORD to a long random secret}
+      SCHOOL_BACKUP_INTERVAL_SECONDS: ${SCHOOL_BACKUP_INTERVAL_SECONDS:-21600}
+      SCHOOL_BACKUP_KEEP: ${SCHOOL_BACKUP_KEEP:-28}
+    volumes:
+      - ./backup/backup.sh:/backup/backup.sh:ro
+      - backups:/backups
+    # No ports: it only connects out, to the postgres service.
   school:
     build: .
     restart: unless-stopped
@@ -51,3 +74,6 @@ services:
       - ${SCHOOL_SOURCES_DIR:?set SCHOOL_SOURCES_DIR to the course's source material, or to an empty directory}:/sources:ro
 volumes:
   postgres:
+  # The dumps. `docker compose down -v` deletes this volume too, with the record: copy a dump
+  # elsewhere first (docs/workflows/backup-and-restore/README.md).
+  backups:
