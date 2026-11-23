@@ -102,7 +102,7 @@ Practical notes for anyone — human or agent — changing the framework.
   `docker run -d --rm --name school-pg -e POSTGRES_PASSWORD=pw -p 127.0.0.1:5432:5432 postgres:18.7`, then
   `SCHOOL_TEST_POSTGRES_URL=postgres://postgres:pw@127.0.0.1:5432/postgres bun test`. To check
   the gate as CI does, add `CI=true`, `--reporter=junit --reporter-outfile=junit.xml`, then
-  `bun run server/testing/postgres-gate.ts junit.xml`. Every `DROP DATABASE` waits for a checkpoint,
+  `bun run server/testing/postgres-gate.ts junit.xml` (its lines: [the programs' output](topics/program-output/README.md#the-postgres-gate)). Every `DROP DATABASE` waits for a checkpoint,
   about three seconds under Docker on macOS on a loaded machine, so each test's database is
   dropped in the background while the next test runs, and the file's teardown waits for them.
   A new race goes through `race()` in the concurrency file: it holds every caller at a table lock

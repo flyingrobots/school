@@ -2,7 +2,7 @@
 title: "Back up and restore the learning record"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-22
-updated: 2026-11-22
+updated: 2026-11-23
 status: "How-to. Describes the `backup` service in server/compose.yaml (flyingrobots/school#48)."
 ---
 
@@ -38,9 +38,14 @@ whole number.
 - **File modes.** The folder is `0700` and every dump `0600`, owned by root in the container.
 - **Secrets.** The password comes from `SCHOOL_POSTGRES_PASSWORD` in the environment, as it does
   for the database. Nothing the service prints contains it.
-- **Output.** Every line is one JSON object with `"kind":"backup"` and an `event`: `started`,
-  `dumped` (with `file` and `bytes`), `pruned`, `waiting`, `failed` (with the `file` it would have made and a `message`),
-  `error` or `stopped`.
+- **Output.** Every line, on stdout or stderr, is one JSON object naming its published schema
+  (`_schema`, a file in `server/backup/schemas/`, which compose mounts beside the script), with
+  `"kind":"backup"`, an `event` and the invocation's `run` id: `started`, `dumped` (with `file` and
+  `bytes`), `pruned`, `waiting`, `captured` (what `pg_dump` printed during a dump that succeeded),
+  `failed` (with the `file` it would have made and a `message` holding `pg_dump`'s own words),
+  `error` or `stopped`. `pg_dump`'s stderr never reaches the log as raw text, and every message is
+  scrubbed of the password. `backup.sh --help` and `--schema` describe it; `--human` prints prose.
+  Each message type is in [the programs' output](../../topics/program-output/README.md#the-backup-job).
 
 > [!WARNING]
 > The dumps live on the same machine as the database. `docker compose down -v` deletes the
@@ -240,12 +245,17 @@ school.snapshots|1|5db55c5e0b50269d07deb29d778f3b07
 school.views|0|d41d8cd98f00b204e9800998ecf8427e
 ```
 
-The backup service after the restore of step 6:
+The backup service's lines in that drill predate flyingrobots/school#135, which added `_schema` and
+`run` to every line. What the service prints now, from `server/backup/backup.sh` run as compose
+runs it, in the same image, against a scratch Postgres 18.7 on 2026-11-23,
+is in [the programs' output](../../topics/program-output/README.md#what-the-backup-job-printed).
+The schedule's first lines, then `docker stop`:
 
 ```text
-{"kind":"backup","event":"started","intervalSeconds":21600,"keep":28}
-{"kind":"backup","event":"dumped","file":"school-20261123T041350Z.dump","bytes":63957}
-{"kind":"backup","event":"waiting","seconds":21600}
+{"_schema":{"id":"school.backup.started","version":"1.0.0"},"kind":"backup","event":"started","intervalSeconds":21600,"keep":28,"run":"62bcc427-530c-dc96-2b3f-5abec5ade945"}
+{"_schema":{"id":"school.backup.dumped","version":"1.0.0"},"kind":"backup","event":"dumped","file":"school-20261123T082433Z.dump","bytes":1105,"run":"62bcc427-530c-dc96-2b3f-5abec5ade945"}
+{"_schema":{"id":"school.backup.waiting","version":"1.0.0"},"kind":"backup","event":"waiting","seconds":21600,"run":"62bcc427-530c-dc96-2b3f-5abec5ade945"}
+{"_schema":{"id":"school.backup.stopped","version":"1.0.0"},"kind":"backup","event":"stopped","run":"62bcc427-530c-dc96-2b3f-5abec5ade945"}
 ```
 
 ## How this is tested
@@ -254,6 +264,8 @@ The backup service after the restore of step 6:
 a real Postgres. It writes the learner-history story, a view and a decision note through the
 server's functions, dumps the database, restores the dump into an empty database, and checks that
 every read of the `LearningRecord` port, and `verify.sql`, return the same on both. It also checks
-the file modes, the retention, a failed dump and the settings' validation. Those cases name Bun.SQL,
+the file modes, the retention, a failed dump and the settings' validation, and validates every
+line the script prints against its published schema (the cases are in
+[the programs' output test plan](../../topics/program-output/test-plan.md#the-backup-job)). Those cases name Bun.SQL,
 so CI's Postgres gate fails a run in which they skipped (`server/testing/postgres-gate.ts`).
 Step 6's role creation is drilled, not tested.
