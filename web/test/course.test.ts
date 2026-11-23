@@ -43,8 +43,11 @@ beforeAll(async () => {
   writeFileSync(join(root, "aion", "reference", "glossary.html"), "<p>Glossary</p>")
   // empty: a course with no lessons directory at all, which the server lists as no lessons.
   mkdirSync(join(root, "empty"), { recursive: true })
-  // broken: lessons that never validated, which the server answers with a 500 and its reason.
+  // broken: lessons that never validated, which the server reports as data beside the course's
+  // reference documents (flyingrobots/school#115).
   mkdirSync(join(root, "broken", "lessons"), { recursive: true })
+  mkdirSync(join(root, "broken", "reference"), { recursive: true })
+  writeFileSync(join(root, "broken", "reference", "kept.html"), "<p>kept</p>")
   writeFileSync(join(root, "broken", "lessons", "0001.json"),
     JSON.stringify({ type: "page", id: "b1", title: "B", subtitle: "", children: [{ ref: "missing" }] }))
 
@@ -229,9 +232,12 @@ describe("states", () => {
   })
 
   test("an unreadable course says it could not be read, with the server's reason", async () => {
+    // The lesson error is data in a 200, beside the reference documents (flyingrobots/school#115).
     const r = await fetch(`${school.url}/api/courses/broken`)
-    expect(r.status).toBe(500)
-    const reason = (await r.json()).error as string
+    expect(r.status).toBe(200)
+    const body = await r.json()
+    expect(body.lessons).toBeNull()
+    const reason = body.lessonsError as string
     expect(reason).toContain('unknown ref "missing"')
     const p = await open("/courses/broken")
     const alert = main(p).getByRole("alert")
@@ -241,6 +247,14 @@ describe("states", () => {
     expect(text).toContain(reason)
     expect(await lessons(p).count()).toBe(0)
     expect(await main(p).locator("[data-slot=skeleton]").count()).toBe(0)
+    await p.context().close()
+  })
+
+  test("an unreadable course still offers its reference documents", async () => {
+    const p = await open("/courses/broken")
+    await main(p).getByRole("alert").waitFor()
+    const button = main(p).getByRole("link", { name: "Reference" })
+    expect(await button.getAttribute("href")).toBe("/courses/broken/reference")
     await p.context().close()
   })
 
