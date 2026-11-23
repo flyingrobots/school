@@ -142,3 +142,31 @@ test("SEC-T1: with no token in the environment or the Keychain the bridge refuse
   expect(error?.message).toContain("SCHOOL_BRIDGE_TOKEN");
   expect(error?.message).toContain(`Keychain (account ${account})`);
 });
+
+// flyingrobots/school#134: a taken port was Bun's uncaught-error output on stderr, a source excerpt
+// and a stack frame, which a consumer reading the bridge's output line by line cannot parse.
+test("a bridge whose port is taken writes one bridge.error line naming it, nothing but JSON Lines, and exits 2", async () => {
+  const holder = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+  try {
+    const proc = Bun.spawn(["bun", join(import.meta.dir, "bridge.ts")], {
+      env: { ...process.env, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: join(dir, "bridge.json"), SCHOOL_BRIDGE_HOST: "127.0.0.1", SCHOOL_BRIDGE_PORT: String(holder.port) },
+      stdout: "pipe", stderr: "pipe",
+    });
+    const [code, stdout, stderr] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    const lines = [...stdout.split("\n"), ...stderr.split("\n")].filter((l) => l !== "");
+    for (const l of lines) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(l); } catch { throw new Error(`not a JSON line: ${l}\n--- stdout\n${stdout}--- stderr\n${stderr}`); }
+      expect(typeof (parsed as { kind?: unknown }).kind).toBe("string");
+    }
+    const errors = lines.map((l) => JSON.parse(l)).filter((l) => l.kind === "bridge.error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ host: "127.0.0.1", port: holder.port });
+    expect(errors[0].message).toContain(`127.0.0.1:${holder.port}`);
+    expect(JSON.parse(stdout.trim().split("\n").at(-1)!).kind).toBe("bridge.error");
+    expect(stdout + stderr).not.toContain(TOKEN);
+    expect(code).toBe(2);
+  } finally {
+    holder.stop(true);
+  }
+}, timeout(1));

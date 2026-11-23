@@ -469,6 +469,29 @@ throws before the failure is stored ([flyingrobots/school#17](https://github.com
 In short: the bridge confines model work to the host and records every outcome, with one known
 gap in handling a malformed reply.
 
+### The bridge's output
+
+The bridge writes JSON Lines on stdout: one JSON object per line, each with a `kind` beginning
+`bridge.` and the time `at`. No line contains a prompt or an answer.
+
+| `kind` | When |
+| --- | --- |
+| `bridge.start` | Once at start-up: `host`, `port`, `config`, and the declared agents (null with no file yet) |
+| `bridge.listening` | Once it listens: `host` and the `port` it got (the OS's choice for port `0`) |
+| `bridge.run.start`, `bridge.attempt`, `bridge.run.end` | Each `POST /run`, its attempts, and its outcome |
+| `bridge.test` | Each `POST /test` |
+| `bridge.config.saved` | Each accepted `PUT /config` |
+| `bridge.error` | Every failure, with a `message` |
+
+A refusal to start is one `bridge.error` line and exit 2: a token under 16 characters, a port that
+is not a port, an unreadable configuration file, or a port already in use, whose line also carries
+`host`, `port` and `code: "EADDRINUSE"`. Any other uncaught throw or rejection is one `bridge.error`
+line with only its message, never a stack, and exit 1. A request handler that throws logs a
+`bridge.error` line and answers 500. The cases are in the [test plan](test-plan.md#the-bridges-output).
+Output that Bun itself or a native module writes straight to the file descriptors, a hard crash
+and a signal kill are outside this: they are not lines. The lines have no published schemas yet
+([flyingrobots/school#135](https://github.com/flyingrobots/school/issues/135)).
+
 ## The web app
 
 `web/` is a stock shadcn/ui app on Vite and React, themed from theme-book through the
