@@ -19,3 +19,8 @@ export function useCourse(name: string): [CourseLoad, () => void] {
 
   return [answer?.key === key ? answer.state : { kind: "loading" }, () => setAttempt((n) => n + 1)]
 }
+
+/** What a page calls the course: the title its own reply gives, or `listed` (the course list's, or the slug) before that. */
+export function titleOf(state: CourseLoad, listed: string): string {
+  return state.kind === "ready" ? state.course.title : state.kind === "unreadable" ? state.title : listed
+}

@@ -79,3 +79,5 @@ never appearing after a save or a reload, a malformed reply shown as an error, t
 the environment locks, reordering by keyboard (arrows, `j`, `Esc`) read back from the bridge's
 file, switching an agent off, a test's attempts, and keys pressed during the intro (`j` reaches each
 stop up to the first field, and every stop takes focus, with the page's clock held). It runs in `bun test` from the repository root.
+
+The browser title is `Settings · School`; `web/test/settings.test.ts` checks it (`connecting the bridge > the browser title is Settings · School`).
