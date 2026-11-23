@@ -98,6 +98,7 @@ export default function ExplainExample() {
       <ExplainTry />
       <ExplainEmpty />
       <ExplainSaving />
+      <ExplainQueued />
       <ExplainSaved />
       <ExplainGrading />
       <ExplainGraded />
@@ -128,6 +129,14 @@ function ExplainSaving() {
   return (
     <Example title="Saving">
       <View state={{ status: "saving", text: explanation.text }} />
+    </Example>
+  )
+}
+
+function ExplainQueued() {
+  return (
+    <Example title="Not sent yet">
+      <View state={{ status: "queued", text: explanation.text }} />
     </Example>
   )
 }

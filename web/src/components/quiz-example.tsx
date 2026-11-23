@@ -30,6 +30,7 @@ export default function QuizExample() {
       <QuizTry />
       <QuizUnanswered />
       <QuizInFlight />
+      <QuizQueued />
       <QuizWrong />
       <QuizRight />
       <QuizSettled />
@@ -60,6 +61,18 @@ function QuizInFlight() {
       <QuizView
         {...quiz}
         state={{ status: "in-flight", choiceId: "venus" }}
+        onChoose={noop}
+      />
+    </Example>
+  )
+}
+
+function QuizQueued() {
+  return (
+    <Example title="Not sent yet">
+      <QuizView
+        {...quiz}
+        state={{ status: "queued", choiceId: "venus" }}
         onChoose={noop}
       />
     </Example>
