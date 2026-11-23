@@ -14,7 +14,8 @@ jobs:
       - run: bun install --frozen-lockfile
         working-directory: server
       - run: bunx tsc -p server
-      # The web tests render components (web/test/quiz.test.tsx), so they need web's packages.
+      # The web tests render components (web/test/quiz.test.tsx) and drive the app in Chrome,
+      # preinstalled on the runner, through playwright-core (web/test/shell.test.ts); both need web's packages.
       - run: npm ci
         working-directory: web
       - run: npx tsc -b
