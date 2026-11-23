@@ -2,7 +2,11 @@
 // (RFC 1 proposal 4). The server sends a prompt and a JSON schema; the bridge tries the
 // learner's configured agents in order and returns the first answer that matches.
 //
-//   SCHOOL_BRIDGE_TOKEN=<shared secret> bun bridge/bridge.ts
+//   bun bridge/bridge.ts
+//
+// The token is SCHOOL_BRIDGE_TOKEN from the environment if it is set, else the macOS Keychain item
+// `school up` stores, through @git-stunts/vault (host/secrets.ts, flyingrobots/school#123), so it is
+// in no file and no argv. SCHOOL_KEYCHAIN_ACCOUNT names the Keychain account (default `school`).
 //
 // Configuration is a JSON file (SCHOOL_BRIDGE_CONFIG, default ~/.config/school/bridge.json),
 // re-read on every request so an edit takes effect without a restart. Agents and their commands
@@ -15,11 +19,12 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { BridgeConfigError, loadConfig, runChain, type BridgeConfig } from "./run.ts";
+import { keychainStore } from "../host/keychain.ts";
+import { accountFrom, resolveSecret } from "../host/secrets.ts";
 
 const log = (kind: string, fields: Record<string, unknown> = {}) =>
   console.log(JSON.stringify({ kind: `bridge.${kind}`, at: new Date().toISOString(), ...fields }));
 
-const token = process.env.SCHOOL_BRIDGE_TOKEN ?? "";
 const configPath = process.env.SCHOOL_BRIDGE_CONFIG ?? join(homedir(), ".config", "school", "bridge.json");
 const host = process.env.SCHOOL_BRIDGE_HOST ?? "127.0.0.1";
 const port = Number(process.env.SCHOOL_BRIDGE_PORT ?? 4748);
@@ -39,6 +44,20 @@ const crash = (e: unknown) => {
 };
 process.on("uncaughtException", crash);
 process.on("unhandledRejection", crash);
+
+let token = "";
+let tokenFrom = "";
+{
+  let account = "";
+  try {
+    account = accountFrom(process.env);
+    const found = resolveSecret("SCHOOL_BRIDGE_TOKEN", process.env, () => keychainStore(account));
+    if (found !== null) [token, tokenFrom] = [found.value, found.from];
+  } catch (e) {
+    exit(`cannot read SCHOOL_BRIDGE_TOKEN from the Keychain${account === "" ? "" : ` (account ${account})`}: ${messageOf(e)}`);
+  }
+  if (token === "") exit(`SCHOOL_BRIDGE_TOKEN is in neither the environment nor the Keychain (account ${account}): run \`./school up\`, which stores the token the server uses, or set SCHOOL_BRIDGE_TOKEN`);
+}
 if (token.length < 16) exit("set SCHOOL_BRIDGE_TOKEN to a shared secret of at least 16 characters; the server sends the same one");
 // Port 0 asks the OS for a free port; the `bridge.listening` line says which one it got.
 if (!Number.isInteger(port) || port < 0 || port > 65535) exit(`SCHOOL_BRIDGE_PORT ${process.env.SCHOOL_BRIDGE_PORT} is not a port`);
@@ -238,4 +257,4 @@ const server = listen({
     return json({ status: "not found" }, 404);
   },
 });
-log("listening", { host, port: server.port });
+log("listening", { host, port: server.port, tokenFrom });

@@ -12,7 +12,9 @@
 # nothing. The folder is closed to everyone but its owner (0700) and every file is 0600.
 #
 # The connection comes from libpq's environment (PGHOST, PGPORT, PGUSER, PGDATABASE, PGPASSWORD);
-# nothing here prints it. Every line printed, on stdout or stderr, is one JSON object with
+# nothing here prints it. Under compose the password is a file instead (flyingrobots/school#123):
+# PGPASSWORD_FILE names it, it wins over a plain PGPASSWORD, and it is read into this process's
+# environment only, never the container's. Every line printed, on stdout or stderr, is one JSON object with
 # "kind": "backup" and an "event". Docs: docs/workflows/backup-and-restore/README.md.
 set -u
 umask 077
@@ -38,6 +40,19 @@ fi
 if ! whole "$INTERVAL"; then
   fail "\"event\":\"error\",\"message\":\"SCHOOL_BACKUP_INTERVAL_SECONDS must be a positive whole number, not \\\"$(json "$INTERVAL")\\\"\""
   exit 2
+fi
+if [ -n "${PGPASSWORD_FILE:-}" ]; then
+  if ! [ -f "$PGPASSWORD_FILE" ] || ! [ -r "$PGPASSWORD_FILE" ]; then
+    fail "\"event\":\"error\",\"message\":\"PGPASSWORD_FILE ($(json "$PGPASSWORD_FILE")) cannot be read\""
+    exit 2
+  fi
+  # $(...) drops the trailing newline.
+  PGPASSWORD=$(cat "$PGPASSWORD_FILE")
+  if [ -z "$PGPASSWORD" ]; then
+    fail "\"event\":\"error\",\"message\":\"PGPASSWORD_FILE ($(json "$PGPASSWORD_FILE")) is empty\""
+    exit 2
+  fi
+  export PGPASSWORD
 fi
 if ! chmod 700 "$DIR" 2>/dev/null; then
   fail "\"event\":\"error\",\"message\":\"cannot close $DIR to others (chmod 700)\""

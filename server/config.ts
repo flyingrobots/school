@@ -2,6 +2,7 @@
 // Nothing here names a subject: a course is configured, never compiled in (ADR 6).
 import { lstatSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { withPassword } from "./secrets.ts";
 
 /** Route prefixes the framework owns. A configured mount may not take one of these. */
 export const RESERVED = ["assets", "courses", "lessons", "reference", "api"] as const;
@@ -145,7 +146,9 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
   const state = abs(env.SCHOOL_STATE ?? join(framework, "state"), cwd);
 
   const dbPath = env.DB_PATH === undefined || env.DB_PATH === "" ? join(state, "progress.db") : abs(env.DB_PATH, cwd);
-  const database = parseDatabase(env.SCHOOL_DATABASE_URL, cwd);
+  // Under compose the URL names school_app and the host, and the password is a file
+  // (SCHOOL_DATABASE_PASSWORD_FILE, read by withSecretFiles in server/secrets.ts).
+  const database = parseDatabase(withPassword(env.SCHOOL_DATABASE_URL, env.SCHOOL_DATABASE_PASSWORD, "SCHOOL_DATABASE_URL", "SCHOOL_DATABASE_PASSWORD"), cwd);
 
   // Learner state must not land inside any course. A course is shared; performance is not.
   // Compared on resolved paths, so a symlink cannot smuggle state into a course.

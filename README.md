@@ -65,24 +65,46 @@ The agents themselves, and their commands, are written only in the bridge's conf
 ```sh
 mkdir -p ~/.config/school
 cp bridge/bridge.example.json ~/.config/school/bridge.json   # then edit the agents
-SCHOOL_BRIDGE_TOKEN=a-long-random-secret bun bridge/bridge.ts
+(cd host && bun install)                                     # the bridge reads the Keychain through host/
 ```
+
+The bridge takes `SCHOOL_BRIDGE_TOKEN` from its environment if it is set, and only otherwise from the Keychain. Which one to use depends on how the server runs:
+
+- **A server you connected in Settings** (one started with `bun server/server.ts`, as above): start the bridge with the token you generated there, in its environment. `read -rs` keeps it out of the shell's history; paste it and press Enter:
+
+  ```sh
+  read -rs SCHOOL_BRIDGE_TOKEN && export SCHOOL_BRIDGE_TOKEN
+  bun bridge/bridge.ts
+  ```
+
+- **A server started with `./school up`**: the launcher keeps the token in the Keychain and gives the server the same one, so start the bridge with no token set and it reads that Keychain item:
+
+  ```sh
+  bun bridge/bridge.ts
+  ```
 
 The file is re-read on every request, so an edit takes effect without a restart.
 
-The connection is saved in `settings.json` in your state directory, mode 0600. `SCHOOL_BRIDGE_URL` and `SCHOOL_BRIDGE_TOKEN` in the server's environment override it, and the page says when they do. The page never shows a saved token. A token is only ever sent to the address it was saved with: changing the address clears a saved token, so connect the new address with its token (or generate one) again; with `SCHOOL_BRIDGE_TOKEN` in the environment the address can only be changed there, with `SCHOOL_BRIDGE_URL`. School follows no redirect from the bridge. **Anyone who can open School can reorder, switch off and test your agents and point School at another bridge, given that bridge's token**, so School must stay on a network only you can reach, such as your tailnet, with its name in `SCHOOL_ALLOWED_HOSTS`. They cannot change what an agent runs.
+The connection is saved in `settings.json` in your state directory, mode 0600. `SCHOOL_BRIDGE_URL` and `SCHOOL_BRIDGE_TOKEN` in the server's environment override it, and the page says when they do. Under `./school up` the server always has the Keychain's token, which the bridge reads too, so set `SCHOOL_BRIDGE_URL` in `server/.env` (for example `http://host.docker.internal:4748`); the page then shows both as set by the environment, and its generate and connect fields are locked. The page never shows a saved token. A token is only ever sent to the address it was saved with: changing the address clears a saved token, so connect the new address with its token (or generate one) again; with `SCHOOL_BRIDGE_TOKEN` in the environment the address can only be changed there, with `SCHOOL_BRIDGE_URL`. School follows no redirect from the bridge. **Anyone who can open School can reorder, switch off and test your agents and point School at another bridge, given that bridge's token**, so School must stay on a network only you can reach, such as your tailnet, with its name in `SCHOOL_ALLOWED_HOSTS`. They cannot change what an agent runs.
 
 What an agent may do is set by its own command: the example turns off Claude Code's tools and MCP servers, and runs Codex in a read-only sandbox. Whether your plan for each CLI permits this use is yours to check. Each run gets an empty working directory and is killed, with everything it started, at its timeout. The bridge logs JSON Lines, never the prompt or the answer.
 
 | Variable | Meaning |
 | --- | --- |
-| `SCHOOL_BRIDGE_TOKEN` | Required; at least 16 characters, the same value the server has. |
+| `SCHOOL_BRIDGE_TOKEN` | At least 16 characters, the same value the server has. Unset, the Keychain item `./school up` stores (account `school`, or `SCHOOL_KEYCHAIN_ACCOUNT`). |
 | `SCHOOL_BRIDGE_CONFIG` | Default `~/.config/school/bridge.json`. Re-read on every request. |
 | `SCHOOL_BRIDGE_HOST`, `SCHOOL_BRIDGE_PORT` | Default `127.0.0.1:4748`. Port `0` lets the OS choose; the `bridge.listening` log line gives the port. |
 
 The record lives in Postgres, and `SCHOOL_DATABASE_URL` says where; the server refuses to start without it. For a learner's record, use a Postgres server, as `server/compose.yaml` does: the migrate job applies the migrations as the owner and sets `school_app`'s password, and the server logs in as `school_app` (`postgres://school_app:password@host:5432/db`). `pglite:<dir>` keeps it in PGlite, a Postgres inside the server's process, for development and tests only: PGlite does not fsync, so a power cut can lose answers, and the server says so when it starts.
 
-`bun test` runs the suite. `server/compose.yaml` runs School in Docker behind `tailscale serve` (ADR 4), with a Postgres server beside it; copy `server/compose.example.env` to `server/.env` and set your course, state and source paths and the two Postgres passwords (the superuser's, which only the one-shot `migrate` service and the `backup` service get, and `school_app`'s) first. To take a new version into a running deployment, follow [docs/workflows/upgrade/README.md](docs/workflows/upgrade/README.md).
+`bun test` runs the suite (run `bun install` in `host/` as well as `server/` first). `server/compose.yaml` runs School in Docker behind `tailscale serve` (ADR 4), with a Postgres server beside it. Copy `server/compose.example.env` to `server/.env` and set your course, state and source paths; no secret goes there. Then, from the checkout:
+
+```sh
+(cd host && bun install)
+./school up
+```
+
+`./school up` keeps School's three secrets (the Postgres superuser's password, `school_app`'s and the bridge token) in the macOS Keychain: the first run asks for the superuser's password (press Enter to generate one for a new deployment) and generates the other two, and later runs read them silently. It starts compose with them in compose's environment only, and compose mounts each as a file into only the services that need it, so none is in a file on disk, in argv or in `docker inspect`. `./school down` stops it. [School's secrets](docs/topics/secrets/README.md) has the details. To take a new version into a running deployment, or to move secrets out of an older `server/.env`, follow [docs/workflows/upgrade/README.md](docs/workflows/upgrade/README.md).
 
 ## How it is put together
 

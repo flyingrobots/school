@@ -2,8 +2,8 @@
 title: "School's architecture"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-22
-updated: 2026-11-22
-version: 1.3.0
+updated: 2026-11-23
+version: 1.4.0
 status: "Living reference. Describes flyingrobots/school at commit a959505, with the record on Postgres since flyingrobots/school#47 and SQLite deleted by flyingrobots/school#49; proposals are in RFCs 2 and 3."
 ---
 
@@ -26,6 +26,7 @@ proposed; for that, read [RFC 2](../../rfc/0002-lessons-written-for-each-learner
 | [The web app](#the-web-app) | What exists of the interface |
 | [Trust and known defects](#trust-and-known-defects) | What School assumes, and what is broken |
 | [Configuration](#configuration) | Every environment variable |
+| [Secrets](../secrets/README.md) | Where the three secrets live (the macOS Keychain) and how each reaches its process; its own page |
 
 ## The three parts
 
@@ -538,17 +539,22 @@ is currently broken.
 | `SCHOOL_COURSE` | Server | One unnamed course | none |
 | `SCHOOL_STATE` | Server | Learner state; must not be inside a course | `state/` |
 | `SCHOOL_DATABASE_URL` | Server | The record: `postgres://school_app:password@host:port/db` (`Bun.SQL`; `school_app`'s own login, refused if it fails [the login check](#the-login-check)) or `pglite:<dir>` (PGlite on disk, not inside a course) | none: required |
+| `SCHOOL_DATABASE_PASSWORD`, `SCHOOL_DATABASE_PASSWORD_FILE` | Server | `school_app`'s password, for a `SCHOOL_DATABASE_URL` that names none; the file wins. Compose gives the file | none |
 | `SCHOOL_MIGRATE_URL` | Migrate job | The owner's URL: a role that can create roles, in practice the superuser | none: required |
-| `SCHOOL_APP_PASSWORD` | Migrate job | The password the job gives `school_app`, at least 20 letters and digits; the same one is in the server's URL | none: required |
+| `SCHOOL_MIGRATE_PASSWORD`, `SCHOOL_MIGRATE_PASSWORD_FILE` | Migrate job | The owner's password, for a `SCHOOL_MIGRATE_URL` that names none; the file wins. Compose gives the file | none |
+| `SCHOOL_APP_PASSWORD`, `SCHOOL_APP_PASSWORD_FILE` | Migrate job | The password the job gives `school_app`, at least 20 letters and digits; the same one the server logs in with. The file wins | none: required |
 | `DB_PATH` | Server | The old SQLite record, only read: startup refuses while it holds learner work | `<SCHOOL_STATE>/progress.db` |
 | `SCHOOL_MOUNTS` | Server | `name=path` pairs served read-only | none |
 | `SCHOOL_WEB` | Server | The built web app | `web/dist` |
 | `HOST`, `PORT` | Server | Listen address | `127.0.0.1:4747` |
 | `SCHOOL_ALLOWED_HOSTS` | Server | Host names answered besides `127.0.0.1`, `localhost`, `::1` and `HOST`, comma-separated; the tailnet name | none |
-| `SCHOOL_BRIDGE_URL`, `SCHOOL_BRIDGE_TOKEN` | Server | Override the saved bridge settings | none |
+| `SCHOOL_BRIDGE_URL`, `SCHOOL_BRIDGE_TOKEN` | Server | Override the saved bridge settings; `SCHOOL_BRIDGE_TOKEN_FILE`, which compose gives, wins over the token | none |
 | `SCHOOL_BACKUP_INTERVAL_SECONDS` | `backup` service | Seconds between dumps; the first is taken at start | `21600` |
 | `SCHOOL_BACKUP_KEEP` | `backup` service | Dumps kept; older ones are deleted after each good dump | `28` |
-| `SCHOOL_BRIDGE_TOKEN` | Bridge | Shared secret, 16 characters or more | required |
+| `PGPASSWORD_FILE` | `backup` service | The superuser's password as a file, read into `PGPASSWORD`; wins over it | none |
+| `SCHOOL_BRIDGE_TOKEN` | Bridge | Shared secret, 16 characters or more; when unset, read from the Keychain | the Keychain item `./school up` stores |
+| `SCHOOL_KEYCHAIN_ACCOUNT` | Launcher, bridge | The Keychain account School's secrets are under | `school` |
+| `SCHOOL_POSTGRES_PASSWORD`, `SCHOOL_APP_PASSWORD`, `SCHOOL_BRIDGE_TOKEN` | Launcher (`./school`) | Each, when set, used instead of the Keychain and never stored | the Keychain |
 | `SCHOOL_BRIDGE_CONFIG` | Bridge | Agents file, re-read per request | `~/.config/school/bridge.json` |
 | `SCHOOL_BRIDGE_HOST`, `SCHOOL_BRIDGE_PORT` | Bridge | Listen address; port `0` lets the OS choose, reported in the `bridge.listening` log line | `127.0.0.1:4748` |
 

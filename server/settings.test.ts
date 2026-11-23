@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { effectiveBridge } from "./settings.ts";
+import { bridgeClient, effectiveBridge } from "./settings.ts";
 import { startBridge, startSchool, timeout, type Started } from "./testing/processes.ts";
 
 // Every test gets its own server, bridge, state and ports, and sets up what it needs: none
@@ -317,4 +317,33 @@ test("with the token in the environment, saving the same URL reports the token a
   expect(text).not.toContain(TOKEN);
   expect(JSON.parse(text)).toEqual({ status: "saved", tokenSet: true });
   expect(await (await fetch(at + "/api/settings/bridge")).json()).toMatchObject({ url: saved.url, tokenSet: true, tokenFrom: "environment" });
+}, timeout(1));
+
+// flyingrobots/school#132 review: under `./school up` the token is mounted from the Keychain, so it
+// comes from the environment (SCHOOL_BRIDGE_TOKEN_FILE) whatever the page saved. A URL saved in
+// settings.json before then, with no token of its own, was never paired with that token. The
+// rule: a token from the environment is sent only to a URL from the environment.
+test("SEC-S2: a token from the environment is paired only with a URL from the environment, never with a saved one", () => {
+  const env = { SCHOOL_BRIDGE_TOKEN: "env-token-0123456789ab" };
+  const savedUrl = { bridge: { url: "http://saved:1" } };
+  expect(bridgeClient(effectiveBridge(env, savedUrl), 1000)).toBeNull();
+  expect(bridgeClient(effectiveBridge({ ...env, SCHOOL_BRIDGE_URL: "http://env:2" }, savedUrl), 1000)).toEqual({ url: "http://env:2", token: "env-token-0123456789ab", deadlineMs: 1000 });
+  // The page's own pair, and a saved token under a URL the deployment pins, are unchanged.
+  expect(bridgeClient(effectiveBridge({}, { bridge: { url: "http://saved:1", token: "saved-token-0123456789" } }), 1000)).toMatchObject({ url: "http://saved:1" });
+  expect(bridgeClient(effectiveBridge({ SCHOOL_BRIDGE_URL: "http://env:2" }, { bridge: { token: "saved-token-0123456789" } }), 1000)).toMatchObject({ url: "http://env:2" });
+});
+
+test("SEC-S3: a mounted token never reaches a URL saved in settings.json; the status names SCHOOL_BRIDGE_URL as the fix", async () => {
+  const saved = listen();
+  mkdirSync(join(root, "state-env"), { recursive: true });
+  writeFileSync(join(root, "state-env", "settings.json"), JSON.stringify({ bridge: { url: saved.url } }));
+  const file = join(root, "bridge_token");
+  writeFileSync(file, TOKEN, { mode: 0o600 });
+  const at = await serverWith({ SCHOOL_BRIDGE_TOKEN_FILE: file });
+  const replies = await touchEverything(at);
+  expect(saved.seen).toEqual([]);
+  for (const r of replies) expect(r).not.toContain(TOKEN);
+  const st = await (await fetch(at + "/api/settings/status")).json();
+  expect(st).toMatchObject({ connection: "none" });
+  expect(String(st.error)).toContain("SCHOOL_BRIDGE_URL");
 }, timeout(1));

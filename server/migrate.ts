@@ -16,9 +16,16 @@
 // No line holds either password: the URL is logged by host and database only (`redact`), and every
 // string is scrubbed of both passwords. Exit codes: 0 applied (or nothing to apply), 2 a bad
 // argument or a missing or invalid setting, 1 any other failure.
+//
+// Under compose neither password is in the environment (flyingrobots/school#123): the URL names the
+// superuser and the host only, SCHOOL_MIGRATE_PASSWORD_FILE names the file holding the superuser's
+// password, and SCHOOL_APP_PASSWORD_FILE school_app's; a file wins over the plain variable
+// (server/secrets.ts). Every secret is resolved before the output is built, so every line is
+// scrubbed of all of them.
 import { join } from "node:path";
 import { APP, migrateRecord, redact } from "./adapters/database.ts";
 import { jsonLines, loadSchemas } from "./jsonl.ts";
+import { withPassword, withSecretFiles } from "./secrets.ts";
 
 const KIND = "school.migrate";
 const schemas = loadSchemas(join(import.meta.dir, "schemas"));
@@ -33,6 +40,8 @@ const OPTIONS = [
 const ENVIRONMENT = [
   { name: "SCHOOL_MIGRATE_URL", description: "The owner's or superuser's postgres:// URL; the role must be able to create roles." },
   { name: "SCHOOL_APP_PASSWORD", description: "The password school_app logs in with, the one in the server's SCHOOL_DATABASE_URL: at least 20 letters and digits." },
+  { name: "SCHOOL_MIGRATE_PASSWORD_FILE", description: "A file holding the superuser's password, put into SCHOOL_MIGRATE_URL; how compose passes it (a compose secret). A URL that already has a password is refused." },
+  { name: "SCHOOL_APP_PASSWORD_FILE", description: "A file holding SCHOOL_APP_PASSWORD; it wins over the plain variable." },
 ];
 const EXIT = [
   { code: 0, meaning: "Every pending migration applied (or none was pending), and school_app may log in; or --help or --schema printed." },
@@ -44,9 +53,18 @@ const SUMMARY = "Apply School's pending migrations as school_owner, make school_
 
 const args = process.argv.slice(2);
 const human = args.includes("--human") || args.includes("--humanize");
-const url = process.env.SCHOOL_MIGRATE_URL ?? "";
-const password = process.env.SCHOOL_APP_PASSWORD ?? "";
-const superPassword = (() => { try { return decodeURIComponent(new URL(url).password); } catch { return ""; } })();
+// Resolved before the output exists; a refusal here is reported as a settings error below.
+let env: Record<string, string | undefined> = {};
+let url = "";
+let unresolved: string | null = null;
+try {
+  env = withSecretFiles(process.env);
+  url = withPassword(env.SCHOOL_MIGRATE_URL, env.SCHOOL_MIGRATE_PASSWORD, "SCHOOL_MIGRATE_URL", "SCHOOL_MIGRATE_PASSWORD") ?? "";
+} catch (e) {
+  unresolved = e instanceof Error ? e.message : String(e);
+}
+const password = env.SCHOOL_APP_PASSWORD ?? "";
+const superPassword = (() => { try { return decodeURIComponent(new URL(url).password); } catch { return env.SCHOOL_MIGRATE_PASSWORD ?? ""; } })();
 
 /** A line as prose, for --human. */
 function prose(l: Record<string, any>): string {
@@ -67,7 +85,7 @@ function prose(l: Record<string, any>): string {
   }
 }
 
-const out = jsonLines({ kind: KIND, schemas, human, prose, secrets: [password, superPassword] });
+const out = jsonLines({ kind: KIND, schemas, human, prose, secrets: [password, superPassword, env.SCHOOL_MIGRATE_PASSWORD ?? ""] });
 process.on("uncaughtException", out.crashHandler(ids.failed, { error: "failed", code: 1 }));
 process.on("unhandledRejection", out.crashHandler(ids.failed, { error: "failed", code: 1 }));
 
@@ -94,6 +112,7 @@ if (args.includes("--schema")) {
   process.exit(0);
 }
 
+if (unresolved !== null) fail("settings", 2, unresolved);
 if (!/^postgres(ql)?:\/\//.test(url)) fail("settings", 2, "SCHOOL_MIGRATE_URL must be the owner's or superuser's postgres:// URL (the role must be able to create roles)");
 try { new URL(url); } catch { fail("settings", 2, "SCHOOL_MIGRATE_URL is not a valid postgres:// URL"); }
 if (password === "") fail("settings", 2, "SCHOOL_APP_PASSWORD is not set: it is the password school_app logs in with, the one in the server's SCHOOL_DATABASE_URL");

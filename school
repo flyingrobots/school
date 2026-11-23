@@ -1,0 +1,3 @@
+#!/bin/sh
+# The `school` command: host/school.ts (flyingrobots/school#123). docs/topics/secrets/README.md.
+exec bun "$(dirname "$0")/host/school.ts" "$@"

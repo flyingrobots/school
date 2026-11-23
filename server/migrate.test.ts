@@ -91,7 +91,7 @@ describe("the migrate command without a database", () => {
     const help = out[0] as Line & { output: string[]; exit: { code: number }[]; environment: { name: string }[] };
     expect(help.output.sort()).toEqual(IDS);
     expect(help.exit.map((e) => e.code)).toEqual([0, 1, 2]);
-    expect(help.environment.map((e) => e.name)).toEqual(["SCHOOL_MIGRATE_URL", "SCHOOL_APP_PASSWORD"]);
+    expect(help.environment.map((e) => e.name)).toEqual(["SCHOOL_MIGRATE_URL", "SCHOOL_APP_PASSWORD", "SCHOOL_MIGRATE_PASSWORD_FILE", "SCHOOL_APP_PASSWORD_FILE"]);
     const schemas = out.slice(1) as (Line & { id: string; version: string; schema: { $id: string } })[];
     expect(schemas.every((l) => l.event === "schema")).toBe(true);
     expect(schemas.map((l) => l.id)).toEqual(IDS);
