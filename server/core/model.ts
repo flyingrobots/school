@@ -56,6 +56,9 @@ export type ViewEvent = z.infer<typeof ViewEvent>;
 
 export const GradeRequest = z.object({ submissionId: uuid });
 
+/** A submission id as a path segment, for GET /api/aid/:submissionId. */
+export const AidRequest = z.object({ submissionId: uuid });
+
 /**
  * The versions of aid capture this server knows (RFC 2 §3). A client that records every exposure it
  * shows says which version it follows when it opens a lesson; an encounter opened without one has
@@ -106,6 +109,10 @@ export type Recorded = z.infer<typeof Recorded>;
 /** For each lesson of a course, the quizzes ever answered correctly there. */
 export const LessonProgress = z.record(z.string(), z.array(z.string()));
 export type LessonProgress = z.infer<typeof LessonProgress>;
+
+/** Where the learner left off: the course and lesson of their latest activity, and its time. */
+export const LastStudied = z.object({ course: z.string(), lesson: z.string(), at: z.string() });
+export type LastStudied = z.infer<typeof LastStudied>;
 
 export const Verdict = z.enum(["meets", "partly", "misses"]);
 export const Criterion = z.object({ verdict: Verdict, note: z.string() });

@@ -5,9 +5,12 @@
 // - an explanation is saved before grading, and a failed grading offers a retry;
 // - the server being down while answering never shows the answer as saved;
 // - a lesson id that does not exist shows a not-found state.
+// And flyingrobots/school#51's: the page opens lessons with ?aid=1 and records each kind of help it
+// shows exactly once per showing, and RFC 2 Figure 4 (submit, reveal, revise) reaches the server in
+// that order.
 // What a reload shows is the learner history's oracle (server/contract/learner-history.ts,
 // `pageShows`): each quiz by its latest answer, each explanation by its latest grading.
-import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
+import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -24,7 +27,7 @@ const TOKEN = "lesson-page-test-token"
 
 // Each test that writes to the record uses its own course name, all served from the one fixture,
 // so no test resumes an encounter another test opened.
-const NAMES = ["golden", "wrong", "saved", "failed", "keys", "aid", "pager", "loading", "down"] as const
+const NAMES = ["golden", "wrong", "saved", "failed", "keys", "aid", "pager", "loading", "down", "feedback", "model", "source", "trace", "figure4", "resend", "final-501", "final-400", "final-409"] as const
 type Name = (typeof NAMES)[number]
 
 /** A fake bridge: answers each grading with the next reply queued, or a failure when none is. */
@@ -39,6 +42,12 @@ const findings = {
 }
 let bridge: ReturnType<typeof Bun.serve>
 let gradings = 0
+// Each test owns the fake bridge's state: no grading counted or reply queued by another test,
+// whatever order the tests run in (`bun test --randomize`).
+beforeEach(() => {
+  gradings = 0
+  replies.length = 0
+})
 
 /** A School process, and the environment it was started with so it can be started again. */
 type Stack = { school: Started; env: Record<string, string | undefined> }
@@ -111,7 +120,8 @@ async function newPage(s: Stack = main): Promise<Page> {
     try {
       await route.fulfill({ response: await route.fetch({ url: s.school.url + u.pathname + u.search }) })
     } catch {
-      await route.abort("connectionrefused")
+      // A request still in flight when its context closes (an exposure, say) is already gone.
+      await route.abort("connectionrefused").catch(() => {})
     }
   })
   const p = await c.newPage()
@@ -133,7 +143,8 @@ const stateOf = async (l: ReturnType<Page["locator"]>) => l.getAttribute("data-s
 
 /** The lesson as the API returns it, read straight from School, bypassing the page. */
 const record = async (s: Stack, course: Name, lesson = "orbits") =>
-  (await (await fetch(`${s.school.url}/api/courses/${course}/lessons/${lesson}`)).json()) as {
+  // With the page's ?aid=1, so it resumes the page's encounter: a different aid opens another (RFC 2 §3).
+  (await (await fetch(`${s.school.url}/api/courses/${course}/lessons/${lesson}?aid=1`)).json()) as {
     answers: { blockId: string; choiceId: string; correct: boolean }[]
     explanations: { blockId: string; text: string; grading: { status: string } | null }[]
   }
@@ -263,7 +274,7 @@ describe("loading", () => {
     const p = await newPage()
     let release!: () => void
     const held = new Promise<void>((r) => (release = r))
-    await p.route("**/api/courses/loading/lessons/orbits", async (route) => {
+    await p.route("**/api/courses/loading/lessons/orbits?aid=1", async (route) => {
       await held
       await route.fallback()
     })
@@ -278,8 +289,8 @@ describe("loading", () => {
   })
 })
 
-describe("exposures are not claimed", () => {
-  test("the page opens the lesson without ?aid=, since it does not record exposures yet (flyingrobots/school#51)", async () => {
+describe("aid tracking (flyingrobots/school#51)", () => {
+  test("the page opens the lesson with ?aid=1: it declares that it records the help it shows", async () => {
     const p = await newPage()
     const asked: string[] = []
     p.on("request", (r) => {
@@ -287,7 +298,218 @@ describe("exposures are not claimed", () => {
     })
     await open(main, lessonPath("aid"), "Orbits", p)
     expect(asked.length).toBeGreaterThan(0)
-    expect(asked.filter((u) => new URL(u).searchParams.has("aid"))).toEqual([])
+    expect(asked.map((u) => new URL(u).searchParams.getAll("aid"))).toEqual(asked.map(() => ["1"]))
+    await p.context().close()
+  })
+})
+
+/** Every POST the page sends to School, in order, with its JSON body. */
+function posts(p: Page) {
+  const sent: { path: string; body: Record<string, string> }[] = []
+  p.on("request", (r) => {
+    if (r.method() === "POST" && r.url().includes("/api/")) sent.push({ path: new URL(r.url()).pathname, body: r.postDataJSON() })
+  })
+  const exposures = () => sent.filter((x) => x.path === "/api/exposure").map((x) => x.body)
+  return { sent, exposures }
+}
+
+/**
+ * Waits until `n` exposures have been sent, then a while longer, so that a second send of one
+ * showing (an effect run twice, say) would be seen. Strict mode's second run is in the same commit,
+ * well inside this.
+ */
+async function exposed(p: Page, seen: ReturnType<typeof posts>, n: number) {
+  const until = Date.now() + 5_000
+  while (seen.exposures().length < n && Date.now() < until) await p.waitForTimeout(25)
+  await p.waitForTimeout(300)
+  return seen.exposures()
+}
+
+const encounterOf = (seen: ReturnType<typeof posts>) => seen.sent.find((x) => x.path !== "/api/exposure")!.body.encounterId
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+
+describe("every exposure the page shows is recorded once per showing (flyingrobots/school#51)", () => {
+  test("feedback: the quiz's why, once when a right answer shows it, never for a wrong one, and once more on a reload that shows it again", async () => {
+    const p = await newPage()
+    const seen = posts(p)
+    await open(main, lessonPath("feedback"), "Orbits", p)
+    const q = quiz(p, "closest")
+    await q.locator("[data-choice=venus]").click()
+    await p.waitForFunction(() => document.querySelector("[data-quiz-id=closest]")?.getAttribute("data-state") === "wrong")
+    expect(await exposed(p, seen, 0)).toEqual([])
+    await q.locator("[data-choice=mercury]").click()
+    await p.waitForFunction(() => document.querySelector("[data-quiz-id=closest]")?.getAttribute("data-state") === "right")
+    const once = await exposed(p, seen, 1)
+    expect(once).toEqual([{ exposureId: expect.stringMatching(UUID), encounterId: encounterOf(seen), blockId: "closest", kind: "feedback" }])
+    // Stored, and never anything the learner sees.
+    expect(await q.locator("[data-quiz=error]").count()).toBe(0)
+
+    await open(main, lessonPath("feedback"), "Orbits", p)
+    expect(await stateOf(quiz(p, "closest"))).toBe("settled")
+    const twice = await exposed(p, seen, 2)
+    expect(twice.map((x) => [x.blockId, x.kind])).toEqual([["closest", "feedback"], ["closest", "feedback"]])
+    expect(twice[1]!.exposureId).not.toBe(twice[0]!.exposureId)
+    await p.context().close()
+  })
+
+  test("model-answer: once when a saved explanation shows it, not again while it is graded, and once more on a reload that shows it again", async () => {
+    const p = await newPage()
+    const seen = posts(p)
+    await open(main, lessonPath("model"), "Orbits", p)
+    const x = explain(p, "seasons")
+    await x.locator("[data-explain=draft]").fill("The tilt of the axis.")
+    await x.locator("[data-explain=save]").click()
+    await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "saved")
+    replies.push("fail", "succeed")
+    await x.locator("[data-explain=grade]").click()
+    await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "failed")
+    await x.locator("[data-explain=grade]").click()
+    await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "graded")
+    const once = await exposed(p, seen, 1)
+    expect(once).toEqual([{ exposureId: expect.stringMatching(UUID), encounterId: encounterOf(seen), blockId: "seasons", kind: "model-answer" }])
+    expect(await x.locator("[data-explain=error]").count()).toBe(0)
+
+    await open(main, lessonPath("model"), "Orbits", p)
+    expect(await stateOf(explain(p, "seasons"))).toBe("graded")
+    expect((await exposed(p, seen, 2)).map((e) => [e.blockId, e.kind])).toEqual([["seasons", "model-answer"], ["seasons", "model-answer"]])
+    await p.context().close()
+  })
+
+  test("reference: once each time one of an explain block's sources is opened", async () => {
+    const p = await newPage()
+    const seen = posts(p)
+    await open(main, lessonPath("source"), "Orbits", p)
+    const x = explain(p, "seasons")
+    await x.locator("[data-explain=draft]").fill("The tilt of the axis.")
+    await x.locator("[data-explain=save]").click()
+    await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "saved")
+    expect((await exposed(p, seen, 1)).map((e) => e.kind)).toEqual(["model-answer"])
+    const source = x.locator("[data-explain=sources]").getByRole("button", { name: "The tilt" })
+    await source.click()
+    await x.locator("[data-explain=sources]").getByText("23.4 degrees").waitFor()
+    expect((await exposed(p, seen, 2)).map((e) => [e.blockId, e.kind])).toEqual([["seasons", "model-answer"], ["seasons", "reference"]])
+    await source.click() // closing it shows nothing
+    expect(await exposed(p, seen, 2)).toHaveLength(2)
+    await p.context().close()
+  })
+})
+
+describe("RFC 2 Figure 4 over the page: submit, reveal, revise (flyingrobots/school#51)", () => {
+  test("the first explanation, the model answer it reveals, and the revision reach School in that order, in one encounter", async () => {
+    const p = await newPage()
+    const seen = posts(p)
+    await open(main, lessonPath("trace"), "Orbits", p)
+    const x = explain(p, "seasons")
+    await x.locator("[data-explain=draft]").fill("Because the Earth is closer to the Sun in summer.")
+    await x.locator("[data-explain=save]").click()
+    await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "saved")
+    expect(await x.locator("[data-explain=model]").textContent()).toContain("each hemisphere in turn")
+    await x.locator("[data-explain=revise]").click()
+    expect(await x.locator("[data-explain=draft]").inputValue()).toBe("Because the Earth is closer to the Sun in summer.")
+    await x.locator("[data-explain=draft]").fill("The axis is tilted, so each hemisphere in turn leans towards the Sun.")
+    await x.locator("[data-explain=save]").click()
+    await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "saved")
+    await exposed(p, seen, 2)
+
+    const trace = seen.sent.map((s) => (s.path === "/api/exposure" ? `${s.path} ${s.body.kind}` : `${s.path} ${s.body.text}`))
+    expect(trace).toEqual([
+      "/api/explanation Because the Earth is closer to the Sun in summer.",
+      "/api/exposure model-answer",
+      "/api/explanation The axis is tilted, so each hemisphere in turn leans towards the Sun.",
+      "/api/exposure model-answer", // the revision shows the model answer again
+    ])
+    expect(new Set(seen.sent.map((s) => s.body.encounterId))).toEqual(new Set([encounterOf(seen)]))
+    // Two submissions, both stored: the lesson API shows a block's latest, the revision.
+    const saves = seen.sent.filter((s) => s.path === "/api/explanation").map((s) => s.body.submissionId)
+    expect(new Set(saves).size).toBe(2)
+    expect((await record(main, "trace")).explanations).toMatchObject([
+      { blockId: "seasons", text: "The axis is tilted, so each hemisphere in turn leans towards the Sun." },
+    ])
+    await p.context().close()
+  })
+
+  test("on School served from pglite:, the first explanation has no recorded aid and the revision is aided", async () => {
+    const p = await newPage()
+    const seen = posts(p)
+    await open(main, lessonPath("figure4"), "Orbits", p)
+    const x = explain(p, "seasons")
+    await x.locator("[data-explain=draft]").fill("Because the Earth is closer to the Sun in summer.")
+    await x.locator("[data-explain=save]").click()
+    await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "saved")
+    await x.locator("[data-explain=revise]").click()
+    await x.locator("[data-explain=draft]").fill("The axis is tilted, so each hemisphere in turn leans towards the Sun.")
+    await x.locator("[data-explain=save]").click()
+    await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "saved")
+    const [a, b] = seen.sent.filter((s) => s.path === "/api/explanation").map((s) => s.body.submissionId!)
+    // The aid School derives from its own record, read past the page.
+    const aid = async (id: string) => (await (await fetch(`${main.school.url}/api/aid/${id}`)).json()) as { aid: string }
+    expect((await aid(a!)).aid).toBe("no-recorded-aid")
+    expect((await aid(b!)).aid).toBe("aided")
+    await p.context().close()
+  })
+})
+
+describe("an exposure that did not reach School (flyingrobots/school#51)", () => {
+  // School on Postgres stores exposures, so 501 (a record that stores none) no longer happens; the
+  // page still treats it, and a refusal, as final: not resent, never shown, never holding a save back.
+  test.each([[501, "unsupported"], [400, "rejected"], [409, "conflict"]])("answered %i, it is final: not resent, not shown, and the next save goes ahead", async (status, reply) => {
+    const p = await newPage()
+    const seen = posts(p)
+    await p.route("**/api/exposure", (route) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ status: reply }) }))
+    await open(main, lessonPath(`final-${status}` as Name), "Orbits", p)
+    const x = explain(p, "seasons")
+    await x.locator("[data-explain=draft]").fill("Because of the distance.")
+    await x.locator("[data-explain=save]").click()
+    await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "saved")
+    expect(await exposed(p, seen, 1)).toHaveLength(1)
+    await x.locator("[data-explain=revise]").click()
+    await x.locator("[data-explain=draft]").fill("Because of the tilt.")
+    await x.locator("[data-explain=save]").click()
+    await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "saved")
+    expect(await x.locator("[data-explain=error]").count()).toBe(0)
+    const ids = (await exposed(p, seen, 2)).map((e) => e.exposureId)
+    expect(new Set(ids).size).toBe(ids.length) // two showings, each sent once
+    expect(seen.sent.map((s) => s.path)).toEqual(["/api/explanation", "/api/exposure", "/api/explanation", "/api/exposure"])
+    await p.context().close()
+  })
+
+  test("is resent with the same id before the block's next submission, and while it cannot be recorded, that submission is not sent", async () => {
+    const p = await newPage()
+    const seen = posts(p)
+    let down = true
+    await p.route("**/api/exposure", (route) => (down ? route.abort("connectionrefused") : route.fallback()))
+    await open(main, lessonPath("resend"), "Orbits", p)
+    const x = explain(p, "seasons")
+    await x.locator("[data-explain=draft]").fill("Because of the distance.")
+    await x.locator("[data-explain=save]").click()
+    await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "saved")
+    const [first] = await exposed(p, seen, 1)
+    expect(first!.kind).toBe("model-answer")
+    expect(await x.locator("[data-explain=error]").count()).toBe(0) // the learner is not told about bookkeeping
+
+    // Still down: the revision is not sent, since School would not know it came after the model answer.
+    await x.locator("[data-explain=revise]").click()
+    await x.locator("[data-explain=draft]").fill("Because of the tilt.")
+    await x.locator("[data-explain=save]").click()
+    await x.locator("[data-explain=error]").waitFor()
+    expect(await stateOf(x)).toBe("empty")
+    expect(await x.locator("[data-explain=draft]").inputValue()).toBe("Because of the tilt.")
+    expect(seen.sent.filter((s) => s.path === "/api/explanation")).toHaveLength(1)
+
+    // Back: the same exposure goes first, then the revision.
+    down = false
+    await x.locator("[data-explain=save]").click()
+    await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "saved")
+    const after = seen.sent.slice(seen.sent.findIndex((s) => s.path === "/api/explanation" && s.body.text === "Because of the tilt.") - 1)
+    expect(after.slice(0, 2).map((s) => [s.path, s.body.exposureId ?? s.body.text])).toEqual([
+      ["/api/exposure", first!.exposureId],
+      ["/api/explanation", "Because of the tilt."],
+    ])
+    // The revision shows the model answer again, a second showing; wait for it to be sent.
+    const ids = () => new Set(seen.exposures().map((e) => e.exposureId))
+    for (let t = Date.now(); ids().size < 2 && Date.now() - t < 5_000; ) await p.waitForTimeout(25)
+    await p.waitForTimeout(300)
+    expect(ids().size).toBe(2) // the model answer's two showings, however many times each was sent
     await p.context().close()
   })
 })

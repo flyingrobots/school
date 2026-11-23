@@ -11,7 +11,7 @@ const RECORD_TABLES = ["answers", "encounters", "explanations", "exposures", "gr
 
 /** The functions `school_app` may execute, and nothing else. */
 const APP_FUNCTIONS = [
-  "encounter_answers", "encounter_explanations", "explanation", "lesson_progress", "open_encounter",
+  "encounter_answers", "encounter_explanations", "explanation", "last_studied", "lesson_progress", "open_encounter",
   "record_exposure", "record_grading", "record_view", "save_explanation", "submission_aid", "submit",
 ];
 
