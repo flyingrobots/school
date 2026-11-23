@@ -11,7 +11,8 @@ The page answers "what do I study now?" first.
 1. **The heading, Home,** and a line saying when the learner last studied, in words ("You last
    studied 2 hours ago."), or that their first lesson is ready.
 2. **The lesson to study now**, from `GET /api/resume`, as one card: a label, the lesson's place
-   ("Lesson 2 of 4 in astronomy"), its title in large type, its subtitle, its progress in words,
+   ("Lesson 2 of 4 in Astronomy", the course named by its title from the course list, or by its
+   name until that answers), its title in large type, its subtitle, its progress in words,
    and, mid-lesson, **the next question still to answer**, written out. Its button opens the lesson
    at `/courses/:course/lessons/:lesson`; a second button opens the course.
 
@@ -25,8 +26,9 @@ The page answers "what do I study now?" first.
 
    "Last studied" is the latest encounter opened, answer or explanation stored, or view recorded
    (the record's `lastStudied`, see [architecture](../architecture/README.md)).
-3. **Your courses**: every course from `GET /api/courses`, in the server's order (by name), each a
-   link to `/courses/:course` with its lesson count, whether it has reference documents, and its
+3. **Your courses**: every course from `GET /api/courses`, in the server's order (by name), each
+   named by its title ([a course's folder](../course-format/README.md)) and a link to
+   `/courses/:course`, with its lesson count, whether it has reference documents, and its
    progress in words. The list is the one the sidebar shows (see
    [the app shell](../app-shell/README.md#the-sidebars-courses)); opening the page asks for it
    again in the background, so the progress is current:

@@ -30,6 +30,7 @@ import { loadLibrary } from "../../server/blocks.ts"
 import { openDatabase } from "../../server/adapters/database.ts"
 import { postgresRecord } from "../../server/adapters/postgres.ts"
 import { startSchool, timeout, type Started } from "../../server/testing/processes.ts"
+import { warm } from "./vite.ts"
 
 setDefaultTimeout(30_000)
 
@@ -110,7 +111,8 @@ beforeAll(async () => {
   base = vite.resolvedUrls!.local[0]!.replace(/\/$/, "")
   // A missing Chrome fails here, loudly; it is never a skip.
   browser = await chromium.launch({ channel: "chrome" })
-}, timeout(1) + 10_000)
+  await warm(browser, base)
+}, timeout(1) + 40_000)
 
 afterAll(async () => {
   await browser?.close()

@@ -74,7 +74,7 @@ function SidebarCourses() {
                     <SidebarMenuButton asChild size="lg" isActive={c.name === current} className="text-base">
                       <NavLink to={`/courses/${encodeURIComponent(c.name)}`} data-nav data-course={c.name}>
                         <BookOpenIcon />
-                        <span>{c.name}</span>
+                        <span>{c.title}</span>
                       </NavLink>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
