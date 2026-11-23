@@ -22,10 +22,18 @@ Nothing here is stable. There are no releases.
 
 [Bun](https://bun.com) runs the TypeScript directly, with no build step (ADR 2). Install the server's packages once with `bun install` in `server/`.
 
+On a Postgres server, run the migrate job first, with the owner's (superuser's) URL and the
+password `school_app` is to log in with; then start the server with `school_app`'s URL, never the
+superuser's (illustrative values):
+
 ```sh
+SCHOOL_MIGRATE_URL=postgres://postgres:superuser-password@127.0.0.1:5432/school \
+SCHOOL_APP_PASSWORD=aLongRandomSecretOfLettersAndDigits \
+  bun server/migrate.ts
+
 SCHOOL_COURSE=/path/to/a-course \
 SCHOOL_STATE=/path/to/your-state \
-SCHOOL_DATABASE_URL=postgres://postgres:password@127.0.0.1:5432/school \
+SCHOOL_DATABASE_URL=postgres://school_app:aLongRandomSecretOfLettersAndDigits@127.0.0.1:5432/school \
 SCHOOL_MOUNTS="papers=/path/to/source-material" \
   bun server/server.ts
 ```
@@ -34,7 +42,8 @@ SCHOOL_MOUNTS="papers=/path/to/source-material" \
 | --- | --- |
 | `SCHOOL_COURSE` | The course to serve. Omit it and the index says so rather than crashing. |
 | `SCHOOL_STATE` | Your private state: `settings.json`. Must not be inside the course; the server refuses to start if it is. If an old SQLite `progress.db` here still holds answers, explanations or views, the server refuses to start rather than leave them behind; nothing migrates from SQLite. |
-| `SCHOOL_DATABASE_URL` | Where your answers and progress go: a Postgres server, or `pglite:<dir>` for development. Required; see below. |
+| `SCHOOL_DATABASE_URL` | Where your answers and progress go: `school_app`'s URL on a Postgres server, or `pglite:<dir>` for development. Required; see below. The server refuses the superuser, the owner, and a `school_app` login with any of the extra privileges the login check lists (docs/topics/architecture/README.md, "The login check"). Never grant `school_app` anything by hand. |
+| `SCHOOL_MIGRATE_URL`, `SCHOOL_APP_PASSWORD` | For `bun server/migrate.ts` only: the owner's (superuser's) URL, and the password it gives `school_app`. The server never needs either. |
 | `SCHOOL_MOUNTS` | `name=path` pairs, served read-only at `/name/...`, for source material a course cites. |
 | `HOST`, `PORT` | Default `127.0.0.1:4747`. |
 | `SCHOOL_ALLOWED_HOSTS` | Comma-separated host names School answers to, besides `127.0.0.1`, `localhost`, `::1` and `HOST`: set it to your tailnet name, such as `school.example.ts.net`. Names only, no port or wildcard. Any other `Host` header gets a 403, which is what stops a DNS-rebinding page from reaching School. |
@@ -71,9 +80,9 @@ What an agent may do is set by its own command: the example turns off Claude Cod
 | `SCHOOL_BRIDGE_CONFIG` | Default `~/.config/school/bridge.json`. Re-read on every request. |
 | `SCHOOL_BRIDGE_HOST`, `SCHOOL_BRIDGE_PORT` | Default `127.0.0.1:4748`. Port `0` lets the OS choose; the `bridge.listening` log line gives the port. |
 
-The record lives in Postgres, and `SCHOOL_DATABASE_URL` says where; the server refuses to start without it. For a learner's record, use a Postgres server (`postgres://user:password@host:5432/db`), as `server/compose.yaml` does. `pglite:<dir>` keeps it in PGlite, a Postgres inside the server's process, for development and tests only: PGlite does not fsync, so a power cut can lose answers, and the server says so when it starts.
+The record lives in Postgres, and `SCHOOL_DATABASE_URL` says where; the server refuses to start without it. For a learner's record, use a Postgres server, as `server/compose.yaml` does: the migrate job applies the migrations as the owner and sets `school_app`'s password, and the server logs in as `school_app` (`postgres://school_app:password@host:5432/db`). `pglite:<dir>` keeps it in PGlite, a Postgres inside the server's process, for development and tests only: PGlite does not fsync, so a power cut can lose answers, and the server says so when it starts.
 
-`bun test` runs the suite. `server/compose.yaml` runs School in Docker behind `tailscale serve` (ADR 4), with a Postgres server beside it; copy `server/compose.example.env` to `server/.env` and set your course, state and source paths and the Postgres password first.
+`bun test` runs the suite. `server/compose.yaml` runs School in Docker behind `tailscale serve` (ADR 4), with a Postgres server beside it; copy `server/compose.example.env` to `server/.env` and set your course, state and source paths and the two Postgres passwords (the superuser's, which only the one-shot `migrate` service and the `backup` service get, and `school_app`'s) first. To take a new version into a running deployment, follow [docs/workflows/upgrade/README.md](docs/workflows/upgrade/README.md).
 
 ## How it is put together
 

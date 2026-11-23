@@ -160,8 +160,11 @@ Choose the newest dump from before the damage (step 1), then:
    docker compose up -d school backup
    ```
 
-   The server runs its migrations at startup. Its log line names no applied migration when the
-   dump came from the same version of School; a dump from an older version is migrated forward.
+   `up` runs the one-shot `migrate` service first, since the server depends on it. Its `done` line
+   lists no applied migration when the dump came from the same version of School; a dump from an
+   older version is migrated forward. It also revokes `TEMPORARY` from `PUBLIC` on the renamed
+   database, which the restored copy was created without, before the server logs in as
+   `school_app`.
 
 4. Once the server answers with the record you expect, drop the damaged copy:
 
@@ -212,6 +215,10 @@ database, so a dump does not hold them: create them before restoring.
    ```sh
    docker compose up -d
    ```
+
+   The `migrate` service runs before the server. It applies nothing, because the dump holds the
+   migration history, and it gives `school_app` its `LOGIN` and the password `SCHOOL_APP_PASSWORD`
+   from `server/.env`, so the server can log in again.
 
 ## What a drill printed
 

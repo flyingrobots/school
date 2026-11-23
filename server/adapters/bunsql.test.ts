@@ -1,5 +1,5 @@
 // The Bun.SQL driver against a real Postgres server (flyingrobots/school#47): the LearningRecord
-// contract, the migration on one reserved connection, and requests as school_app on a pool.
+// contract, the migrate job on one reserved connection, and requests as school_app on a pool.
 //
 // It needs SCHOOL_TEST_POSTGRES_URL, a superuser URL to a scratch server (CI starts one; locally,
 // `docker run -e POSTGRES_PASSWORD=pw -p 127.0.0.1:5432:5432 postgres:18.7` and
@@ -8,8 +8,8 @@
 // (server/testing/postgres.ts).
 import { describe, expect, test } from "bun:test";
 import { learningRecordContract } from "../contract/learning-record.ts";
-import { scratchPostgres, TEST_POSTGRES_URL as URL_ } from "../testing/postgres.ts";
-import { APP, FUNCTION_CALL, openDatabase, redact } from "./database.ts";
+import { appUrl, scratchPostgres, TEST_APP_PASSWORD, TEST_POSTGRES_URL as URL_ } from "../testing/postgres.ts";
+import { APP, FUNCTION_CALL, migrateRecord, openDatabase, redact } from "./database.ts";
 import { bunSql } from "./bunsql.ts";
 import { postgresRecord } from "./postgres.ts";
 import { readMigrations } from "../db/migrate.ts";
@@ -22,22 +22,22 @@ const { database, fresh, track } = scratchPostgres();
 describe.skipIf(URL_ === undefined)("Bun.SQL on a real Postgres (SCHOOL_TEST_POSTGRES_URL)", () => {
   learningRecordContract("postgres (Bun.SQL)", async () => postgresRecord((await fresh()).sql));
 
-  test("opening migrates on first start and applies nothing on the next", async () => {
+  // The server no longer migrates a Postgres record: the migrate job does, as the owner, and the
+  // server opens it as school_app (flyingrobots/school#91; server/adapters/app-login.test.ts).
+  test("the migrate job migrates on its first run and applies nothing on the next; the server, opening it, applies nothing", async () => {
     const url = await database();
-    const first = await openDatabase({ driver: "postgres", url });
-    expect(first.applied).toEqual(readMigrations().map((m) => m.version)); // every shipped migration, in order
-    await first.close();
-    const second = await openDatabase({ driver: "postgres", url });
-    expect(second.applied).toEqual([]);
-    await second.close();
+    expect(await migrateRecord(url, TEST_APP_PASSWORD)).toEqual({ applied: readMigrations().map((m) => m.version) }); // every shipped migration, in order
+    expect(await migrateRecord(url, TEST_APP_PASSWORD)).toEqual({ applied: [] });
+    const opened = await openDatabase({ driver: "postgres", url: appUrl(url) });
+    expect(opened.applied).toEqual([]);
+    await opened.close();
   }, SLOW);
 
-  test("two servers starting at once on one database migrate it once", async () => {
+  test("two migrate jobs starting at once on one database migrate it once", async () => {
     const url = await database();
-    const both = await Promise.all([openDatabase({ driver: "postgres", url }), openDatabase({ driver: "postgres", url })]);
+    const both = await Promise.all([migrateRecord(url, TEST_APP_PASSWORD), migrateRecord(url, TEST_APP_PASSWORD)]);
     // One applies every shipped migration, in order; the other finds nothing left to do.
     expect(both.map((o) => o.applied).sort()).toEqual([[], readMigrations().map((m) => m.version)]);
-    for (const o of both) await o.close();
   }, SLOW);
 
   test("every request runs as school_app, and no pooled connection keeps the role afterwards", async () => {

@@ -73,3 +73,36 @@ test("the image imports bun:sqlite only in the startup refusal of an old progres
 test("no module but the startup refusal and its test reads SQLite", () => {
   expect(modules().filter(importsSqlite).sort()).toEqual(["legacy.ts", "startup.test.ts"]);
 });
+
+// flyingrobots/school#91: under compose the server holds only school_app's credentials. The one-shot
+// `migrate` service holds the superuser's, runs the migrations and exits; the server waits for it.
+type Service = { build?: string; pull_policy?: string; command?: string[]; restart?: string; depends_on?: Record<string, { condition: string }>; environment?: Record<string, string> };
+const compose = Bun.YAML.parse(readFileSync(join(dir, "compose.yaml"), "utf8")) as { services: Record<string, Service> };
+
+test("compose runs the migrate job once, as the superuser, before the server, and the server logs in as school_app only", () => {
+  const { migrate, school, postgres } = compose.services;
+  expect(postgres).toBeDefined();
+  expect(migrate?.build).toBe(".");
+  // flyingrobots/school#112 review, F-3: a plain `docker compose up` after a pull must rebuild both
+  // services from this checkout; a cached old server image would crash-loop on school_app's URL.
+  expect(migrate?.pull_policy).toBe("build");
+  expect(school?.build).toBe(".");
+  expect(school?.pull_policy).toBe("build");
+  expect(migrate?.command).toEqual(["bun", "migrate.ts"]);
+  expect(migrate?.restart).toBe("no"); // one-shot: it exits after applying, and is not restarted
+  expect(migrate?.depends_on).toEqual({ postgres: { condition: "service_healthy" } });
+  expect(migrate?.environment?.SCHOOL_MIGRATE_URL).toMatch(/^postgres:\/\/postgres:\$\{SCHOOL_POSTGRES_PASSWORD\}@postgres:5432\/school$/);
+  expect(migrate?.environment?.SCHOOL_APP_PASSWORD).toMatch(/^\$\{SCHOOL_APP_PASSWORD:\?/);
+  expect(school?.depends_on?.migrate).toEqual({ condition: "service_completed_successfully" });
+  expect(school?.environment?.SCHOOL_DATABASE_URL).toMatch(/^postgres:\/\/school_app:\$\{SCHOOL_APP_PASSWORD\}@postgres:5432\/school$/);
+  // No superuser credential reaches the server's container, by any variable.
+  for (const value of Object.values(school?.environment ?? {})) {
+    expect(value).not.toContain("SCHOOL_POSTGRES_PASSWORD");
+    expect(value).not.toMatch(/postgres:\/\/postgres:/);
+  }
+  expect(Object.keys(school?.environment ?? {})).not.toContain("SCHOOL_MIGRATE_URL");
+});
+
+test("the image ships the migrate command", () => {
+  expect(shipped).toContain("migrate.ts");
+});
