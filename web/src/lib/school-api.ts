@@ -227,3 +227,51 @@ export async function listCourses(): Promise<CourseSummary[]> {
   if (!parsed.success) throw new CoursesUnavailable(null)
   return parsed.data
 }
+
+// GET /api/courses/:course (server/server.ts, courseJson): its lessons with their progress, and
+// the file names of its reference documents, which School serves at /courses/:course/reference/<file>
+// only while they stay inside the course.
+export const CourseReply = z.object({
+  name: z.string(),
+  reference: z.array(z.string()),
+  lessons: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      subtitle: z.string().nullish(),
+      quizzes: z.number().int().nonnegative(),
+      answeredCorrectly: z.number().int().nonnegative(),
+    })
+  ),
+})
+export type Course = z.infer<typeof CourseReply>
+
+export type CourseLoad =
+  | { kind: "loading" }
+  | { kind: "ready"; course: Course }
+  | { kind: "missing" }
+  // The server answered that the course's lessons cannot be read, with its reason.
+  | { kind: "unreadable"; reason: string }
+  // No usable answer at all: the server is unreachable or answered something else.
+  | { kind: "unloaded" }
+
+/** One course. Never rejects: an unreachable server or a reply of the wrong shape is "unloaded". */
+export async function loadCourse(name: string, signal?: AbortSignal): Promise<Exclude<CourseLoad, { kind: "loading" }>> {
+  try {
+    const res = await fetch(`/api/courses/${encodeURIComponent(name)}`, { signal })
+    if (res.status === 404) return { kind: "missing" }
+    const body: unknown = await res.json()
+    if (!res.ok) {
+      const reason = z.object({ error: z.string() }).safeParse(body)
+      return reason.success ? { kind: "unreadable", reason: reason.data.error } : { kind: "unloaded" }
+    }
+    const course = CourseReply.safeParse(body)
+    return course.success ? { kind: "ready", course: course.data } : { kind: "unloaded" }
+  } catch {
+    return { kind: "unloaded" }
+  }
+}
+
+/** Where School serves one of a course's reference documents. */
+export const referenceHref = (course: string, file: string) =>
+  `/courses/${encodeURIComponent(course)}/reference/${encodeURIComponent(file)}`

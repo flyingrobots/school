@@ -6,7 +6,7 @@ and reads one endpoint, `GET /api/courses/:course`.
 ## What it shows
 
 - The course's name as the page heading, under a breadcrumb back to Home.
-- A **Reference** button to `/courses/:course/reference`, only when the course has reference
+- A **Reference** button to `/courses/:course/reference` (the [reference page](../reference-page/README.md)), only when the course has reference
   documents.
 - Every lesson, in the server's order, as a link to `/courses/:course/lessons/:lesson`. Each shows
   its title, its subtitle when it has one, and its progress in words:
