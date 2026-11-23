@@ -62,6 +62,8 @@ export function lineWriter(o: { schemas: Schemas; human?: boolean; prose?: (line
     emit(stream, id, body) {
       const published = o.schemas.get(id);
       if (published === undefined) throw new Error(`no published schema for ${id}`);
+      // The envelope is the writer's: a body naming a schema of its own could make a line lie about its type.
+      if (Object.hasOwn(body, "_schema")) throw new Error(`a ${id} body may not carry its own _schema`);
       const line = scrub({ _schema: { id, version: published.version }, ...body }) as Record<string, unknown>;
       write(stream, `${o.human && o.prose ? scrubText(o.prose(line)) : JSON.stringify(line)}\n`);
     },

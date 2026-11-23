@@ -307,16 +307,21 @@ describe.skipIf(TEST_POSTGRES_URL === undefined)("backup and restore on a real P
     cleanup.push(dir);
     const name = `school-backup-stop-${crypto.randomUUID()}`;
     const ran = inImage(dir, nameOf(url), ["/bin/sh", "/backup/backup.sh"], {}, { docker: ["--name", name, ...fakePgDump("sleep 3")] });
-    // Mid-dump: the temporary files exist while the (slow) pg_dump runs.
-    const until = Date.now() + 60_000;
-    while (!readdirSync(dir).some((f) => f.endsWith(".partial")) && Date.now() < until) await Bun.sleep(50);
-    expect(readdirSync(dir).some((f) => f.endsWith(".partial"))).toBe(true);
-    const kill = Bun.spawn(["docker", "kill", "--signal=TERM", name], { stdout: "ignore", stderr: "ignore" });
-    expect(await kill.exited).toBe(0);
-    const r = await ran;
-    expect({ code: r.code, stderr: r.stderr }).toEqual({ code: 0, stderr: "" });
-    expect(backupSchemas.validated(r.stdout).map((l) => l.event)).toEqual(["started", "stopped"]);
-    expect(readdirSync(dir)).toEqual([]);
+    try {
+      // Mid-dump: the temporary files exist while the (slow) pg_dump runs.
+      const until = Date.now() + 60_000;
+      while (!readdirSync(dir).some((f) => f.endsWith(".partial")) && Date.now() < until) await Bun.sleep(50);
+      expect(readdirSync(dir).some((f) => f.endsWith(".partial"))).toBe(true);
+      const kill = Bun.spawn(["docker", "kill", "--signal=TERM", name], { stdout: "ignore", stderr: "ignore" });
+      expect(await kill.exited).toBe(0);
+      const r = await ran;
+      expect({ code: r.code, stderr: r.stderr }).toEqual({ code: 0, stderr: "" });
+      expect(backupSchemas.validated(r.stdout).map((l) => l.event)).toEqual(["started", "stopped"]);
+      expect(readdirSync(dir)).toEqual([]);
+    } finally {
+      // The schedule never ends by itself: whatever failed above, the container must not outlive the test.
+      await Bun.spawn(["docker", "rm", "--force", name], { stdout: "ignore", stderr: "ignore" }).exited;
+    }
   });
 
   test("Bun.SQL: in the image, --schema prints every published schema from /backup/schemas and --help the same after its help line", async () => {
@@ -505,6 +510,33 @@ describe("the backup job's output (server/backup/schemas/)", () => {
     const r = await onHost(["--help"], {}, join(lone, "backup.sh"));
     expect({ code: r.code, stdout: r.stdout }).toEqual({ code: 2, stdout: "" });
     expect(lines(r).map((l) => l._schema.id)).toEqual(["school.backup.error.refused"]);
+  });
+
+  test("backup, an empty argument is still an unknown argument: one valid usage error line, exit 2", async () => {
+    const r = await onHost([""]);
+    expect({ code: r.code, stdout: r.stdout }).toEqual({ code: 2, stdout: "" });
+    expect(backupSchemas.validated(r.stderr).map((l) => l._schema.id)).toEqual(["school.backup.error.usage"]);
+  });
+
+  test("backup, every run id is a random (version 4) UUID, different each run", async () => {
+    const ids = new Set<unknown>();
+    for (let i = 0; i < 20; i++) {
+      const [line] = backupSchemas.validated((await onHost(["--schema"])).stdout);
+      expect(String(line!.run)).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      ids.add(line!.run);
+    }
+    expect(ids.size).toBe(20);
+  });
+
+  test("backup, a message's control characters are escaped, \\r kept as \\r, and a password spanning lines is redacted whole", async () => {
+    const password = "first-line-secret\nsecond-line-secret";
+    const keep = `a\u0001b\rc\u001fd\te"f\\g ${password}`;
+    const r = await onHost(["once"], { SCHOOL_BACKUP_KEEP: keep, PGPASSWORD: password });
+    expect(r.code).toBe(2);
+    const [line] = backupSchemas.validated(r.stderr);
+    expect(line!.message).toBe(`SCHOOL_BACKUP_KEEP must be a positive whole number, not "a\u0001b\rc\u001fd\te"f\\g (redacted)"`);
+    expect(r.stderr).not.toContain("first-line-secret");
+    expect(r.stderr).not.toContain("second-line-secret");
   });
 
   test("backup --human and --humanize: the help, a bad setting and the schemas are prose, no line JSON", async () => {

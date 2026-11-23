@@ -35,33 +35,47 @@ INTERVAL=${SCHOOL_BACKUP_INTERVAL_SECONDS:-21600}
 # After a failed dump, try again this soon rather than a whole interval later.
 RETRY=300
 SCHEMAS=$(dirname "$0")/schemas
-# One id per invocation, on every line: 16 random bytes as a UUID's 8-4-4-4-12 hex digits.
-RUN=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n' | sed 's/^\(.\{8\}\)\(.\{4\}\)\(.\{4\}\)\(.\{4\}\)\(.\{12\}\)$/\1-\2-\3-\4-\5/')
+# One id per invocation, on every line: a random (RFC 4122 version 4) UUID from 16 random bytes,
+# its version nibble set to 4 and its variant to 10xx (8, 9, a or b).
+RUN=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n' | awk '{
+  v = index("0123456789abcdef", substr($0, 17, 1)) - 1
+  printf "%s-%s-4%s-%s%s-%s", substr($0, 1, 8), substr($0, 9, 4), substr($0, 14, 3), substr("89ab", v % 4 + 1, 1), substr($0, 18, 3), substr($0, 21, 12)
+}')
 USAGE="backup.sh [once] | --help | --schema [--human]"
 
 HUMAN=0
 MODE=schedule
 BAD=
+UNKNOWN=0
 for arg in "$@"; do
   case $arg in
     --human | --humanize) HUMAN=1 ;;
     --help | -h) MODE=help ;;
     --schema) [ "$MODE" = help ] || MODE=schema ;;
     once) [ "$MODE" = schedule ] && MODE=once ;;
-    *) BAD="${BAD:+$BAD }$arg" ;;
+    *) UNKNOWN=1; BAD="${BAD:+$BAD }\"$arg\"" ;;
   esac
 done
 
-# $1 with PGPASSWORD, if set, replaced by "(redacted)". awk reads it from its environment, so it
-# sees the password as it is, with no escape processing.
-scrub() {
-  printf '%s\n' "$1" | awk 'BEGIN { s = ENVIRON["PGPASSWORD"] }
-    { if (s != "") { out = ""; while ((i = index($0, s)) > 0) { out = out substr($0, 1, i - 1) "(redacted)"; $0 = substr($0, i + length(s)) } $0 = out $0 } print }'
-}
+# awk that reads the whole input as one text `t` (lines joined with newlines) and replaces every
+# PGPASSWORD in it, even one spanning lines, by "(redacted)". awk reads the password from its
+# environment, so it sees it as it is, with no escape processing.
+SCRUB='{ t = t (NR > 1 ? "\n" : "") $0 }
+  END { s = ENVIRON["PGPASSWORD"]; if (s != "") { out = ""; while ((i = index(t, s)) > 0) { out = out substr(t, 1, i - 1) "(redacted)"; t = substr(t, i + length(s)) } t = out t } '
 
-# $1, scrubbed, as the inside of a JSON string: backslashes, quotes and tabs escaped, lines joined with \n.
+# $1 with PGPASSWORD, if set, replaced by "(redacted)".
+scrub() { printf '%s\n' "$1" | awk "$SCRUB print t }"; }
+
+# $1, scrubbed, as the inside of a JSON string: a backslash or quote escaped, and every control
+# character (U+0001 to U+001F; a shell string holds no U+0000) written \n, \r, \t, \b, \f or \u00XX.
 json() {
-  scrub "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g' | tr -d '\r' | awk 'BEGIN { ORS = "" } NR > 1 { print "\\n" } { print }'
+  printf '%s\n' "$1" | awk "$SCRUB"'
+    for (c = 1; c < 32; c++) code[sprintf("%c", c)] = sprintf("\\u%04x", c)
+    code["\n"] = "\\n"; code["\r"] = "\\r"; code["\t"] = "\\t"; code["\b"] = "\\b"; code["\f"] = "\\f"; code["\\"] = "\\\\"; code["\""] = "\\\""
+    out = ""
+    for (k = 1; k <= length(t); k++) { ch = substr(t, k, 1); out = out ((ch in code) ? code[ch] : ch) }
+    printf "%s", out
+  }'
 }
 
 # The version of each message type's published schema: each is versioned on its own.
@@ -87,7 +101,7 @@ refuse() {
   exit 2
 }
 
-if [ -n "$BAD" ]; then
+if [ "$UNKNOWN" = 1 ]; then
   message="unknown argument $BAD; usage: $USAGE"
   warn error.usage error ",\"error\":\"usage\",\"code\":2,\"message\":\"$(json "$message")\"" "error (usage): $(scrub "$message")"
   exit 2

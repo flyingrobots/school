@@ -31,8 +31,8 @@
     },
     "run": {
       "type": "string",
-      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-      "description": "One id per invocation (for the bridge, per process), on every line it prints."
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "One id per invocation (for the bridge, per process), on every line it prints: a random (version 4) UUID."
     },
     "at": {
       "type": "string",
