@@ -3,7 +3,14 @@
 // the palette opens on ⌘K (Ctrl+K off Apple) or Space Space and never on Esc; hjkl and the arrows
 // move focus only outside text fields; the theme switch offers light, dark and system and persists
 // per viewer; every key that acts shows its Kbd hint.
-import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  setDefaultTimeout,
+  test,
+} from "bun:test"
 import { join } from "node:path"
 import { chromium, type Browser, type Page } from "playwright-core"
 import { createServer, type ViteDevServer } from "vite"
@@ -19,7 +26,12 @@ let browser: Browser
 let base: string
 
 beforeAll(async () => {
-  server = await createServer({ root: web, configFile: join(web, "vite.config.ts"), logLevel: "silent", server: { host: "127.0.0.1", port: 0 } })
+  server = await createServer({
+    root: web,
+    configFile: join(web, "vite.config.ts"),
+    logLevel: "silent",
+    server: { host: "127.0.0.1", port: 0 },
+  })
   await server.listen()
   base = server.resolvedUrls!.local[0]!.replace(/\/$/, "")
   // A missing Chrome fails here, loudly; it is never a skip.
@@ -41,15 +53,20 @@ async function open(path = "/", page?: Page): Promise<Page> {
 }
 
 const palette = (p: Page) => p.getByRole("dialog", { name: "Commands" })
-const paletteOpen = async (p: Page) => (await palette(p).count()) > 0 && (await palette(p).isVisible())
+const paletteOpen = async (p: Page) =>
+  (await palette(p).count()) > 0 && (await palette(p).isVisible())
 
 /** Where focus is: the nav region and the index of the focused item within it. */
 const focused = (p: Page) =>
   p.evaluate(() => {
     const el = document.activeElement
     const region = el?.closest("[data-nav-region]")
-    if (!el || !region || !el.matches("[data-nav]")) return { region: null, index: -1 }
-    return { region: region.getAttribute("data-nav-region"), index: [...region.querySelectorAll("[data-nav]")].indexOf(el) }
+    if (!el || !region || !el.matches("[data-nav]"))
+      return { region: null, index: -1 }
+    return {
+      region: region.getAttribute("data-nav-region"),
+      index: [...region.querySelectorAll("[data-nav]")].indexOf(el),
+    }
   })
 
 /** Adds a text field to the main region, as a page's content would, and focuses it. */
@@ -77,7 +94,10 @@ describe("routing", () => {
     const p = await open(path)
     // A page may show a screen-reader-only heading while it loads (the lesson page's "Loading the
     // lesson"); wait for the page's settled heading before reading it.
-    const h1 = p.getByRole("heading", { level: 1 }).filter({ hasText: heading }).first()
+    const h1 = p
+      .getByRole("heading", { level: 1 })
+      .filter({ hasText: heading })
+      .first()
     await h1.waitFor()
     expect(await h1.textContent()).toContain(heading)
     expect(await p.locator("[data-nav-region=sidebar]").count()).toBe(1)
@@ -95,10 +115,17 @@ describe("routing", () => {
 
   test("a sidebar link routes on the client, without a page load", async () => {
     const p = await open("/")
-    await p.evaluate(() => ((window as unknown as { marker: number }).marker = 1))
-    await p.locator("[data-nav-region=sidebar]").getByRole("link", { name: /Settings/ }).click()
+    await p.evaluate(
+      () => ((window as unknown as { marker: number }).marker = 1)
+    )
+    await p
+      .locator("[data-nav-region=sidebar]")
+      .getByRole("link", { name: /Settings/ })
+      .click()
     await p.getByRole("heading", { level: 1, name: "Settings" }).waitFor()
-    expect(await p.evaluate(() => (window as unknown as { marker?: number }).marker)).toBe(1)
+    expect(
+      await p.evaluate(() => (window as unknown as { marker?: number }).marker)
+    ).toBe(1)
     await p.context().close()
   })
 })
@@ -137,7 +164,12 @@ describe("command palette", () => {
     await p.keyboard.press(" ")
     await p.keyboard.press(" ")
     await palette(p).waitFor()
-    expect(await p.locator("[data-slot=sidebar][data-state]").first().getAttribute("data-state")).toBe("expanded")
+    expect(
+      await p
+        .locator("[data-slot=sidebar][data-state]")
+        .first()
+        .getAttribute("data-state")
+    ).toBe("expanded")
     await p.context().close()
   })
 
@@ -203,10 +235,19 @@ describe("leader keys", () => {
 
   test("⌘B toggles the sidebar", async () => {
     const p = await open()
-    const state = () => p.locator("[data-slot=sidebar][data-state]").first().getAttribute("data-state")
+    const state = () =>
+      p
+        .locator("[data-slot=sidebar][data-state]")
+        .first()
+        .getAttribute("data-state")
     expect(await state()).toBe("expanded")
     await p.keyboard.press("ControlOrMeta+b")
-    await p.waitForFunction(() => document.querySelector("[data-slot=sidebar][data-state]")?.getAttribute("data-state") === "collapsed")
+    await p.waitForFunction(
+      () =>
+        document
+          .querySelector("[data-slot=sidebar][data-state]")
+          ?.getAttribute("data-state") === "collapsed"
+    )
     await p.context().close()
   })
 })
@@ -214,7 +255,15 @@ describe("leader keys", () => {
 describe("focus movement", () => {
   test.each([
     ["hjkl", { down: "j", up: "k", left: "h", right: "l" }],
-    ["arrows", { down: "ArrowDown", up: "ArrowUp", left: "ArrowLeft", right: "ArrowRight" }],
+    [
+      "arrows",
+      {
+        down: "ArrowDown",
+        up: "ArrowUp",
+        left: "ArrowLeft",
+        right: "ArrowRight",
+      },
+    ],
   ])("%s move focus through the regions and their items", async (_, key) => {
     const p = await open()
     await p.keyboard.press(key.down) // nothing focused yet: the first item of the main region
@@ -236,16 +285,19 @@ describe("focus movement", () => {
     await p.context().close()
   })
 
-  test.each(["input", "textarea"] as const)("typing hjkl, j and Space in an %s types them and moves nothing", async (tag) => {
-    const p = await open()
-    const probe = await field(p, tag)
-    await p.keyboard.type("hjkl j  ")
-    await p.keyboard.press("ArrowLeft")
-    expect(await probe.inputValue()).toBe("hjkl j  ")
-    expect(await p.evaluate(() => document.activeElement?.id)).toBe("probe")
-    expect(await paletteOpen(p)).toBe(false)
-    await p.context().close()
-  })
+  test.each(["input", "textarea"] as const)(
+    "typing hjkl, j and Space in an %s types them and moves nothing",
+    async (tag) => {
+      const p = await open()
+      const probe = await field(p, tag)
+      await p.keyboard.type("hjkl j  ")
+      await p.keyboard.press("ArrowLeft")
+      expect(await probe.inputValue()).toBe("hjkl j  ")
+      expect(await p.evaluate(() => document.activeElement?.id)).toBe("probe")
+      expect(await paletteOpen(p)).toBe(false)
+      await p.context().close()
+    }
+  )
 
   test("⌘K still opens the palette from a text field", async () => {
     const p = await open()
@@ -260,13 +312,24 @@ describe("focus movement", () => {
     await p.getByRole("button", { name: /Theme/ }).click()
     await p.getByRole("menuitemradio", { name: "Dark" }).waitFor()
     await p.keyboard.press("j")
-    expect(await p.evaluate(() => document.activeElement?.closest("[role=menu]") !== null)).toBe(true)
+    expect(
+      await p.evaluate(
+        () => document.activeElement?.closest("[role=menu]") !== null
+      )
+    ).toBe(true)
     await p.context().close()
   })
 })
 
 describe("theme switch", () => {
-  const mode = (p: Page) => p.evaluate(() => (document.documentElement.classList.contains("dark") ? "dark" : document.documentElement.classList.contains("light") ? "light" : null))
+  const mode = (p: Page) =>
+    p.evaluate(() =>
+      document.documentElement.classList.contains("dark")
+        ? "dark"
+        : document.documentElement.classList.contains("light")
+          ? "light"
+          : null
+    )
 
   async function choose(p: Page, name: "Light" | "Dark" | "System") {
     await p.getByRole("button", { name: /Theme/ }).click()
@@ -278,7 +341,11 @@ describe("theme switch", () => {
     await p.getByRole("button", { name: /Theme/ }).click()
     const items = p.getByRole("menuitemradio")
     expect(await items.allTextContents()).toEqual(["Light", "Dark", "System"])
-    expect(await p.getByRole("menuitemradio", { name: "System" }).getAttribute("aria-checked")).toBe("true")
+    expect(
+      await p
+        .getByRole("menuitemradio", { name: "System" })
+        .getAttribute("aria-checked")
+    ).toBe("true")
     await p.context().close()
   })
 
@@ -292,7 +359,9 @@ describe("theme switch", () => {
     await open("/settings", p)
     expect(await mode(p)).toBe("light")
 
-    const other = await (await browser.newContext({ colorScheme: "dark" })).newPage()
+    const other = await (
+      await browser.newContext({ colorScheme: "dark" })
+    ).newPage()
     await open("/", other)
     expect(await mode(other)).toBe("dark") // system, from this viewer's own setting
     await other.context().close()
@@ -303,9 +372,13 @@ describe("theme switch", () => {
     const p = await open()
     await choose(p, "System")
     await p.emulateMedia({ colorScheme: "dark" })
-    await p.waitForFunction(() => document.documentElement.classList.contains("dark"))
+    await p.waitForFunction(() =>
+      document.documentElement.classList.contains("dark")
+    )
     await p.emulateMedia({ colorScheme: "light" })
-    await p.waitForFunction(() => document.documentElement.classList.contains("light"))
+    await p.waitForFunction(() =>
+      document.documentElement.classList.contains("light")
+    )
     await p.context().close()
   })
 
@@ -327,26 +400,55 @@ describe("theme switch", () => {
 describe("Kbd hints", () => {
   /** Every hint inside a scope: a KbdGroup as its keys joined by spaces, or a lone Kbd's text. */
   const hints = (p: Page, scope: string) =>
-    p.locator(`${scope} [data-slot=kbd-group], ${scope} [data-slot=kbd]:not([data-slot=kbd-group] [data-slot=kbd])`).evaluateAll((els) =>
-      els.map((e) => {
-        const keys = e.matches("[data-slot=kbd-group]") ? [...e.querySelectorAll("[data-slot=kbd]")] : [e]
-        return keys.map((k) => (k.textContent ?? "").trim()).join(" ")
-      })
-    )
+    p
+      .locator(
+        `${scope} [data-slot=kbd-group], ${scope} [data-slot=kbd]:not([data-slot=kbd-group] [data-slot=kbd])`
+      )
+      .evaluateAll((els) =>
+        els.map((e) => {
+          const keys = e.matches("[data-slot=kbd-group]")
+            ? [...e.querySelectorAll("[data-slot=kbd]")]
+            : [e]
+          return keys.map((k) => (k.textContent ?? "").trim()).join(" ")
+        })
+      )
 
   test("the keys list shows every key that acts", async () => {
     const p = await open()
     const shown = await hints(p, "[data-keys]")
-    for (const hint of [`${mod} K`, "Space Space", "h j k l", "← ↓ ↑ →", "Space h", "Space s", "Space t", `${mod} B`, "Esc"]) expect(shown).toContain(hint)
+    for (const hint of [
+      `${mod} K`,
+      "Space Space",
+      "h j k l",
+      "← ↓ ↑ →",
+      "Space h",
+      "Space s",
+      "Space t",
+      `${mod} B`,
+      "Esc",
+    ])
+      expect(shown).toContain(hint)
     await p.context().close()
   })
 
   test("each sidebar link and the palette button show their keys", async () => {
     const p = await open()
-    expect(await p.locator("[data-nav-region=sidebar]").getByRole("link", { name: /Home/ }).locator("..").textContent()).toContain("Space")
-    expect(await hints(p, "[data-nav-region=sidebar] li:has(a[href='/'])")).toEqual(["Space h"])
-    expect(await hints(p, "[data-nav-region=sidebar] li:has(a[href='/settings'])")).toEqual(["Space s"])
-    expect(await hints(p, "header button[aria-keyshortcuts]")).toContain(`${mod} K`)
+    expect(
+      await p
+        .locator("[data-nav-region=sidebar]")
+        .getByRole("link", { name: /Home/ })
+        .locator("..")
+        .textContent()
+    ).toContain("Space")
+    expect(
+      await hints(p, "[data-nav-region=sidebar] li:has(a[href='/'])")
+    ).toEqual(["Space h"])
+    expect(
+      await hints(p, "[data-nav-region=sidebar] li:has(a[href='/settings'])")
+    ).toEqual(["Space s"])
+    expect(await hints(p, "header button[aria-keyshortcuts]")).toContain(
+      `${mod} K`
+    )
     await p.context().close()
   })
 
@@ -355,7 +457,8 @@ describe("Kbd hints", () => {
     await p.keyboard.press("ControlOrMeta+k")
     await palette(p).waitFor()
     const shown = await hints(p, "[role=dialog]")
-    for (const hint of ["Space h", "Space s", `${mod} B`, "↑ ↓", "↵", "Esc"]) expect(shown).toContain(hint)
+    for (const hint of ["Space h", "Space s", `${mod} B`, "↑ ↓", "↵", "Esc"])
+      expect(shown).toContain(hint)
     await p.context().close()
   })
 })

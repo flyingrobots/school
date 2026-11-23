@@ -8,12 +8,15 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator"
 // happy-dom stands in for the browser for this file only, then gives the globals back.
 GlobalRegistrator.register()
 afterAll(() => GlobalRegistrator.unregister())
-;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+;(
+  globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true
 
 const React = await import("react")
 const { act } = React
 const { createRoot } = await import("react-dom/client")
-const { Quiz, QuizView, QuizAnswerError, QuizReadOnly } = await import("@/components/quiz")
+const { Quiz, QuizView, QuizAnswerError, QuizReadOnly } =
+  await import("@/components/quiz")
 type QuizState = import("@/components/quiz").QuizState
 
 const quiz = {
@@ -45,21 +48,42 @@ function render(node: React.ReactNode): HTMLElement {
 
 /** A server stand-in: each answer waits until the test settles it, or says it was queued. */
 function server() {
-  const calls: { choiceId: string; resolve: (v: { correct: boolean }) => void; reject: (e: unknown) => void; queued: () => void }[] = []
+  const calls: {
+    choiceId: string
+    resolve: (v: { correct: boolean }) => void
+    reject: (e: unknown) => void
+    queued: () => void
+  }[] = []
   const onAnswer = (choiceId: string, progress: { queued: () => void }) =>
-    new Promise<{ correct: boolean }>((resolve, reject) => calls.push({ choiceId, resolve, reject, queued: progress.queued }))
+    new Promise<{ correct: boolean }>((resolve, reject) =>
+      calls.push({ choiceId, resolve, reject, queued: progress.queued })
+    )
   return { calls, onAnswer }
 }
 
-const root = (host: HTMLElement) => host.querySelector<HTMLElement>("[data-quiz=root]")!
+const root = (host: HTMLElement) =>
+  host.querySelector<HTMLElement>("[data-quiz=root]")!
 const stateOf = (host: HTMLElement) => root(host).dataset.state
-const choice = (host: HTMLElement, id: string) => host.querySelector<HTMLButtonElement>(`[data-choice="${id}"]`)!
-const choices = (host: HTMLElement) => [...host.querySelectorAll<HTMLButtonElement>("[data-quiz=choice]")]
-const enabled = (host: HTMLElement) => choices(host).filter((b) => !b.disabled).map((b) => b.dataset.choice)
-const why = (host: HTMLElement) => host.querySelector("[data-quiz=why] [data-slot=alert-description]")?.textContent ?? null
-const click = (el: HTMLElement) => el.dispatchEvent(new MouseEvent("click", { bubbles: true }))
-const press = (el: HTMLElement, key: string) => el.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }))
-const resolve = async (call: { resolve: (v: { correct: boolean }) => void }, correct: boolean) => {
+const choice = (host: HTMLElement, id: string) =>
+  host.querySelector<HTMLButtonElement>(`[data-choice="${id}"]`)!
+const choices = (host: HTMLElement) => [
+  ...host.querySelectorAll<HTMLButtonElement>("[data-quiz=choice]"),
+]
+const enabled = (host: HTMLElement) =>
+  choices(host)
+    .filter((b) => !b.disabled)
+    .map((b) => b.dataset.choice)
+const why = (host: HTMLElement) =>
+  host.querySelector("[data-quiz=why] [data-slot=alert-description]")
+    ?.textContent ?? null
+const click = (el: HTMLElement) =>
+  el.dispatchEvent(new MouseEvent("click", { bubbles: true }))
+const press = (el: HTMLElement, key: string) =>
+  el.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }))
+const resolve = async (
+  call: { resolve: (v: { correct: boolean }) => void },
+  correct: boolean
+) => {
   await act(async () => call.resolve({ correct }))
 }
 
@@ -67,9 +91,17 @@ test("unanswered: the question and every choice, each with its key hint, and no 
   const host = render(<Quiz {...quiz} onAnswer={server().onAnswer} />)
   expect(stateOf(host)).toBe("unanswered")
   expect(root(host).textContent).toContain(quiz.q)
-  expect(choices(host).map((b) => b.textContent)).toEqual(["1Venus", "2Mercury", "3Mars"])
-  expect(choices(host).map((b) => b.querySelector("[data-slot=kbd]")?.textContent)).toEqual(["1", "2", "3"])
-  expect(choices(host).map((b) => b.getAttribute("aria-keyshortcuts"))).toEqual(["1", "2", "3"])
+  expect(choices(host).map((b) => b.textContent)).toEqual([
+    "1Venus",
+    "2Mercury",
+    "3Mars",
+  ])
+  expect(
+    choices(host).map((b) => b.querySelector("[data-slot=kbd]")?.textContent)
+  ).toEqual(["1", "2", "3"])
+  expect(choices(host).map((b) => b.getAttribute("aria-keyshortcuts"))).toEqual(
+    ["1", "2", "3"]
+  )
   expect(enabled(host)).toEqual(["venus", "mercury", "mars"])
   expect(why(host)).toBeNull()
 })
@@ -81,7 +113,9 @@ test("in flight: the chosen answer is sent, shows a spinner, and every choice is
   expect(s.calls.map((c) => c.choiceId)).toEqual(["mercury"])
   expect(stateOf(host)).toBe("in-flight")
   expect(enabled(host)).toEqual([])
-  expect(choice(host, "mercury").querySelector("[data-slot=spinner]")).not.toBeNull()
+  expect(
+    choice(host, "mercury").querySelector("[data-slot=spinner]")
+  ).not.toBeNull()
   expect(why(host)).toBeNull()
 })
 
@@ -141,7 +175,13 @@ test("the verdict is the server's, not the block's: a 'right' for any choice is 
 
 test("settled: a quiz the record already holds as right shows that answer and cannot be answered again", () => {
   const s = server()
-  const host = render(<Quiz {...quiz} onAnswer={s.onAnswer} recorded={{ choiceId: "mercury", correct: true }} />)
+  const host = render(
+    <Quiz
+      {...quiz}
+      onAnswer={s.onAnswer}
+      recorded={{ choiceId: "mercury", correct: true }}
+    />
+  )
   expect(stateOf(host)).toBe("settled")
   expect(choice(host, "mercury").dataset.verdict).toBe("right")
   expect(why(host)).toBe(quiz.why)
@@ -155,7 +195,13 @@ test("settled: a quiz the record already holds as right shows that answer and ca
 
 test("a recorded wrong answer resumes as wrong, and can be tried again", () => {
   const s = server()
-  const host = render(<Quiz {...quiz} onAnswer={s.onAnswer} recorded={{ choiceId: "mars", correct: false }} />)
+  const host = render(
+    <Quiz
+      {...quiz}
+      onAnswer={s.onAnswer}
+      recorded={{ choiceId: "mars", correct: false }}
+    />
+  )
   expect(stateOf(host)).toBe("wrong")
   expect(choice(host, "mars").dataset.verdict).toBe("wrong")
   act(() => press(root(host), "2"))
@@ -168,7 +214,9 @@ test("the number keys answer while focus is in the quiz; other keys and modified
   act(() => {
     press(root(host), "4") // no fourth choice
     press(root(host), "a")
-    root(host).dispatchEvent(new KeyboardEvent("keydown", { key: "1", metaKey: true, bubbles: true }))
+    root(host).dispatchEvent(
+      new KeyboardEvent("keydown", { key: "1", metaKey: true, bubbles: true })
+    )
   })
   expect(s.calls).toEqual([])
   act(() => press(choice(host, "venus"), "3"))
@@ -181,7 +229,9 @@ test("an answer the server did not take returns the quiz to where it was, says s
   act(() => click(choice(host, "venus")))
   await act(async () => s.calls[0]!.reject(new Error("offline")))
   expect(stateOf(host)).toBe("unanswered")
-  expect(host.querySelector("[data-quiz=error]")?.getAttribute("role")).toBe("alert")
+  expect(host.querySelector("[data-quiz=error]")?.getAttribute("role")).toBe(
+    "alert"
+  )
   expect(enabled(host)).toEqual(["venus", "mercury", "mars"])
   act(() => click(choice(host, "mercury")))
   expect(s.calls.map((c) => c.choiceId)).toEqual(["venus", "mercury"])
@@ -196,34 +246,59 @@ test.each<[string, QuizState, string[]]>([
   ["wrong", { status: "wrong", choiceId: "venus" }, ["mercury", "mars"]],
   ["right", { status: "right", choiceId: "mercury" }, []],
   ["settled", { status: "settled", choiceId: "mercury" }, []],
-])("QuizView renders %s as given, and offers only the choices that state allows", (name, state, offered) => {
-  const chosen: string[] = []
-  const host = render(<QuizView {...quiz} state={state} onChoose={(id) => chosen.push(id)} />)
-  expect(stateOf(host)).toBe(name)
-  expect(enabled(host)).toEqual(offered)
-  act(() => {
-    for (const b of choices(host)) click(b)
-    for (const key of ["1", "2", "3"]) press(root(host), key)
-  })
-  expect(chosen.sort()).toEqual([...offered, ...offered].sort())
-  expect(why(host)).toBe(name === "right" || name === "settled" ? quiz.why : null)
-})
+])(
+  "QuizView renders %s as given, and offers only the choices that state allows",
+  (name, state, offered) => {
+    const chosen: string[] = []
+    const host = render(
+      <QuizView {...quiz} state={state} onChoose={(id) => chosen.push(id)} />
+    )
+    expect(stateOf(host)).toBe(name)
+    expect(enabled(host)).toEqual(offered)
+    act(() => {
+      for (const b of choices(host)) click(b)
+      for (const key of ["1", "2", "3"]) press(root(host), key)
+    })
+    expect(chosen.sort()).toEqual([...offered, ...offered].sort())
+    expect(why(host)).toBe(
+      name === "right" || name === "settled" ? quiz.why : null
+    )
+  }
+)
 
 // The choice group's behaviour is ui-sdk's radio group (flyingrobots/school#62): its roles, its
 // name, and its roving focus. Arrow keys only move focus here; an answer is a click, Space or a
 // number key, because checking a radio sends it to the server.
-const group = (host: HTMLElement) => host.querySelector<HTMLElement>("[role=radiogroup]")!
-const focused = () => (document.activeElement as HTMLElement | null)?.dataset.choice
+const group = (host: HTMLElement) =>
+  host.querySelector<HTMLElement>("[role=radiogroup]")!
+const focused = () =>
+  (document.activeElement as HTMLElement | null)?.dataset.choice
 const arrow = async (key: string) => {
   await act(async () => press(document.activeElement as HTMLElement, key))
 }
 
 test("the choices are ui-sdk's radio group, named by the question, each a radio checked by the state", () => {
-  const host = render(<QuizView {...quiz} state={{ status: "wrong", choiceId: "venus" }} onChoose={() => {}} />)
+  const host = render(
+    <QuizView
+      {...quiz}
+      state={{ status: "wrong", choiceId: "venus" }}
+      onChoose={() => {}}
+    />
+  )
   expect(group(host).dataset.slot).toBe("radio-group")
-  const names = (group(host).getAttribute("aria-labelledby") ?? "").split(" ").filter(Boolean)
-  expect(names.map((id) => document.getElementById(id)?.textContent)).toEqual([quiz.q])
-  expect(choices(host).map((b) => [b.getAttribute("role"), b.dataset.slot, b.getAttribute("aria-checked")])).toEqual([
+  const names = (group(host).getAttribute("aria-labelledby") ?? "")
+    .split(" ")
+    .filter(Boolean)
+  expect(names.map((id) => document.getElementById(id)?.textContent)).toEqual([
+    quiz.q,
+  ])
+  expect(
+    choices(host).map((b) => [
+      b.getAttribute("role"),
+      b.dataset.slot,
+      b.getAttribute("aria-checked"),
+    ])
+  ).toEqual([
     ["radio", "radio", "true"],
     ["radio", "radio", "false"],
     ["radio", "radio", "false"],
@@ -248,11 +323,21 @@ test("arrow keys move focus between the choices, wrapping at both ends, and answ
   expect(focused()).toBe("mercury")
   expect(s.calls).toEqual([])
   expect(stateOf(host)).toBe("unanswered")
-  expect(choices(host).map((b) => b.getAttribute("aria-checked"))).toEqual(["false", "false", "false"])
+  expect(choices(host).map((b) => b.getAttribute("aria-checked"))).toEqual([
+    "false",
+    "false",
+    "false",
+  ])
 })
 
 test("after a wrong answer, arrow keys skip the choice the server turned down", async () => {
-  const host = render(<Quiz {...quiz} onAnswer={server().onAnswer} recorded={{ choiceId: "mercury", correct: false }} />)
+  const host = render(
+    <Quiz
+      {...quiz}
+      onAnswer={server().onAnswer}
+      recorded={{ choiceId: "mercury", correct: false }}
+    />
+  )
   choice(host, "venus").focus()
   await arrow("ArrowDown")
   expect(focused()).toBe("mars")
@@ -265,14 +350,25 @@ test("an agent finds the quiz by its question and answers it through the same ca
   const agent = createAgent()
   const s = server()
   render(<Quiz {...quiz} onAnswer={s.onAnswer} />)
-  const components = agent.snapshot().filter((entry) => !entry.offPage && entry.component !== "more")
-  for (const entry of components) expect(entry.label, `${entry.component} ${entry.ref} has no name`).toBeTruthy()
+  const components = agent
+    .snapshot()
+    .filter((entry) => !entry.offPage && entry.component !== "more")
+  for (const entry of components)
+    expect(
+      entry.label,
+      `${entry.component} ${entry.ref} has no name`
+    ).toBeTruthy()
   const entry = components.find((e) => e.label === quiz.q)
   expect(entry?.component).toBe("radio")
-  const items = (entry as { items?: { value: string; label: string }[] }).items ?? []
+  const items =
+    (entry as { items?: { value: string; label: string }[] }).items ?? []
   expect(items.map((i) => i.value)).toEqual(["venus", "mercury", "mars"])
   const mercury = items.find((i) => i.label.includes("Mercury"))!
-  const result = await act(async () => agent.act({ steps: [{ ref: quiz.q, action: "setValue", args: [mercury.label] }] }))
+  const result = await act(async () =>
+    agent.act({
+      steps: [{ ref: quiz.q, action: "setValue", args: [mercury.label] }],
+    })
+  )
   expect(result.ok, result.error?.message).toBe(true)
   expect(s.calls.map((c) => c.choiceId)).toEqual(["mercury"])
 })
@@ -282,15 +378,27 @@ test("the block and its example import only React, ui-sdk entries, stock shadcn 
   const { readFileSync, readdirSync } = await import("node:fs")
   const { join } = await import("node:path")
   const components = join(import.meta.dir, "..", "src", "components")
-  const stock = new Set(readdirSync(join(components, "ui")).map((f) => f.replace(/\.tsx$/, "")))
+  const stock = new Set(
+    readdirSync(join(components, "ui")).map((f) => f.replace(/\.tsx$/, ""))
+  )
   const imports = (file: string) =>
-    [...readFileSync(join(components, file), "utf8").matchAll(/from "([^"]+)"/g)].map((m) => m[1]!)
+    [
+      ...readFileSync(join(components, file), "utf8").matchAll(
+        /from "([^"]+)"/g
+      ),
+    ].map((m) => m[1]!)
   const foreign = (file: string, allowed: string[]) =>
-    imports(file).filter((spec) => !allowed.includes(spec) && !(spec.startsWith("@/components/ui/") && stock.has(spec.slice(16))))
+    imports(file).filter(
+      (spec) =>
+        !allowed.includes(spec) &&
+        !(spec.startsWith("@/components/ui/") && stock.has(spec.slice(16)))
+    )
   expect(imports("quiz.tsx").length).toBeGreaterThan(1) // zero witnesses would mean the harvest read nothing
   expect(imports("quiz.tsx")).toContain("@ui-sdk/react/radio")
   expect(foreign("quiz.tsx", ["react", "@ui-sdk/react/radio"])).toEqual([])
-  expect(foreign("quiz-example.tsx", ["@/components/example", "@/components/quiz"])).toEqual([])
+  expect(
+    foreign("quiz-example.tsx", ["@/components/example", "@/components/quiz"])
+  ).toEqual([])
 })
 
 // Showing the explanation is help the record must see (RFC 2 §3, flyingrobots/school#51): the block
@@ -319,7 +427,12 @@ test("onWhyShown: once when a settled quiz first renders with its explanation", 
   const shown: number[] = []
   render(
     <React.StrictMode>
-      <Quiz {...quiz} onAnswer={server().onAnswer} recorded={{ choiceId: "mercury", correct: true }} onWhyShown={() => shown.push(1)} />
+      <Quiz
+        {...quiz}
+        onAnswer={server().onAnswer}
+        recorded={{ choiceId: "mercury", correct: true }}
+        onWhyShown={() => shown.push(1)}
+      />
     </React.StrictMode>
   )
   expect(shown).toEqual([1])
@@ -332,17 +445,29 @@ test.each<[string, QuizState, number]>([
   ["wrong", { status: "wrong", choiceId: "venus" }, 0],
   ["right", { status: "right", choiceId: "mercury" }, 1],
   ["settled", { status: "settled", choiceId: "mercury" }, 1],
-])("QuizView in %s calls onWhyShown exactly when it shows the explanation", (_, state, times) => {
-  const shown: number[] = []
-  const host = render(<QuizView {...quiz} state={state} onChoose={() => {}} onWhyShown={() => shown.push(1)} />)
-  expect(shown.length).toBe(times)
-  expect(why(host) !== null).toBe(times === 1)
-})
+])(
+  "QuizView in %s calls onWhyShown exactly when it shows the explanation",
+  (_, state, times) => {
+    const shown: number[] = []
+    const host = render(
+      <QuizView
+        {...quiz}
+        state={state}
+        onChoose={() => {}}
+        onWhyShown={() => shown.push(1)}
+      />
+    )
+    expect(shown.length).toBe(times)
+    expect(why(host) !== null).toBe(times === 1)
+  }
+)
 
 // An answer the page keeps to send later (flyingrobots/school#28): queued, shown as not sent yet,
 // until the server answers it. It is never shown as a verdict before then.
-const badge = (host: HTMLElement) => root(host).querySelector("[data-slot=badge]")?.textContent ?? null
-const errorOf = (host: HTMLElement) => host.querySelector("[data-quiz=error]")?.textContent ?? null
+const badge = (host: HTMLElement) =>
+  root(host).querySelector("[data-slot=badge]")?.textContent ?? null
+const errorOf = (host: HTMLElement) =>
+  host.querySelector("[data-quiz=error]")?.textContent ?? null
 
 test("queued: an answer kept to send later says it is not sent yet, keeps its spinner, offers nothing, and shows no verdict", async () => {
   const s = server()
@@ -353,7 +478,9 @@ test("queued: an answer kept to send later says it is not sent yet, keeps its sp
   expect(badge(host)).toBe("Not sent yet")
   expect(root(host).textContent).toContain("Not saved yet")
   expect(root(host).getAttribute("aria-busy")).toBe("true")
-  expect(choice(host, "venus").querySelector("[data-slot=spinner]")).not.toBeNull()
+  expect(
+    choice(host, "venus").querySelector("[data-slot=spinner]")
+  ).not.toBeNull()
   expect(choice(host, "venus").dataset.verdict).toBeUndefined()
   expect(enabled(host)).toEqual([])
   act(() => {
@@ -380,9 +507,18 @@ test("pending: an answer kept from an earlier page starts queued over the record
   let settle!: (v: { correct: boolean }) => void
   const verdict = new Promise<{ correct: boolean }>((r) => (settle = r))
   const s = server()
-  const host = render(<Quiz {...quiz} onAnswer={s.onAnswer} recorded={{ choiceId: "venus", correct: false }} pending={{ choiceId: "mars", verdict }} />)
+  const host = render(
+    <Quiz
+      {...quiz}
+      onAnswer={s.onAnswer}
+      recorded={{ choiceId: "venus", correct: false }}
+      pending={{ choiceId: "mars", verdict }}
+    />
+  )
   expect(stateOf(host)).toBe("queued")
-  expect(choice(host, "mars").querySelector("[data-slot=spinner]")).not.toBeNull()
+  expect(
+    choice(host, "mars").querySelector("[data-slot=spinner]")
+  ).not.toBeNull()
   expect(enabled(host)).toEqual([])
   await act(async () => settle({ correct: true }))
   expect(stateOf(host)).toBe("right")
@@ -396,17 +532,34 @@ test("a refusal says why in the page's words, returns the quiz to where it was, 
   const host = render(<Quiz {...quiz} onAnswer={s.onAnswer} />)
   act(() => click(choice(host, "venus")))
   act(() => s.calls[0]!.queued())
-  await act(async () => s.calls[0]!.reject(new QuizAnswerError("School refused this answer (conflict). It was not recorded.")))
+  await act(async () =>
+    s.calls[0]!.reject(
+      new QuizAnswerError(
+        "School refused this answer (conflict). It was not recorded."
+      )
+    )
+  )
   expect(stateOf(host)).toBe("unanswered")
-  expect(errorOf(host)).toBe("School refused this answer (conflict). It was not recorded.")
+  expect(errorOf(host)).toBe(
+    "School refused this answer (conflict). It was not recorded."
+  )
   expect(enabled(host)).toEqual(["venus", "mercury", "mars"])
 })
 
 test("a pending answer that is refused returns the quiz to the record as it was, with the reason", async () => {
   let refuse!: (e: unknown) => void
   const verdict = new Promise<{ correct: boolean }>((_, r) => (refuse = r))
-  const host = render(<Quiz {...quiz} onAnswer={server().onAnswer} recorded={{ choiceId: "venus", correct: false }} pending={{ choiceId: "mars", verdict }} />)
-  await act(async () => refuse(new QuizAnswerError("School refused this answer (rejected).")))
+  const host = render(
+    <Quiz
+      {...quiz}
+      onAnswer={server().onAnswer}
+      recorded={{ choiceId: "venus", correct: false }}
+      pending={{ choiceId: "mars", verdict }}
+    />
+  )
+  await act(async () =>
+    refuse(new QuizAnswerError("School refused this answer (rejected)."))
+  )
   expect(stateOf(host)).toBe("wrong")
   expect(choice(host, "venus").dataset.verdict).toBe("wrong")
   expect(errorOf(host)).toBe("School refused this answer (rejected).")
@@ -416,13 +569,23 @@ test("a pending answer that is refused returns the quiz to the record as it was,
 // The slides view shows a quiz to read only (flyingrobots/school#43): it records nothing, so the
 // quiz offers nothing to choose and shows no explanation, which would be help nobody recorded.
 test("read only: the question and every choice, none of them choosable by click or key, no key hints and no explanation", () => {
-  const host = render(<QuizReadOnly id={quiz.id} q={quiz.q} choices={quiz.choices} />)
+  const host = render(
+    <QuizReadOnly id={quiz.id} q={quiz.q} choices={quiz.choices} />
+  )
   expect(root(host).dataset.readOnly).toBe("true")
   expect(root(host).textContent).toContain(quiz.q)
   expect(root(host).textContent).toContain("To read only")
-  expect(root(host).querySelector("[data-slot=badge]")?.textContent).toBe("Read only")
-  expect(choices(host).map((b) => b.textContent)).toEqual(["Venus", "Mercury", "Mars"])
-  expect(choices(host).map((b) => b.getAttribute("aria-keyshortcuts"))).toEqual([null, null, null])
+  expect(root(host).querySelector("[data-slot=badge]")?.textContent).toBe(
+    "Read only"
+  )
+  expect(choices(host).map((b) => b.textContent)).toEqual([
+    "Venus",
+    "Mercury",
+    "Mars",
+  ])
+  expect(choices(host).map((b) => b.getAttribute("aria-keyshortcuts"))).toEqual(
+    [null, null, null]
+  )
   expect(enabled(host)).toEqual([])
   act(() => {
     click(choice(host, "mercury"))

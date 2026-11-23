@@ -29,13 +29,24 @@ export type MockCourse = {
 export const COURSES: MockCourse[] = [
   { name: "aion", lessons: 2, reference: 3, quizzes: 10, correct: 6 },
   { name: "rust-ownership", lessons: 5, reference: 0, quizzes: 24, correct: 0 },
-  { name: "category-theory", lessons: null, reference: 1, quizzes: 0, correct: 0 },
+  {
+    name: "category-theory",
+    lessons: null,
+    reference: 1,
+    quizzes: 0,
+    correct: 0,
+  },
 ]
 
 export const initials = (name: string) => name.slice(0, 2).toUpperCase()
 export const lessonCount = (n: number) => `${n} lesson${n === 1 ? "" : "s"}`
 
-export type Rationale = { title: string; summary: string; points: string[]; components: string }
+export type Rationale = {
+  title: string
+  summary: string
+  points: string[]
+  components: string
+}
 
 function Why({ rationale }: { rationale: Rationale }) {
   return (
@@ -56,7 +67,9 @@ function Why({ rationale }: { rationale: Rationale }) {
             <li key={p}>{p}</li>
           ))}
         </ul>
-        <p className="text-xs text-muted-foreground">Stock parts: {rationale.components}</p>
+        <p className="text-xs text-muted-foreground">
+          Stock parts: {rationale.components}
+        </p>
         <DialogFooter>
           <DialogClose asChild>
             <Button>Got it</Button>
@@ -83,7 +96,9 @@ export function mount(rationale: Rationale, page: ReactNode) {
             </div>
           </header>
           <Separator />
-          <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-10">{page}</main>
+          <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-10">
+            {page}
+          </main>
         </div>
       </ThemeProvider>
     </StrictMode>

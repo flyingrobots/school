@@ -3,7 +3,11 @@
 // (flyingrobots/school#95). One request is in flight at a time; a second caller joins it.
 import * as React from "react"
 
-import { CoursesUnavailable, listCourses, type CourseSummary } from "@/lib/school-api"
+import {
+  CoursesUnavailable,
+  listCourses,
+  type CourseSummary,
+} from "@/lib/school-api"
 
 export type CoursesLoad =
   | { kind: "loading" }
@@ -34,7 +38,12 @@ function ask() {
   listCourses()
     .then(
       (data) => set({ kind: "ready", data }),
-      (e: unknown) => shown || set({ kind: "failed", reason: e instanceof CoursesUnavailable ? e.reason : null })
+      (e: unknown) =>
+        shown ||
+        set({
+          kind: "failed",
+          reason: e instanceof CoursesUnavailable ? e.reason : null,
+        })
     )
     .finally(() => (inFlight = false))
 }
@@ -49,7 +58,10 @@ const subscribe = (listener: () => void) => {
  * `fresh` also asks again when the component mounts, in the background: the home page shows
  * progress, which studying changes, while the sidebar's names do not.
  */
-export function useCourses({ fresh = false }: { fresh?: boolean } = {}): [CoursesLoad, () => void] {
+export function useCourses({ fresh = false }: { fresh?: boolean } = {}): [
+  CoursesLoad,
+  () => void,
+] {
   const courses = React.useSyncExternalStore(subscribe, () => state)
   React.useEffect(() => {
     if (!asked || fresh) ask()

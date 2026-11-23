@@ -7,37 +7,91 @@ import { z } from "zod"
 import type { NestNode } from "@/components/nest"
 
 const nestNode: z.ZodType<NestNode> = z.lazy(() =>
-  z.object({ label: z.string(), atoms: z.array(z.string()), edge: z.string().optional(), children: z.array(nestNode) })
+  z.object({
+    label: z.string(),
+    atoms: z.array(z.string()),
+    edge: z.string().optional(),
+    children: z.array(nestNode),
+  })
 )
 
 export type Block =
-  | { type: "page"; id: string; title: string; subtitle: string; children: Block[] }
+  | {
+      type: "page"
+      id: string
+      title: string
+      subtitle: string
+      children: Block[]
+    }
   | { type: "section"; id: string; title: string; children: Block[] }
   | { type: "prose" | "card" | "quote" | "aside"; id: string; html: string }
-  | { type: "quiz"; id: string; q: string; choices: { id: string; text: string }[]; why: string }
-  | { type: "explain"; id: string; prompt: string; model: string; sources: { id: string; title: string; text: string }[] }
+  | {
+      type: "quiz"
+      id: string
+      q: string
+      choices: { id: string; text: string }[]
+      why: string
+    }
+  | {
+      type: "explain"
+      id: string
+      prompt: string
+      model: string
+      sources: { id: string; title: string; text: string }[]
+    }
   | { type: "nest"; id: string; root: NestNode }
 
 const block: z.ZodType<Block> = z.lazy(() =>
   z.discriminatedUnion("type", [
-    z.object({ type: z.literal("page"), id: z.string(), title: z.string(), subtitle: z.string(), children: z.array(block) }),
-    z.object({ type: z.literal("section"), id: z.string(), title: z.string(), children: z.array(block) }),
-    z.object({ type: z.enum(["prose", "card", "quote", "aside"]), id: z.string(), html: z.string() }),
+    z.object({
+      type: z.literal("page"),
+      id: z.string(),
+      title: z.string(),
+      subtitle: z.string(),
+      children: z.array(block),
+    }),
+    z.object({
+      type: z.literal("section"),
+      id: z.string(),
+      title: z.string(),
+      children: z.array(block),
+    }),
+    z.object({
+      type: z.enum(["prose", "card", "quote", "aside"]),
+      id: z.string(),
+      html: z.string(),
+    }),
     // The choices' `correct` flags are dropped here, so nothing past this line can read them.
-    z.object({ type: z.literal("quiz"), id: z.string(), q: z.string(), choices: z.array(z.object({ id: z.string(), text: z.string() })), why: z.string() }),
+    z.object({
+      type: z.literal("quiz"),
+      id: z.string(),
+      q: z.string(),
+      choices: z.array(z.object({ id: z.string(), text: z.string() })),
+      why: z.string(),
+    }),
     z.object({
       type: z.literal("explain"),
       id: z.string(),
       prompt: z.string(),
       model: z.string(),
-      sources: z.array(z.object({ id: z.string(), title: z.string(), text: z.string() })),
+      sources: z.array(
+        z.object({ id: z.string(), title: z.string(), text: z.string() })
+      ),
     }),
     z.object({ type: z.literal("nest"), id: z.string(), root: nestNode }),
   ])
 )
 
-const criterion = z.object({ verdict: z.enum(["meets", "partly", "misses"]), note: z.string() })
-const gradingBase = { id: z.number().int(), model: z.string().nullable(), supersedes: z.number().int().nullable(), at: z.string() }
+const criterion = z.object({
+  verdict: z.enum(["meets", "partly", "misses"]),
+  note: z.string(),
+})
+const gradingBase = {
+  id: z.number().int(),
+  model: z.string().nullable(),
+  supersedes: z.number().int().nullable(),
+  at: z.string(),
+}
 const grading = z.discriminatedUnion("status", [
   z.object({
     ...gradingBase,
@@ -47,24 +101,47 @@ const grading = z.discriminatedUnion("status", [
       fidelity: criterion,
       completeness: criterion,
       accessibility: criterion,
-      contradictions: z.array(z.object({ source_id: z.string(), quote: z.string(), note: z.string(), quote_verified: z.boolean() })),
+      contradictions: z.array(
+        z.object({
+          source_id: z.string(),
+          quote: z.string(),
+          note: z.string(),
+          quote_verified: z.boolean(),
+        })
+      ),
       summary: z.string(),
     }),
   }),
   z.object({ ...gradingBase, status: z.literal("failed"), error: z.string() }),
 ])
 
-export const Explanation = z.object({ submissionId: z.string(), blockId: z.string(), text: z.string(), at: z.string(), grading: grading.nullable() })
+export const Explanation = z.object({
+  submissionId: z.string(),
+  blockId: z.string(),
+  text: z.string(),
+  at: z.string(),
+  grading: grading.nullable(),
+})
 export type Explanation = z.infer<typeof Explanation>
 
-const Answer = z.object({ blockId: z.string(), choiceId: z.string(), correct: z.boolean() })
+const Answer = z.object({
+  blockId: z.string(),
+  choiceId: z.string(),
+  correct: z.boolean(),
+})
 export type Answer = z.infer<typeof Answer>
 
 /** A block School brought back for review, the rule that chose it, and why, in words (RFC 2 §5). */
-const ReviewReason = z.object({ blockId: z.string(), rule: z.string(), reason: z.string() })
+const ReviewReason = z.object({
+  blockId: z.string(),
+  rule: z.string(),
+  reason: z.string(),
+})
 export type ReviewReason = z.infer<typeof ReviewReason>
 
-const Neighbour = z.object({ id: z.string(), title: z.string(), subtitle: z.string() }).nullable()
+const Neighbour = z
+  .object({ id: z.string(), title: z.string(), subtitle: z.string() })
+  .nullable()
 
 export const LessonReply = z.object({
   course: z.string(),
@@ -96,12 +173,24 @@ export class LessonUnavailable extends Error {
 export const AID_CAPTURE_VERSION = 1
 
 /** Opens the lesson in the web view, which opens or resumes the learner's tracked encounter. */
-export async function openLesson(course: string, lesson: string, signal?: AbortSignal): Promise<LessonReply> {
-  return lessonRequest(`/api/courses/${encodeURIComponent(course)}/lessons/${encodeURIComponent(lesson)}?aid=${AID_CAPTURE_VERSION}`, LessonReply, signal)
+export async function openLesson(
+  course: string,
+  lesson: string,
+  signal?: AbortSignal
+): Promise<LessonReply> {
+  return lessonRequest(
+    `/api/courses/${encodeURIComponent(course)}/lessons/${encodeURIComponent(lesson)}?aid=${AID_CAPTURE_VERSION}`,
+    LessonReply,
+    signal
+  )
 }
 
 /** One GET of a lesson, in either view, parsed with `reply`; rejects with LessonUnavailable. */
-async function lessonRequest<T>(path: string, reply: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
+async function lessonRequest<T>(
+  path: string,
+  reply: z.ZodType<T>,
+  signal?: AbortSignal
+): Promise<T> {
   let res: Response
   try {
     res = await fetch(path, { headers: { accept: "application/json" }, signal })
@@ -111,27 +200,58 @@ async function lessonRequest<T>(path: string, reply: z.ZodType<T>, signal?: Abor
   }
   const body: unknown = await res.json().catch(() => null)
   // School's own 404 names what is missing; any other 404 (a proxy's, say) is a failure to load.
-  if (res.status === 404 && z.object({ error: z.string() }).safeParse(body).success) throw new LessonUnavailable("missing", "There is no such lesson in this course.")
-  if (!res.ok) throw new LessonUnavailable("failed", `School answered ${res.status}.`)
+  if (
+    res.status === 404 &&
+    z.object({ error: z.string() }).safeParse(body).success
+  )
+    throw new LessonUnavailable(
+      "missing",
+      "There is no such lesson in this course."
+    )
+  if (!res.ok)
+    throw new LessonUnavailable("failed", `School answered ${res.status}.`)
   const parsed = reply.safeParse(body)
-  if (!parsed.success) throw new LessonUnavailable("failed", "School's reply was not a lesson.")
+  if (!parsed.success)
+    throw new LessonUnavailable("failed", "School's reply was not a lesson.")
   return parsed.data
 }
 
 /** The slides view's reply (server/server.ts, lessonJson): the lesson and its neighbours, and no encounter. */
-export const SlidesReply = z.object({ course: z.string(), view: z.literal("slides"), lesson: block, prev: Neighbour, next: Neighbour })
+export const SlidesReply = z.object({
+  course: z.string(),
+  view: z.literal("slides"),
+  lesson: block,
+  prev: Neighbour,
+  next: Neighbour,
+})
 export type SlidesReply = z.infer<typeof SlidesReply>
 
 /**
  * Reads the lesson in the slides view, which opens no encounter and records nothing. It sends no
  * `?aid=`: nothing in the slides view is recorded, so it declares no capture version.
  */
-export async function readSlides(course: string, lesson: string, signal?: AbortSignal): Promise<SlidesReply> {
-  return lessonRequest(`/api/courses/${encodeURIComponent(course)}/lessons/${encodeURIComponent(lesson)}?view=slides`, SlidesReply, signal)
+export async function readSlides(
+  course: string,
+  lesson: string,
+  signal?: AbortSignal
+): Promise<SlidesReply> {
+  return lessonRequest(
+    `/api/courses/${encodeURIComponent(course)}/lessons/${encodeURIComponent(lesson)}?view=slides`,
+    SlidesReply,
+    signal
+  )
 }
 
-async function post<T>(path: string, body: unknown, reply: z.ZodType<T>): Promise<T> {
-  const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(body) })
+async function post<T>(
+  path: string,
+  body: unknown,
+  reply: z.ZodType<T>
+): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify(body),
+  })
   if (!res.ok) throw new Error(`${path} answered ${res.status}`)
   return reply.parse(await res.json())
 }
@@ -160,55 +280,114 @@ export type Delivery<T> =
   | { status: "refused"; reason: string }
   | { status: "unreachable"; error: string }
 
-async function deliver<T>(path: string, body: unknown, reply: z.ZodType<T>, final: number[] = [400, 409]): Promise<Delivery<T>> {
+async function deliver<T>(
+  path: string,
+  body: unknown,
+  reply: z.ZodType<T>,
+  final: number[] = [400, 409]
+): Promise<Delivery<T>> {
   let res: Response
   try {
-    res = await fetch(path, { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(body) })
+    res = await fetch(path, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify(body),
+    })
   } catch {
     return { status: "unreachable", error: "School could not be reached." }
   }
   const json: unknown = await res.json().catch(() => null)
   if (res.ok) {
     const parsed = reply.safeParse(json)
-    return parsed.success ? { status: "delivered", value: parsed.data } : { status: "unreachable", error: `${path}'s reply was not understood.` }
+    return parsed.success
+      ? { status: "delivered", value: parsed.data }
+      : { status: "unreachable", error: `${path}'s reply was not understood.` }
   }
   if (final.includes(res.status)) {
     const said = z.object({ status: z.string() }).safeParse(json)
-    return { status: "refused", reason: said.success ? said.data.status : `answered ${res.status}` }
+    return {
+      status: "refused",
+      reason: said.success ? said.data.status : `answered ${res.status}`,
+    }
   }
   return { status: "unreachable", error: `${path} answered ${res.status}.` }
 }
 
 const Stored = z.enum(["stored", "duplicate"])
 
-export type AnswerBody = { submissionId: string; encounterId: string; blockId: string; choiceId: string; ms: number }
-export type ExplanationBody = { submissionId: string; encounterId: string; blockId: string; text: string; ms: number }
+export type AnswerBody = {
+  submissionId: string
+  encounterId: string
+  blockId: string
+  choiceId: string
+  ms: number
+}
+export type ExplanationBody = {
+  submissionId: string
+  encounterId: string
+  blockId: string
+  text: string
+  ms: number
+}
 
 /** Sends one answer once; delivered with the server's verdict only once it is committed. */
-export function sendAnswer(body: AnswerBody): Promise<Delivery<{ correct: boolean }>> {
-  return deliver("/api/answer", body, z.object({ status: Stored, correct: z.boolean() }).transform((r) => ({ correct: r.correct })))
+export function sendAnswer(
+  body: AnswerBody
+): Promise<Delivery<{ correct: boolean }>> {
+  return deliver(
+    "/api/answer",
+    body,
+    z
+      .object({ status: Stored, correct: z.boolean() })
+      .transform((r) => ({ correct: r.correct }))
+  )
 }
 
 /** Sends one explanation once; delivered with it as stored, before anything grades it. */
-export function sendExplanation(body: ExplanationBody): Promise<Delivery<Explanation>> {
-  return deliver("/api/explanation", body, z.object({ status: Stored, explanation: Explanation }).transform((r) => r.explanation))
+export function sendExplanation(
+  body: ExplanationBody
+): Promise<Delivery<Explanation>> {
+  return deliver(
+    "/api/explanation",
+    body,
+    z
+      .object({ status: Stored, explanation: Explanation })
+      .transform((r) => r.explanation)
+  )
 }
 
 /** One grading attempt for a saved explanation; resolves with the explanation and its new grading. */
 export async function grade(submissionId: string): Promise<Explanation> {
-  const r = await post("/api/grade", { submissionId }, z.object({ status: z.string(), explanation: Explanation }))
+  const r = await post(
+    "/api/grade",
+    { submissionId },
+    z.object({ status: z.string(), explanation: Explanation })
+  )
   return r.explanation
 }
 
 export type ExposureKind = "hint" | "model-answer" | "feedback" | "reference"
-export type Exposure = { exposureId: string; encounterId: string; blockId: string; kind: ExposureKind }
+export type Exposure = {
+  exposureId: string
+  encounterId: string
+  blockId: string
+  kind: ExposureKind
+}
 
 /**
  * Records once that the page showed help for a block. Besides 400 and 409, a 501 is final: a record
  * that stores no exposures (not the server on Postgres) answers it, and the encounter is not tracked.
  */
 export function sendExposure(x: Exposure): Promise<Delivery<null>> {
-  return deliver("/api/exposure", x, z.unknown().transform(() => null), [400, 409, 501])
+  return deliver(
+    "/api/exposure",
+    x,
+    z.unknown().transform(() => null),
+    [400, 409, 501]
+  )
 }
 
 // GET /api/courses (server/server.ts, coursesJson): every course, in the server's order (by name).
@@ -237,7 +416,9 @@ export class CoursesUnavailable extends Error {
 export async function listCourses(): Promise<CourseSummary[]> {
   let res: Response
   try {
-    res = await fetch("/api/courses", { headers: { accept: "application/json" } })
+    res = await fetch("/api/courses", {
+      headers: { accept: "application/json" },
+    })
   } catch {
     throw new CoursesUnavailable(null)
   }
@@ -266,11 +447,24 @@ const CourseLessons = z.array(
 // Lessons that cannot be read are null, with the server's reason beside them; the reference
 // documents are listed either way (flyingrobots/school#115).
 export const CourseReply = z.union([
-  z.object({ name: z.string(), reference: z.array(z.string()), lessons: CourseLessons }),
-  z.object({ name: z.string(), reference: z.array(z.string()), lessons: z.null(), lessonsError: z.string() }),
+  z.object({
+    name: z.string(),
+    reference: z.array(z.string()),
+    lessons: CourseLessons,
+  }),
+  z.object({
+    name: z.string(),
+    reference: z.array(z.string()),
+    lessons: z.null(),
+    lessonsError: z.string(),
+  }),
 ])
 /** A course whose lessons were read. */
-export type Course = { name: string; reference: string[]; lessons: z.infer<typeof CourseLessons> }
+export type Course = {
+  name: string
+  reference: string[]
+  lessons: z.infer<typeof CourseLessons>
+}
 
 export type CourseLoad =
   | { kind: "loading" }
@@ -282,16 +476,29 @@ export type CourseLoad =
   | { kind: "unloaded" }
 
 /** One course. Never rejects: an unreachable server or a reply of the wrong shape is "unloaded". */
-export async function loadCourse(name: string, signal?: AbortSignal): Promise<Exclude<CourseLoad, { kind: "loading" }>> {
+export async function loadCourse(
+  name: string,
+  signal?: AbortSignal
+): Promise<Exclude<CourseLoad, { kind: "loading" }>> {
   try {
-    const res = await fetch(`/api/courses/${encodeURIComponent(name)}`, { signal })
+    const res = await fetch(`/api/courses/${encodeURIComponent(name)}`, {
+      signal,
+    })
     if (res.status === 404) return { kind: "missing" }
     if (!res.ok) return { kind: "unloaded" }
     const course = CourseReply.safeParse(await res.json())
     if (!course.success) return { kind: "unloaded" }
     const c = course.data
-    if (c.lessons === null) return { kind: "unreadable", reason: c.lessonsError, reference: c.reference }
-    return { kind: "ready", course: { name: c.name, reference: c.reference, lessons: c.lessons } }
+    if (c.lessons === null)
+      return {
+        kind: "unreadable",
+        reason: c.lessonsError,
+        reference: c.reference,
+      }
+    return {
+      kind: "ready",
+      course: { name: c.name, reference: c.reference, lessons: c.lessons },
+    }
   } catch {
     return { kind: "unloaded" }
   }

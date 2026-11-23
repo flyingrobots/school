@@ -1,5 +1,18 @@
-import { BookOpenIcon, HomeIcon, SettingsIcon, TriangleAlertIcon } from "lucide-react"
-import { createBrowserRouter, NavLink, Outlet, RouterProvider, useLocation, useMatch, useNavigate } from "react-router"
+import {
+  BookOpenIcon,
+  HomeIcon,
+  SettingsIcon,
+  TriangleAlertIcon,
+} from "lucide-react"
+import {
+  createBrowserRouter,
+  NavLink,
+  Outlet,
+  RouterProvider,
+  useLocation,
+  useMatch,
+  useNavigate,
+} from "react-router"
 
 import { AppShell, type AppShellPage } from "@/components/app-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -16,7 +29,13 @@ import {
 import { Gallery } from "@/demo/gallery"
 import { useCourses } from "@/lib/courses"
 import { LessonPage } from "@/pages/lesson"
-import { CoursePage, HomePage, NotFoundPage, ReferencePage, SettingsPage } from "@/pages/pages"
+import {
+  CoursePage,
+  HomePage,
+  NotFoundPage,
+  ReferencePage,
+  SettingsPage,
+} from "@/pages/pages"
 
 const pages: AppShellPage[] = [
   { href: "/", label: "Home", icon: HomeIcon, leader: "h" },
@@ -71,8 +90,17 @@ function SidebarCourses() {
                 ))
               : courses.data.map((c) => (
                   <SidebarMenuItem key={c.name}>
-                    <SidebarMenuButton asChild size="lg" isActive={c.name === current} className="text-base">
-                      <NavLink to={`/courses/${encodeURIComponent(c.name)}`} data-nav data-course={c.name}>
+                    <SidebarMenuButton
+                      asChild
+                      size="lg"
+                      isActive={c.name === current}
+                      className="text-base"
+                    >
+                      <NavLink
+                        to={`/courses/${encodeURIComponent(c.name)}`}
+                        data-nav
+                        data-course={c.name}
+                      >
                         <BookOpenIcon />
                         <span>{c.name}</span>
                       </NavLink>

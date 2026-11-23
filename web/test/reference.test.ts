@@ -4,14 +4,36 @@
 // GET /api/courses/:c lists is linked and opens (as School serves it, under its containment
 // rules), and a course without references says so; plus the loading, failed and missing states,
 // the keys and the breadcrumb.
-import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  setDefaultTimeout,
+  test,
+} from "bun:test"
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core"
+import {
+  chromium,
+  type Browser,
+  type BrowserContext,
+  type Page,
+} from "playwright-core"
 import { createServer, type ViteDevServer } from "vite"
 
-import { startSchool, timeout, type Started } from "../../server/testing/processes.ts"
+import {
+  startSchool,
+  timeout,
+  type Started,
+} from "../../server/testing/processes.ts"
 
 setDefaultTimeout(30_000)
 
@@ -23,46 +45,86 @@ let browser: Browser
 let base = ""
 let root = ""
 
-const lesson = (id: string, title: string) => JSON.stringify({ type: "page", id, title, subtitle: "", children: [] })
+const lesson = (id: string, title: string) =>
+  JSON.stringify({ type: "page", id, title, subtitle: "", children: [] })
 
-beforeAll(async () => {
-  root = mkdtempSync(join(tmpdir(), "school-reference-page-"))
-  // aion: four reference documents (one with a space in its name), a file that is not a document,
-  // and a symlink that leaves the course, which School neither lists nor serves.
-  mkdirSync(join(root, "aion", "lessons"), { recursive: true })
-  mkdirSync(join(root, "aion", "reference"), { recursive: true })
-  mkdirSync(join(root, "outside"), { recursive: true })
-  writeFileSync(join(root, "aion", "lessons", "0001.json"), lesson("l1", "Orbits"))
-  writeFileSync(join(root, "aion", "reference", "glossary.html"), "<title>Glossary</title><p>Aphelion: farthest from the sun.</p>")
-  writeFileSync(join(root, "aion", "reference", "star charts.html"), "<title>Star charts</title><p>The northern sky.</p>")
-  writeFileSync(join(root, "aion", "reference", "tides.html"), "<p>Tides</p>")
-  writeFileSync(join(root, "aion", "reference", "units.html"), "<p>Units</p>")
-  writeFileSync(join(root, "aion", "reference", "notes.txt"), "not a document")
-  writeFileSync(join(root, "outside", "secret.html"), "<p>secret</p>")
-  symlinkSync(join(root, "outside", "secret.html"), join(root, "aion", "reference", "leak.html"))
-  // plain: lessons, and no reference folder at all.
-  mkdirSync(join(root, "plain", "lessons"), { recursive: true })
-  writeFileSync(join(root, "plain", "lessons", "0001.json"), lesson("p1", "Only lesson"))
-  // broken: lessons that never validated, and a reference document, which the server still lists
-  // (flyingrobots/school#115).
-  mkdirSync(join(root, "broken", "lessons"), { recursive: true })
-  mkdirSync(join(root, "broken", "reference"), { recursive: true })
-  writeFileSync(join(root, "broken", "reference", "kept.html"), "<p>kept</p>")
-  writeFileSync(join(root, "broken", "lessons", "0001.json"),
-    JSON.stringify({ type: "page", id: "b1", title: "B", subtitle: "", children: [{ ref: "missing" }] }))
+beforeAll(
+  async () => {
+    root = mkdtempSync(join(tmpdir(), "school-reference-page-"))
+    // aion: four reference documents (one with a space in its name), a file that is not a document,
+    // and a symlink that leaves the course, which School neither lists nor serves.
+    mkdirSync(join(root, "aion", "lessons"), { recursive: true })
+    mkdirSync(join(root, "aion", "reference"), { recursive: true })
+    mkdirSync(join(root, "outside"), { recursive: true })
+    writeFileSync(
+      join(root, "aion", "lessons", "0001.json"),
+      lesson("l1", "Orbits")
+    )
+    writeFileSync(
+      join(root, "aion", "reference", "glossary.html"),
+      "<title>Glossary</title><p>Aphelion: farthest from the sun.</p>"
+    )
+    writeFileSync(
+      join(root, "aion", "reference", "star charts.html"),
+      "<title>Star charts</title><p>The northern sky.</p>"
+    )
+    writeFileSync(join(root, "aion", "reference", "tides.html"), "<p>Tides</p>")
+    writeFileSync(join(root, "aion", "reference", "units.html"), "<p>Units</p>")
+    writeFileSync(
+      join(root, "aion", "reference", "notes.txt"),
+      "not a document"
+    )
+    writeFileSync(join(root, "outside", "secret.html"), "<p>secret</p>")
+    symlinkSync(
+      join(root, "outside", "secret.html"),
+      join(root, "aion", "reference", "leak.html")
+    )
+    // plain: lessons, and no reference folder at all.
+    mkdirSync(join(root, "plain", "lessons"), { recursive: true })
+    writeFileSync(
+      join(root, "plain", "lessons", "0001.json"),
+      lesson("p1", "Only lesson")
+    )
+    // broken: lessons that never validated, and a reference document, which the server still lists
+    // (flyingrobots/school#115).
+    mkdirSync(join(root, "broken", "lessons"), { recursive: true })
+    mkdirSync(join(root, "broken", "reference"), { recursive: true })
+    writeFileSync(join(root, "broken", "reference", "kept.html"), "<p>kept</p>")
+    writeFileSync(
+      join(root, "broken", "lessons", "0001.json"),
+      JSON.stringify({
+        type: "page",
+        id: "b1",
+        title: "B",
+        subtitle: "",
+        children: [{ ref: "missing" }],
+      })
+    )
 
-  // The helper chooses the port (flyingrobots/school#82).
-  school = await startSchool({
-    ...process.env,
-    SCHOOL_COURSES: ["aion", "plain", "broken"].map((c) => `${c}=${join(root, c)}`).join(","),
-    SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`, SCHOOL_WEB: join(root, "no-web"), HOST: "127.0.0.1",
-  })
+    // The helper chooses the port (flyingrobots/school#82).
+    school = await startSchool({
+      ...process.env,
+      SCHOOL_COURSES: ["aion", "plain", "broken"]
+        .map((c) => `${c}=${join(root, c)}`)
+        .join(","),
+      SCHOOL_STATE: join(root, "state"),
+      SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`,
+      SCHOOL_WEB: join(root, "no-web"),
+      HOST: "127.0.0.1",
+    })
 
-  vite = await createServer({ root: web, configFile: join(web, "vite.config.ts"), logLevel: "silent", server: { host: "127.0.0.1", port: 0 } })
-  await vite.listen()
-  base = vite.resolvedUrls!.local[0]!.replace(/\/$/, "")
-  browser = await chromium.launch({ channel: "chrome" })
-}, timeout(1) + 20_000)
+    vite = await createServer({
+      root: web,
+      configFile: join(web, "vite.config.ts"),
+      logLevel: "silent",
+      server: { host: "127.0.0.1", port: 0 },
+    })
+    await vite.listen()
+    base = vite.resolvedUrls!.local[0]!.replace(/\/$/, "")
+    browser = await chromium.launch({ channel: "chrome" })
+  },
+  timeout(1) + 20_000
+)
 
 afterAll(async () => {
   await browser?.close()
@@ -76,11 +138,15 @@ afterAll(async () => {
  * A browser context whose /api requests, and requests for a course's reference documents, reach
  * the School server, as they do when School serves the built app.
  */
-async function context(viewport = { width: 1280, height: 900 }): Promise<BrowserContext> {
+async function context(
+  viewport = { width: 1280, height: 900 }
+): Promise<BrowserContext> {
   const c = await browser.newContext({ viewport })
   await c.route(/\/api\/|\/courses\/[^/]+\/reference\/./, async (route) => {
     const u = new URL(route.request().url())
-    await route.fulfill({ response: await route.fetch({ url: school.url + u.pathname + u.search }) })
+    await route.fulfill({
+      response: await route.fetch({ url: school.url + u.pathname + u.search }),
+    })
   })
   return c
 }
@@ -95,13 +161,20 @@ async function open(path: string, c?: BrowserContext): Promise<Page> {
 
 const main = (p: Page) => p.locator("[data-nav-region=main]")
 const docs = (p: Page) => main(p).locator("[data-reference]")
-const api = async (course: string): Promise<{ reference: string[] }> => (await fetch(`${school.url}/api/courses/${course}`)).json()
-const served = (course: string, file: string) => `/courses/${course}/reference/${encodeURIComponent(file)}`
+const api = async (course: string): Promise<{ reference: string[] }> =>
+  (await fetch(`${school.url}/api/courses/${course}`)).json()
+const served = (course: string, file: string) =>
+  `/courses/${course}/reference/${encodeURIComponent(file)}`
 
 describe("a course with reference documents", () => {
   test("links every document the API lists, in its order, to the file School serves", async () => {
     const expected = (await api("aion")).reference
-    expect(expected).toEqual(["glossary.html", "star charts.html", "tides.html", "units.html"])
+    expect(expected).toEqual([
+      "glossary.html",
+      "star charts.html",
+      "tides.html",
+      "units.html",
+    ])
     const p = await open("/courses/aion/reference")
     await docs(p).first().waitFor()
     expect(await docs(p).count()).toBe(expected.length)
@@ -124,10 +197,15 @@ describe("a course with reference documents", () => {
     const link = main(p).getByRole("link", { name: /star charts/ })
     expect(await link.getAttribute("target")).toBe("_blank")
     expect(await link.getAttribute("rel")).toContain("noopener")
-    const [tab] = await Promise.all([p.context().waitForEvent("page"), link.click()])
+    const [tab] = await Promise.all([
+      p.context().waitForEvent("page"),
+      link.click(),
+    ])
     await tab.waitForLoadState()
     expect(new URL(tab.url()).pathname).toBe(served("aion", "star charts.html"))
-    expect(await tab.locator("body").textContent()).toContain("The northern sky.")
+    expect(await tab.locator("body").textContent()).toContain(
+      "The northern sky."
+    )
     // The app tab stays where it was.
     expect(new URL(p.url()).pathname).toBe("/courses/aion/reference")
     await p.context().close()
@@ -136,18 +214,29 @@ describe("a course with reference documents", () => {
   test("the documents are reachable with j and k, and Enter opens the focused one", async () => {
     const p = await open("/courses/aion/reference")
     await docs(p).first().waitFor()
-    const hrefs = await main(p).locator("[data-nav]").evaluateAll((els) => els.map((e) => e.getAttribute("href")))
+    const hrefs = await main(p)
+      .locator("[data-nav]")
+      .evaluateAll((els) => els.map((e) => e.getAttribute("href")))
     const first = hrefs.indexOf(served("aion", "glossary.html"))
     expect(first).toBeGreaterThanOrEqual(0)
     for (let i = 0; i <= first; i++) await p.keyboard.press("j")
-    expect(await p.evaluate(() => document.activeElement?.getAttribute("href"))).toBe(served("aion", "glossary.html"))
+    expect(
+      await p.evaluate(() => document.activeElement?.getAttribute("href"))
+    ).toBe(served("aion", "glossary.html"))
     await p.keyboard.press("j")
     await p.keyboard.press("j")
     await p.keyboard.press("k")
-    expect(await p.evaluate(() => document.activeElement?.getAttribute("href"))).toBe(served("aion", "star charts.html"))
-    const [tab] = await Promise.all([p.context().waitForEvent("page"), p.keyboard.press("Enter")])
+    expect(
+      await p.evaluate(() => document.activeElement?.getAttribute("href"))
+    ).toBe(served("aion", "star charts.html"))
+    const [tab] = await Promise.all([
+      p.context().waitForEvent("page"),
+      p.keyboard.press("Enter"),
+    ])
     await tab.waitForLoadState()
-    expect(await tab.locator("body").textContent()).toContain("The northern sky.")
+    expect(await tab.locator("body").textContent()).toContain(
+      "The northern sky."
+    )
     await p.context().close()
   })
 
@@ -156,9 +245,13 @@ describe("a course with reference documents", () => {
   test("every document and crumb can take focus as soon as the list is shown, while it animates in", async () => {
     const p = await open("/courses/aion/reference")
     await docs(p).first().waitFor()
-    const refused = await main(p).locator("[data-nav]").evaluateAll((els) =>
-      (els as HTMLElement[]).filter((e) => (e.focus(), document.activeElement !== e)).map((e) => e.textContent)
-    )
+    const refused = await main(p)
+      .locator("[data-nav]")
+      .evaluateAll((els) =>
+        (els as HTMLElement[])
+          .filter((e) => (e.focus(), document.activeElement !== e))
+          .map((e) => e.textContent)
+      )
     expect(refused).toEqual([])
     await p.context().close()
   })
@@ -175,11 +268,17 @@ describe("a course with reference documents", () => {
     const p = await open("/courses/aion/reference")
     await docs(p).first().waitFor()
     const crumbs = main(p).locator("[data-slot=breadcrumb]")
-    expect((await crumbs.textContent())?.replace(/\s+/g, "")).toBe("HomeaionReference")
-    await p.evaluate(() => ((window as unknown as { marker: number }).marker = 1))
+    expect((await crumbs.textContent())?.replace(/\s+/g, "")).toBe(
+      "HomeaionReference"
+    )
+    await p.evaluate(
+      () => ((window as unknown as { marker: number }).marker = 1)
+    )
     await crumbs.getByRole("link", { name: "aion" }).click()
     await p.waitForURL(base + "/courses/aion")
-    expect(await p.evaluate(() => (window as unknown as { marker?: number }).marker)).toBe(1)
+    expect(
+      await p.evaluate(() => (window as unknown as { marker?: number }).marker)
+    ).toBe(1)
     await p.context().close()
   })
 
@@ -187,7 +286,9 @@ describe("a course with reference documents", () => {
     const columns = async (viewport: { width: number; height: number }) => {
       const p = await open("/courses/aion/reference", await context(viewport))
       await docs(p).first().waitFor()
-      const xs = await docs(p).evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().left)))
+      const xs = await docs(p).evaluateAll((els) =>
+        els.map((e) => Math.round(e.getBoundingClientRect().left))
+      )
       await p.context().close()
       return new Set(xs).size
     }
@@ -207,7 +308,9 @@ describe("states", () => {
     })
     const p = await open("/courses/aion/reference", c)
     await main(p).locator("[data-slot=skeleton]").first().waitFor()
-    expect(await main(p).locator("[data-slot=spinner], [role=status]").count()).toBeGreaterThan(0)
+    expect(
+      await main(p).locator("[data-slot=spinner], [role=status]").count()
+    ).toBeGreaterThan(0)
     expect(await docs(p).count()).toBe(0)
     release()
     await docs(p).first().waitFor()
@@ -237,9 +340,14 @@ describe("states", () => {
     const p = await open("/courses/broken/reference")
     await docs(p).first().waitFor()
     expect(await docs(p).count()).toBe(1)
-    expect(await docs(p).first().getAttribute("href")).toBe(served("broken", "kept.html"))
+    expect(await docs(p).first().getAttribute("href")).toBe(
+      served("broken", "kept.html")
+    )
     expect(await main(p).getByRole("alert").count()).toBe(0)
-    const [tab] = await Promise.all([p.context().waitForEvent("page"), docs(p).first().click()])
+    const [tab] = await Promise.all([
+      p.context().waitForEvent("page"),
+      docs(p).first().click(),
+    ])
     await tab.waitForLoadState()
     expect(await tab.locator("body").textContent()).toContain("kept")
     await p.context().close()
@@ -250,18 +358,24 @@ describe("states", () => {
     const p = await open("/courses/nowhere/reference")
     const empty = main(p).locator("[data-slot=empty]")
     await empty.waitFor()
-    expect(await empty.textContent()).toContain("There is no course called nowhere")
+    expect(await empty.textContent()).toContain(
+      "There is no course called nowhere"
+    )
     await p.context().close()
   })
 
   test("a server that cannot be reached is reported, and Try again shows the documents once it answers", async () => {
     const c = await context()
     let refuse = true
-    await c.route(/\/api\/courses\/aion$/, (route) => (refuse ? route.abort("connectionrefused") : route.fallback()))
+    await c.route(/\/api\/courses\/aion$/, (route) =>
+      refuse ? route.abort("connectionrefused") : route.fallback()
+    )
     const p = await open("/courses/aion/reference", c)
     const alert = main(p).getByRole("alert")
     await alert.waitFor()
-    expect(await alert.textContent()).toContain("The reference documents could not be loaded")
+    expect(await alert.textContent()).toContain(
+      "The reference documents could not be loaded"
+    )
     expect(await main(p).locator("[data-slot=skeleton]").count()).toBe(0)
     refuse = false
     await main(p).getByRole("button", { name: "Try again" }).click()
@@ -272,10 +386,14 @@ describe("states", () => {
 
   test("an answer of the wrong shape is reported as not loaded, not drawn", async () => {
     const c = await context()
-    await c.route(/\/api\/courses\/aion$/, (route) => route.fulfill({ json: { name: "aion", reference: [1, 2] } }))
+    await c.route(/\/api\/courses\/aion$/, (route) =>
+      route.fulfill({ json: { name: "aion", reference: [1, 2] } })
+    )
     const p = await open("/courses/aion/reference", c)
     await main(p).getByRole("alert").waitFor()
-    expect(await main(p).getByRole("alert").textContent()).toContain("The reference documents could not be loaded")
+    expect(await main(p).getByRole("alert").textContent()).toContain(
+      "The reference documents could not be loaded"
+    )
     expect(await docs(p).count()).toBe(0)
     await c.close()
   })
