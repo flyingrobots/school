@@ -4,6 +4,11 @@ Reference: what `/settings` shows and does. It is a page over the settings API
 (`/api/settings/*`, listed in [Architecture](../architecture/README.md)); every rule about what
 can be saved is the server's, and the page shows what the server answers.
 
+Every reply is parsed with Zod in `web/src/lib/settings-api.ts` before the page reads it. A reply
+of the wrong shape is shown as an error in the card that asked for it, naming the request; the
+page never shows a status, an agent list or a form built from it. A refusal shows the server's
+own reason.
+
 ## Bridge
 
 The address and the token School uses to reach the bridge.
@@ -68,6 +73,6 @@ below them, and from `2xl` the three share one row, the agents two columns wide.
 `web/test/settings.test.ts` drives the page in Chrome against the Vite dev server, with every
 `/api` request forwarded to a real School and a real bridge, each started by the port helper
 (`server/testing/processes.ts`). It covers each connection state, the loading skeletons, the token
-never appearing after a save or a reload, the one-time generated token, the cleared-token notice,
+never appearing after a save or a reload, a malformed reply shown as an error, the one-time generated token, the cleared-token notice,
 the environment locks, reordering by keyboard (arrows, `j`, `Esc`) read back from the bridge's
 file, switching an agent off, and a test's attempts. It runs in `bun test` from the repository root.

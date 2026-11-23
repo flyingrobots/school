@@ -26,34 +26,14 @@ import { ItemActions, ItemContent, ItemDescription, ItemGroup, Item, ItemTitle }
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
+import { readSettings, saveAgents as postAgents, saveBridge, testAgent, type Agent, type Attempt, type Bridge, type Connection, type Status } from "@/lib/settings-api"
 import { SortableList, SortableListHandle, SortableListItem, SortableListItems, SortableListKeys } from "@/components/sortable-list"
 
 gsap.registerPlugin(useGSAP)
 
-type Source = "environment" | "settings" | "none"
-type Bridge = { url: string | null; urlFrom: Source; tokenSet: boolean; tokenFrom: Source }
-type Agent = { name: string; enabled: boolean; found: boolean }
-type Connection = "none" | "unreachable" | "unauthorised" | "unconfigured" | "misconfigured" | "ok"
-type Status = { connection: Connection; error?: string; config?: string; agents: Agent[] }
-type Attempt = { agent: string; status: "succeeded" | "failed" | "skipped"; error?: string; exitCode?: number | null; ms: number }
-type TestResult = { agent: string; status: string; error?: string; attempts: Attempt[] }
+type TestResult = { agent: string; status: "succeeded" | "failed"; error?: string; attempts: Attempt[] }
 
-async function call(path: string, body?: unknown): Promise<{ ok: boolean; body: Record<string, unknown> }> {
-  try {
-    const res = await fetch(path, body === undefined ? undefined : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
-    const json = (await res.json().catch(() => ({ error: `School answered ${res.status} with no JSON` }))) as Record<string, unknown>
-    return { ok: res.ok, body: json }
-  } catch (e) {
-    return { ok: false, body: { error: e instanceof Error ? e.message : String(e) } }
-  }
-}
-
-async function fetchSettings() {
-  const [b, s] = await Promise.all([call("/api/settings/bridge"), call("/api/settings/status")])
-  return { b, s }
-}
-
-const errorOf = (b: Record<string, unknown>) => (typeof b.error === "string" ? b.error : typeof b.status === "string" ? b.status : "something went wrong")
+const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 const connectionLabel: Record<Connection, string> = {
   none: "Not connected",
@@ -97,25 +77,28 @@ export function SettingsPage() {
   const [agentError, setAgentError] = React.useState<string | null>(null)
   const [testing, setTesting] = React.useState<string | null>(null)
   const [result, setResult] = React.useState<TestResult | null>(null)
+  const [bridgeError, setBridgeError] = React.useState<string | null>(null)
+  const [statusError, setStatusError] = React.useState<string | null>(null)
 
-  const apply = React.useCallback(({ b, s }: Awaited<ReturnType<typeof fetchSettings>>) => {
+  const apply = React.useCallback(({ bridge: b, status: st }: Awaited<ReturnType<typeof readSettings>>) => {
     if (b.ok) {
-      const next = b.body as unknown as Bridge
-      setBridge(next)
-      setAddress(next.url ?? "")
+      setBridge(b.value)
+      setAddress(b.value.url ?? "")
     }
-    setStatus(s.ok ? (s.body as unknown as Status) : { connection: "unreachable", error: errorOf(s.body), agents: [] })
+    setBridgeError(b.ok ? null : b.error)
+    setStatus(st.ok ? st.value : null)
+    setStatusError(st.ok ? null : st.error)
     setChecking(false)
   }, [])
 
   const refresh = React.useCallback(async () => {
     setChecking(true)
-    apply(await fetchSettings())
+    apply(await readSettings())
   }, [apply])
 
   React.useEffect(() => {
     let live = true
-    void fetchSettings().then((r) => live && apply(r))
+    void readSettings().then((r) => live && apply(r))
     return () => {
       live = false
     }
@@ -138,25 +121,27 @@ export function SettingsPage() {
   const savedUrl = bridge?.url ?? ""
   const moving = !urlLocked && address.replace(/\/+$/, "") !== savedUrl && bridge?.tokenFrom === "settings" && token === ""
 
-  async function save(body: Record<string, unknown>) {
+  async function save(body: Parameters<typeof saveBridge>[0]) {
     setSaving(true)
     setSaveError(null)
     const before = bridge
-    const r = await call("/api/settings/bridge", body)
-    setSaving(false)
-    if (!r.ok) {
-      setSaveError(errorOf(r.body))
+    try {
+      const saved = await saveBridge(body)
+      setToken("")
+      setTokenCleared(Boolean(before?.tokenSet) && !saved.tokenSet && body.url !== undefined && body.url.replace(/\/+$/, "") !== (before?.url ?? ""))
+      if (saved.generated !== undefined) setGenerated(saved.generated)
+    } catch (e) {
+      setSaveError(messageOf(e))
       return
+    } finally {
+      setSaving(false)
     }
-    setToken("")
-    setTokenCleared(Boolean(before?.tokenSet) && r.body.tokenSet === false && typeof body.url === "string" && body.url.replace(/\/+$/, "") !== (before?.url ?? ""))
-    if (typeof r.body.generated === "string") setGenerated(r.body.generated)
     await refresh()
   }
 
   function onSubmit(event: React.FormEvent) {
     event.preventDefault()
-    const body: Record<string, unknown> = {}
+    const body: Parameters<typeof saveBridge>[0] = {}
     if (!urlLocked) body.url = address.trim()
     if (!tokenLocked && token !== "") body.token = token
     void save(body)
@@ -168,10 +153,11 @@ export function SettingsPage() {
   async function saveAgents(next: Agent[]) {
     setAgentError(null)
     setStatus((s) => (s ? { ...s, agents: next } : s))
-    const r = await call("/api/settings/agents", { agents: next.map(({ name, enabled }) => ({ name, enabled })) })
-    if (r.ok && Array.isArray(r.body.agents)) setStatus((s) => (s ? { ...s, agents: r.body.agents as Agent[] } : s))
-    else {
-      setAgentError(errorOf(r.body))
+    try {
+      const saved = await postAgents(next)
+      setStatus((s) => (s ? { ...s, agents: saved } : s))
+    } catch (e) {
+      setAgentError(messageOf(e))
       await refresh()
     }
   }
@@ -179,10 +165,14 @@ export function SettingsPage() {
   async function test(name: string) {
     setTesting(name)
     setResult(null)
-    const r = await call("/api/settings/agents/test", { agent: name })
-    const attempts = Array.isArray(r.body.attempts) ? (r.body.attempts as Attempt[]) : []
-    setResult({ agent: name, status: typeof r.body.status === "string" ? r.body.status : "failed", error: typeof r.body.error === "string" ? r.body.error : undefined, attempts })
-    setTesting(null)
+    try {
+      const r = await testAgent(name)
+      setResult(r.status === "succeeded" ? { agent: name, status: "succeeded", attempts: r.attempts } : { agent: name, status: "failed", error: r.error, attempts: r.attempts })
+    } catch (e) {
+      setResult({ agent: name, status: "failed", error: messageOf(e), attempts: [] })
+    } finally {
+      setTesting(null)
+    }
   }
 
   const config = status?.config
@@ -218,11 +208,20 @@ export function SettingsPage() {
             <CardDescription className="text-base">Where School finds the bridge, and the token it proves itself with.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-6">
+            {bridgeError && (
+              <Alert data-settings="error" variant="destructive">
+                <TriangleAlertIcon />
+                <AlertTitle className="text-base">School's answer could not be read</AlertTitle>
+                <AlertDescription className="text-base wrap-anywhere">{bridgeError}</AlertDescription>
+              </Alert>
+            )}
             {bridge === null ? (
+              bridgeError ? null : (
               <div className="flex flex-col gap-4">
                 <Skeleton className="h-10 w-full" />
                 <Skeleton className="h-10 w-full" />
               </div>
+              )
             ) : (
               <form onSubmit={onSubmit} className="flex flex-col gap-6">
                 <FieldGroup>
@@ -320,12 +319,21 @@ export function SettingsPage() {
             </CardAction>
           </CardHeader>
           <CardContent className="flex flex-col gap-6">
+            {statusError && (
+              <Alert data-settings="error" variant="destructive">
+                <TriangleAlertIcon />
+                <AlertTitle className="text-base">School's answer could not be read</AlertTitle>
+                <AlertDescription className="text-base wrap-anywhere">{statusError}</AlertDescription>
+              </Alert>
+            )}
             {status === null ? (
+              statusError ? null : (
               <div className="flex flex-col gap-3">
                 <Skeleton className="h-6 w-40" />
                 <Skeleton className="h-16 w-full" />
                 <Skeleton className="h-16 w-full" />
               </div>
+              )
             ) : (
               <>
                 <div className="flex flex-col gap-2">
