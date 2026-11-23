@@ -20,6 +20,8 @@ From the `xl` breakpoint an outline of the lesson's sections sits beside the blo
 previous and next lessons close the page; the first lesson has no previous link and the last no
 next one.
 
+Under the title a **Slides** button (`P`) opens the same lesson in [the slides view](#the-slides-view).
+
 The frame and the reading blocks are the `@flyingrobots/lesson` registry block
 (`web/src/components/lesson.tsx`, installed with the shadcn CLI, never edited here). School's own
 code, `web/src/pages/lesson.tsx` and `web/src/lib/school-api.ts`, loads the lesson and wires the
@@ -109,6 +111,42 @@ a block:
 - An exposure School answers 400 or 409 is final and not resent, and so is 501, which a record that
   stores no exposures would answer (the server on Postgres never does). Nothing about exposures is
   ever shown to the learner.
+## The slides view
+
+`/courses/:course/lessons/:lesson?view=slides` presents the lesson as slides (flyingrobots/school#43),
+through the `@flyingrobots/slides` registry block (`web/src/components/slides.tsx`). It records
+nothing.
+
+- The page asks `GET /api/courses/:course/lessons/:lesson?view=slides`, with no `?aid=`. The
+  server answers with the lesson and its neighbours and opens no encounter (ADR 9, RFC 1 "Views").
+  The page sends no write request: no answer, explanation, exposure or grading. It does not read
+  or write the outbox. The outbox that every page of the app starts (`web/src/main.tsx`) still
+  delivers submissions an earlier web view left waiting; the slides view adds none.
+- Each top-level block of the lesson is one slide, and a section is one slide with everything in
+  it. Only the current slide is in the page. The lesson's title and breadcrumb stay above it.
+- Blocks render as they do in the web view, except that quizzes and explain blocks are read only.
+  A quiz shows its question and its choices, all disabled, marked **Read only**, with no key hints
+  and no "Why". An explain block shows its prompt only, with no field, Save button, model answer or
+  sources. Nothing on a slide can be answered, and no help is shown that would need recording. The
+  review section is never part of it, because review comes with an encounter.
+- The position is in words, "Slide 2 of 5", announced politely, with a Progress bar under it.
+- A GSAP timeline brings each slide in from the side it came from, then its blocks in order. With
+  reduced motion the slide is simply there.
+- **Web view** (`Esc`) goes back to the web view of the lesson, on the client.
+
+| Keys | Do |
+| --- | --- |
+| `←` `↑` `h` `k` `PageUp` | Previous slide |
+| `→` `↓` `l` `j` `PageDown` | Next slide |
+| `Home`, `End` | First slide, last slide |
+| `Esc` | The web view |
+
+Every key's `Kbd` hint is on screen under the slides, and Previous, Next and Web view carry theirs.
+The slides take focus when they open. Their keys act while focus is in the slides or on the page
+itself, never while it is in the sidebar, so the app shell's keys still work there. In the slides
+the vertical keys move between slides rather than focus, which is the issue's acceptance ("arrows
+and hjkl move between slides"); a slide taller than the window scrolls with the mouse or trackpad.
+
 ## States
 
 | State | Shows |
@@ -116,6 +154,8 @@ a block:
 | Loading | Skeletons in the lesson's shape and a Spinner |
 | Not found | "Lesson not found", when School answers 404 for the course or the lesson, with a link back to the course |
 | Did not load | "The lesson did not load", when School cannot be reached or its reply is not a lesson, with Try again |
+
+The slides view shows the same three states.
 
 ## Keys
 
@@ -153,6 +193,17 @@ is back. The blocks' queued state and pending prop are tested in `web/test/quiz.
 `web/test/explain.test.tsx`. The Figure 4
 case reads the derived aid from `GET /api/aid/:submissionId`: no recorded aid for the first
 explanation, aided for the revision.
+
+The "the slides view (flyingrobots/school#43)" group uses a School of its own for its first case:
+it walks every slide, tries to answer the read-only quiz, and checks that no request other than a
+GET was sent, that every lesson request was `?view=slides` with no `?aid=`, and that
+`GET /api/resume` and the record itself (`lastStudied`, read with School stopped) hold no activity.
+The web view of the same lesson then opens an encounter, so the oracle can see one. The other cases
+check that each pair of keys and Home and End move between slides with the position in words, that
+a slide animates in its first frame unless the context asks for reduced motion, and that the Slides
+button, `P`, `Esc` and Web view go between the two views on the client. `web/test/slides.test.tsx`
+tests the registry slides block on its own, including that its keys do nothing while focus is
+elsewhere; `web/test/quiz.test.tsx` and `web/test/explain.test.tsx` test the read-only blocks.
 
 The "delayed review" group seeds the record with an answer from two days ago before School starts.
 It checks that the Review section and its reason come before the lesson's own quiz, and that a

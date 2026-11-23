@@ -58,6 +58,8 @@ import { Textarea } from "@/components/ui/textarea"
 // and when a source is opened, once per showing, so a page can record the help it gave.
 // An explanation the page keeps to send later (an outbox) is `queued`: it shows as not sent yet,
 // with a spinner, and the model answer stays hidden until the server has stored it.
+// ExplainReadOnly shows only the prompt, as a slides view does: nothing to write or save, and
+// neither the model answer nor the sources, so it shows no help to record.
 
 /** Material an explanation is graded against. `id` is what a contradiction's quote cites. */
 export type ExplainSource = { id: string; title: string; text: string }
@@ -401,6 +403,24 @@ export function ExplainView({
           )}
         </CardFooter>
       )}
+    </Card>
+  )
+}
+
+/**
+ * The explain block to read only: its prompt and nothing else. No field, no Save, no model answer,
+ * no sources and no callback, so nothing it shows can be recorded.
+ */
+export function ExplainReadOnly({ id, prompt }: Pick<ExplainContent, "id" | "prompt">) {
+  return (
+    <Card data-explain="root" data-explain-id={id} data-state="empty" data-read-only className="w-full">
+      <CardHeader>
+        <CardTitle className="text-2xl">{prompt}</CardTitle>
+        <CardDescription className="text-base">To read only: nothing is written or saved here.</CardDescription>
+        <CardAction>
+          <Badge variant="outline">Read only</Badge>
+        </CardAction>
+      </CardHeader>
     </Card>
   )
 }
