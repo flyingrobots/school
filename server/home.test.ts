@@ -50,12 +50,13 @@ async function answer(lesson: string, blockId: string, choiceId: string) {
   expect(r.status).toBe(200);
 }
 
-// One server, one record: the cases run in order, from a fresh record to a finished lesson.
+// One server, one record: the cases run in order, from a fresh record to a finished lesson. Courses
+// come in the order the server lists them, by name.
 test("a fresh record starts the first lesson, and every course's progress is told in counts", async () => {
   expect(await get("/api/courses")).toEqual([
     { name: "aion", lessons: 2, reference: 0, quizzes: 3, answeredCorrectly: 0 },
-    { name: "empty", lessons: 0, reference: 0, quizzes: 0, answeredCorrectly: 0 },
     { name: "broken", lessons: null, reference: 0, quizzes: null, answeredCorrectly: null },
+    { name: "empty", lessons: 0, reference: 0, quizzes: 0, answeredCorrectly: 0 },
   ]);
   expect(await get("/api/resume")).toEqual({
     kind: "start", course: "aion", lastStudied: null, question: null,

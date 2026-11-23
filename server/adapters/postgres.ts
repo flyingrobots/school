@@ -12,7 +12,7 @@
 // end as the model's ISO form, 2026-11-21T10:00:00.000Z.
 import { z } from "zod";
 import {
-  Aid, Block, Encounter, ExplanationState, ExposureResult, Grading, LessonProgress, Recorded, SaveResult, SubmitResult,
+  Aid, Block, Encounter, ExplanationState, ExposureResult, Grading, LastStudied, LessonProgress, Recorded, SaveResult, SubmitResult,
   type ExplainBlock,
 } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
@@ -27,6 +27,7 @@ const Submitted = z.object({ status: z.string(), correct: z.boolean().nullable()
 const Answer = z.object({ block_id: z.string(), choice_id: z.string(), correct: z.boolean() });
 const Explained = z.object({ submission_id: z.string(), block_id: z.string(), text: z.string(), at: time, grading: Grading.nullable() });
 const ExplanationRow = Explained.extend({ block: Block });
+const Studied = z.object({ course: z.string(), lesson: z.string(), at: time });
 
 /** `SELECT * FROM school.fn($1, ..., $n)`: the only statement shape this adapter issues. */
 const call = (fn: string, args: readonly unknown[]) =>
@@ -65,6 +66,12 @@ export function postgresRecord(sql: Sql): LearningRecord {
       }),
 
     lessonProgress: async (course) => LessonProgress.parse(await value("lesson_progress", course)),
+
+    lastStudied: async () => {
+      const r = await rows("last_studied");
+      if (r.length > 1) throw new Error(`school.last_studied returned ${r.length} rows, not at most one`);
+      return r.length === 0 ? null : LastStudied.parse(Studied.parse(r[0]));
+    },
 
     saveExplanation: async (s, now) =>
       SaveResult.parse({ status: await value("save_explanation", s.submissionId, s.encounterId, s.blockId, s.text, s.ms, now) }),

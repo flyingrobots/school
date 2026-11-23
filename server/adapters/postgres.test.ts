@@ -14,7 +14,7 @@ setDefaultTimeout(30_000); // PGlite starts a whole Postgres in process.
 
 /** The functions the port calls: every one granted to school_app. */
 const PORT_FUNCTIONS = [
-  "encounter_answers", "encounter_explanations", "explanation", "lesson_progress", "open_encounter",
+  "encounter_answers", "encounter_explanations", "explanation", "last_studied", "lesson_progress", "open_encounter",
   "record_exposure", "record_grading", "record_view", "save_explanation", "submission_aid", "submit",
 ];
 
@@ -78,6 +78,7 @@ test("every port method is one call of its function, as school_app", async () =>
   await r.submit({ submissionId: crypto.randomUUID(), encounterId: e.id, blockId: "q1", choiceId: "a", ms: 1 }, "2026-11-21T10:00:01.000Z");
   await r.encounterAnswers(e.id);
   await r.lessonProgress("c");
+  await r.lastStudied();
   const id = crypto.randomUUID();
   await r.saveExplanation({ submissionId: id, encounterId: e.id, blockId: "e1", text: "Because.", ms: 1 }, "2026-11-21T10:00:02.000Z");
   await r.recordGrading({ status: "failed", findings: null, error: "down", submissionId: id, rubricVersion: "r", promptVersion: "p",

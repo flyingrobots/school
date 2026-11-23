@@ -107,6 +107,10 @@ export type Recorded = z.infer<typeof Recorded>;
 export const LessonProgress = z.record(z.string(), z.array(z.string()));
 export type LessonProgress = z.infer<typeof LessonProgress>;
 
+/** Where the learner left off: the course and lesson of their latest activity, and its time. */
+export const LastStudied = z.object({ course: z.string(), lesson: z.string(), at: z.string() });
+export type LastStudied = z.infer<typeof LastStudied>;
+
 export const Verdict = z.enum(["meets", "partly", "misses"]);
 export const Criterion = z.object({ verdict: Verdict, note: z.string() });
 export const Contradiction = z.object({ source_id: z.string(), quote: z.string(), note: z.string() });

@@ -120,7 +120,7 @@ const words = (c: CourseJson) =>
 describe("a learner who has studied", () => {
   test("lists every course, in order, with its progress in words, matching the API", async () => {
     const expected = await api<CourseJson[]>(studied, "/api/courses")
-    expect(expected.map((c) => c.name)).toEqual(["aion", "bio", "empty", "broken"])
+    expect(expected.map((c) => c.name)).toEqual(["aion", "bio", "broken", "empty"]) // the server lists courses by name
     expect(expected[0]).toMatchObject({ quizzes: 5, answeredCorrectly: 2 })
     const p = await open()
     await courses(p).first().waitFor()
@@ -182,16 +182,16 @@ describe("a learner who has studied", () => {
       const all = [...document.querySelectorAll("[data-nav-region=main] [data-nav]")]
       return all.indexOf(document.activeElement as Element)
     })
-    for (const name of ["aion", "bio", "empty", "broken"]) {
+    for (const name of ["aion", "bio", "broken", "empty"]) {
       const target = hrefs.indexOf(`/courses/${name}`)
       expect(target).toBeGreaterThanOrEqual(0)
       for (let i = await at(); i < target; i++) await p.keyboard.press("j")
       expect(await p.evaluate(() => document.activeElement?.getAttribute("href"))).toBe(`/courses/${name}`)
     }
     await p.keyboard.press("k")
-    expect(await p.evaluate(() => document.activeElement?.getAttribute("href"))).toBe("/courses/empty")
+    expect(await p.evaluate(() => document.activeElement?.getAttribute("href"))).toBe("/courses/broken")
     await p.keyboard.press("Enter")
-    await p.waitForURL(base + "/courses/empty")
+    await p.waitForURL(base + "/courses/broken")
     await p.context().close()
   })
 
