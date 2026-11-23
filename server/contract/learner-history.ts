@@ -2,7 +2,7 @@
 // (flyingrobots/school#27). The contract suite proves each rule on its own; this replays them
 // together, and checks two things at every step: the facts as the port reports them, and what
 // the lesson page would show for them. It speaks only through the port, so every adapter that
-// registers it (SQLite and Postgres on PGlite today; real Postgres with flyingrobots/school#23)
+// registers it (SQLite, Postgres on PGlite, and a real Postgres through Bun.SQL in CI)
 // must tell the same story. An adapter that records no exposures (SQLite) tells it with every
 // aid unknown and every exposure refused, which is what the port requires of it; it never claims
 // "no recorded aid". The story grows as the record does.

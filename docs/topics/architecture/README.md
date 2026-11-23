@@ -76,7 +76,8 @@ JSON API.
 
 | Method | Path | Does |
 | --- | --- | --- |
-| GET | `/api/courses` | Lists installed courses with lesson and reference counts |
+| GET | `/api/courses` | Lists installed courses with lesson and reference counts, and each course's `quizzes` and `answeredCorrectly`; the counts are `null` for a course whose lessons cannot be read |
+| GET | `/api/resume` | What to study now, from where the learner left off: `continue`, `next`, `start`, `finished` or `nothing` ([the home page](../home-page/README.md)) |
 | GET | `/api/courses/:c` | One course: lessons with correct-quiz counts, reference documents |
 | GET | `/api/courses/:c/lessons/:id` | One lesson; `?view=web` opens or resumes an encounter, `?view=slides` records nothing. `?aid=1` declares that the client records every exposure it shows, so the encounter is opened with aid tracking 1; absent, it is untracked and its aid unknown. Any other `aid` value is refused (400) |
 | POST | `/api/answer` | Records a quiz answer |
@@ -111,7 +112,8 @@ writes against ordinary cross-site requests, and hands learning-record work to P
 ## The learning record
 
 The record is Postgres, built by the numbered migrations in `server/db/migrations/` (`0001_init.sql`,
-`0002_exposures.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
+`0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`) and reached only through the
+functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -143,6 +145,26 @@ The server runs on this record, so `POST /api/exposure` stores exposures. The SQ
 no longer used by the server, declares that it records none: it refuses them and reports every aid
 as unknown. The lesson page opens lessons with `?aid=1` and posts each exposure it shows (see
 [the lesson page](../lesson-page/README.md#the-help-it-records)).
+
+Decisions are notes that name their evidence (RFC 2 §3 and §5). Migration 0004 adds
+`decision_notes`: what School chose (a course, a lesson, or a block of a lesson), the rule that
+chose it as a stable id of the form `<selector>/<rule>` (for example `due-review/wrong-first-try`),
+a reason a person can read, optionally the encounter the choice was made for, and the rows it
+cites as `seq` values. `record_decision_note` stores a note once per note id and refuses one that
+cites a row that does not exist, a row that is not evidence (a snapshot, or another note), or
+evidence of another course than the choice's; an encounter it names must be of the choice's course
+and lesson and hold its block. The table checks that a note cites at least one row and that every
+cited `seq` is smaller than its own. Notes cite rows, never judgments, so a later regrading leaves
+a note pointing at the grading it named. `encounter_evidence` lists the rows of an encounter a
+note may cite; `choice_decision_notes` and `encounter_decision_notes` read notes back. Nothing
+writes notes yet: the due-review selector will ([flyingrobots/school#32](https://github.com/flyingrobots/school/issues/32)).
+The SQLite adapter keeps no notes, and the contract's note cases do not run on it.
+
+Where the learner left off is the port's `lastStudied()`: the course, lesson and time of the latest
+encounter opened, answer or explanation stored, or view recorded. On Postgres it is
+`school.last_studied()` from migration 0003, ordered by `seq`; on SQLite, a query ordered by `at`.
+The core's `resumeFrom` (`server/core/school.ts`) turns it and the courses as served into
+`GET /api/resume`.
 
 **Figure 2. The learning record's tables**
 
@@ -200,6 +222,19 @@ erDiagram
         text kind "hint, model-answer, feedback, reference"
         timestamptz at
     }
+    ENCOUNTERS |o--o{ DECISION_NOTES : "is chosen for"
+    DECISION_NOTES {
+        bigint seq PK
+        uuid note_id UK "caller UUID"
+        text course
+        text lesson "NULL for a course"
+        text block_id "NULL for a course or lesson"
+        uuid encounter_id FK "nullable"
+        text rule "selector/rule"
+        text reason
+        bigint_array evidence "cited seqs, each smaller than seq"
+        timestamptz at
+    }
 ```
 
 *Figure 2. The learning record's tables, in schema `school`. Every row takes its `seq` from one
@@ -214,6 +249,13 @@ web pages do not call it yet.*
 | A resent submission stores nothing | Unique `answers.submission_id`; `school.submit` answers `duplicate`, or `conflict` for a different answer under the same id | Nothing further |
 | `correct` and `first_try` come from the snapshot | `school.submit` derives them from the encounter's stored snapshot; the client's are ignored. A partial unique index allows one first try per block and encounter, even under concurrent answers | A direct `INSERT` by the owner |
 | An acknowledged answer survives the server's crash | The 200 is sent after the function's transaction commits; a test kills the server hard and reads the answer back | On PGlite, an operating-system crash or power cut: PGlite writes through to its folder but does not `fsync`, so the last commits may be lost. Real Postgres `fsync`s each commit. Nothing makes scheduled backups yet. |
+
+Every adapter of the record passes one contract suite (`server/contract/learning-record.ts`) and
+replays one learner's history (`server/contract/learner-history.ts`). Both run on PGlite in every
+test run, and in CI also on a real Postgres server through `Bun.SQL`, the driver the server uses;
+CI fails the build if any of the real-Postgres cases skipped or a PGlite case has no `Bun.SQL`
+counterpart (`server/testing/postgres-gate.ts`). Those runs are sequential: no test yet races two
+writers against real Postgres, so the concurrent cases in the table above rest on the SQL.
 
 An encounter resumes when the learner reopens the same lesson with the same snapshot, it is that
 lesson's latest encounter, its aid tracking is unchanged, and its **opening, latest answer or

@@ -2,7 +2,7 @@
 // built web app (web/dist). It renders no HTML of its own; the pages are the shadcn app in web/.
 import { join, normalize, sep } from "node:path";
 import { readdirSync, realpathSync, statSync } from "node:fs";
-import { lastValidLoader, quizIds, type Block } from "./blocks.ts";
+import { lastValidLoader, quizIds, quizzes, type Block } from "./blocks.ts";
 import { PROMPT_VERSION, RUBRIC_VERSION, bridgeConfig, callBridge } from "./grade.ts";
 import { openDatabase, redact } from "./adapters/database.ts";
 import { InUse } from "./adapters/lock.ts";
@@ -10,7 +10,7 @@ import { postgresRecord } from "./adapters/postgres.ts";
 import { legacyRefusal } from "./legacy.ts";
 import { AID_CAPTURE_VERSIONS, AidQuery, AidRequest, Exposure, ExplanationSubmission, GradeRequest, Submission, ViewEvent, type AidTracking } from "./core/model.ts";
 import type { Grader } from "./core/ports.ts";
-import { createSchool } from "./core/school.ts";
+import { createSchool, resumeFrom, type CourseOutline } from "./core/school.ts";
 import { bridgeClient, bridgeStatus, effectiveBridge, loadSettings, saveSettings, settingsFile, toBridge, validToken, validUrl } from "./settings.ts";
 import { ConfigError, course, courseNames, mountTable, parseConfig, type Course } from "./config.ts";
 import { allowedHosts, hostAllowed } from "./hosts.ts";
@@ -31,6 +31,8 @@ try {
   throw e;
 }
 const courses = courseNames(config);
+/** Every configured course, in the order the API lists them. */
+const served: Course[] = courses.map((name) => course(config, name)!);
 
 // RFC 3 §3.3: nothing migrates from SQLite. A progress.db holding learner work stops startup
 // here, before Postgres is opened, rather than leaving that history behind an empty record.
@@ -132,15 +134,6 @@ function lessons(c: Course) {
   return { library, error };
 }
 
-/** How many lessons a course serves, for the landing page. Never throws on a broken course. */
-function lessonCount(c: Course): number | null {
-  try {
-    return lessons(c).library?.pages.length ?? null;
-  } catch {
-    return null; // for example, a course with no lessons directory
-  }
-}
-
 const notFound = () => new Response("Not found", { status: 404 });
 
 /** `p` with every symlink resolved, or null if it does not exist. */
@@ -213,6 +206,43 @@ async function courseJson(c: Course): Promise<Response> {
       return { ...summary(p), quizzes: ids.size, answeredCorrectly: [...ids].filter((id) => done[p.id]?.includes(id)).length };
     }),
   });
+}
+
+/**
+ * A course as the home page needs it: each lesson's quizzes in document order, and the quizzes ever
+ * answered correctly in each. Null when the course's lessons cannot be read.
+ */
+async function outline(c: Course): Promise<CourseOutline | null> {
+  let pages: Block[];
+  try {
+    const { library } = lessons(c);
+    if (library === null) return null;
+    pages = library.pages;
+  } catch {
+    return null; // for example, a course with no lessons directory
+  }
+  return {
+    name: c.name,
+    progress: await school.lessonProgress(c.name),
+    lessons: pages.flatMap((p) => (p.type === "page" ? [{ id: p.id, title: p.title, subtitle: p.subtitle, quizzes: quizzes(p) }] : [])),
+  };
+}
+
+/** Every course for the home page: its lesson and reference counts, and its quizzes and how many are answered correctly. */
+async function coursesJson(): Promise<Response> {
+  return json(await Promise.all(served.map(async (c) => {
+    const o = await outline(c);
+    const quizCount = o === null ? null : o.lessons.reduce((n, l) => n + l.quizzes.length, 0);
+    const correct = o === null ? null : o.lessons.reduce((n, l) => n + l.quizzes.filter((q) => o.progress[l.id]?.includes(q.id)).length, 0);
+    return { name: c.name, lessons: o === null ? null : o.lessons.length, reference: referenceDocs(c).length, quizzes: quizCount, answeredCorrectly: correct };
+  })));
+}
+
+/** What to study now: where the learner left off and the next step from it (core/school.ts, resumeFrom). */
+async function resumeJson(): Promise<Response> {
+  const outlines = await Promise.all(served.map(outline));
+  const readable = outlines.filter((o): o is CourseOutline => o !== null);
+  return json(resumeFrom(await school.lastStudied(), readable), 200, { "cache-control": "no-store" });
 }
 
 /**
@@ -396,12 +426,8 @@ const http = Bun.serve({
       if (aid === null) return json({ status: "unknown submission" }, 404);
       return json({ submissionId: r.data.submissionId, aid }, 200, { "cache-control": "no-store" });
     }
-    if (pathname === "/api/courses") {
-      return json(courses.map((name) => {
-        const c = course(config, name)!;
-        return { name, lessons: lessonCount(c), reference: referenceDocs(c).length };
-      }));
-    }
+    if (pathname === "/api/courses") return coursesJson();
+    if (pathname === "/api/resume") return resumeJson();
     const api = /^\/api\/courses\/([a-z0-9][a-z0-9-]*)(?:\/lessons\/([\w-]+))?$/.exec(pathname);
     if (api !== null) {
       const c = course(config, api[1]!);

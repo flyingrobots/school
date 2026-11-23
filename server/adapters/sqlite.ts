@@ -12,6 +12,15 @@ import { encounterAnswers, lessonProgress, openEncounter, submit } from "../reco
 
 export function sqliteRecord(db: Database): LearningRecord {
   const insertView = db.prepare("INSERT INTO views (course, lesson, at) VALUES ($course, $lesson, $at)");
+  // Where the learner left off. SQLite rows carry no shared sequence, so "latest" is by `at`, the
+  // caller's clock, and then by table and row order for rows stored in the same millisecond.
+  const lastStudied = db.prepare<{ course: string; lesson: string; at: string }, []>(`
+    SELECT course, lesson, at FROM (
+      SELECT course, lesson, at, 0 AS k, rowid AS n FROM encounters
+      UNION ALL SELECT course, lesson, at, 1, id FROM answers WHERE course IS NOT NULL
+      UNION ALL SELECT course, lesson, at, 2, rowid FROM explanations
+      UNION ALL SELECT course, lesson, at, 3, id FROM views WHERE course IS NOT NULL
+    ) ORDER BY at DESC, k DESC, n DESC LIMIT 1`);
   const submissionExists = db.prepare<{ n: number }, { id: string }>(
     "SELECT (SELECT count(*) FROM answers WHERE submission_id = $id) + (SELECT count(*) FROM explanations WHERE submission_id = $id) AS n");
   return {
@@ -20,6 +29,7 @@ export function sqliteRecord(db: Database): LearningRecord {
     encounterAnswers: async (id) => encounterAnswers(db, id),
     lessonProgress: async (course) =>
       Object.fromEntries([...lessonProgress(db, course)].map(([lesson, ids]) => [lesson, [...ids].sort()])),
+    lastStudied: async () => lastStudied.get() ?? null,
     saveExplanation: async (s, now) => saveExplanation(db, s, now),
     explanation: async (id) => explanationState(db, id),
     recordGrading: async (g, now) => recordGrading(db, g, now),
@@ -28,5 +38,10 @@ export function sqliteRecord(db: Database): LearningRecord {
     recordsExposures: false,
     recordExposure: async () => ({ status: "unsupported" }),
     aid: async (id) => (submissionExists.get({ id })!.n > 0 ? "unknown" : null),
+    // Nor decision notes (flyingrobots/school#31): their cases run only on a record that stores exposures.
+    encounterEvidence: async () => { throw new Error("the SQLite record keeps no decision notes"); },
+    recordDecisionNote: async () => { throw new Error("the SQLite record keeps no decision notes"); },
+    decisionNotes: async () => { throw new Error("the SQLite record keeps no decision notes"); },
+    encounterDecisionNotes: async () => { throw new Error("the SQLite record keeps no decision notes"); },
   };
 }
