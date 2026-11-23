@@ -29,15 +29,17 @@ whole number.
 - **Format.** Each dump is `pg_dump --format=custom` of database `school`, saved as
   `/backups/school-<UTC time>.dump`, for example `school-20261123T041319Z.dump`, in the named
   volume `backups`.
-- **Atomicity.** `pg_dump` writes to a hidden `.partial` file, which is renamed only once it
-  succeeds. A dump that fails leaves no file, deletes nothing, and is tried again five minutes later.
+- **Atomicity.** `pg_dump` writes to a hidden `.partial` file of its own (made by `mktemp`, so
+  two runs never share one). Only once `pg_dump` succeeds is the file put in place under its name,
+  and only if no dump has that name yet: a dump never overwrites another. A dump that fails at
+  either point leaves no file, deletes nothing, and is tried again five minutes later.
 - **Retention.** Only files named `school-<UTC time>.dump` are counted and pruned. A copy saved
   under any other name in the volume is never touched.
 - **File modes.** The folder is `0700` and every dump `0600`, owned by root in the container.
 - **Secrets.** The password comes from `SCHOOL_POSTGRES_PASSWORD` in the environment, as it does
   for the database. Nothing the service prints contains it.
 - **Output.** Every line is one JSON object with `"kind":"backup"` and an `event`: `started`,
-  `dumped` (with `file` and `bytes`), `pruned`, `waiting`, `failed` (with pg_dump's `message`),
+  `dumped` (with `file` and `bytes`), `pruned`, `waiting`, `failed` (with the `file` it would have made and a `message`),
   `error` or `stopped`.
 
 > [!WARNING]
@@ -109,10 +111,13 @@ schedule you will keep.
    digest of its rows, so two databases holding the same record print the same lines:
 
    ```sh
-   docker compose exec -T backup psql --dbname=school --tuples-only --no-align < backup/verify.sql > /tmp/school.verify
-   docker compose exec -T backup psql --dbname=school_restore --tuples-only --no-align < backup/verify.sql > /tmp/school_restore.verify
-   diff /tmp/school.verify /tmp/school_restore.verify && echo identical
+   docker compose exec -T backup psql --set=ON_ERROR_STOP=1 --dbname=school --tuples-only --no-align < backup/verify.sql > /tmp/school.verify &&
+     docker compose exec -T backup psql --set=ON_ERROR_STOP=1 --dbname=school_restore --tuples-only --no-align < backup/verify.sql > /tmp/school_restore.verify &&
+     diff /tmp/school.verify /tmp/school_restore.verify && echo identical
    ```
+
+   The `&&` matters: `diff` runs only if both queries succeeded, so two failed queries, which
+   leave two empty files, cannot print `identical`. Anything else printed means the check failed.
 
 5. End the drill, either by dropping the copy and starting the server again:
 
@@ -121,7 +126,8 @@ schedule you will keep.
    docker compose start school
    ```
 
-   or by switching to it (step 5), which proves the switch as well.
+   or by switching to it, which proves the switch as well: do step 5.1, skip step 5.2, since
+   `school_restore` is already restored and checked, and go on from step 5.3.
 
 ## 5. Restore over the live database
 
@@ -135,8 +141,15 @@ Choose the newest dump from before the damage (step 1), then:
    docker compose stop school backup
    ```
 
-2. Restore the dump into `school_restore` (step 4.3), and check that `verify.sql` lists every table
-   with plausible counts (step 4.4, against `school_restore` only).
+2. Restore the dump into a new database, `school_restore`, and check that `verify.sql` lists every
+   table with plausible counts. The backup service is stopped, so these use one-off containers of
+   it (`docker compose run`), which have its volume and connection settings but not its schedule:
+
+   ```sh
+   docker compose run --rm --entrypoint createdb backup school_restore
+   docker compose run --rm --entrypoint pg_restore backup --exit-on-error --single-transaction --dbname=school_restore /backups/<file>
+   docker compose run --rm -T --entrypoint psql backup --set=ON_ERROR_STOP=1 --dbname=school_restore --tuples-only --no-align < backup/verify.sql
+   ```
 
 3. Switch: keep the damaged database under another name, and give the restored one the live name.
 
@@ -186,7 +199,7 @@ database, so a dump does not hold them: create them before restoring.
    docker compose exec postgres psql --username=postgres --dbname=school \
      --command='CREATE ROLE school_owner NOLOGIN' --command='CREATE ROLE school_app NOLOGIN'
    docker compose run --rm --entrypoint pg_restore backup --exit-on-error --single-transaction --dbname=school /backups/<file>
-   docker compose run --rm -T --entrypoint psql backup --tuples-only --no-align < backup/verify.sql
+   docker compose run --rm -T --entrypoint psql backup --set=ON_ERROR_STOP=1 --tuples-only --no-align < backup/verify.sql
    ```
 
    If the `backups` volume is gone too but you kept a copy (step 3), put it back first:
