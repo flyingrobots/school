@@ -24,7 +24,10 @@ The address and the token School uses to reach the bridge.
   says so; after saving, an alert says the saved token was cleared and must be entered again.
 - **Locked fields say why.** A field set in the server's environment (`SCHOOL_BRIDGE_URL`,
   `SCHOOL_BRIDGE_TOKEN`) is disabled and names its variable. With `SCHOOL_BRIDGE_TOKEN` there, the
-  address is locked too, since it can only be changed beside the token.
+  address is locked too, since it can only be changed beside the token. A token from the
+  environment (or mounted as `SCHOOL_BRIDGE_TOKEN_FILE`, as under `./school up`) is sent only to
+  a `SCHOOL_BRIDGE_URL` from the environment, never to an address saved on this page: with only a
+  saved address, the status is `none` and its message says to set `SCHOOL_BRIDGE_URL`.
 - A refused save (a bad address, a short token) shows the server's reason under the fields.
 
 ## Connection and agents

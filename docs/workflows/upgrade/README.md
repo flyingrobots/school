@@ -105,14 +105,16 @@ password is in neither, step 4 asks for it at the terminal: type the password th
 created with. Pressing Enter there generates a new one, which a database that already exists will
 refuse; see the table below.
 
-If you started the bridge with `SCHOOL_BRIDGE_TOKEN` in its environment, start it with plain
-`bun bridge/bridge.ts` from now on: it reads the token from the Keychain.
-
 ## 4. Start it
 
 ```sh
 ./school up
 ```
+
+If you started the bridge with `SCHOOL_BRIDGE_TOKEN` in its environment, restart it now with plain
+`bun bridge/bridge.ts`, and from now on start it that way: it reads the token from the Keychain.
+Not before this step: `./school import` moves only what `server/.env` held, so until `./school up`
+has generated and stored the token, the Keychain may hold none, and the bridge refuses to start.
 
 It always rebuilds `migrate` and `school` (`--build`), so it also covers a `compose.yaml` that
 predates `pull_policy: build`. Plain `docker compose up` no longer works: compose stops with
@@ -160,9 +162,53 @@ that applies migrations also prints an `applied` line for each as it commits. Ev
 | `No such image: <project>-migrate:latest` | `up` ran with `--no-build`, so nothing was built | Run `./school up` |
 | `school` is not listed, or is `Created` but never started | `migrate` did not exit 0 | See the `migrate` rows above |
 
-To go back, restore the dump from step 1 with
-[back up and restore](../backup-and-restore/README.md), "Restore over the live database", after
-checking out the previous version.
+## Going back
+
+To go back, check out the previous version and restore the dump from step 1. The previous
+version's `server/compose.yaml` reads `SCHOOL_POSTGRES_PASSWORD` and `SCHOOL_APP_PASSWORD` (and
+`SCHOOL_BRIDGE_TOKEN`, if grading is to work) from `server/.env` or from the shell's environment,
+and step 3 removed them from `server/.env`. Put them back in the environment of the shell that
+runs the previous version's compose commands, read from the Keychain, rather than in a file.
+Compose reads the shell's environment as well as `server/.env`, and prefers it.
+
+1. Stop this version, then check out the previous one (`<previous version>` is the tag or commit
+   you upgraded from):
+
+   ```sh
+   ./school down
+   git checkout <previous version>
+   ```
+
+2. In the shell you will run the restore from, read the secrets from the Keychain (account
+   `school`, or your `SCHOOL_KEYCHAIN_ACCOUNT`). Nothing is printed, and nothing is written to disk:
+
+   ```sh
+   cd server
+   export SCHOOL_POSTGRES_PASSWORD="$(security find-generic-password -a school -s SCHOOL_POSTGRES_PASSWORD -w)"
+   export SCHOOL_APP_PASSWORD="$(security find-generic-password -a school -s SCHOOL_APP_PASSWORD -w)"
+   export SCHOOL_BRIDGE_TOKEN="$(security find-generic-password -a school -s SCHOOL_BRIDGE_TOKEN -w)"
+   ```
+
+3. In that same shell, follow the previous version's own
+   [back up and restore](../backup-and-restore/README.md), "Restore over the live database", as
+   that checkout gives it, with plain `docker compose`. The previous version predates the
+   launcher, so its commands read the passwords from this environment.
+
+4. Once School is serving the restored record, clear the secrets from the shell, or close it:
+
+   ```sh
+   unset SCHOOL_POSTGRES_PASSWORD SCHOOL_APP_PASSWORD SCHOOL_BRIDGE_TOKEN
+   ```
+
+   Containers the previous version started keep their own copy of the passwords. A later
+   `docker compose up` for that version needs step 2 again in a new shell. The previous version's
+   bridge reads its token only from the environment, so start it from a shell that has run step 2.
+
+If you would rather put the secrets back in `server/.env` for the previous version, do it with
+`chmod 600 server/.env`, and remove those lines again (`./school import` does it) before upgrading
+again. The environment is the safer place: a file outlives the shell, and backups copy it.
+
+This was not drilled.
 
 ## What the drills printed
 

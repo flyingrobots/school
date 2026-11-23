@@ -136,6 +136,11 @@ item `./school up` stored, under the same account. Its `bridge.listening` line s
 `tokenFrom`. With neither, it refuses to start (exit 2), naming both places. Run `bun install` in
 `host/` before starting it.
 
+The server sends its mounted token only to a `SCHOOL_BRIDGE_URL` from its environment, never to an
+address saved on the Settings page, which anyone who could reach School might have saved before
+the token was mounted. Under `./school up`, set `SCHOOL_BRIDGE_URL` in `server/.env`; without it
+the Settings status is `none` and says so, and explanations are saved but not graded.
+
 ## What this does not cover
 
 - A token saved through the Settings page still goes into `settings.json` in the state directory

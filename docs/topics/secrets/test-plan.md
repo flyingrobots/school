@@ -7,7 +7,7 @@ states its case and oracle.
 
 ## The launcher, `./school`
 
-`host/launcher.test.ts`, with a fake vault and a fake compose; SEC-L22 is `host/prompt.test.ts`, with a fake terminal.
+`host/launcher.test.ts`, with a fake vault and a fake compose; SEC-L22 is `host/prompt.test.ts`, with a fake terminal, and SEC-L27 `host/lock.test.ts`, with a real lock directory.
 
 | ID | Case and oracle | Status | Test |
 | --- | --- | --- | --- |
@@ -33,6 +33,11 @@ states its case and oracle.
 | SEC-L20 | A `KEY: value` line in server/.env, which compose also reads, is a leak to `school up` and is moved by `school import` | implemented | `host/launcher.test.ts`: `SEC-L20: a `KEY: value` line in server/.env, which compose also reads, is a leak to `school up` and is moved by `school import`` |
 | SEC-L21 | `school import` refuses a value compose would interpolate (a `$` unquoted or in double quotes), changing nothing; a single-quoted one is literal | implemented | `host/launcher.test.ts`: `SEC-L21: `school import` refuses a value compose would interpolate (a `$` unquoted or in double quotes), changing nothing; a single-quoted one is literal` |
 | SEC-L22 | The prompt reads a line unechoed, restores the terminal, and writes nothing to stderr, not even a newline | implemented | `host/prompt.test.ts`: `SEC-L22: the prompt reads a line unechoed, restores the terminal, and writes nothing to stderr, not even a newline` |
+| SEC-L23 | A quoted value whose quote does not close on its line (unclosed, or spanning lines) is refused; the Keychain and server/.env are unchanged | implemented | `host/launcher.test.ts`: `SEC-L23: a quoted value whose quote does not close on its line (unclosed, or spanning lines) is refused; the Keychain and server/.env are unchanged` |
+| SEC-L24 | `school up` resolves and stores under the account's lock, released before compose starts and on a refusal too | implemented | `host/launcher.test.ts`: `SEC-L24: `school up` resolves and stores under the account's lock, released before compose starts and on a refusal too` |
+| SEC-L25 | Two overlapping first runs leave one superuser password, the one both start compose with | implemented | `host/launcher.test.ts`: `SEC-L25: two overlapping first runs leave one superuser password, the one both start compose with` |
+| SEC-L26 | A generated or prompted secret never replaces an item that appeared since it was read; the run uses that item | implemented | `host/launcher.test.ts`: `SEC-L26: a generated or prompted secret never replaces an item that appeared since it was read; the run uses that item` |
+| SEC-L27 | The lock is exclusive, waits for its holder, takes over a dead holder's lock, and gives up on a live one naming its pid | implemented | `host/lock.test.ts`: `SEC-L27: the lock is exclusive, waits for its holder, takes over a dead holder's lock, and gives up on a live one naming its pid` |
 
 ## The Keychain adapter and the shared rule
 
@@ -49,6 +54,8 @@ states its case and oracle.
 | SEC-K7 | ResolveSecret takes the environment first, then the store, and says which; an empty variable counts as unset | implemented | `host/keychain.test.ts`: `SEC-K7: resolveSecret takes the environment first, then the store, and says which; an empty variable counts as unset` |
 | SEC-K8 | A read returns nothing only for a missing item (exit 44); any other failure is an error, so no caller takes a locked Keychain for an empty one | implemented | `host/keychain.test.ts`: `SEC-K8: a read returns nothing only for a missing item (exit 44); any other failure is an error, so no caller takes a locked Keychain for an empty one` |
 | SEC-K9 | Storing updates the item in place: no delete runs first, so a failed store leaves the old secret where it was | implemented | `host/keychain.test.ts`: `SEC-K9: storing updates the item in place: no delete runs first, so a failed store leaves the old secret where it was` |
+| SEC-K10 | A `security` that cannot be run at all is a failed read, not a missing item; an absent `secret-tool` on Linux still reads as missing | implemented | `host/keychain.test.ts`: `SEC-K10: a `security` that cannot be run at all is a failed read, not a missing item; an absent `secret-tool` on Linux still reads as missing` |
+| SEC-K11 | Create stores only when no item is there: no `-U`, so an existing item is kept and reported, never replaced | implemented | `host/keychain.test.ts`: `SEC-K11: create stores only when no item is there: no `-U`, so an existing item is kept and reported, never replaced` |
 
 ## Compose
 
@@ -87,11 +94,13 @@ states its case and oracle.
 
 ## The server
 
-`server/adapters/app-login.test.ts`, on the real Postgres.
+`server/adapters/app-login.test.ts`, on the real Postgres; SEC-S2 and SEC-S3 are `server/settings.test.ts`, the second with a real server and a listener standing in for a saved address.
 
 | ID | Case and oracle | Status | Test |
 | --- | --- | --- | --- |
 | SEC-S1 | The server process starts on school_app's URL with its password from SCHOOL_DATABASE_PASSWORD_FILE, and prints no password | implemented | `server/adapters/app-login.test.ts`: `SEC-S1: the server process starts on school_app's URL with its password from SCHOOL_DATABASE_PASSWORD_FILE, and prints no password` |
+| SEC-S2 | A token from the environment is paired only with a URL from the environment, never with a saved one | implemented | `server/settings.test.ts`: `SEC-S2: a token from the environment is paired only with a URL from the environment, never with a saved one` |
+| SEC-S3 | A mounted token never reaches a URL saved in settings.json; the status names SCHOOL_BRIDGE_URL as the fix | implemented | `server/settings.test.ts`: `SEC-S3: a mounted token never reaches a URL saved in settings.json; the status names SCHOOL_BRIDGE_URL as the fix` |
 
 ## The backup script
 
