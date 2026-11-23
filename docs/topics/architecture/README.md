@@ -78,11 +78,12 @@ JSON API.
 | --- | --- | --- |
 | GET | `/api/courses` | Lists installed courses with lesson and reference counts |
 | GET | `/api/courses/:c` | One course: lessons with correct-quiz counts, reference documents |
-| GET | `/api/courses/:c/lessons/:id` | One lesson; `?view=web` opens or resumes an encounter, `?view=slides` records nothing |
+| GET | `/api/courses/:c/lessons/:id` | One lesson; `?view=web` opens or resumes an encounter, `?view=slides` records nothing. `?aid=1` declares that the client records every exposure it shows, so the encounter is opened with aid tracking 1; absent, it is untracked and its aid unknown. Any other `aid` value is refused (400) |
 | POST | `/api/answer` | Records a quiz answer |
 | POST | `/api/explanation` | Saves an explanation, before any grading |
 | POST | `/api/grade` | One grading attempt through the bridge |
 | POST | `/api/view` | Records a view |
+| POST | `/api/exposure` | Records help shown for a block: `{ exposureId, encounterId, blockId, kind }`, kind `hint`, `model-answer`, `feedback` or `reference`. A stored or resent id answers 200 (`stored`, `duplicate`); the id naming something else is a conflict (409); no such encounter, an untracked one, or a block that is not a quiz or explain block in its snapshot is rejected (400). An adapter that records no exposures (SQLite, no longer used by the server) answers unsupported (501) |
 | GET | `/api/settings/status` | Whether the bridge answers |
 | GET, POST | `/api/settings/bridge` | The bridge address and token; the token is never returned except once when generated. A new address clears a saved token, and is refused (409) while the token comes from the environment |
 | GET, POST | `/api/settings/agents` | The bridge's agents as its file declares them; a POST only reorders them and switches them on or off |
@@ -108,8 +109,8 @@ writes against ordinary cross-site requests, and hands learning-record work to P
 
 ## The learning record
 
-The record is Postgres, built by the numbered migrations in `server/db/migrations/` (today one,
-`0001_init.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
+The record is Postgres, built by the numbered migrations in `server/db/migrations/` (`0001_init.sql`,
+`0002_exposures.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -128,6 +129,15 @@ learner runs School with no database server. `postgres://` is a real Postgres se
 Both drivers log in as the superuser and then take `school_app`'s role. A statement that resets
 the role would get the superuser back, which is why step 4 exists. That is a guard rail, not
 tamper-proofing: the server holds the superuser URL anyway, because it runs the migrations.
+
+Only the Postgres record observes aid (RFC 2 §3). Migration 0002 records exposures through
+`record_exposure`, idempotent by the client's exposure id, and derives each answer's and
+explanation's aid in `submission_aid`: **unknown** when the encounter's `aid_tracking` is NULL,
+**aided** when an exposure to the same block in the same encounter has a smaller `seq`, and
+**no recorded aid** otherwise. Aid is never stored, and `seq`, not `at`, decides before and after.
+The server runs on this record, so `POST /api/exposure` stores exposures. The SQLite adapter,
+no longer used by the server, declares that it records none: it refuses them and reports every aid
+as unknown.
 
 **Figure 2. The learning record's tables**
 
@@ -179,6 +189,7 @@ erDiagram
     }
     EXPOSURES {
         bigint seq PK
+        uuid exposure_id UK "client UUID"
         uuid encounter_id FK
         text block_id
         text kind "hint, model-answer, feedback, reference"
@@ -188,7 +199,8 @@ erDiagram
 
 *Figure 2. The learning record's tables, in schema `school`. Every row takes its `seq` from one
 shared sequence, so "before" and "after" across tables compare `seq`, never `at`. `VIEWS` is
-omitted; it records page views only. Nothing writes `EXPOSURES` yet.*
+omitted; it records page views only. `EXPOSURES` is written only by `POST /api/exposure`, and the
+web pages do not call it yet.*
 
 | Rule | How it is enforced | What it does not cover |
 | --- | --- | --- |
@@ -223,13 +235,14 @@ The SQLite record (`server/record.ts`, `server/explain.ts`, `server/adapters/sql
 `server/migrate.ts`) is still in the repository but the server no longer uses it; it goes with
 [flyingrobots/school#49](https://github.com/flyingrobots/school/issues/49).
 
-The record does **not** yet capture assistance. RFC 1 requires that a submission made after a hint
-or a model-answer reveal is recorded as aided[^rfc1]; no table records reveals today, so the record
-cannot distinguish an explanation written after seeing the model answer from an unaided one.
+The record can observe assistance, but nothing in the web app reports it yet. RFC 1 requires that a
+submission made after a hint or a model-answer reveal is recorded as aided[^rfc1]. The API records
+exposures and derives aid for tracked encounters, but the pages open every encounter untracked and
+post no exposure (flyingrobots/school#51), so in practice every learner's aid is unknown today.
 
 In short: the record derives correctness and first try from what was shown, refuses every update,
 delete and truncate, and lets the server do nothing but call its functions. Its guarantees stop at
-the owner and the superuser, and it does not yet record assistance.
+the owner and the superuser, and the web app does not yet report assistance to it.
 
 ## The bridge
 

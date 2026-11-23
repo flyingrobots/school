@@ -15,7 +15,7 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 test("pglite: migrates on first open, applies nothing on the next, and keeps what was recorded", async () => {
   const dir = join(root, "a", "record"); // parents are created
   const first = await openDatabase({ driver: "pglite", dir });
-  expect(first.applied).toEqual([1]);
+  expect(first.applied).toEqual([1, 2]);
   await postgresRecord(first.sql).recordView({ course: "c", lesson: "l1" }, "2026-11-22T10:00:00.000Z");
   await first.close();
   const second = await openDatabase({ driver: "pglite", dir });

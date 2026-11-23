@@ -12,7 +12,7 @@
 // end as the model's ISO form, 2026-11-21T10:00:00.000Z.
 import { z } from "zod";
 import {
-  Block, Encounter, ExplanationState, Grading, LessonProgress, Recorded, SaveResult, SubmitResult,
+  Aid, Block, Encounter, ExplanationState, ExposureResult, Grading, LessonProgress, Recorded, SaveResult, SubmitResult,
   type ExplainBlock,
 } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
@@ -47,14 +47,9 @@ export function postgresRecord(sql: Sql): LearningRecord {
   });
 
   return {
-    openEncounter: async (o) => {
-      // Not tracked: the port does not say which aid capture is in force, and nothing records
-      // exposures yet (flyingrobots/school#29, #51). NULL means aid was not observed, so no
-      // learner's aided work can ever be read as "no recorded aid"; a version would claim it was.
-      const aidTracking = null;
-      const e = Opened.parse(await one("open_encounter", o.course, o.lesson, canonical(o.page), o.now, aidTracking));
-      return Encounter.parse(e);
-    },
+    // aid_tracking is the caller's: the capture version its client declared, or NULL (not observed).
+    openEncounter: async (o) =>
+      Encounter.parse(Opened.parse(await one("open_encounter", o.course, o.lesson, canonical(o.page), o.now, o.aidTracking))),
 
     submit: async (s, now) => {
       const r = Submitted.parse(await one("submit", s.submissionId, s.encounterId, s.blockId, s.choiceId, s.ms, now));
@@ -94,5 +89,17 @@ export function postgresRecord(sql: Sql): LearningRecord {
       (await rows("encounter_explanations", encounterId)).map((row) => state(Explained.parse(row))),
 
     recordView: async (v, now) => void await one("record_view", v.course, v.lesson, now),
+
+    recordsExposures: true,
+
+    recordExposure: async (e, now) =>
+      ExposureResult.parse({ status: await value("record_exposure", e.exposureId, e.encounterId, e.blockId, e.kind, now) }),
+
+    aid: async (submissionId) => {
+      const r = await rows("submission_aid", submissionId);
+      if (r.length === 0) return null;
+      if (r.length > 1) throw new Error(`school.submission_aid returned ${r.length} rows: an answer and an explanation share submission ${submissionId}`);
+      return Aid.parse(r[0]!.aid);
+    },
   };
 }

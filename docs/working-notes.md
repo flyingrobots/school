@@ -45,8 +45,14 @@ Practical notes for anyone — human or agent — changing the framework.
   fails loudly. It talks to a driver through the `Sql` port (`server/adapters/sql.ts`): PGlite
   (`server/adapters/pglite.ts`; PGlite is a production dependency) or `Bun.SQL`
   (`server/adapters/bunsql.ts`). Pass jsonb arguments as values, not `JSON.stringify` text:
-  `Bun.SQL` sends a string to a jsonb parameter as a JSON string. It opens every encounter with
-  `aid_tracking` NULL (aid not observed) until exposures are recorded (flyingrobots/school#29, #51).
+  `Bun.SQL` sends a string to a jsonb parameter as a JSON string. It opens an encounter with the
+  `aid_tracking` its caller passes: the lesson API's `?aid=` capture version, or NULL (aid not
+  observed) when the client sends none. A client may send `?aid=1` only if it records, through
+  `POST /api/exposure`, every exposure it shows; the pages do not yet (flyingrobots/school#51).
+- `LearningRecord.recordsExposures` says whether an adapter stores exposures. The contract's aid
+  cases run only for one that does; one that does not must refuse every exposure as `unsupported`
+  and report every aid as unknown. SQLite does not, and is not getting them (flyingrobots/school#49).
+  The server runs on Postgres, which does, so `POST /api/exposure` records them.
 - `SCHOOL_DATABASE_URL` picks the record: `postgres://...` is `Bun.SQL`, `pglite:<dir>` is PGlite on
   disk, and unset it is `pglite:<SCHOOL_STATE>/db`. Startup refuses a SQLite `DB_PATH`
   (`<SCHOOL_STATE>/progress.db`) holding any answer, explanation or view, before opening Postgres

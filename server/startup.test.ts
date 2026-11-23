@@ -82,7 +82,7 @@ async function legacy(path: string, work: (r: ReturnType<typeof sqliteRecord>, e
   try {
     migrateSqlite(db);
     const r = sqliteRecord(db);
-    const e = await r.openEncounter({ course: "c", lesson: "l1", page, now: NOW });
+    const e = await r.openEncounter({ course: "c", lesson: "l1", page, now: NOW, aidTracking: null });
     await work(r, e.id);
   } finally {
     db.close();

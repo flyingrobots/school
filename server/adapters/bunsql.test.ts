@@ -57,12 +57,12 @@ afterAll(async () => {
 }, SLOW);
 
 describe.skipIf(URL_ === undefined || URL_ === "")("Bun.SQL on a real Postgres (SCHOOL_TEST_POSTGRES_URL)", () => {
-  learningRecordContract("postgres (Bun.SQL)", async () => postgresRecord((await fresh()).sql));
+  learningRecordContract("postgres (Bun.SQL)", async () => postgresRecord((await fresh()).sql), { recordsExposures: true });
 
   test("opening migrates on first start and applies nothing on the next", async () => {
     const url = await database();
     const first = await openDatabase({ driver: "postgres", url });
-    expect(first.applied).toEqual([1]);
+    expect(first.applied).toEqual([1, 2]);
     await first.close();
     const second = await openDatabase({ driver: "postgres", url });
     expect(second.applied).toEqual([]);
@@ -72,7 +72,7 @@ describe.skipIf(URL_ === undefined || URL_ === "")("Bun.SQL on a real Postgres (
   test("two servers starting at once on one database migrate it once", async () => {
     const url = await database();
     const both = await Promise.all([openDatabase({ driver: "postgres", url }), openDatabase({ driver: "postgres", url })]);
-    expect(both.map((o) => o.applied).sort()).toEqual([[], [1]]);
+    expect(both.map((o) => o.applied).sort()).toEqual([[], [1, 2]]);
     for (const o of both) await o.close();
   }, SLOW);
 
