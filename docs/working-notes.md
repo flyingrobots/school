@@ -35,6 +35,11 @@ Practical notes for anyone — human or agent — changing the framework.
 - The server is a hexagon (RFC 3, §4): `server/core/` holds the model (Zod), the ports and the use
   cases, and imports nothing but itself and Zod (`server/core/boundary.test.ts`). Adapters live in
   `server/adapters/`; every `LearningRecord` adapter must pass `server/contract/learning-record.ts`.
+- The Postgres adapter (`server/adapters/postgres.ts`) issues only `SELECT * FROM school.<function>($1, ...)`
+  as `school_app`; its test refuses any other statement. It talks to a driver through the `Sql` port
+  (`server/adapters/sql.ts`); the PGlite driver is a test helper in `server/testing/pglite.ts`, since
+  PGlite is a dev dependency and `testing/` is not shipped. It opens every encounter with
+  `aid_tracking` NULL (aid not observed) until exposures are recorded (flyingrobots/school#29, #51).
 - Typecheck the server with `bunx tsc -p server` after `bun install` in `server/`.
   A server file that is not TypeScript still needs adding explicitly.
 - `server/compose.yaml` names no course. Its paths come from a gitignored `server/.env`; copy

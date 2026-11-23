@@ -113,8 +113,10 @@ SQL so that server code does not have to be trusted to keep them[^adr9]. This se
 those rules guarantee, and what they do not.
 
 The Postgres record that replaces it (RFC 3) exists as migrations in `server/db/migrations/`, run by
-`server/db/migrate.ts` and tested on PGlite. The server does not use it yet; see
-[working notes](../../working-notes.md) for how migrations are run.
+`server/db/migrate.ts` and tested on PGlite. `server/adapters/postgres.ts` implements the
+`LearningRecord` port by calling only those migrations' functions, through the `Sql` port in
+`server/adapters/sql.ts`, and passes the same contract suite as SQLite on PGlite. The server does
+not use it yet; see [working notes](../../working-notes.md) for how migrations are run.
 
 **Figure 2. The learning record's tables**
 
