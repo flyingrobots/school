@@ -148,7 +148,7 @@ export type Exposure = { exposureId: string; encounterId: string; blockId: strin
 
 /**
  * Records that the page showed help for a block. Resolves once School has an answer that a resend
- * would not change: stored or a duplicate; 501, School on SQLite, which records no exposures, so
+ * would not change: stored or a duplicate; 501, from a record that stores no exposures (not the server on Postgres), so
  * the encounter is not tracked; or a refusal (400, 409), which the same body would get again.
  * Rejects when School could not be reached or failed otherwise, so the caller can resend it.
  */

@@ -99,3 +99,42 @@ test("on Postgres an exposure is rejected, and nothing stored, in an untracked e
   server = await startSchool(env);
   base = server.url;
 }, timeout(2));
+
+// GET /api/aid/:submissionId reads a submission's derived aid through the core use case
+// (`submissionAid`, RFC 2 §3). RFC 2 Figure 4 over HTTP: submit, reveal, revise.
+const explain = (encounterId: string, text: string) => {
+  const submissionId = crypto.randomUUID();
+  return fetch(`${base}/api/explanation`, { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ submissionId, encounterId, blockId: "e1", text, ms: 1000 }) }).then((r) => {
+    expect(r.status).toBe(200);
+    return submissionId;
+  });
+};
+const aid = (id: string) => fetch(`${base}/api/aid/${id}`);
+
+test("GET /api/aid: Figure 4 over HTTP: the first explanation has no recorded aid, the revision after the model answer is aided", async () => {
+  const { encounterId } = await (await lesson("?aid=1")).json();
+  const a = await explain(encounterId, "Because it is.");
+  expect((await expose({ exposureId: crypto.randomUUID(), encounterId, blockId: "e1", kind: "model-answer" })).status).toBe(200);
+  const b = await explain(encounterId, "Because, as the model says.");
+  const ra = await aid(a);
+  expect(ra.status).toBe(200);
+  expect(await ra.json()).toEqual({ submissionId: a, aid: "no-recorded-aid" });
+  expect(await (await aid(b)).json()).toEqual({ submissionId: b, aid: "aided" });
+  // Upper-case ids name the same submission, as everywhere else in the API.
+  expect(await (await aid(b.toUpperCase())).json()).toEqual({ submissionId: b, aid: "aided" });
+});
+
+test("GET /api/aid: unknown in an untracked encounter; 404 for no such submission; 400 for an id that is not a UUID", async () => {
+  const { encounterId } = await (await lesson()).json();
+  const x = await explain(encounterId, "Because it is.");
+  expect(await (await aid(x)).json()).toEqual({ submissionId: x, aid: "unknown" });
+  const none = await aid(crypto.randomUUID());
+  expect(none.status).toBe(404);
+  expect(await none.json()).toEqual({ status: "unknown submission" });
+  for (const bad of ["not-a-uuid", "1", `${crypto.randomUUID()}x`]) {
+    const r = await aid(bad);
+    expect(`${bad}: ${r.status}`).toBe(`${bad}: 400`);
+    expect(await r.json()).toEqual({ status: "invalid" });
+  }
+});

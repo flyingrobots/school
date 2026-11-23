@@ -8,7 +8,7 @@ import { openDatabase, redact } from "./adapters/database.ts";
 import { InUse } from "./adapters/lock.ts";
 import { postgresRecord } from "./adapters/postgres.ts";
 import { legacyRefusal } from "./legacy.ts";
-import { AID_CAPTURE_VERSIONS, AidQuery, Exposure, ExplanationSubmission, GradeRequest, Submission, ViewEvent, type AidTracking } from "./core/model.ts";
+import { AID_CAPTURE_VERSIONS, AidQuery, AidRequest, Exposure, ExplanationSubmission, GradeRequest, Submission, ViewEvent, type AidTracking } from "./core/model.ts";
 import type { Grader } from "./core/ports.ts";
 import { createSchool } from "./core/school.ts";
 import { bridgeClient, bridgeStatus, effectiveBridge, loadSettings, saveSettings, settingsFile, toBridge, validToken, validUrl } from "./settings.ts";
@@ -386,6 +386,15 @@ const http = Bun.serve({
     if (pathname === "/api/settings/agents") {
       const r = await toBridge(currentBridge(), "GET", "/config");
       return json(r.body, r.status);
+    }
+    // A submission's aid, derived by the record's order (RFC 2 §3): what a reader of the record sees.
+    const aidPath = /^\/api\/aid\/([^/]+)$/.exec(pathname);
+    if (aidPath !== null) {
+      const r = AidRequest.safeParse({ submissionId: aidPath[1] });
+      if (!r.success) return json({ status: "invalid" }, 400);
+      const aid = await school.submissionAid(r.data.submissionId);
+      if (aid === null) return json({ status: "unknown submission" }, 404);
+      return json({ submissionId: r.data.submissionId, aid }, 200, { "cache-control": "no-store" });
     }
     if (pathname === "/api/courses") {
       return json(courses.map((name) => {

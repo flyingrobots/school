@@ -27,7 +27,7 @@ const TOKEN = "lesson-page-test-token"
 
 // Each test that writes to the record uses its own course name, all served from the one fixture,
 // so no test resumes an encounter another test opened.
-const NAMES = ["golden", "wrong", "saved", "failed", "keys", "aid", "pager", "loading", "down", "feedback", "model", "source", "trace", "resend"] as const
+const NAMES = ["golden", "wrong", "saved", "failed", "keys", "aid", "pager", "loading", "down", "feedback", "model", "source", "trace", "figure4", "resend", "final-501", "final-400", "final-409"] as const
 type Name = (typeof NAMES)[number]
 
 /** A fake bridge: answers each grading with the next reply queued, or a failure when none is. */
@@ -335,7 +335,7 @@ describe("every exposure the page shows is recorded once per showing (flyingrobo
     await p.waitForFunction(() => document.querySelector("[data-quiz-id=closest]")?.getAttribute("data-state") === "right")
     const once = await exposed(p, seen, 1)
     expect(once).toEqual([{ exposureId: expect.stringMatching(UUID), encounterId: encounterOf(seen), blockId: "closest", kind: "feedback" }])
-    // School on SQLite answers 501 (exposures unsupported); that is "not tracked", never an error.
+    // Stored, and never anything the learner sees.
     expect(await q.locator("[data-quiz=error]").count()).toBe(0)
 
     await open(main, lessonPath("feedback"), "Orbits", p)
@@ -422,13 +422,51 @@ describe("RFC 2 Figure 4 over the page: submit, reveal, revise (flyingrobots/sch
     await p.context().close()
   })
 
-  // The derived aid needs School on Postgres: on SQLite every exposure is refused as unsupported and
-  // every aid is unknown. On `pglite:` (flyingrobots/school#79), the same trace must leave the first
-  // explanation "no-recorded-aid" and the revision "aided".
-  test.todo("the first explanation has no recorded aid and the revision is aided, on a School served from pglite: (flyingrobots/school#79)")
+  test("on School served from pglite:, the first explanation has no recorded aid and the revision is aided", async () => {
+    const p = await newPage()
+    const seen = posts(p)
+    await open(main, lessonPath("figure4"), "Orbits", p)
+    const x = explain(p, "seasons")
+    await x.locator("[data-explain=draft]").fill("Because the Earth is closer to the Sun in summer.")
+    await x.locator("[data-explain=save]").click()
+    await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "saved")
+    await x.locator("[data-explain=revise]").click()
+    await x.locator("[data-explain=draft]").fill("The axis is tilted, so each hemisphere in turn leans towards the Sun.")
+    await x.locator("[data-explain=save]").click()
+    await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "saved")
+    const [a, b] = seen.sent.filter((s) => s.path === "/api/explanation").map((s) => s.body.submissionId!)
+    // The aid School derives from its own record, read past the page.
+    const aid = async (id: string) => (await (await fetch(`${main.school.url}/api/aid/${id}`)).json()) as { aid: string }
+    expect((await aid(a!)).aid).toBe("no-recorded-aid")
+    expect((await aid(b!)).aid).toBe("aided")
+    await p.context().close()
+  })
 })
 
 describe("an exposure that did not reach School (flyingrobots/school#51)", () => {
+  // School on Postgres stores exposures, so 501 (a record that stores none) no longer happens; the
+  // page still treats it, and a refusal, as final: not resent, never shown, never holding a save back.
+  test.each([[501, "unsupported"], [400, "rejected"], [409, "conflict"]])("answered %i, it is final: not resent, not shown, and the next save goes ahead", async (status, reply) => {
+    const p = await newPage()
+    const seen = posts(p)
+    await p.route("**/api/exposure", (route) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ status: reply }) }))
+    await open(main, lessonPath(`final-${status}` as Name), "Orbits", p)
+    const x = explain(p, "seasons")
+    await x.locator("[data-explain=draft]").fill("Because of the distance.")
+    await x.locator("[data-explain=save]").click()
+    await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "saved")
+    expect(await exposed(p, seen, 1)).toHaveLength(1)
+    await x.locator("[data-explain=revise]").click()
+    await x.locator("[data-explain=draft]").fill("Because of the tilt.")
+    await x.locator("[data-explain=save]").click()
+    await p.waitForFunction(() => document.querySelector("[data-explain-id=seasons]")?.getAttribute("data-state") === "saved")
+    expect(await x.locator("[data-explain=error]").count()).toBe(0)
+    const ids = (await exposed(p, seen, 2)).map((e) => e.exposureId)
+    expect(new Set(ids).size).toBe(ids.length) // two showings, each sent once
+    expect(seen.sent.map((s) => s.path)).toEqual(["/api/explanation", "/api/exposure", "/api/explanation", "/api/exposure"])
+    await p.context().close()
+  })
+
   test("is resent with the same id before the block's next submission, and while it cannot be recorded, that submission is not sent", async () => {
     const p = await newPage()
     const seen = posts(p)
@@ -461,8 +499,11 @@ describe("an exposure that did not reach School (flyingrobots/school#51)", () =>
       ["/api/exposure", first!.exposureId],
       ["/api/explanation", "Because of the tilt."],
     ])
-    const ids = new Set(seen.exposures().map((e) => e.exposureId))
-    expect(ids.size).toBe(2) // the model answer's two showings, however many times each was sent
+    // The revision shows the model answer again, a second showing; wait for it to be sent.
+    const ids = () => new Set(seen.exposures().map((e) => e.exposureId))
+    for (let t = Date.now(); ids().size < 2 && Date.now() - t < 5_000; ) await p.waitForTimeout(25)
+    await p.waitForTimeout(300)
+    expect(ids().size).toBe(2) // the model answer's two showings, however many times each was sent
     await p.context().close()
   })
 })

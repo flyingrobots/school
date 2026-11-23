@@ -66,8 +66,9 @@ a block:
   School has not answered and waits for them, so School sees the help before the work that came
   after it. While one cannot be sent, the submission is not sent either, and the block says it was
   not saved.
-- An exposure School answers 501 (School on SQLite, which records none), 400 or 409 is not
-  resent. Nothing about exposures is ever shown to the learner.
+- An exposure School answers 400 or 409 is final and not resent, and so is 501, which a record that
+  stores no exposures would answer (the server on Postgres never does). Nothing about exposures is
+  ever shown to the learner.
 ## States
 
 | State | Shows |
@@ -95,10 +96,9 @@ tests, it needs `npm ci` in `web/` and Google Chrome.
 The help the page records is tested at two levels. `web/test/quiz.test.tsx` and
 `web/test/explain.test.tsx` check that each block calls `onWhyShown`, `onModelShown` and
 `onSourceOpened` exactly once per showing, under React strict mode, and that Revise works. In
-`web/test/lesson.test.ts`, the "aid tracking", "every exposure the page shows is recorded once per
-showing", "RFC 2 Figure 4 over the page" and "an exposure that did not reach School" groups check
-`?aid=1`, one exposure per kind and showing, the order submit, model answer, revision, and resends
-by the same id. Those tests count the exposures the page sends. School on SQLite stores none, so
-the derived aid (no recorded aid, then aided) is a pending case until the server runs on
-`pglite:` (flyingrobots/school#79).
-
+`web/test/lesson.test.ts`, against School on `pglite:`, the "aid tracking", "every exposure the
+page shows is recorded once per showing", "RFC 2 Figure 4 over the page" and "an exposure that did
+not reach School" groups check `?aid=1`, one exposure per kind and showing, the order submit,
+model answer, revision, resends by the same id, and that 400, 409 and 501 are final. The Figure 4
+case reads the derived aid from `GET /api/aid/:submissionId`: no recorded aid for the first
+explanation, aided for the revision.
