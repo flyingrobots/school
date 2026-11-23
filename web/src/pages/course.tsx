@@ -6,7 +6,6 @@ import { useGSAP } from "@gsap/react"
 import gsap from "gsap"
 import { BookOpenIcon, CheckIcon, FileQuestionIcon, LibraryIcon, TriangleAlertIcon } from "lucide-react"
 import { Link, useParams } from "react-router"
-import { z } from "zod"
 
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -24,60 +23,13 @@ import { Item, ItemContent, ItemDescription, ItemFooter, ItemGroup, ItemTitle } 
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
+import { useCourse } from "@/lib/course"
+import type { Course, CourseLoad } from "@/lib/school-api"
 
 gsap.registerPlugin(useGSAP)
 
-// The shape of GET /api/courses/:course (server/server.ts, courseJson), checked at the boundary.
-const CourseJson = z.object({
-  name: z.string(),
-  reference: z.array(z.string()),
-  lessons: z.array(
-    z.object({
-      id: z.string(),
-      title: z.string(),
-      subtitle: z.string().nullish(),
-      quizzes: z.number().int().nonnegative(),
-      answeredCorrectly: z.number().int().nonnegative(),
-    })
-  ),
-})
-type Course = z.infer<typeof CourseJson>
 type Lesson = Course["lessons"][number]
-
-type State =
-  | { kind: "loading" }
-  | { kind: "ready"; course: Course }
-  | { kind: "missing" }
-  // The server answered that the course's lessons cannot be read, with its reason.
-  | { kind: "unreadable"; reason: string }
-  // No usable answer at all: the server is unreachable or answered something else.
-  | { kind: "unloaded" }
-
-function useCourse(name: string): [State, () => void] {
-  const [attempt, setAttempt] = React.useState(0)
-  // An answer belongs to the request it came from; until the current one answers, it is loading.
-  const key = `${attempt} ${name}`
-  const [answer, setAnswer] = React.useState<{ key: string; state: State } | null>(null)
-
-  React.useEffect(() => {
-    const abort = new AbortController()
-    const settle = (state: State) => abort.signal.aborted || setAnswer({ key, state })
-    ;(async (): Promise<State> => {
-      const res = await fetch(`/api/courses/${encodeURIComponent(name)}`, { signal: abort.signal })
-      if (res.status === 404) return { kind: "missing" }
-      const body: unknown = await res.json()
-      if (!res.ok) {
-        const reason = z.object({ error: z.string() }).safeParse(body)
-        return reason.success ? { kind: "unreadable", reason: reason.data.error } : { kind: "unloaded" }
-      }
-      const course = CourseJson.safeParse(body)
-      return course.success ? { kind: "ready", course: course.data } : { kind: "unloaded" }
-    })().then(settle, () => settle({ kind: "unloaded" }))
-    return () => abort.abort()
-  }, [name, key])
-
-  return [answer?.key === key ? answer.state : { kind: "loading" }, () => setAttempt((n) => n + 1)]
-}
+type State = CourseLoad
 
 /** A lesson's progress in words: "2 of 3 quizzes answered correctly". */
 export function progressWords({ quizzes, answeredCorrectly }: Pick<Lesson, "quizzes" | "answeredCorrectly">): string {
