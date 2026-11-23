@@ -119,16 +119,6 @@ function Body({ state, name, retry }: { state: CourseLoad; name: string; retry: 
           </EmptyContent>
         </Empty>
       )
-    case "unreadable":
-      return (
-        <div data-animate="body">
-          <Alert variant="destructive" className="text-base">
-            <TriangleAlertIcon />
-            <AlertTitle className="text-lg">This course could not be read</AlertTitle>
-            <AlertDescription className="text-base">{state.reason}</AlertDescription>
-          </Alert>
-        </div>
-      )
     case "unloaded":
       return (
         <div data-animate="body">
@@ -144,8 +134,12 @@ function Body({ state, name, retry }: { state: CourseLoad; name: string; retry: 
           </Alert>
         </div>
       )
+    // A course whose lessons cannot be read still lists its documents (flyingrobots/school#115);
+    // the lesson error is the course page's to show.
     case "ready":
-      if (state.course.reference.length === 0)
+    case "unreadable": {
+      const reference = state.kind === "ready" ? state.course.reference : state.reference
+      if (reference.length === 0)
         return (
           <Empty data-animate="body" className="border">
             <EmptyHeader>
@@ -163,7 +157,7 @@ function Body({ state, name, retry }: { state: CourseLoad; name: string; retry: 
         <div className="flex flex-col gap-4">
           {/* Each document is a link, so the group is not announced as a list of non-items. */}
           <ItemGroup data-animate="body" role={undefined} className={grid}>
-            {state.course.reference.map((file) => (
+            {reference.map((file) => (
               <Item key={file} asChild variant="outline" className="p-5">
                 <a href={referenceHref(name, file)} target="_blank" rel="noopener noreferrer" data-nav data-reference={file}>
                   <ItemMedia variant="icon">
@@ -189,5 +183,6 @@ function Body({ state, name, retry }: { state: CourseLoad; name: string; retry: 
           </p>
         </div>
       )
+    }
   }
 }

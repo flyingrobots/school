@@ -7,7 +7,7 @@ and reads one endpoint, `GET /api/courses/:course`.
 
 - The course's name as the page heading, under a breadcrumb back to Home.
 - A **Reference** button to `/courses/:course/reference` (the [reference page](../reference-page/README.md)), only when the course has reference
-  documents.
+  documents. It is shown even when the course's lessons cannot be read.
 - Every lesson, in the server's order, as a link to `/courses/:course/lessons/:lesson`. Each shows
   its title, its subtitle when it has one, and its progress in words:
 
@@ -33,7 +33,7 @@ in), unless the viewer prefers reduced motion.
 | The request is in flight | A Spinner with "Loading the lessons" and a grid of Skeletons |
 | The course has no lessons (`lessons: []`, including a course with no lessons folder) | An Empty state, "No lessons yet" |
 | The server answers 404 | An Empty state, "There is no course called …", with a link home |
-| The server answers with an error and a reason (a 500 for lessons that never validated) | A destructive Alert, "This course could not be read", with the server's reason |
+| The lessons cannot be read (`lessons: null`, the reason in `lessonsError`, for lessons that never validated) | A destructive Alert, "This course could not be read", with the server's reason |
 | No usable answer: the server is unreachable, or the body is not the expected shape | A destructive Alert, "This course could not be loaded", with **Try again** |
 
 The response is checked with Zod before anything is shown; a body of the wrong shape is the last

@@ -43,7 +43,8 @@ beforeAll(async () => {
   // plain: lessons, and no reference folder at all.
   mkdirSync(join(root, "plain", "lessons"), { recursive: true })
   writeFileSync(join(root, "plain", "lessons", "0001.json"), lesson("p1", "Only lesson"))
-  // broken: lessons that never validated, which the server answers with a 500 and its reason.
+  // broken: lessons that never validated, and a reference document, which the server still lists
+  // (flyingrobots/school#115).
   mkdirSync(join(root, "broken", "lessons"), { recursive: true })
   mkdirSync(join(root, "broken", "reference"), { recursive: true })
   writeFileSync(join(root, "broken", "reference", "kept.html"), "<p>kept</p>")
@@ -225,17 +226,22 @@ describe("states", () => {
     await p.context().close()
   })
 
-  test("an unreadable course says it could not be read, with the server's reason", async () => {
+  // flyingrobots/school#115: a course whose lessons fail validation still lists its documents.
+  test("a course whose lessons cannot be read still lists its reference documents", async () => {
     const r = await fetch(`${school.url}/api/courses/broken`)
-    expect(r.status).toBe(500)
-    const reason = (await r.json()).error as string
+    expect(r.status).toBe(200)
+    const body = await r.json()
+    expect(body.lessons).toBeNull()
+    expect(body.lessonsError).toContain('unknown ref "missing"')
+    expect(body.reference).toEqual(["kept.html"])
     const p = await open("/courses/broken/reference")
-    const alert = main(p).getByRole("alert")
-    await alert.waitFor()
-    const text = await alert.textContent()
-    expect(text).toContain("This course could not be read")
-    expect(text).toContain(reason)
-    expect(await docs(p).count()).toBe(0)
+    await docs(p).first().waitFor()
+    expect(await docs(p).count()).toBe(1)
+    expect(await docs(p).first().getAttribute("href")).toBe(served("broken", "kept.html"))
+    expect(await main(p).getByRole("alert").count()).toBe(0)
+    const [tab] = await Promise.all([p.context().waitForEvent("page"), docs(p).first().click()])
+    await tab.waitForLoadState()
+    expect(await tab.locator("body").textContent()).toContain("kept")
     await p.context().close()
   })
 
