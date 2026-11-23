@@ -15,6 +15,8 @@
 // - The adapter's store runs `delete-generic-password` before `add-generic-password ... -U`, so an
 //   add that fails leaves no item at all. `-U` already updates an existing item in place, so while
 //   the store is storing, the runner skips that delete.
+// - `create`, for a secret School asked for or generated, adds without `-U`, so `security` refuses
+//   an item that another process stored meanwhile; the read back says which value the Keychain holds.
 import Vault, { createBunKeychainAdapter, type CommandResult, type CommandRunner } from "@git-stunts/vault";
 import { SecretError, storable, type Store } from "./secrets.ts";
 
@@ -40,6 +42,8 @@ export class StdinSecretRunner implements CommandRunner {
   lastRead: { status: number | null; stderr: string } | null = null;
   /** True while the store is storing: the adapter's delete before its `add ... -U` is skipped (see the header). */
   updatingInPlace = false;
+  /** True while the store is creating: the add goes without `-U`, so `security` refuses an item already there. */
+  createOnly = false;
 
   constructor(private readonly spawnSync: SpawnSync = realSpawnSync) {}
 
@@ -51,7 +55,7 @@ export class StdinSecretRunner implements CommandRunner {
       const service = args[args.indexOf("-s") + 1];
       const value = at < 0 ? undefined : args[at + 1];
       if (account === undefined || service === undefined || value === undefined) return { status: 1 };
-      const line = `add-generic-password -a ${word(account)} -s ${word(service)} -w ${word(value)} -U\n`;
+      const line = `add-generic-password -a ${word(account)} -s ${word(service)} -w ${word(value)}${this.createOnly ? "" : " -U"}\n`;
       // `security -i` echoes a failed command line, secret and all, so its output is never shown.
       const r = this.spawnSync(["security", "-i"], { stdin: new TextEncoder().encode(line), stdout: "pipe", stderr: "pipe" });
       return { status: r.exitCode, stdout: "", stderr: "" };
@@ -88,7 +92,7 @@ export function keychainStore(account: string, { platform, spawnSync }: { platfo
       ...(platform === undefined ? {} : { platformGetter: () => platform }),
     }),
   });
-  return {
+  const store: Store = {
     get(name) {
       runner.lastRead = null;
       const v = vault.getSecret({ target: name });
@@ -115,5 +119,22 @@ export function keychainStore(account: string, { platform, spawnSync }: { platfo
       // `security -i` can exit 0 having stored nothing; read it back rather than trust that.
       if (vault.getSecret({ target: name }) !== value) throw new SecretError(`the Keychain did not keep ${name} (account ${account})`, 1);
     },
+    create(name, value) {
+      if (!storable(value)) throw new SecretError(`${name} must be printable ASCII with no space, double quote or backslash to be stored in the Keychain`);
+      [runner.updatingInPlace, runner.createOnly] = [true, true];
+      try {
+        vault.setSecret({ target: name, value });
+      } catch {
+        // Refused, most likely because an item is there already; the read below says which.
+      } finally {
+        [runner.updatingInPlace, runner.createOnly] = [false, false];
+      }
+      // `security -i`'s exit status is not to be trusted; what the Keychain now holds is.
+      const there = store.get(name);
+      if (there === value) return "stored";
+      if (there !== undefined) return "exists";
+      throw new SecretError(`the Keychain did not keep ${name} (account ${account})`, 1);
+    },
   };
+  return store;
 }

@@ -12,6 +12,13 @@ function fakeStore(initial: Record<string, string> = {}) {
   const store: Store = {
     get(name) { calls.get++; return items.get(name); },
     set(name, value) { calls.set.push(name); items.set(name, value); },
+    // A store too (counted in calls.set), but one that never replaces an item already there.
+    create(name, value) {
+      calls.set.push(name);
+      if (items.has(name)) return "exists";
+      items.set(name, value);
+      return "stored";
+    },
   };
   return { store, items, calls };
 }
@@ -44,6 +51,7 @@ async function run(argv: string[], over: Partial<Deps> & { answers?: string[]; c
     writeText: () => { throw new Error("nothing should be written"); },
     generate: generated,
     serverDir: "/checkout/server",
+    lock: async () => () => {},
     ...over,
   };
   r.code = await main(argv, deps);
@@ -295,7 +303,7 @@ describe("the command line", () => {
   });
 
   test("SEC-L16: a Keychain that throws is an error line, exit 1, never a stack trace", async () => {
-    const r = await run(["up"], { store: () => ({ get() { throw new Error("security: boom"); }, set() {} }) });
+    const r = await run(["up"], { store: () => ({ get() { throw new Error("security: boom"); }, set() {}, create() { return "stored" as const; } }) });
     expect(r.code).toBe(1);
     expect(parsed(r.stderr).at(-1)).toMatchObject({ kind: "school.up", event: "error", code: 1 });
     contract(r, []);
@@ -365,5 +373,71 @@ describe("school import, second review of flyingrobots/school#132", () => {
       expect(String(e.message)).toContain("quote");
       contract(r, ["OldSuperuser0123456789", "OldApp0123456789"]);
     }
+  });
+});
+
+/** An in-process mutex, what the real lock (host/lock.ts) is across processes; records its use. */
+function fakeLock() {
+  let tail = Promise.resolve();
+  const events: string[] = [];
+  const lock = async (account: string) => {
+    const before = tail;
+    let release!: () => void;
+    tail = new Promise<void>((r) => { release = r; });
+    await before;
+    events.push(`acquire:${account}`);
+    return () => { events.push(`release:${account}`); release(); };
+  };
+  return { lock, events };
+}
+
+describe("overlapping first runs, second review of flyingrobots/school#132", () => {
+  test("SEC-L24: `school up` resolves and stores under the account's lock, released before compose starts and on a refusal too", async () => {
+    const { lock, events } = fakeLock();
+    const { store } = fakeStore();
+    const seen: string[] = [];
+    const ok = await run(["up"], {
+      store: () => store, isTTY: true, answers: [""], lock,
+      spawn: (args) => { seen.push(`spawn with ${events.join(",")}`); return { lines: (async function* () {})(), exited: Promise.resolve(0) }; },
+    });
+    expect(ok.code).toBe(0);
+    expect(seen).toEqual(["spawn with acquire:school,release:school"]);
+
+    const refused = fakeLock();
+    const r = await run(["up"], { lock: refused.lock, isTTY: false });
+    expect(r.code).toBe(2);
+    expect(refused.events).toEqual(["acquire:school", "release:school"]);
+  });
+
+  test("SEC-L25: two overlapping first runs leave one superuser password, the one both start compose with", async () => {
+    const { lock } = fakeLock();
+    const { store, items } = fakeStore();
+    const [a, b] = await Promise.all([
+      run(["up"], { store: () => store, isTTY: true, answers: [""], lock }),
+      run(["up"], { store: () => store, isTTY: true, answers: [""], lock }),
+    ]);
+    expect([a.code, b.code]).toEqual([0, 0]);
+    const pg = items.get("SCHOOL_POSTGRES_PASSWORD");
+    expect(pg).toBeDefined();
+    expect(a.spawned[0]!.env.SCHOOL_POSTGRES_PASSWORD).toBe(pg);
+    expect(b.spawned[0]!.env.SCHOOL_POSTGRES_PASSWORD).toBe(pg);
+    expect(a.prompts.length + b.prompts.length).toBe(1);
+  });
+
+  test("SEC-L26: a generated or prompted secret never replaces an item that appeared since it was read; the run uses that item", async () => {
+    // A read that saw nothing, then another process stored a value before this one stores.
+    const items = new Map<string, string>();
+    let reads = 0;
+    const store: Store = {
+      get(name) { if (name === "SCHOOL_POSTGRES_PASSWORD" && reads++ === 0) { items.set(name, "FirstRun0123456789abcd"); return undefined; } return items.get(name); },
+      set() { throw new Error("set must not be used for a generated or prompted secret"); },
+      create(name, value) { if (items.has(name)) return "exists"; items.set(name, value); return "stored"; },
+    };
+    const r = await run(["up"], { store: () => store, isTTY: true, answers: ["Typed0123456789abcdef"] });
+    expect(r.code).toBe(0);
+    expect(items.get("SCHOOL_POSTGRES_PASSWORD")).toBe("FirstRun0123456789abcd");
+    expect(r.spawned[0]!.env.SCHOOL_POSTGRES_PASSWORD).toBe("FirstRun0123456789abcd");
+    expect(parsed(r.stdout).find((e) => e.event === "secret" && e.name === "SCHOOL_POSTGRES_PASSWORD")).toMatchObject({ from: "keychain" });
+    contract(r, ["FirstRun0123456789abcd", "Typed0123456789abcdef"]);
   });
 });

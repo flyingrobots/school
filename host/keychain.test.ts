@@ -22,6 +22,8 @@ function fakeSecurity() {
     }
     if (sub === "delete-generic-password") return { exitCode: items.delete(key(opt(args, "-a"), opt(args, "-s"))) ? 0 : 44, stdout: enc("") };
     if (sub === "add-generic-password") {
+      // Without -U, security refuses an item that is already there (errSecDuplicateItem, exit 45).
+      if (!args.includes("-U") && items.has(key(opt(args, "-a"), opt(args, "-s")))) return { exitCode: 45, stdout: enc("") };
       items.set(key(opt(args, "-a"), opt(args, "-s")), opt(args, "-w"));
       return { exitCode: 0, stdout: enc("") };
     }
@@ -102,7 +104,7 @@ test("SEC-K6: generated secrets are 32 letters and digits, and differ", () => {
 });
 
 test("SEC-K7: resolveSecret takes the environment first, then the store, and says which; an empty variable counts as unset", () => {
-  const store = { get: (n: string) => (n === "SCHOOL_BRIDGE_TOKEN" ? "FromKeychain0123456789" : undefined), set() { throw new Error("no writes"); } };
+  const store = { get: (n: string) => (n === "SCHOOL_BRIDGE_TOKEN" ? "FromKeychain0123456789" : undefined), set() { throw new Error("no writes"); }, create(): "stored" { throw new Error("no writes"); } };
   expect(resolveSecret("SCHOOL_BRIDGE_TOKEN", { SCHOOL_BRIDGE_TOKEN: "FromEnv0123456789" }, () => store)).toEqual({ value: "FromEnv0123456789", from: "environment" });
   expect(resolveSecret("SCHOOL_BRIDGE_TOKEN", { SCHOOL_BRIDGE_TOKEN: "" }, () => store)).toEqual({ value: "FromKeychain0123456789", from: "keychain" });
   expect(resolveSecret("SCHOOL_APP_PASSWORD", {}, () => store)).toBeNull();
@@ -144,4 +146,16 @@ test("SEC-K10: a `security` that cannot be run at all is a failed read, not a mi
   expect(() => darwin.get("SCHOOL_APP_PASSWORD")).toThrow(/could not read SCHOOL_APP_PASSWORD .*could not run security/);
   const linux = keychainStore("school-test-k10", { platform: "linux", spawnSync: noSecurity });
   expect(linux.get("SCHOOL_APP_PASSWORD")).toBeUndefined();
+});
+
+test("SEC-K11: create stores only when no item is there: no `-U`, so an existing item is kept and reported, never replaced", () => {
+  const sec = fakeSecurity();
+  const store = keychainStore("school-test-k11", { platform: "darwin", spawnSync: sec.spawnSync });
+  expect(store.create("SCHOOL_APP_PASSWORD", "First0123456789abcdef")).toBe("stored");
+  expect(store.create("SCHOOL_APP_PASSWORD", "Second0123456789abcdef")).toBe("exists");
+  expect(sec.items.get("school-test-k11\u0000SCHOOL_APP_PASSWORD")).toBe("First0123456789abcdef");
+  const adds = sec.calls.filter((c) => c.stdin?.includes("add-generic-password"));
+  expect(adds).toHaveLength(2);
+  for (const a of adds) expect(a.stdin).not.toContain(" -U");
+  expect(sec.calls.some((c) => c.argv.includes("delete-generic-password"))).toBe(false);
 });

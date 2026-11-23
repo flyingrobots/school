@@ -3,9 +3,11 @@
 // and `docker compose`. Run it as `./school <command>` from the checkout, or `bun host/school.ts`.
 // docs/topics/secrets/README.md.
 import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { keychainStore } from "./keychain.ts";
 import { main, type Deps, type Spawned } from "./launcher.ts";
+import { acquireLock } from "./lock.ts";
 import { readHidden } from "./prompt.ts";
 import { generateSecret } from "./secrets.ts";
 
@@ -64,6 +66,8 @@ const deps: Deps = {
     renameSync(temp, path);
   },
   generate: generateSecret,
+  // TMPDIR on macOS is per user, so the lock is this user's only.
+  lock: (account) => acquireLock({ path: join(tmpdir(), `school-${account}.lock`) }),
   serverDir,
 };
 

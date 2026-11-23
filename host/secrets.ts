@@ -7,7 +7,10 @@
 /** Where the vault keeps a secret: a get and a set, by name. The Keychain, or a fake in tests. */
 export interface Store {
   get(name: string): string | undefined;
+  /** Stores `value` under `name`, replacing what is there. */
   set(name: string, value: string): void;
+  /** Stores `value` under `name` only if no item is there: "exists" leaves that item as it was. */
+  create(name: string, value: string): "stored" | "exists";
 }
 
 /**

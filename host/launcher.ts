@@ -39,6 +39,8 @@ export type Deps = {
   /** Replaces a file's text atomically, keeping its mode. */
   writeText: (path: string, text: string) => void;
   generate: () => string;
+  /** Takes the account's lock (host/lock.ts), waiting for another school command; resolves to its release. */
+  lock: (account: string) => Promise<() => void>;
   /** The checkout's server/ directory, where compose.yaml and .env are. */
   serverDir: string;
 };
@@ -126,6 +128,17 @@ async function secrets(deps: Deps, o: Output): Promise<Record<string, string | u
   }
 
   const account = accountFrom(deps.env);
+  // Resolving and storing happen under the account's lock: two overlapping first runs would
+  // otherwise each find the superuser's password missing and each store a different one.
+  const release = await deps.lock(account);
+  try {
+    return await resolveAndStore(deps, o, account);
+  } finally {
+    release();
+  }
+}
+
+async function resolveAndStore(deps: Deps, o: Output, account: string): Promise<Record<string, string | undefined> | number> {
   let opened: Store | null = null;
   const store = () => (opened ??= deps.store(account));
   o.line("out", { event: "keychain", account }, `Keychain account: ${account}`);
@@ -170,8 +183,15 @@ async function secrets(deps: Deps, o: Output): Promise<Record<string, string | u
   }
 
   // Stored before compose starts: a new database is initialised with the superuser password it is given.
+  // Never over an item that is there: if another process stored one since it was read, that one,
+  // which the database may already have been created with, is used instead.
   for (const r of resolved) {
-    if (r.from === "prompted" || r.from === "generated") store().set(r.name, r.value);
+    if ((r.from === "prompted" || r.from === "generated") && store().create(r.name, r.value) === "exists") {
+      const there = store().get(r.name);
+      if (there === undefined || there === "") throw new SecretError(`the Keychain reported ${r.name} as already there, but it could not be read back (account ${account})`, 1);
+      o.know(there);
+      [r.value, r.from] = [there, "keychain"];
+    }
     o.line("out", { event: "secret", name: r.name, from: r.from }, `${r.name}: ${SOURCE_PROSE[r.from]}`);
   }
 
@@ -205,6 +225,15 @@ async function importDotenv(deps: Deps, o: Output): Promise<number> {
     return 0;
   }
   const account = accountFrom(deps.env);
+  const release = await deps.lock(account);
+  try {
+    return importUnderLock(deps, o, account, dotenv, text!, found);
+  } finally {
+    release();
+  }
+}
+
+function importUnderLock(deps: Deps, o: Output, account: string, dotenv: string, text: string, found: DotenvSecret[]): number {
   const store = deps.store(account);
   o.line("out", { event: "keychain", account }, `Keychain account: ${account}`);
 
@@ -233,7 +262,7 @@ async function importDotenv(deps: Deps, o: Output): Promise<number> {
     o.line("out", { event: "imported", name: f.name, account }, `${f.name}: moved into the Keychain`);
   }
   const drop = new Set(found.map((f) => f.line));
-  deps.writeText(dotenv, text!.split("\n").filter((_, i) => !drop.has(i)).join("\n"));
+  deps.writeText(dotenv, text.split("\n").filter((_, i) => !drop.has(i)).join("\n"));
   o.line("out", { event: "done", ok: true, imported: found.map((f) => f.name) }, `removed ${found.length} line(s) from ${dotenv}`);
   return 0;
 }
