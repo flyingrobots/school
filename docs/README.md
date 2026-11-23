@@ -17,6 +17,7 @@ Start here. Each page has one job; this page routes to all of them.
 | [School's secrets](topics/secrets/README.md) | Reference: the three secrets in the macOS Keychain, `./school up`, and how each reaches its process as a compose secret file; with its [test plan](topics/secrets/test-plan.md). |
 | [Upgrade a compose deployment](workflows/upgrade/README.md) | How-to: take a new version into a running deployment, including the first upgrades to the migrate job and to the Keychain (`./school import`), and what each failure means. |
 | [The migrate job's output](topics/migrate-job/README.md) | Reference: what `server/migrate.ts` prints, its message types and schemas, `--help`, `--schema` and `--human`, and what the contract cannot cover; with its [test plan](topics/migrate-job/test-plan.md). |
+| [The programs' output](topics/program-output/README.md) | Reference: what the backup job, the Postgres gate and the bridge print, their message types and schemas, `--help`, `--schema` and `--human`, and what the contract cannot cover; with its [test plan](topics/program-output/test-plan.md). |
 | [Due review](topics/due-review/README.md) | Reference: which quizzes come back for delayed review, why, and where they are shown; with its [test plan](topics/due-review/test-plan.md). |
 | [Working notes](working-notes.md) | How-to notes for anyone changing the framework. |
 | [RFC 1: School](rfc/0001-school.md) | The original design and the learning record contract. Draft. |

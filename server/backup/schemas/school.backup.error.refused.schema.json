@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "school.backup.error.refused/1.0.0",
+  "title": "Refused",
+  "description": "On stderr, then exit 2: the job refused to start: a setting that is not a positive whole number, a folder it cannot close to others, or, for --help and --schema, no published schemas beside it. Nothing was dumped or deleted.",
+  "type": "object",
+  "properties": {
+    "_schema": {
+      "type": "object",
+      "description": "The schema this line follows.",
+      "properties": {
+        "id": {
+          "const": "school.backup.error.refused"
+        },
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "kind": {
+      "const": "backup",
+      "description": "The program (or, for the bridge, the message type) that printed the line."
+    },
+    "event": {
+      "const": "error"
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "One id per invocation (for the bridge, per process), on every line it prints: a random (version 4) UUID."
+    },
+    "error": {
+      "const": "refused"
+    },
+    "code": {
+      "const": 2,
+      "description": "The exit code that follows."
+    },
+    "message": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "_schema",
+    "kind",
+    "event",
+    "run",
+    "error",
+    "code",
+    "message"
+  ],
+  "additionalProperties": false
+}

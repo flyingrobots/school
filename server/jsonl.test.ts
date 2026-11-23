@@ -3,7 +3,7 @@
 // library prints is captured as lines, and how an uncaught throw becomes an error line.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { jsonLines, loadSchemas, type Stream } from "./jsonl.ts";
+import { jsonLines, lineWriter, loadSchemas, type Stream } from "./jsonl.ts";
 
 const schemas = loadSchemas(join(import.meta.dir, "schemas"));
 
@@ -89,5 +89,20 @@ describe("jsonLines", () => {
       ["stderr", "school.migrate.error.failed", "error", "failed", 1, "boom (redacted)"],
       ["stderr", "school.migrate.error.failed", "error", "failed", 1, "a string thrown"],
     ]);
+  });
+});
+
+// flyingrobots/school#135: the bridge's lines carry an envelope of their own (its `kind` is the
+// message type), so it writes through the part of jsonLines that adds only `_schema`.
+describe("lineWriter", () => {
+  test("lineWriter: a line is _schema first, then the body as given, scrubbed; no kind, run or time is added; an unpublished type, or a body carrying its own _schema, is refused", () => {
+    const m = memory();
+    const w = lineWriter({ schemas, write: m.write, secrets: ["hunter2hunter2"] });
+    w.emit("stderr", "school.migrate.captured", { kind: "anything", text: "said hunter2hunter2" });
+    expect(m.written).toHaveLength(1);
+    expect(m.written[0]!.text).toBe(`{"_schema":{"id":"school.migrate.captured","version":"${schemas.get("school.migrate.captured")!.version}"},"kind":"anything","text":"said (redacted)"}\n`);
+    expect(() => w.emit("stdout", "school.migrate.nonesuch", {})).toThrow(/no published schema/);
+    expect(() => w.emit("stdout", "school.migrate.captured", { _schema: { id: "school.migrate.done", version: "9.9.9" }, text: "x" })).toThrow(/_schema/);
+    expect(m.written).toHaveLength(1);
   });
 });

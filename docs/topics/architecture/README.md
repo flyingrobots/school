@@ -489,8 +489,9 @@ is not a port, an unreadable configuration file, or a port already in use, whose
 line with only its message, never a stack, and exit 1. A request handler that throws logs a
 `bridge.error` line and answers 500. The cases are in the [test plan](test-plan.md#the-bridges-output).
 Output that Bun itself or a native module writes straight to the file descriptors, a hard crash
-and a signal kill are outside this: they are not lines. The lines have no published schemas yet
-([flyingrobots/school#135](https://github.com/flyingrobots/school/issues/135)).
+and a signal kill are outside this: they are not lines. Every line names its published schema in `bridge/schemas/`
+and carries the process's `run` id; `--help`, `--schema` and `--human` are in
+[the programs' output](../program-output/README.md#the-bridge) (flyingrobots/school#135).
 
 ## The web app
 
