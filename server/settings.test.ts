@@ -37,7 +37,7 @@ beforeEach(async () => {
   procs.push(bridge);
   BRIDGE_URL = bridge.url;
   // A server with no bridge configured at all, as the learner's was.
-  const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), HOST: "127.0.0.1" };
+  const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`, HOST: "127.0.0.1" };
   delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_URL;
   delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_TOKEN;
   serverOut = await startSchool(env);
@@ -228,7 +228,7 @@ async function touchEverything(at: string) {
 
 /** A second server, with the bridge settings given in its environment. */
 async function serverWith(extra: Record<string, string>) {
-  const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state-env"), HOST: "127.0.0.1", ...extra };
+  const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state-env"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record-env")}`, HOST: "127.0.0.1", ...extra };
   for (const k of ["SCHOOL_BRIDGE_URL", "SCHOOL_BRIDGE_TOKEN"]) if (!(k in extra)) delete (env as Record<string, string | undefined>)[k];
   const s = await startSchool(env);
   procs.push(s);

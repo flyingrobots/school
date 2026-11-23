@@ -52,6 +52,7 @@ async function stack(state: string): Promise<Stack> {
     SCHOOL_COURSE: undefined,
     SCHOOL_COURSES: NAMES.map((n) => `${n}=${COURSE}`).join(","),
     SCHOOL_STATE: state,
+    SCHOOL_DATABASE_URL: `pglite:${join(state, "record")}`, // its own PGlite record beside its state
     SCHOOL_BRIDGE_URL: bridge.url.href.replace(/\/$/, ""),
     SCHOOL_BRIDGE_TOKEN: TOKEN,
     HOST: "127.0.0.1",
