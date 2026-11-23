@@ -19,7 +19,7 @@ import {
 } from "@ui-sdk/react/field"
 import { useShortcut, useShortcutHint } from "@ui-sdk/react/shortcuts"
 import { Textarea as TextareaBehavior } from "@ui-sdk/react/textarea"
-import { BotIcon, ChevronDownIcon } from "lucide-react"
+import { BotIcon, ChevronDownIcon, PencilIcon } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -53,6 +53,9 @@ import { Textarea } from "@/components/ui/textarea"
 // (notes, summary, quotes, errors) is rendered as text, never as HTML.
 // Behaviour (field and label, textarea and its submit keys, buttons, disclosures, shortcuts) is
 // ui-sdk's; the look is stock shadcn parts passed as `render`, or shadcn's own classes.
+// A saved explanation can be revised: the learner writes again, starting from the saved text, and
+// saves a new explanation. `onModelShown` and `onSourceOpened` say when the model answer is shown
+// and when a source is opened, once per showing, so a page can record the help it gave.
 
 /** Material an explanation is graded against. `id` is what a contradiction's quote cites. */
 export type ExplainSource = { id: string; title: string; text: string }
@@ -146,6 +149,7 @@ const STATUS: Record<ExplainState["status"], { label: string; variant: "secondar
 const MAX_LENGTH = 10_000
 const SAVE_KEYS = "mod+enter"
 const GRADE_KEYS = "g"
+const REVISE_KEYS = "r"
 
 /** The state a saved explanation resumes in. */
 export function explainStateOf(explanation: ExplainExplanation): ExplainState {
@@ -156,6 +160,28 @@ export function explainStateOf(explanation: ExplainExplanation): ExplainState {
 }
 
 const canGrade = (state: ExplainState) => state.status === "saved" || state.status === "failed"
+const canRevise = (state: ExplainState) => state.status === "saved" || state.status === "graded" || state.status === "failed"
+
+/**
+ * Calls `onShown` once each time `shown` turns true, including on the first render. A ref, not
+ * state, guards it, so strict mode's second run of the effect calls nothing.
+ */
+function useShowing(shown: boolean, onShown: (() => void) | undefined) {
+  const fired = React.useRef(false)
+  const latest = React.useRef(onShown)
+  React.useEffect(() => {
+    latest.current = onShown
+  })
+  React.useEffect(() => {
+    if (!shown) {
+      fired.current = false
+      return
+    }
+    if (fired.current) return
+    fired.current = true
+    latest.current?.()
+  }, [shown])
+}
 
 /** The explain block as given: renders any state and offers only the actions that state allows. */
 export function ExplainView({
@@ -169,6 +195,9 @@ export function ExplainView({
   onDraftChange,
   onSave,
   onGrade,
+  onRevise,
+  onModelShown,
+  onSourceOpened,
 }: ExplainContent & {
   state: ExplainState
   /** The text being written, while `empty`. */
@@ -178,6 +207,12 @@ export function ExplainView({
   onDraftChange: (text: string) => void
   onSave: () => void
   onGrade: () => void
+  /** Starts writing again from the saved explanation. No Revise action is offered without it. */
+  onRevise?: () => void
+  /** Called once each time the model answer is shown. */
+  onModelShown?: () => void
+  /** Called once each time a source is opened, with its id. */
+  onSourceOpened?: (sourceId: string) => void
 }) {
   const writing = state.status === "empty" || state.status === "saving"
   const text = state.status === "empty" ? draft : state.status === "saving" ? state.text : state.explanation.text
@@ -187,8 +222,16 @@ export function ExplainView({
   const root = React.useRef<HTMLDivElement>(null)
   const focusedHere = () => root.current?.contains(document.activeElement) ?? false
   useShortcut(GRADE_KEYS, onGrade, { when: () => focusedHere() && canGrade(state), description: "Get AI feedback" })
+  useShortcut(REVISE_KEYS, () => onRevise?.(), {
+    when: () => focusedHere() && canRevise(state) && onRevise !== undefined,
+    description: "Revise your explanation",
+  })
   const saveHint = useShortcutHint(SAVE_KEYS)
   const gradeHint = useShortcutHint(GRADE_KEYS)
+  const reviseHint = useShortcutHint(REVISE_KEYS)
+  useShowing(!writing, onModelShown)
+  const opened = React.useRef<string[]>([])
+  const revisable = onRevise !== undefined && !writing
 
   return (
     <Card
@@ -259,7 +302,15 @@ export function ExplainView({
         )}
 
         {!writing && sources.length > 0 && (
-          <Accordion data-explain="sources" multiple className="flex w-full flex-col">
+          <Accordion
+            data-explain="sources"
+            multiple
+            className="flex w-full flex-col"
+            onValueChange={(open: string[]) => {
+              for (const sourceId of open) if (!opened.current.includes(sourceId)) onSourceOpened?.(sourceId)
+              opened.current = open
+            }}
+          >
             {sources.map((s) => (
               <AccordionItem key={s.id} value={s.id} className="not-last:border-b">
                 <AccordionHeader className="flex">
@@ -294,9 +345,24 @@ export function ExplainView({
         )}
       </CardContent>
 
-      {state.status !== "graded" && (
-        <CardFooter className="justify-end">
-          {writing ? (
+      {(state.status !== "graded" || revisable) && (
+        <CardFooter className="flex-wrap justify-end gap-2">
+          {revisable && (
+            <ButtonBehavior
+              data-explain="revise"
+              render={<Button size="lg" variant="outline" />}
+              disabled={!canRevise(state)}
+              aria-keyshortcuts={reviseHint.ariaKeyshortcuts}
+              onClick={() => {
+                if (canRevise(state)) onRevise?.()
+              }}
+            >
+              <PencilIcon data-icon="inline-start" />
+              Revise
+              <Kbd data-icon="inline-end">{reviseHint.text}</Kbd>
+            </ButtonBehavior>
+          )}
+          {state.status === "graded" ? null : writing ? (
             <ButtonBehavior
               data-explain="save"
               render={<Button size="lg" />}
@@ -411,6 +477,8 @@ export function Explain({
   onSave,
   onGrade,
   saved,
+  onModelShown,
+  onSourceOpened,
   ...content
 }: ExplainContent & {
   /** Stores the explanation; resolves with it as saved, or rejects if it was not stored. */
@@ -419,6 +487,10 @@ export function Explain({
   onGrade: (submissionId: string) => Promise<ExplainExplanation>
   /** The explanation the record already holds for this block, read when the block first renders. */
   saved?: ExplainExplanation | null
+  /** Called once each time the model answer is shown: when an explanation is saved, or first renders saved. */
+  onModelShown?: () => void
+  /** Called once each time a source is opened, with its id. */
+  onSourceOpened?: (sourceId: string) => void
 }) {
   const [state, setState] = React.useState<ExplainState>(() => (saved ? explainStateOf(saved) : { status: "empty" }))
   const [draft, setDraft] = React.useState("")
@@ -461,6 +533,15 @@ export function Explain({
     )
   }
 
+  /** Writes again from the saved explanation; saving then stores a new one. The old one is kept. */
+  const revise = () => {
+    const before = current.current
+    if (!canRevise(before) || !("explanation" in before)) return
+    setDraft(before.explanation.text)
+    setError(undefined)
+    move({ status: "empty" })
+  }
+
   return (
     <ExplainView
       {...content}
@@ -470,6 +551,9 @@ export function Explain({
       onDraftChange={setDraft}
       onSave={save}
       onGrade={grade}
+      onRevise={revise}
+      onModelShown={onModelShown}
+      onSourceOpened={onSourceOpened}
     />
   )
 }
