@@ -1,7 +1,8 @@
 # The app shell
 
 Reference: the frame every page of the web app (`web/`) sits in. The pages' own content is built
-separately; today every route shows a placeholder.
+separately: the lesson route is [the lesson page](../lesson-page/README.md); every other route
+shows a placeholder.
 
 ## Routes
 
@@ -10,7 +11,7 @@ separately; today every route shows a placeholder.
 | `/` | Home |
 | `/courses/:course` | A course |
 | `/courses/:course/reference` | A course's reference |
-| `/courses/:course/lessons/:lesson` | A lesson |
+| `/courses/:course/lessons/:lesson` | A lesson ([the lesson page](../lesson-page/README.md)) |
 | `/settings` | Settings |
 | anything else | Not found |
 | `/demo` | The theme sandbox, outside the shell ([`web/src/demo/README.md`](../../../web/src/demo/README.md)) |
@@ -34,8 +35,9 @@ shell on its own (`app-shell-example`), with its keys acting only while focus is
 
 - In a text field, every key except the `⌘`/`Ctrl` ones is text: `j` types `j`, `Space` types a space.
 - While the palette, a menu or the mobile sidebar is open, its own keys win and the page's wait.
-- The arrow keys move focus, so they do not scroll the page. Whether long pages keep that is
-  flyingrobots/school#84.
+- The arrow keys move focus, so they do not scroll the page, on long pages too (decision below).
+  The browser scrolls the newly focused item into view. A control that uses the arrows itself gets
+  them first: a quiz's choices, the nest's tree, and the theme button, whose menu opens on `↓`.
 - `Space` is the leader key even on a focused button, so it does not press it. `Enter` does. A lone
   `Space` waits 1.5 seconds for its second key, and the header shows that it is waiting.
 - Every key that acts shows a `Kbd` hint: the sidebar's Keys list names them all, sidebar links,
@@ -48,6 +50,27 @@ listener for `Space`, and focus movement over elements marked `data-nav` inside 
 `data-nav-region`). The theme menu is `@flyingrobots/theme-switch`. School's own code only wires the
 block to React Router and the pages, in `web/src/App.tsx`. Changes to the shell go to the registry
 (`flyingrobots/shadcn-registry`) and are reinstalled as `web/test/fixtures/README.md` describes.
+
+### Decision: on a long page the arrows still move focus (flyingrobots/school#84)
+
+Taken for the lesson page (flyingrobots/school#42), the first page that scrolls; reversible by a
+change to the registry block and a reinstall. Section 2d of flyingrobots/school#84 names the
+maintainer as the one who decides, so this stands until they confirm or overturn it.
+
+- **Chosen: A, the arrows move focus everywhere.** A long page gives the key layer something to
+  move through: the lesson page makes every section heading and every block a focus stop
+  (`@flyingrobots/lesson`), so `↓` and `j` step through a lesson in reading order and the browser
+  scrolls each stop into view. The arrows stay hjkl's twin (RFC 2), the `Kbd` hints do not change,
+  and the block needs no change. Reading inside a block taller than the window scrolls by mouse,
+  trackpad, `PageDown`/`PageUp` or `Home`/`End`. Most study is on a phone, which has no arrow keys.
+- Rejected: B, `j`/`k` move focus and the arrows scroll. It matches the browser but breaks the
+  arrows' documented role as hjkl's twin and changes every `Kbd` hint, for a page that already
+  scrolls as focus moves.
+- Rejected: C, the arrows move focus until a region runs out, then scroll. On a lesson with stops
+  throughout, the region rarely runs out before the end, so it buys little for more behaviour in
+  the key layer.
+- Rejected for now: D, a page hands the arrows back to scrolling. It is the fallback if reading by
+  stops proves awkward: a region attribute in the block, set by the lesson page.
 
 ## Theme
 

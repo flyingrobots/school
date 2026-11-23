@@ -11,7 +11,8 @@ import {
   SidebarMenuSkeleton,
 } from "@/components/ui/sidebar"
 import { Gallery } from "@/demo/gallery"
-import { CoursePage, HomePage, LessonPage, NotFoundPage, ReferencePage, SettingsPage } from "@/pages/pages"
+import { LessonPage } from "@/pages/lesson"
+import { CoursePage, HomePage, NotFoundPage, ReferencePage, SettingsPage } from "@/pages/pages"
 
 const pages: AppShellPage[] = [
   { href: "/", label: "Home", icon: HomeIcon, leader: "h" },

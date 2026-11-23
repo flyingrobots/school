@@ -1,4 +1,12 @@
-# Token oracles
+# Test fixtures
+
+## Development course
+
+`course/` is a School course of two lessons (`orbits`, `moons`) that between them use every block
+type. `test/lesson.test.ts` serves it with a real School process. It is written by hand; keep every
+block type in it when the block model grows.
+
+## Token oracles
 
 Fixtures for `test/tokens.test.ts`. All are change-detection oracles, captured from their sources;
 replace them only from those sources, never by hand.

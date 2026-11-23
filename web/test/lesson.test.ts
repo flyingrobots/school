@@ -134,8 +134,10 @@ describe("golden path", () => {
     const p = await open(main, lessonPath("golden"))
 
     // Prose is the lesson's HTML, rendered through the markdown item, not shown as markup.
+    // Streamdown renders <strong> as its own bold element.
     const prose = p.locator("[data-lesson-block=prose]").first()
-    expect(await prose.locator("[data-slot=markdown] strong").textContent()).toBe("circular")
+    expect(await prose.locator("[data-slot=markdown] [data-streamdown=strong]").textContent()).toBe("circular")
+    expect(await prose.locator("[data-slot=markdown] li").count()).toBe(2)
     expect(await prose.textContent()).not.toContain("<strong>")
     expect(await p.getByRole("heading", { level: 2, name: "Where the planets are", exact: true }).count()).toBe(1)
     expect(await p.getByRole("heading", { level: 2, name: "Why the seasons turn", exact: true }).count()).toBe(1)
@@ -298,22 +300,29 @@ describe("previous and next", () => {
 })
 
 describe("keys (flyingrobots/school#84)", () => {
-  test("↓ and j step through the lesson's blocks in order, scrolling each into view", async () => {
+  test.each([["↓", "ArrowDown"], ["j", "j"]])("%s steps through the lesson's sections and blocks in reading order, scrolling each into view", async (_, key) => {
     const p = await open(main, lessonPath("keys"))
-    const at = () =>
-      p.evaluate(() => {
-        const el = document.activeElement
-        return { block: el?.getAttribute("data-lesson-block") ?? el?.closest("[data-lesson-block]")?.getAttribute("data-lesson-block") ?? null, y: window.scrollY }
-      })
+    // From the breadcrumb's last link, the first focus stop above the lesson.
+    await p.locator("[data-lesson=root] nav[aria-label=breadcrumb] a").last().focus()
     const seen: string[] = []
-    for (let i = 0; i < 30; i++) {
-      await p.keyboard.press(i % 2 ? "j" : "ArrowDown")
-      const { block } = await at()
-      if (block && seen.at(-1) !== block) seen.push(block)
+    const ys: number[] = []
+    for (let i = 0; i < 10; i++) {
+      await p.keyboard.press(key)
+      const at = await p.evaluate(() => {
+        const el = document.activeElement
+        const stop = el?.getAttribute("data-lesson-block") ?? (el?.closest("[data-lesson=section]") && el.matches("h2") ? `section: ${el.textContent}` : null)
+        return { stop, y: window.scrollY }
+      })
+      seen.push(at.stop ?? "elsewhere")
+      ys.push(at.y)
     }
-    // Every kind of block is a stop, in the lesson's order.
-    expect(seen).toEqual(["prose", "quiz", "card", "aside", "quote", "prose", "explain", "nest"])
-    expect((await at()).y).toBeGreaterThan(0)
+    expect(seen).toEqual([
+      "section: Where the planets are", "prose", "quiz", "card", "aside",
+      "section: Why the seasons turn", "quote", "prose", "explain", "nest",
+    ])
+    // The page scrolls to follow, and never back up.
+    expect(ys.at(-1)!).toBeGreaterThan(0)
+    expect(ys).toEqual([...ys].sort((a, b) => a - b))
     await p.context().close()
   })
 })
