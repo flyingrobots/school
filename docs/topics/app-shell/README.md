@@ -105,7 +105,10 @@ block's `sidebar` slot; the block itself is unchanged.
 The stock shadcn `Sidebar`; on a phone it becomes a sheet behind the header's sidebar button. The
 main area uses the full width: the placeholder grid has one column on a phone and up to four on
 extra-wide screens. Page headings are large (`text-4xl` up to `text-6xl`). A GSAP timeline brings
-each page's heading and placeholders in, unless the viewer prefers reduced motion.
+each page's heading and placeholders in, unless the viewer prefers reduced motion. Every page's
+intro animates opacity and position only, never visibility (GSAP's `autoAlpha`), because an element
+under `visibility: hidden` cannot take focus and `j` pressed during the intro would skip it;
+`web/test/motion.test.ts` fails on any `autoAlpha` tween under `web/src`.
 
 ## Tests
 

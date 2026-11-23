@@ -24,11 +24,13 @@ export function Placeholder({ title, crumbs = [], children }: { title: string; c
 
   useGSAP(
     () => {
+      // Opacity, not autoAlpha: autoAlpha sets visibility: hidden, and a hidden element cannot take
+      // focus, so j pressed while the heading is still fading in would skip it (flyingrobots/school#114).
       gsap.matchMedia().add("(prefers-reduced-motion: no-preference)", () => {
         gsap
           .timeline({ defaults: { ease: "power2.out" } })
-          .from("[data-animate=heading]", { y: 24, autoAlpha: 0, duration: 0.4 })
-          .from("[data-slot=skeleton]", { y: 16, autoAlpha: 0, duration: 0.3, stagger: 0.04 }, "-=0.2")
+          .from("[data-animate=heading]", { y: 24, opacity: 0, duration: 0.4 })
+          .from("[data-slot=skeleton]", { y: 16, opacity: 0, duration: 0.3, stagger: 0.04 }, "-=0.2")
       })
     },
     { scope, dependencies: [title], revertOnUpdate: true }

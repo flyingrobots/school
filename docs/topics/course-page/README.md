@@ -22,7 +22,9 @@ and reads one endpoint, `GET /api/courses/:course`.
 
 The lessons fill a grid of one column on a phone, two from `sm`, three from `xl` and four from
 `2xl`. A line under the grid shows the keys: `j` and `k` move between lessons (the shell's focus
-movement) and `↵` opens the focused one.
+movement) and `↵` opens the focused one. A GSAP timeline brings the heading and then the lessons
+in, animating opacity and position only (never visibility, so `j` reaches a lesson while it fades
+in), unless the viewer prefers reduced motion.
 
 ## States
 
