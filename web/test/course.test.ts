@@ -47,11 +47,11 @@ beforeAll(async () => {
   writeFileSync(join(root, "broken", "lessons", "0001.json"),
     JSON.stringify({ type: "page", id: "b1", title: "B", subtitle: "", children: [{ ref: "missing" }] }))
 
-  const port = 20000 + Math.floor(Math.random() * 20000)
+  // The helper chooses the port (flyingrobots/school#82).
   school = await startSchool({
     ...process.env,
     SCHOOL_COURSES: ["aion", "empty", "broken"].map((c) => `${c}=${join(root, c)}`).join(","),
-    SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`, SCHOOL_WEB: join(root, "no-web"), PORT: String(port), HOST: "127.0.0.1",
+    SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`, SCHOOL_WEB: join(root, "no-web"), HOST: "127.0.0.1",
   })
 
   // Progress, recorded the way the lesson page records it: l1 has q1 right (after a wrong try),
