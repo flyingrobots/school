@@ -8,6 +8,6 @@ type LinkProps = Omit<React.ComponentProps<"a">, "href"> & {
   scroll?: boolean
 }
 
-export default function Link({ href, prefetch: _p, replace: _r, scroll: _s, ...props }: LinkProps) {
+export default function Link({ href, prefetch, replace, scroll, ...props }: LinkProps) {
   return <a href={typeof href === "string" ? href : (href.pathname ?? "#")} {...props} />
 }

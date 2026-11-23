@@ -9,6 +9,6 @@ type ImageProps = Omit<React.ComponentProps<"img">, "src"> & {
   unoptimized?: boolean
 }
 
-export default function Image({ fill, priority: _p, quality: _q, unoptimized: _u, style, ...props }: ImageProps) {
+export default function Image({ fill, priority, quality, unoptimized, style, ...props }: ImageProps) {
   return <img style={fill ? { position: "absolute", inset: 0, width: "100%", height: "100%", ...style } : style} {...props} />
 }

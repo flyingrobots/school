@@ -5,3 +5,11 @@ pnpm-lock.yaml
 package-lock.json
 pnpm-lock.yaml
 yarn.lock
+
+# Vendored: installed from the shadcn / @flyingrobots registries and hash-pinned or kept byte-equal to them
+# (test/fixtures/*.sha256), so they are never hand-edited or reformatted.
+src/components/ui/
+src/components/ai-elements/
+src/components/*-example.tsx
+src/components/markdown.tsx
+src/hooks/use-mobile.ts
