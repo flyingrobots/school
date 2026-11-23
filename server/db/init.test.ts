@@ -306,7 +306,7 @@ describe("functions", () => {
     });
   }, SLOW);
 
-  // The resume rule is main's (flyingrobots/school#53; server/record.ts): activity is the learner's, the
+  // The resume rule is main's (flyingrobots/school#53): activity is the learner's, the
   // encounter's opening, its latest answer and its latest explanation. These mirror the contract's cases.
   test("an explanation is activity: one written late in the window keeps the encounter open past it", async () => {
     const db = await fresh();

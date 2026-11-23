@@ -48,17 +48,19 @@ Practical notes for anyone — human or agent — changing the framework.
   `Bun.SQL` sends a string to a jsonb parameter as a JSON string. It opens an encounter with the
   `aid_tracking` its caller passes: the lesson API's `?aid=` capture version, or NULL (aid not
   observed) when the client sends none. A client may send `?aid=1` only if it records, through
-  `POST /api/exposure`, every exposure it shows; the pages do not yet (flyingrobots/school#51).
-- `LearningRecord.recordsExposures` says whether an adapter stores exposures. The contract's aid
-  cases run only for one that does; one that does not must refuse every exposure as `unsupported`
-  and report every aid as unknown. SQLite does not, and is not getting them (flyingrobots/school#49).
-  The server runs on Postgres, which does, so `POST /api/exposure` records them.
+  `POST /api/exposure`, every exposure it shows; the lesson page does (flyingrobots/school#51).
+- Every `LearningRecord` adapter stores exposures and must pass the contract's aid cases; there is
+  no "unsupported" answer since SQLite was deleted (flyingrobots/school#49).
 - `SCHOOL_DATABASE_URL` picks the record: `postgres://...` is `Bun.SQL`, `pglite:<dir>` is PGlite on
   disk, and unset the server refuses to start (exit 2): there is no default. `pglite:` is for
   development and tests, and the server warns at startup that it is not crash-durable; every test
   that starts School sets its own `pglite:` folder. Startup refuses a SQLite `DB_PATH`
   (`<SCHOOL_STATE>/progress.db`) holding any answer, explanation or view, before opening Postgres
   (`server/legacy.ts`, RFC 3 §3.3).
+- SQLite is deleted (flyingrobots/school#49). `server/legacy.ts`, that startup refusal, is the only
+  module allowed to import `bun:sqlite`, read-only, and `server/startup.test.ts` the only test, to
+  write its fixture; `server/docker.test.ts` fails on any other. Do not add SQLite back for
+  convenience in a test: test the record through the contract suite on PGlite.
 - PGlite is one process's database and takes no lock of its own, so `openPglite` takes `flock` on
   `<dir>.lock` beside the folder for as long as it is open (`server/adapters/lock.ts`); a second
   server on the same folder exits 2 naming it, and the kernel drops the lock when the holder dies.

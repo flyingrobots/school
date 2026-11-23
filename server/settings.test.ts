@@ -74,6 +74,15 @@ test("with nothing configured, the status says so", async () => {
   expect(await status()).toMatchObject({ connection: "none" });
 });
 
+test("with no bridge connected, a grading attempt is stored as failed and says why", async () => {
+  // Was server/explain.test.ts on the SQLite record; the server's own grader now gives the reason.
+  const e = (await (await fetch(base + "/api/courses/c/lessons/l1")).json()).encounterId;
+  const id = crypto.randomUUID();
+  expect((await post("/api/explanation", { submissionId: id, encounterId: e, blockId: "e1", text: "Because.", ms: 1 })).status).toBe(200);
+  const graded = await (await post("/api/grade", { submissionId: id })).json();
+  expect(graded).toMatchObject({ status: "failed", explanation: { text: "Because.", grading: { status: "failed", error: expect.stringMatching(/no bridge/) } } });
+});
+
 test("a wrong token and an unreachable bridge are each reported as such", async () => {
   expect((await post("/api/settings/bridge", { url: BRIDGE_URL, token: "wrong-token-but-long-enough" })).status).toBe(200);
   expect(await status()).toMatchObject({ connection: "unauthorised" });

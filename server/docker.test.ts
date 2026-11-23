@@ -58,3 +58,18 @@ test("every migration the runner reads is shipped, beside the runner that reads 
   for (const f of files) expect(admitted(join("db", "migrations", f))).toBe(true);
   expect(readMigrations(MIGRATIONS).map((m) => m.name)).toEqual(files.sort());
 });
+
+// flyingrobots/school#49: SQLite is deleted. The one thing left that reads it is the startup refusal
+// of a populated progress.db (RFC 3 §3.3, server/legacy.ts), read-only; the image ships nothing else
+// that imports bun:sqlite, and no other module in the repository does, tests aside from that
+// refusal's own fixture.
+const SQLITE = new RegExp(`from "bun:${"sqlite"}"`); // spelled so this file does not match itself
+const importsSqlite = (f: string) => SQLITE.test(readFileSync(join(dir, f), "utf8"));
+
+test("the image imports bun:sqlite only in the startup refusal of an old progress.db", () => {
+  expect(shipped.filter(importsSqlite)).toEqual(["legacy.ts"]);
+});
+
+test("no module but the startup refusal and its test reads SQLite", () => {
+  expect(modules().filter(importsSqlite).sort()).toEqual(["legacy.ts", "startup.test.ts"]);
+});

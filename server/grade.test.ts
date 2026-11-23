@@ -1,12 +1,13 @@
 // The server's side of grading: what it sends the bridge and how it reads the reply
 // (RFC 1 proposal 4; flyingrobots/school#10). A fake bridge stands in for bridge/bridge.ts.
 import { afterAll, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { sqliteRecord } from "./adapters/sqlite.ts";
+import { PGlite } from "@electric-sql/pglite";
+import { pgliteSql } from "./adapters/pglite.ts";
+import { postgresRecord } from "./adapters/postgres.ts";
 import type { Block } from "./core/model.ts";
 import { createSchool } from "./core/school.ts";
+import { migrate } from "./db/migrate.ts";
 import { PROMPT_VERSION, RESPONSE_SCHEMA, RUBRIC_VERSION, bridgeConfig, callBridge, checkQuotes, type GradingInput } from "./grade.ts";
-import { migrate } from "./migrate.ts";
 
 const input: GradingInput = {
   prompt: "Explain the inversion in under 30 seconds.",
@@ -104,11 +105,11 @@ test.each(MALFORMED)("a 200 reply of %s is a failure that keeps the raw text", a
 
 test("a malformed bridge reply stores one failed grading and returns the honest-failure state", async () => {
   reply = () => Response.json({ status: "failed", error: "every agent failed" });
-  const db = new Database(":memory:", { strict: true });
-  db.exec("PRAGMA foreign_keys = ON;");
-  migrate(db);
+  const db = new PGlite();
+  await migrate(db);
+  await db.exec("SET ROLE school_app");
   const school = createSchool({
-    record: sqliteRecord(db),
+    record: postgresRecord(pgliteSql(db)),
     grader: { adapter: "bridge", model: "", rubricVersion: RUBRIC_VERSION, promptVersion: PROMPT_VERSION, grade: (i) => callBridge(cfg(), i) },
     clock: { now: () => new Date().toISOString() },
   });
@@ -122,10 +123,11 @@ test("a malformed bridge reply stores one failed grading and returns the honest-
   const graded = await school.gradeExplanation(submissionId);
   expect(graded!.grading).toMatchObject({ status: "failed", error: expect.stringMatching(/not the expected shape/) });
   expect(graded!.explanation).toMatchObject({ text: input.explanation, grading: { status: "failed" } });
-  const rows = db.query("SELECT status, raw_response AS raw FROM gradings").all() as { status: string; raw: string }[];
+  await db.exec("RESET ROLE"); // the record as its owner: school_app may read no table
+  const { rows } = await db.query<{ status: string; raw: string }>("SELECT status, raw_response AS raw FROM school.gradings");
   expect(rows).toEqual([{ status: "failed", raw: JSON.stringify({ status: "failed", error: "every agent failed" }) }]);
-  db.close();
-});
+  await db.close();
+}, 30_000); // PGlite starts a whole Postgres in process.
 
 test("an unreachable bridge fails", async () => {
   const out = await callBridge(bridgeConfig({ SCHOOL_BRIDGE_URL: "http://127.0.0.1:9", SCHOOL_BRIDGE_TOKEN: TOKEN })!, input);

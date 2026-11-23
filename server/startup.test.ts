@@ -7,8 +7,6 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Block } from "./blocks.ts";
-import { migrate as migrateSqlite } from "./migrate.ts";
-import { sqliteRecord } from "./adapters/sqlite.ts";
 import { NotStarted, probePort, startSchool, timeout } from "./testing/processes.ts";
 import { ownerQuery } from "./testing/record.ts";
 
@@ -134,28 +132,56 @@ const quiz: Block = { type: "quiz", id: "q1", q: "Which?", why: "So.", choices: 
 const page: Block = { type: "page", id: "l1", title: "L", subtitle: "", children: [quiz, explain] };
 const NOW = "2026-11-22T10:00:00.000Z";
 
-/** A SQLite progress.db as the old server left it, holding whatever `work` records. */
-async function legacy(path: string, work: (r: ReturnType<typeof sqliteRecord>, encounterId: string) => Promise<unknown>): Promise<void> {
+/**
+ * The tables of the last SQLite schema (version 6), as server/migrate.ts created them before
+ * SQLite was deleted (flyingrobots/school#49). Abridged: no indexes or append-only triggers, which
+ * the refusal does not read. This fixture, and the refusal it feeds, are the only SQLite left.
+ */
+const SCHEMA_V6 = `
+CREATE TABLE snapshots (hash TEXT PRIMARY KEY, content TEXT NOT NULL, at TEXT NOT NULL);
+CREATE TABLE encounters (id TEXT PRIMARY KEY, course TEXT NOT NULL, lesson TEXT NOT NULL, view TEXT NOT NULL,
+  snapshot_hash TEXT NOT NULL REFERENCES snapshots (hash), at TEXT NOT NULL);
+CREATE TABLE answers (id INTEGER PRIMARY KEY, origin TEXT NOT NULL CHECK (origin IN ('block', 'legacy')), course TEXT,
+  block_id TEXT, lesson TEXT NOT NULL, question INTEGER, prompt TEXT, choice TEXT NOT NULL, correct INTEGER NOT NULL,
+  first_try INTEGER NOT NULL, ms INTEGER NOT NULL, at TEXT NOT NULL, encounter_id TEXT REFERENCES encounters (id),
+  choice_id TEXT, submission_id TEXT);
+CREATE TABLE views (id INTEGER PRIMARY KEY, course TEXT, lesson TEXT NOT NULL, at TEXT NOT NULL);
+CREATE TABLE explanations (submission_id TEXT PRIMARY KEY, encounter_id TEXT NOT NULL REFERENCES encounters (id),
+  block_id TEXT NOT NULL, course TEXT NOT NULL, lesson TEXT NOT NULL, text TEXT NOT NULL, ms INTEGER NOT NULL, at TEXT NOT NULL);
+CREATE TABLE gradings (id INTEGER PRIMARY KEY, submission_id TEXT NOT NULL REFERENCES explanations (submission_id),
+  status TEXT NOT NULL, rubric_version TEXT NOT NULL, prompt_version TEXT NOT NULL, adapter TEXT NOT NULL, model TEXT,
+  sources TEXT NOT NULL, raw_response TEXT, findings TEXT, error TEXT, supersedes INTEGER REFERENCES gradings (id), at TEXT NOT NULL);
+PRAGMA user_version = 6;`;
+
+type Work = (db: Database, encounterId: string) => void;
+
+/** A SQLite progress.db as the old server left it: one encounter of `page`, and whatever `work` records. */
+function legacy(path: string, work: Work): void {
   const db = new Database(path, { create: true, strict: true });
   try {
-    migrateSqlite(db);
-    const r = sqliteRecord(db);
-    const e = await r.openEncounter({ course: "c", lesson: "l1", page, now: NOW, aidTracking: null });
-    await work(r, e.id);
+    db.exec(SCHEMA_V6);
+    const content = JSON.stringify(page);
+    const hash = new Bun.CryptoHasher("sha256").update(content).digest("hex");
+    const encounterId = crypto.randomUUID();
+    db.query("INSERT INTO snapshots (hash, content, at) VALUES (?, ?, ?)").run(hash, content, NOW);
+    db.query("INSERT INTO encounters (id, course, lesson, view, snapshot_hash, at) VALUES (?, 'c', 'l1', 'web', ?, ?)").run(encounterId, hash, NOW);
+    work(db, encounterId);
   } finally {
     db.close();
   }
 }
 
-const WORK: [string, (r: ReturnType<typeof sqliteRecord>, encounterId: string) => Promise<unknown>][] = [
-  ["an answer", (r, e) => r.submit({ submissionId: crypto.randomUUID(), encounterId: e, blockId: "q1", choiceId: "a", ms: 5 }, NOW)],
-  ["an explanation", (r, e) => r.saveExplanation({ submissionId: crypto.randomUUID(), encounterId: e, blockId: "e1", text: "Because so.", ms: 5 }, NOW)],
-  ["a view", (r) => r.recordView({ course: "c", lesson: "l1" }, NOW)],
+const WORK: [string, Work][] = [
+  ["an answer", (db, e) => db.query(`INSERT INTO answers (origin, course, block_id, lesson, choice, correct, first_try, ms, at, encounter_id, choice_id, submission_id)
+    VALUES ('block', 'c', 'q1', 'l1', 'A', 1, 1, 5, ?, ?, 'a', ?)`).run(NOW, e, crypto.randomUUID())],
+  ["an explanation", (db, e) => db.query(`INSERT INTO explanations (submission_id, encounter_id, block_id, course, lesson, text, ms, at)
+    VALUES (?, ?, 'e1', 'c', 'l1', 'Because so.', 5, ?)`).run(crypto.randomUUID(), e, NOW)],
+  ["a view", (db) => db.query("INSERT INTO views (course, lesson, at) VALUES ('c', 'l1', ?)").run(NOW)],
 ];
 
 test.each(WORK)("a SQLite progress.db holding %s stops startup with a clear message, before Postgres is touched", (what, work) => inRoot(async (root) => {
   mkdirSync(join(root, "state"));
-  await legacy(join(root, "state", "progress.db"), work);
+  legacy(join(root, "state", "progress.db"), work);
   const r = await boot({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "state", "db")}` });
   expect(r.up).toBe(false);
   expect(r.code).toBe(2);
@@ -167,7 +193,7 @@ test.each(WORK)("a SQLite progress.db holding %s stops startup with a clear mess
 
 test("a SQLite progress.db with no answer, explanation or view does not stop startup", () => inRoot(async (root) => {
   mkdirSync(join(root, "state"));
-  await legacy(join(root, "state", "progress.db"), async () => undefined); // an encounter and its snapshot only
+  legacy(join(root, "state", "progress.db"), () => undefined); // an encounter and its snapshot only
   const r = await boot({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "state", "db")}` });
   expect(r.up).toBe(true);
 }), timeout(1));

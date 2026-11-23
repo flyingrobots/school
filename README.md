@@ -20,11 +20,12 @@ Nothing here is stable. There are no releases.
 
 ## Running it
 
-No install step, no `package.json` — [Bun](https://bun.com) runs the TypeScript directly (ADR 2).
+[Bun](https://bun.com) runs the TypeScript directly, with no build step (ADR 2). Install the server's packages once with `bun install` in `server/`.
 
 ```sh
 SCHOOL_COURSE=/path/to/a-course \
 SCHOOL_STATE=/path/to/your-state \
+SCHOOL_DATABASE_URL=postgres://postgres:password@127.0.0.1:5432/school \
 SCHOOL_MOUNTS="papers=/path/to/source-material" \
   bun server/server.ts
 ```
@@ -32,7 +33,8 @@ SCHOOL_MOUNTS="papers=/path/to/source-material" \
 | Variable | Meaning |
 | --- | --- |
 | `SCHOOL_COURSE` | The course to serve. Omit it and the index says so rather than crashing. |
-| `SCHOOL_STATE` | Where **your** answers and progress go. Must not be inside the course; the server refuses to start if it is. |
+| `SCHOOL_STATE` | Your private state: `settings.json`. Must not be inside the course; the server refuses to start if it is. If an old SQLite `progress.db` here still holds answers, explanations or views, the server refuses to start rather than leave them behind; nothing migrates from SQLite. |
+| `SCHOOL_DATABASE_URL` | Where your answers and progress go: a Postgres server, or `pglite:<dir>` for development. Required; see below. |
 | `SCHOOL_MOUNTS` | `name=path` pairs, served read-only at `/name/...`, for source material a course cites. |
 | `HOST`, `PORT` | Default `127.0.0.1:4747`. |
 | `SCHOOL_ALLOWED_HOSTS` | Comma-separated host names School answers to, besides `127.0.0.1`, `localhost`, `::1` and `HOST`: set it to your tailnet name, such as `school.example.ts.net`. Names only, no port or wildcard. Any other `Host` header gets a 403, which is what stops a DNS-rebinding page from reaching School. |

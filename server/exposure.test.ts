@@ -60,8 +60,7 @@ test("POST /api/exposure is behind the API guard and parses its body", async () 
   }
 });
 
-// While the server ran on SQLite this asserted 501 "unsupported". On Postgres, recording an
-// exposure in a tracked encounter is supported: it is stored once, and the record holds it.
+// Recording an exposure in a tracked encounter: it is stored once, and the record holds it.
 test("on Postgres a valid exposure in a tracked encounter is stored once; a resend is a duplicate, a reused id a conflict", async () => {
   const { encounterId } = await (await lesson("?aid=1")).json();
   const exposure = { exposureId: crypto.randomUUID(), encounterId, blockId: "e1", kind: "model-answer" };

@@ -3,8 +3,13 @@
 // there and holds any answer, explanation or view, the server stops and says so, before it opens
 // Postgres, instead of starting on an empty record beside the learner's real history.
 //
-// Read-only: the file is opened readonly, never created, never migrated. This check and the
-// SQLite code it reads with go when flyingrobots/school#49 deletes SQLite.
+// Read-only: the file is opened readonly, never created, never migrated. This is the one place in
+// School that still reads SQLite. The SQLite record was deleted (flyingrobots/school#49), but this
+// check stays: it is what makes "there is no learner data in SQLite" a fact the server checks at
+// every start instead of an assumption. It uses bun:sqlite, Bun's built-in driver, because counting
+// rows means reading SQLite's file format, and the built-in reads it exactly, adds no dependency
+// and ships in the image already; a hand-written reader would be new code to trust for one query.
+// server/docker.test.ts holds the line: nothing else imports bun:sqlite.
 import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 
