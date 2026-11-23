@@ -122,16 +122,19 @@ checking out the previous version.
 
 The upgrade above was drilled on 2026-11-23 for flyingrobots/school#112. The starting point was a
 deployment at `1a7c021`, the last layout in which the server migrated as the superuser. It held one
-answer written through School's API. The full transcript, with no password in it, is in that pull
-request. Abridged:
+answer written through School's API. Step 4 was run first as plain `docker compose up -d`, to check
+that `pull_policy: build` replaces the old server image, and then as written. The full transcript,
+with no password in it, is in that pull request. Abridged:
 
 ```text
-$ docker compose up -d            # step 4 before step 3
+$ docker compose up -d            # before step 3
 error while interpolating services.migrate.environment.SCHOOL_APP_PASSWORD: required variable SCHOOL_APP_PASSWORD is missing a value: ...
-$ docker compose up -d --build    # after step 3
-$ docker compose ps -a
-migrate    exited    Exited (0) 1 second ago
-school     running   Up Less than a second
+$ docker compose up -d            # after step 3, without --build: the school image is rebuilt
+image id of school91up-school before: sha256:4ab60f5d1846
+image id of school91up-school after: sha256:fbb4869b6b8a
+migrate-1  | {"kind":"school.migrate","event":"done","ok":true,"where":"postgres://postgres:5432/school","applied":[],"role":"school_app"}
+school-1   | school: record in Postgres at postgres://postgres:5432/school as school_app
+$ docker compose up -d --build    # step 4 as written: the same result
 $ docker compose exec -T postgres psql -U postgres -d school -Atc "SELECT submission_id, choice_id, first_try FROM school.answers ORDER BY seq"
-d12281cd-27e7-4aac-b336-2f2cf50de0c8|a|t
+8473769c-bfcd-46da-b386-6bf824485898|a|t
 ```
