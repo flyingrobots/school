@@ -7,7 +7,7 @@ states its case and oracle.
 
 ## The launcher, `./school`
 
-`host/launcher.test.ts`, with a fake vault and a fake compose.
+`host/launcher.test.ts`, with a fake vault and a fake compose; SEC-L22 is `host/prompt.test.ts`, with a fake terminal.
 
 | ID | Case and oracle | Status | Test |
 | --- | --- | --- | --- |
@@ -29,6 +29,10 @@ states its case and oracle.
 | SEC-L16 | A Keychain that throws is an error line, exit 1, never a stack trace | implemented | `host/launcher.test.ts`: `SEC-L16: a Keychain that throws is an error line, exit 1, never a stack trace` |
 | SEC-L17 | Passes its arguments to `docker compose` as they are, with the secrets resolved as for up and in the environment only, and stdin inherited | implemented | `host/launcher.test.ts`: `SEC-L17: passes its arguments to `docker compose` as they are, with the secrets resolved as for up and in the environment only, and stdin inherited` |
 | SEC-L18 | `school compose` with nothing after it is an error line, exit 2 | implemented | `host/launcher.test.ts`: `SEC-L18: `school compose` with nothing after it is an error line, exit 2` |
+| SEC-L19 | A secret with a double quote or backslash is scrubbed from compose's output before it is serialised, not after | implemented | `host/launcher.test.ts`: `SEC-L19: a secret with a double quote or backslash is scrubbed from compose's output before it is serialised, not after` |
+| SEC-L20 | A `KEY: value` line in server/.env, which compose also reads, is a leak to `school up` and is moved by `school import` | implemented | `host/launcher.test.ts`: `SEC-L20: a `KEY: value` line in server/.env, which compose also reads, is a leak to `school up` and is moved by `school import`` |
+| SEC-L21 | `school import` refuses a value compose would interpolate (a `$` unquoted or in double quotes), changing nothing; a single-quoted one is literal | implemented | `host/launcher.test.ts`: `SEC-L21: `school import` refuses a value compose would interpolate (a `$` unquoted or in double quotes), changing nothing; a single-quoted one is literal` |
+| SEC-L22 | The prompt reads a line unechoed, restores the terminal, and writes nothing to stderr, not even a newline | implemented | `host/prompt.test.ts`: `SEC-L22: the prompt reads a line unechoed, restores the terminal, and writes nothing to stderr, not even a newline` |
 
 ## The Keychain adapter and the shared rule
 
@@ -43,6 +47,8 @@ states its case and oracle.
 | SEC-K5 | The runner passes every other command through unchanged | implemented | `host/keychain.test.ts`: `SEC-K5: the runner passes every other command through unchanged` |
 | SEC-K6 | Generated secrets are 32 letters and digits, and differ | implemented | `host/keychain.test.ts`: `SEC-K6: generated secrets are 32 letters and digits, and differ` |
 | SEC-K7 | ResolveSecret takes the environment first, then the store, and says which; an empty variable counts as unset | implemented | `host/keychain.test.ts`: `SEC-K7: resolveSecret takes the environment first, then the store, and says which; an empty variable counts as unset` |
+| SEC-K8 | A read returns nothing only for a missing item (exit 44); any other failure is an error, so no caller takes a locked Keychain for an empty one | implemented | `host/keychain.test.ts`: `SEC-K8: a read returns nothing only for a missing item (exit 44); any other failure is an error, so no caller takes a locked Keychain for an empty one` |
+| SEC-K9 | Storing updates the item in place: no delete runs first, so a failed store leaves the old secret where it was | implemented | `host/keychain.test.ts`: `SEC-K9: storing updates the item in place: no delete runs first, so a failed store leaves the old secret where it was` |
 
 ## Compose
 
@@ -109,4 +115,5 @@ states its case and oracle.
 | --- | --- | --- | --- |
 | SEC-R1 | A real `./school up` from a clean Keychain asks for the superuser password, generates the rest, stores them and starts School; a second run reads them silently | verified by hand on 2026-11-23 | flyingrobots/school#132, with a throwaway Keychain account, deleted afterwards |
 | SEC-R2 | `docker inspect` of every container, compose's logs, both transcripts and `server/.env` hold no secret value; argv sampled during a run holds none | verified by hand on 2026-11-23 | flyingrobots/school#132 |
-| SEC-R3 | The bridge starts with its token from the Keychain, and the server's Settings status reaches it authorised | verified by hand on 2026-11-23 | flyingrobots/school#132 |
+| SEC-R3 | The bridge starts with its token from the Keychain | verified by hand on 2026-11-23 | flyingrobots/school#132: the bridge's `bridge.listening` line, with no token in its environment |
+| SEC-R4 | The server's Settings status, under `./school up`, reaches that bridge authorised | not verified | Not checked on 2026-11-23: the run could not publish the server on 127.0.0.1:4747, which another School held |

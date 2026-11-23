@@ -36,8 +36,13 @@ School reaches the Keychain through [`@git-stunts/vault`](https://www.npmjs.com/
 the vault, its command runner (`host/keychain.ts`). The vault's adapter stores a secret with
 `security add-generic-password ... -w <secret>`, which puts the secret in argv, where any process
 of the same user can read it while `security` runs. School's runner sends that one command to
-`security -i` on stdin instead, and reads the item back to check it was kept. Reads run as the
-vault gives them: the secret comes back on the child's stdout, a pipe.
+`security -i` on stdin instead, with `-U`, which updates an existing item in place; the vault's
+adapter deletes the item first, and the runner skips that delete, so a store that fails leaves the
+old secret where it was. It then reads the item back to check it was kept. Reads run as the vault
+gives them: the secret comes back on the child's stdout, a pipe. Only `security`'s exit 44 (the
+item could not be found) counts as a missing secret; any other failed read, such as a locked
+Keychain or a denied prompt, is an error (exit 1), so `./school up` never generates a secret over
+one it could not read.
 
 A stored value must be printable ASCII with no space, double quote or backslash, because it is
 written as one double-quoted word on that stdin. Generated secrets are 32 letters and digits.
@@ -60,8 +65,9 @@ checkout:
 
 `./school` runs `host/school.ts` with Bun; run `bun install` in `host/` once first. `up`:
 
-1. refuses (exit 2) while `server/.env` still assigns any of the three secrets, naming the keys
-   and never a value, and says to run `./school import`;
+1. refuses (exit 2) while `server/.env` still assigns any of the three secrets, as `KEY=value` or
+   `KEY: value` (compose reads both), naming the keys and never a value, and says to run
+   `./school import`;
 2. resolves every secret, asking or generating as the table above says; without a terminal, a
    missing superuser password is an error (exit 2), and nothing is stored or started;
 3. stores what it asked for or generated, before compose starts, so a new database is created
@@ -93,7 +99,8 @@ environment variable "SCHOOL_POSTGRES_PASSWORD" required by secret "server_postg
 
 Output is JSON Lines on stdout and stderr, one object per line with `kind` (`school.up`,
 `school.down`, `school.compose`, `school.import`, `school.help`, `school.error`) and `event`.
-Compose's own output arrives as `compose` events, scrubbed of every secret; errors are `error`
+Compose's own output arrives as `compose` events, scrubbed of every secret (each string before it
+is serialised, so a secret with a quote or backslash is caught too); errors are `error`
 lines on stderr with a `code`. `--human`, before the command, prints prose instead.
 `./school --help` lists the commands as JSON Lines. Exit codes: 0 done, 2 a missing or invalid
 setting with nothing started, 1 any other failure, such as compose failing.

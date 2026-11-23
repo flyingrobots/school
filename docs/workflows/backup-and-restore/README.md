@@ -58,6 +58,16 @@ compose's output as it is (without `--human`, each line comes as a JSON object);
 project after the folder, so its volumes are `server_postgres` and `server_backups` unless you set
 `COMPOSE_PROJECT_NAME`. `docker volume ls` shows them.
 
+The backup service connects to the database with the superuser password in a file,
+`/run/secrets/postgres_password`, which its `PGPASSWORD_FILE` names. `backup.sh` reads that file
+into `PGPASSWORD`, but libpq itself does not read `PGPASSWORD_FILE`, and `docker compose exec` or
+`run --entrypoint` starts the command without `backup.sh`. So every command below that connects
+from the backup service (`createdb`, `pg_restore --dbname`, `psql`) runs in `sh -c` and loads the
+password first, inside the container: `PGPASSWORD="$(cat "$PGPASSWORD_FILE")" <command>`. The
+single quotes keep the host's shell from expanding it, and the password is never on a command
+line. `pg_restore --list` and `ls` connect to nothing and run as they are; `psql` in the
+`postgres` service connects over its local socket, which needs no password.
+
 ## 1. Check that backups run
 
 ```sh
@@ -105,8 +115,8 @@ schedule you will keep.
 
    ```sh
    docker compose exec backup pg_restore --list /backups/<file> | grep -c 'TABLE DATA'
-   docker compose exec backup createdb school_restore
-   docker compose exec backup pg_restore --exit-on-error --single-transaction --dbname=school_restore /backups/<file>
+   docker compose exec backup sh -c 'PGPASSWORD="$(cat "$PGPASSWORD_FILE")" createdb school_restore'
+   docker compose exec backup sh -c 'PGPASSWORD="$(cat "$PGPASSWORD_FILE")" pg_restore --exit-on-error --single-transaction --dbname=school_restore /backups/<file>'
    ```
 
    `--single-transaction` with `--exit-on-error` restores everything or nothing; a silent exit
@@ -116,8 +126,8 @@ schedule you will keep.
    digest of its rows, so two databases holding the same record print the same lines:
 
    ```sh
-   docker compose exec -T backup psql --set=ON_ERROR_STOP=1 --dbname=school --tuples-only --no-align < backup/verify.sql > /tmp/school.verify &&
-     docker compose exec -T backup psql --set=ON_ERROR_STOP=1 --dbname=school_restore --tuples-only --no-align < backup/verify.sql > /tmp/school_restore.verify &&
+   docker compose exec -T backup sh -c 'PGPASSWORD="$(cat "$PGPASSWORD_FILE")" psql --set=ON_ERROR_STOP=1 --dbname=school --tuples-only --no-align' < backup/verify.sql > /tmp/school.verify &&
+     docker compose exec -T backup sh -c 'PGPASSWORD="$(cat "$PGPASSWORD_FILE")" psql --set=ON_ERROR_STOP=1 --dbname=school_restore --tuples-only --no-align' < backup/verify.sql > /tmp/school_restore.verify &&
      diff /tmp/school.verify /tmp/school_restore.verify && echo identical
    ```
 
@@ -151,9 +161,9 @@ Choose the newest dump from before the damage (step 1), then:
    it (`docker compose run`), which have its volume and connection settings but not its schedule:
 
    ```sh
-   ../school --human compose run --rm --entrypoint createdb backup school_restore
-   ../school --human compose run --rm --entrypoint pg_restore backup --exit-on-error --single-transaction --dbname=school_restore /backups/<file>
-   ../school --human compose run --rm -T --entrypoint psql backup --set=ON_ERROR_STOP=1 --dbname=school_restore --tuples-only --no-align < backup/verify.sql
+   ../school --human compose run --rm --entrypoint sh backup -c 'PGPASSWORD="$(cat "$PGPASSWORD_FILE")" createdb school_restore'
+   ../school --human compose run --rm --entrypoint sh backup -c 'PGPASSWORD="$(cat "$PGPASSWORD_FILE")" pg_restore --exit-on-error --single-transaction --dbname=school_restore /backups/<file>'
+   ../school --human compose run --rm -T --entrypoint sh backup -c 'PGPASSWORD="$(cat "$PGPASSWORD_FILE")" psql --set=ON_ERROR_STOP=1 --dbname=school_restore --tuples-only --no-align' < backup/verify.sql
    ```
 
 3. Switch: keep the damaged database under another name, and give the restored one the live name.
@@ -206,8 +216,8 @@ database, so a dump does not hold them: create them before restoring.
    ../school --human compose run --rm --entrypoint ls backup -l /backups
    docker compose exec postgres psql --username=postgres --dbname=school \
      --command='CREATE ROLE school_owner NOLOGIN' --command='CREATE ROLE school_app NOLOGIN'
-   ../school --human compose run --rm --entrypoint pg_restore backup --exit-on-error --single-transaction --dbname=school /backups/<file>
-   ../school --human compose run --rm -T --entrypoint psql backup --set=ON_ERROR_STOP=1 --tuples-only --no-align < backup/verify.sql
+   ../school --human compose run --rm --entrypoint sh backup -c 'PGPASSWORD="$(cat "$PGPASSWORD_FILE")" pg_restore --exit-on-error --single-transaction --dbname=school /backups/<file>'
+   ../school --human compose run --rm -T --entrypoint sh backup -c 'PGPASSWORD="$(cat "$PGPASSWORD_FILE")" psql --set=ON_ERROR_STOP=1 --tuples-only --no-align' < backup/verify.sql
    ```
 
    If the `backups` volume is gone too but you kept a copy (step 3), put it back first:

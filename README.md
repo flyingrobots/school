@@ -65,10 +65,23 @@ The agents themselves, and their commands, are written only in the bridge's conf
 ```sh
 mkdir -p ~/.config/school
 cp bridge/bridge.example.json ~/.config/school/bridge.json   # then edit the agents
-bun bridge/bridge.ts
+(cd host && bun install)                                     # the bridge reads the Keychain through host/
 ```
 
-The bridge takes `SCHOOL_BRIDGE_TOKEN` from its environment, or else from the Keychain item `./school up` stores, the same token the server gets (run `bun install` in `host/` first).
+The bridge takes `SCHOOL_BRIDGE_TOKEN` from its environment if it is set, and only otherwise from the Keychain. Which one to use depends on how the server runs:
+
+- **A server you connected in Settings** (one started with `bun server/server.ts`, as above): start the bridge with the token you generated there, in its environment. `read -rs` keeps it out of the shell's history; paste it and press Enter:
+
+  ```sh
+  read -rs SCHOOL_BRIDGE_TOKEN && export SCHOOL_BRIDGE_TOKEN
+  bun bridge/bridge.ts
+  ```
+
+- **A server started with `./school up`**: the launcher keeps the token in the Keychain and gives the server the same one, so start the bridge with no token set and it reads that Keychain item:
+
+  ```sh
+  bun bridge/bridge.ts
+  ```
 
 The file is re-read on every request, so an edit takes effect without a restart.
 

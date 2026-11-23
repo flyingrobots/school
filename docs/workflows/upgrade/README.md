@@ -40,19 +40,25 @@ Run every command from the checkout's root, with the deployment's `server/.env` 
 compose` commands that create or start a container (`up`, `run`, `start`) need the secrets, so run
 them as `./school compose ...`; the others (`exec`, `logs`, `ps`, `cp`, `stop`, `down`) need none
 and can also run as plain `docker compose` from `server/`, as in
-[back up and restore](../backup-and-restore/README.md#before-you-start). This page runs them all
-through `./school compose`.
+[back up and restore](../backup-and-restore/README.md#before-you-start). From step 2 on, this page
+runs them all through `./school compose`; step 1 cannot, because it runs before `git pull`.
 
 ## 1. Take a dump and copy it off the volume
 
 A migration can fail halfway through a file; the file then rolls back. Still, keep a dump from just
 before the upgrade, outside the volume, so the upgrade can always be undone
-([back up and restore](../backup-and-restore/README.md), steps 2 and 3):
+([back up and restore](../backup-and-restore/README.md), steps 2 and 3). This step runs before
+`git pull`, so on the first upgrade past flyingrobots/school#123 the checkout has no `./school` yet,
+and the secrets are still in `server/.env`. Run it with plain `docker compose` from `server/`:
+`exec` and `cp` start no container and need no secret.
 
 ```sh
-./school compose exec backup /bin/sh /backup/backup.sh once
-./school compose exec backup ls -1t /backups
-./school compose cp backup:/backups/<newest file> ./
+cd server
+docker compose exec backup /bin/sh /backup/backup.sh once
+docker compose exec backup ls -1t /backups
+docker compose cp backup:/backups/<newest file> ./
+chmod 600 <newest file>
+cd ..
 ```
 
 ## 2. Take the new version
@@ -79,8 +85,11 @@ Install the launcher's packages, then move them:
 
 `import` stores each secret it finds in the Keychain (account `school`), then removes exactly
 those lines from `server/.env` and keeps every other line. It changes nothing if a value cannot be
-stored as it is, or if the Keychain already holds a different value for the same name; it says
-which. It prints names, never values:
+stored as it is, if the Keychain already holds a different value for the same name, or if a
+value holds a `$` outside single quotes, which compose would interpolate, so the text on the line
+is not the password compose used: replace that line with the literal password and run it again.
+It reads `KEY=value` and `KEY: value` lines, as compose does, and names the secret that stopped it. It
+prints names, never values:
 
 ```text
 {"kind":"school.import","event":"keychain","account":"school"}
