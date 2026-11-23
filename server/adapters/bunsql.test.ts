@@ -9,6 +9,10 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { learningRecordContract } from "../contract/learning-record.ts";
 import { APP, FUNCTION_CALL, openDatabase, redact, type Opened } from "./database.ts";
 import { bunSql } from "./bunsql.ts";
+import { readMigrations } from "../db/migrate.ts";
+
+/** Every migration, in order: what a first open applies. */
+const ALL = readMigrations().map((m) => m.version);
 import { postgresRecord } from "./postgres.ts";
 
 const URL_ = process.env.SCHOOL_TEST_POSTGRES_URL;
@@ -65,7 +69,7 @@ describe.skipIf(URL_ === undefined || URL_ === "")("Bun.SQL on a real Postgres (
   test("opening migrates on first start and applies nothing on the next", async () => {
     const url = await database();
     const first = await openDatabase({ driver: "postgres", url });
-    expect(first.applied).toEqual([1, 2]);
+    expect(first.applied).toEqual(ALL);
     await first.close();
     const second = await openDatabase({ driver: "postgres", url });
     expect(second.applied).toEqual([]);
@@ -75,7 +79,7 @@ describe.skipIf(URL_ === undefined || URL_ === "")("Bun.SQL on a real Postgres (
   test("two servers starting at once on one database migrate it once", async () => {
     const url = await database();
     const both = await Promise.all([openDatabase({ driver: "postgres", url }), openDatabase({ driver: "postgres", url })]);
-    expect(both.map((o) => o.applied).sort()).toEqual([[], [1, 2]]);
+    expect(both.map((o) => o.applied).sort()).toEqual([[], ALL]);
     for (const o of both) await o.close();
   }, SLOW);
 

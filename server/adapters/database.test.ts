@@ -5,6 +5,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDatabase } from "./database.ts";
+import { readMigrations } from "../db/migrate.ts";
+
+/** Every migration, in order: what a first open applies. */
+const ALL = readMigrations().map((m) => m.version);
 import { postgresRecord } from "./postgres.ts";
 import { ownerQuery } from "../testing/record.ts";
 
@@ -15,7 +19,7 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 test("pglite: migrates on first open, applies nothing on the next, and keeps what was recorded", async () => {
   const dir = join(root, "a", "record"); // parents are created
   const first = await openDatabase({ driver: "pglite", dir });
-  expect(first.applied).toEqual([1, 2]);
+  expect(first.applied).toEqual(ALL);
   await postgresRecord(first.sql).recordView({ course: "c", lesson: "l1" }, "2026-11-22T10:00:00.000Z");
   await first.close();
   const second = await openDatabase({ driver: "pglite", dir });
