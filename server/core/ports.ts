@@ -2,7 +2,7 @@
 // Adapters implement them; the core never imports an adapter.
 import type {
   Aid, AidTracking, Block, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingInput,
-  GradingRecord, LessonProgress, Outcome, Recorded, SaveResult, SavedExplanation, Submission, SubmitResult, ViewEvent,
+  GradingRecord, LastStudied, LessonProgress, Outcome, Recorded, SaveResult, SavedExplanation, Submission, SubmitResult, ViewEvent,
 } from "./model.ts";
 
 /**
@@ -21,6 +21,12 @@ export interface LearningRecord {
   /** What the learner has already answered in this encounter, oldest first. */
   encounterAnswers(encounterId: string): Promise<Recorded[]>;
   lessonProgress(course: string): Promise<LessonProgress>;
+  /**
+   * Where the learner left off: the course and lesson of the latest encounter opened, answer or
+   * explanation stored, or view recorded, by the record's order, with its time; null when there is
+   * none. A refused submission is not activity, and neither is resuming an encounter, which stores nothing.
+   */
+  lastStudied(): Promise<LastStudied | null>;
   saveExplanation(s: ExplanationSubmission, now: string): Promise<SaveResult>;
   /** A saved explanation, its block from the snapshot and its latest grading; null if there is none. */
   explanation(submissionId: string): Promise<SavedExplanation | null>;

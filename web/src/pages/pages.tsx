@@ -9,9 +9,7 @@ export { SettingsPage } from "./settings"
 
 const home = { label: "Home", to: "/" }
 
-export function HomePage() {
-  return <Placeholder title="Home" />
-}
+export { HomePage } from "./home"
 
 export { CoursePage } from "./course"
 

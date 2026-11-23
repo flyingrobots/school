@@ -12,7 +12,7 @@ const RECORD_TABLES = ["answers", "decision_notes", "encounters", "explanations"
 /** The functions `school_app` may execute, and nothing else. */
 const APP_FUNCTIONS = [
   "choice_decision_notes", "encounter_answers", "encounter_decision_notes", "encounter_evidence", "encounter_explanations",
-  "explanation", "lesson_progress", "open_encounter", "record_decision_note", "record_exposure", "record_grading",
+  "explanation", "last_studied", "lesson_progress", "open_encounter", "record_decision_note", "record_exposure", "record_grading",
   "record_view", "save_explanation", "submission_aid", "submit",
 ];
 

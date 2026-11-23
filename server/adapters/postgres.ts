@@ -13,7 +13,7 @@
 import { z } from "zod";
 import {
   Aid, Block, DecisionNote, DecisionNoteResult, Encounter, EvidenceKind, EvidenceRow, ExplanationState, ExposureResult, Grading,
-  LessonProgress, Recorded, SaveResult, Seq, SubmitResult, type ExplainBlock,
+  LastStudied, LessonProgress, Recorded, SaveResult, Seq, SubmitResult, type ExplainBlock,
 } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
 import { canonical } from "../record.ts";
@@ -32,6 +32,7 @@ const bigint = z.union([z.number(), z.bigint(), z.string().regex(/^[0-9]+$/)]).t
 const Evidence = z.object({ seq: bigint, kind: EvidenceKind, block_id: z.string().nullable() });
 const Noted = z.object({ status: z.string(), note: DecisionNote.nullable() });
 const NoteRow = z.object({ note: DecisionNote });
+const Studied = z.object({ course: z.string(), lesson: z.string(), at: time });
 
 /** `SELECT * FROM school.fn($1, ..., $n)`: the only statement shape this adapter issues. */
 const call = (fn: string, args: readonly unknown[]) =>
@@ -70,6 +71,12 @@ export function postgresRecord(sql: Sql): LearningRecord {
       }),
 
     lessonProgress: async (course) => LessonProgress.parse(await value("lesson_progress", course)),
+
+    lastStudied: async () => {
+      const r = await rows("last_studied");
+      if (r.length > 1) throw new Error(`school.last_studied returned ${r.length} rows, not at most one`);
+      return r.length === 0 ? null : LastStudied.parse(Studied.parse(r[0]));
+    },
 
     saveExplanation: async (s, now) =>
       SaveResult.parse({ status: await value("save_explanation", s.submissionId, s.encounterId, s.blockId, s.text, s.ms, now) }),
