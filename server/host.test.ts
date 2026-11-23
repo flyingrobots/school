@@ -24,7 +24,7 @@ writeFileSync(join(root, "course", "lessons", "0001.json"), JSON.stringify({
   children: [{ type: "quiz", id: "q1", q: "Which?", why: "So.", choices: [{ id: "a", text: "A", correct: true }, { id: "b", text: "B", correct: false }] }],
 }));
 const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_MOUNTS: `papers=${join(root, "papers")}`,
-  SCHOOL_STATE: join(root, "state"), SCHOOL_WEB: join(root, "no-web"), HOST: "127.0.0.1", SCHOOL_ALLOWED_HOSTS: TAILNET };
+  SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`, SCHOOL_WEB: join(root, "no-web"), HOST: "127.0.0.1", SCHOOL_ALLOWED_HOSTS: TAILNET };
 delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_URL;
 delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_TOKEN;
 const server: Started = await startSchool(env).catch((e) => { rmSync(root, { recursive: true, force: true }); throw e; });

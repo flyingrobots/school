@@ -95,7 +95,7 @@ Entries are tagged:
 
 **School**, or **the framework** *(School)* — This repository: the server, the block model, the renderers, the shared components and the docs. It is subject-agnostic. It renders lessons, records evidence, and runs assessments; it does not know what any course is about.
 
-**Server** *(School)* — The part that serves renderings and records evidence to SQLite. Its existence is the original reason School exists: the skill alone could not see the learner's quiz results.
+**Server** *(School)* — The part that serves renderings and records evidence to Postgres (PGlite on disk in development and tests). Its existence is the original reason School exists: the skill alone could not see the learner's quiz results.
 
 **View** *(School)* — A rendering of the same content for a different purpose: `web` (interactive, records evidence), `slides` (presentation, records nothing), `epub` (a frozen export, later). A view may omit a block but never changes its data.
 

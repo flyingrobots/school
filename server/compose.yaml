@@ -1,13 +1,38 @@
 # Runs School in Docker behind `tailscale serve` (ADR 4). Nothing here names a course (ADR 6):
 # the course, the learner's state and any source material come from the environment, usually
 # a gitignored server/.env beside this file. See compose.example.env.
+#
+# The learner's record is in Postgres (RFC 3), in the named volume `postgres`. `docker compose down`
+# keeps it; `docker compose down -v` deletes it, and with it every answer.
 services:
+  postgres:
+    # Pinned by tag and digest: the major version is the record's on-disk format.
+    image: postgres:18.7@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: school
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${SCHOOL_POSTGRES_PASSWORD:?set SCHOOL_POSTGRES_PASSWORD to a long random secret}
+    volumes:
+      - postgres:/var/lib/postgresql   # Postgres 18's image keeps its data under here
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --username=postgres --dbname=school"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    # No ports: only the school service reaches it, on the compose network.
   school:
     build: .
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "127.0.0.1:4747:4747"   # local only; tailscale serve publishes it to the tailnet
     environment:
+      # The record. The server connects as the superuser, because it runs the migrations at
+      # startup; every request then runs as school_app (server/adapters/database.ts).
+      SCHOOL_DATABASE_URL: postgres://postgres:${SCHOOL_POSTGRES_PASSWORD}@postgres:5432/school
       # Host names School answers to besides localhost, comma-separated: the tailnet name that
       # `tailscale serve` publishes it under. Any other Host header is refused (DNS rebinding).
       SCHOOL_ALLOWED_HOSTS: ${SCHOOL_ALLOWED_HOSTS:-}
@@ -24,3 +49,5 @@ services:
       - ${SCHOOL_COURSE_DIR:?set SCHOOL_COURSE_DIR to the course repository}:/course:ro
       - ${SCHOOL_STATE_DIR:?set SCHOOL_STATE_DIR to the private learner-state directory}:/state
       - ${SCHOOL_SOURCES_DIR:?set SCHOOL_SOURCES_DIR to the course's source material, or to an empty directory}:/sources:ro
+volumes:
+  postgres:

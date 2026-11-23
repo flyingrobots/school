@@ -2,9 +2,13 @@
 // learner state cannot be placed inside a course.
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { ConfigError, course, courseNames, mountTable, parseConfig, parseMounts } from "./config.ts";
+import { ConfigError, course, courseNames, mountTable, parseConfig as parseConfigFrom, parseMounts } from "./config.ts";
 
 const FRAMEWORK = "/opt/school";
+
+/** The config, with a record named: there is no default, and most of these tests are about something else. */
+const parseConfig = (env: Record<string, string | undefined>, framework: string) =>
+  parseConfigFrom({ SCHOOL_DATABASE_URL: "postgres://db/school", ...env }, framework);
 
 test("no course configured is a valid state, not a crash", () => {
   const c = parseConfig({}, FRAMEWORK);
@@ -52,6 +56,31 @@ test("learner state inside the course is refused", () => {
 test("the database defaults inside the state directory", () => {
   expect(parseConfig({ SCHOOL_STATE: "/var/school" }, FRAMEWORK).dbPath).toBe("/var/school/progress.db");
   expect(parseConfig({ SCHOOL_STATE: "/var/school", DB_PATH: "/tmp/other.db" }, FRAMEWORK).dbPath).toBe("/tmp/other.db");
+});
+
+test("SCHOOL_DATABASE_URL picks the driver, and there is no default", () => {
+  for (const env of [{ SCHOOL_STATE: "/var/school" }, { SCHOOL_STATE: "/var/school", SCHOOL_DATABASE_URL: "" }]) {
+    expect(() => parseConfigFrom(env, FRAMEWORK)).toThrow(/SCHOOL_DATABASE_URL is not set.*postgres:\/\/.*pglite:/);
+  }
+  expect(parseConfig({ SCHOOL_DATABASE_URL: "pglite:/srv/record" }, FRAMEWORK).database).toEqual({ driver: "pglite", dir: "/srv/record" });
+  expect(parseConfig({ SCHOOL_DATABASE_URL: "pglite:record" }, FRAMEWORK).database).toEqual({ driver: "pglite", dir: join(process.cwd(), "record") });
+  for (const url of ["postgres://school:pw@db:5432/school", "postgresql://db/school"]) {
+    expect(parseConfig({ SCHOOL_DATABASE_URL: url }, FRAMEWORK).database).toEqual({ driver: "postgres", url });
+  }
+});
+
+test("a SCHOOL_DATABASE_URL School cannot use is refused, without echoing what may be a password", () => {
+  for (const url of ["mysql://u:hunter2@db/school", "sqlite:/var/school/progress.db", "pglite:", "pglite://x", "postgres://u:hunter2@[bad"]) {
+    let message = "";
+    try { parseConfig({ SCHOOL_DATABASE_URL: url }, FRAMEWORK); } catch (e) { expect(e).toBeInstanceOf(ConfigError); message = (e as Error).message; }
+    expect(message).toContain("SCHOOL_DATABASE_URL");
+    expect(message).not.toContain("hunter2");
+  }
+});
+
+test("a PGlite record inside a course is refused", () => {
+  expect(() => parseConfig({ SCHOOL_COURSES: "aion=/courses/aion", SCHOOL_STATE: "/var/school", SCHOOL_DATABASE_URL: "pglite:/courses/aion/db" }, FRAMEWORK))
+    .toThrow(/SCHOOL_DATABASE_URL.*must live outside the course/);
 });
 
 test("named mounts are parsed, and several courses can cite different sources", () => {
