@@ -98,9 +98,6 @@ review quiz is answered in the encounter of the lesson that shows it. Its answer
 that lesson, whose own quizzes are what the course and home pages count. The slides view opens no
 encounter and carries no review.
 
-A record without exposures (the SQLite adapter, being deleted in flyingrobots/school#49) is never
-asked for review: every aid it holds is unknown.
-
 ## Not yet
 
 - **Flagged items.** RFC 2 §2 excludes a flagged item's answers from the evidence that drives

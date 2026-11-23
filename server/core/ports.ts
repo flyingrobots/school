@@ -47,11 +47,6 @@ export interface LearningRecord {
   /** The latest explanation per block in this encounter, each with its latest grading. */
   encounterExplanations(encounterId: string): Promise<ExplanationState[]>;
   recordView(v: ViewEvent, now: string): Promise<void>;
-  /**
-   * Whether this record stores exposures. One that does not refuses every exposure as `unsupported`
-   * and reports every aid as unknown: it never claims "no recorded aid" (RFC 2 §3).
-   */
-  readonly recordsExposures: boolean;
   /** Store help shown for a block, once per exposure id. */
   recordExposure(e: Exposure, now: string): Promise<ExposureResult>;
   /** A quiz answer's or explanation's aid, derived by the record's order; null if there is no such submission. */

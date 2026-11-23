@@ -51,7 +51,7 @@ async function freshApp(): Promise<PGliteInterface> {
   return db;
 }
 
-learningRecordContract("postgres (PGlite)", async () => postgresRecord(functionCallsOnly(pgliteSql(await freshApp()))), { recordsExposures: true });
+learningRecordContract("postgres (PGlite)", async () => postgresRecord(functionCallsOnly(pgliteSql(await freshApp()))));
 
 test("the guard refuses table SQL, so the contract run above proves the adapter issues none", async () => {
   const guarded = functionCallsOnly({ query: async () => [] });

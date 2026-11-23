@@ -63,7 +63,6 @@ test("a grading failure is stored as failed, with no findings, never as a verdic
 test("opening a lesson passes the client's aid capture version, or null, to the record", async () => {
   const opened: unknown[] = [];
   const record = {
-    recordsExposures: true,
     openLessonEncounter: async (o: { page: Block }) => (opened.push(o), { encounter: { id: "e", hash: "h", resumed: false }, page: o.page }),
     encounterAnswers: async () => [],
     encounterExplanations: async () => [],
@@ -85,10 +84,9 @@ describe("due review on opening a lesson (RFC 2 §5; flyingrobots/school#32)", (
     blockId, rule: "due-review/wrong-first-try", answeredAt: "2026-11-20T12:00:00.000Z", corrected: true, shown: [],
     lastSeen: "2026-11-20T12:01:00.000Z", evidence: [3, 5], ...o,
   });
-  function reviewRecord(due: DueItem[], o: { recordsExposures?: boolean } = {}) {
+  function reviewRecord(due: DueItem[]) {
     const calls: { dueReview: unknown[]; opened: { page: Block; notes: unknown[] }[] } = { dueReview: [], opened: [] };
     const record = {
-      recordsExposures: o.recordsExposures ?? true,
       dueReview: async (q: unknown) => (calls.dueReview.push(q), due),
       openLessonEncounter: async (x: { page: Block; notes: unknown[] }) => (calls.opened.push(x), { encounter: { id: "e", hash: "h", resumed: false }, page: x.page }),
       encounterAnswers: async () => [],
@@ -125,13 +123,11 @@ describe("due review on opening a lesson (RFC 2 §5; flyingrobots/school#32)", (
     expect(opened.review).toEqual([]);
   });
 
-  test("no other quizzes, or a record that keeps no exposures, asks for no review", async () => {
-    for (const [reviewable, recordsExposures] of [[[quiz("own"), explain], true], [[quiz("q1")], false]] as const) {
-      const { record, calls } = reviewRecord([item("q1")], { recordsExposures });
-      await createSchool({ record, grader: grader({ status: "failed", error: "x" }), clock }).openLesson("c", lessonPage, 1, [...reviewable]);
-      expect(calls.dueReview).toEqual([]);
-      expect(calls.opened[0]).toMatchObject({ page: lessonPage, notes: [] });
-    }
+  test("a lesson whose course has no other quizzes asks for no review", async () => {
+    const { record, calls } = reviewRecord([item("q1")]);
+    await createSchool({ record, grader: grader({ status: "failed", error: "x" }), clock }).openLesson("c", lessonPage, 1, [quiz("own"), explain]);
+    expect(calls.dueReview).toEqual([]);
+    expect(calls.opened[0]).toMatchObject({ page: lessonPage, notes: [] });
   });
 
   test("each reason says in words why the item came back, with the day of the answer that decided it", () => {

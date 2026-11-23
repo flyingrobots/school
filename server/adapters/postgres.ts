@@ -16,8 +16,25 @@ import {
   LastStudied, LessonProgress, Recorded, SaveResult, Seq, SubmitResult, type ExplainBlock,
 } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
-import { canonical } from "../record.ts";
 import type { Sql } from "./sql.ts";
+
+/**
+ * The page as JSON with object keys sorted at every depth, so equal content always hashes equally.
+ * `school.open_encounter` stores this text as the snapshot and hashes it (SHA-256), and the
+ * `snapshots_hash` check holds the hash to it. It lived in server/record.ts, as the comments in
+ * 0001_init.sql still say, until SQLite was deleted (flyingrobots/school#49); an applied migration
+ * is never edited, so those comments keep the old name.
+ */
+export function canonical(value: unknown): string {
+  const sort = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(sort);
+    if (typeof v === "object" && v !== null) {
+      return Object.fromEntries(Object.keys(v).sort().map((k) => [k, sort((v as Record<string, unknown>)[k])]));
+    }
+    return v;
+  };
+  return JSON.stringify(sort(value));
+}
 
 /** A timestamptz column, as the model's ISO string. Microseconds cannot arise: every `at` stored came in as milliseconds. */
 const time = z.date().transform((d) => d.toISOString());
@@ -111,8 +128,6 @@ export function postgresRecord(sql: Sql): LearningRecord {
       (await rows("encounter_explanations", encounterId)).map((row) => state(Explained.parse(row))),
 
     recordView: async (v, now) => void await one("record_view", v.course, v.lesson, now),
-
-    recordsExposures: true,
 
     recordExposure: async (e, now) =>
       ExposureResult.parse({ status: await value("record_exposure", e.exposureId, e.encounterId, e.blockId, e.kind, now) }),

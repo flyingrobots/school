@@ -81,9 +81,9 @@ export type Exposure = z.infer<typeof Exposure>;
 
 /**
  * `rejected`: no such encounter, it is not tracked, or the block is not a quiz or explain block in
- * its snapshot. `unsupported`: this record cannot store exposures at all (the SQLite adapter).
+ * its snapshot.
  */
-export const ExposureResult = z.object({ status: z.enum(["stored", "duplicate", "conflict", "rejected", "unsupported"]) });
+export const ExposureResult = z.object({ status: z.enum(["stored", "duplicate", "conflict", "rejected"]) });
 export type ExposureResult = z.infer<typeof ExposureResult>;
 
 /** Whether a submission was aided: derived from exposures by the record's order, never stored (RFC 2 §3). */

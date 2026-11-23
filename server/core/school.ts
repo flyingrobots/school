@@ -105,10 +105,9 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
     async openLesson(course, page, aidTracking, reviewable = []) {
       if (page.type !== "page") throw new TypeError("a lesson is a page block");
       const now = clock.now();
-      // Review needs the record's exposures; a record without them is never asked (its aid is all unknown).
       const own = quizIdsIn(page);
       const candidates = new Map(reviewable.flatMap((b) => (b.type === "quiz" && !own.has(b.id) ? [[b.id, b] as const] : [])));
-      const due = record.recordsExposures && candidates.size > 0
+      const due = candidates.size > 0
         ? await record.dueReview({ course, blocks: [...candidates.keys()], now, delayMs: REVIEW_DELAY_MS, limit: REVIEW_LIMIT })
         : [];
       const items = due.filter((d) => candidates.has(d.blockId));
@@ -121,7 +120,7 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
       const { encounter } = opened;
       const [answers, explanations, noted] = await Promise.all([
         record.encounterAnswers(encounter.id), record.encounterExplanations(encounter.id),
-        record.recordsExposures ? record.encounterDecisionNotes(encounter.id) : Promise.resolve([]),
+        record.encounterDecisionNotes(encounter.id),
       ]);
       const review = noted.flatMap((n) => (n.rule.startsWith("due-review/") && n.choice.blockId !== null
         ? [{ blockId: n.choice.blockId, rule: n.rule, reason: n.reason }] : []));

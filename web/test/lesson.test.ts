@@ -720,6 +720,9 @@ describe("the outbox (flyingrobots/school#28)", () => {
     await open(main, lessonPath("ob-lost"), "Orbits", p)
     await quiz(p, "closest").locator("[data-choice=venus]").click()
     await until(p, "quiz", "closest", "wrong")
+    // The page can show the verdict before replies_ has read the resend's body (it pushes after an
+    // await), so wait for the reply itself, then assert on it.
+    await eventually(() => got.length > 0)
     expect(got.map((g) => g.reply.status)).toEqual(["duplicate"])
     expect((await record(main, "ob-lost")).answers).toEqual([{ blockId: "closest", choiceId: "venus", correct: false }])
     await p.context().close()
