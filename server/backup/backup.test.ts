@@ -82,15 +82,17 @@ type Ran = { code: number; stdout: string; stderr: string };
  * Run `args` in the database's image with `dir` mounted at /backups and the script at
  * /backup/backup.sh, as compose runs it. The password goes in the environment, never in argv.
  */
-async function inImage(dir: string, database: string, args: string[], extra: Record<string, string> = {}): Promise<Ran> {
+async function inImage(dir: string, database: string, args: string[], extra: Record<string, string> = {}, input?: string): Promise<Ran> {
+  // Docker would mount a missing path as a new, empty directory in its place.
+  if (!statSync(SCRIPT, { throwIfNoEntry: false })?.isFile()) throw new Error(`${SCRIPT} is not a file`);
   const { network, env } = connection(database);
   const all = { ...env, ...extra };
   const p = Bun.spawn([
-    "docker", "run", "--rm", `--user=${process.getuid!()}:${process.getgid!()}`, ...network,
+    "docker", "run", "--rm", ...(input === undefined ? [] : ["-i"]), `--user=${process.getuid!()}:${process.getgid!()}`, ...network,
     "-v", `${SCRIPT}:/backup/backup.sh:ro`, "-v", `${dir}:/backups`,
     ...Object.keys(all).flatMap((k) => ["-e", k]),
     "--entrypoint", args[0]!, IMAGE, ...args.slice(1),
-  ], { env: { ...process.env, ...all }, stdout: "pipe", stderr: "pipe" });
+  ], { env: { ...process.env, ...all }, stdin: input === undefined ? "ignore" : new TextEncoder().encode(input), stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
   return { code, stdout, stderr };
 }
@@ -102,6 +104,13 @@ const backupOnce = (dir: string, database: string, extra: Record<string, string>
 /** The restore, as the how-to gives it. */
 const restore = (dir: string, database: string, file: string) =>
   inImage(dir, database, ["pg_restore", "--exit-on-error", "--single-transaction", `--dbname=${database}`, `/backups/${file}`]);
+
+/** verify.sql's lines for `database`, as the how-to runs it. */
+async function verify(dir: string, database: string): Promise<string[]> {
+  const r = await inImage(dir, database, ["psql", "--tuples-only", "--no-align", "--set=ON_ERROR_STOP=1"], {}, readFileSync(join(import.meta.dir, "verify.sql"), "utf8"));
+  expect({ code: r.code, stderr: r.stderr }).toEqual({ code: 0, stderr: "" });
+  return r.stdout.split("\n").filter((l) => l !== "");
+}
 
 /** Every line the script printed, on either stream, as JSON. */
 function lines(r: Ran): Record<string, unknown>[] {
@@ -184,6 +193,11 @@ describe.skipIf(TEST_POSTGRES_URL === undefined)("backup and restore on a real P
       const call = (rec: LearningRecord) => (rec[c.method as (typeof READS)[number]] as (...a: unknown[]) => Promise<unknown>)(...c.args);
       expect({ read: c.method, args: c.args, result: await call(again) }).toEqual({ read: c.method, args: c.args, result: await call(now) });
     }
+    // The how-to's check agrees: every table, every row.
+    const tables = await verify(dir, nameOf(original.url));
+    expect(tables).toEqual(await verify(dir, nameOf(empty)));
+    expect(tables.map((l) => l.split("|")[0])).toEqual(expect.arrayContaining(["public.schema_migrations", "school.answers", "school.decision_notes", "school.exposures"]));
+    expect(tables.find((l) => l.startsWith("school.answers|"))).toMatch(/^school\.answers\|5\|[0-9a-f]{32}$/);
     // And its rules came with it: a resend of a stored answer is still a duplicate, not a new answer.
     const sent = calls.findLast((c) => c.method === "submit")!;
     expect(await again.submit(...(sent.args as Parameters<LearningRecord["submit"]>))).toMatchObject({ status: "duplicate" });
@@ -232,7 +246,8 @@ describe.skipIf(TEST_POSTGRES_URL === undefined)("backup and restore on a real P
   });
 
   test("Bun.SQL: a retention or interval that is not a positive whole number is refused before anything runs", async () => {
-    for (const bad of [{ SCHOOL_BACKUP_KEEP: "0" }, { SCHOOL_BACKUP_KEEP: "two" }, { SCHOOL_BACKUP_INTERVAL_SECONDS: "-5" }]) {
+    const refused: Record<string, string>[] = [{ SCHOOL_BACKUP_KEEP: "0" }, { SCHOOL_BACKUP_KEEP: "two" }, { SCHOOL_BACKUP_INTERVAL_SECONDS: "-5" }];
+    for (const bad of refused) {
       const dir = folder();
       cleanup.push(dir);
       const ran = await backupOnce(dir, "postgres", bad);
