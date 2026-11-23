@@ -68,10 +68,12 @@ describe("routing", () => {
     ["/", "Home"],
     ["/courses/aion", "aion"],
     ["/courses/aion/reference", "Reference"],
-    ["/courses/aion/lessons/2", "Lesson 2"],
+    // No School runs behind this dev server, so the lesson page shows that its lesson did not load;
+    // the lesson page itself is web/test/lesson.test.ts.
+    ["/courses/aion/lessons/2", "The lesson did not load"],
     ["/settings", "Settings"],
     ["/no/such/page", "Not found"],
-  ])("%s renders inside the shell with its placeholder", async (path, heading) => {
+  ])("%s renders inside the shell", async (path, heading) => {
     const p = await open(path)
     expect(await p.getByRole("heading", { level: 1 }).textContent()).toContain(heading)
     expect(await p.locator("[data-nav-region=sidebar]").count()).toBe(1)

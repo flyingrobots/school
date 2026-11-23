@@ -1,4 +1,5 @@
 // The routes' pages. Each one's content is its own task; until it lands, a page is a placeholder.
+// The lesson page is its own module (./lesson.tsx).
 import { Link, useParams } from "react-router"
 
 import { Button } from "@/components/ui/button"
@@ -15,11 +16,6 @@ export { CoursePage } from "./course"
 export function ReferencePage() {
   const { course } = useParams()
   return <Placeholder title="Reference" crumbs={[home, { label: course!, to: `/courses/${course}` }]} />
-}
-
-export function LessonPage() {
-  const { course, lesson } = useParams()
-  return <Placeholder title={`Lesson ${lesson}`} crumbs={[home, { label: course!, to: `/courses/${course}` }]} />
 }
 
 export function SettingsPage() {
