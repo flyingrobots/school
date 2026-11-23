@@ -13,6 +13,7 @@ import type { Grader } from "./core/ports.ts";
 import { createSchool, resumeFrom, type CourseOutline } from "./core/school.ts";
 import { bridgeClient, bridgeStatus, effectiveBridge, loadSettings, saveSettings, settingsFile, toBridge, validToken, validUrl } from "./settings.ts";
 import { ConfigError, course, courseNames, mountTable, parseConfig, type Course } from "./config.ts";
+import { CourseFileError, readCourseFile } from "./course-file.ts";
 import { allowedHosts, hostAllowed } from "./hosts.ts";
 import { withSecretFiles } from "./secrets.ts";
 import { agentOrder, agentTest } from "./agents.ts";
@@ -39,6 +40,18 @@ try {
 const courses = courseNames(config);
 /** Every configured course, in the order the API lists them. */
 const served: Course[] = courses.map((name) => course(config, name)!);
+/** Each course's title (flyingrobots/school#143): its course.json's, read once here, else its name. */
+const titles = new Map<string, string>();
+for (const c of served) {
+  try {
+    titles.set(c.name, readCourseFile(c.root).title ?? c.name);
+  } catch (e) {
+    if (!(e instanceof CourseFileError)) throw e;
+    console.error(`school: course ${JSON.stringify(c.name)}: ${e.message}`);
+    process.exit(2);
+  }
+}
+const titleOf = (c: Course): string => titles.get(c.name) ?? c.name;
 
 // RFC 3 §3.3: nothing migrates from SQLite. A progress.db holding learner work stops startup
 // here, before Postgres is opened, rather than leaving that history behind an empty record.
@@ -209,10 +222,11 @@ const summary = (p: Block | undefined) => (p === undefined || p.type !== "page" 
 async function courseJson(c: Course): Promise<Response> {
   const { library, error } = lessons(c);
   const reference = referenceDocs(c);
-  if (library === null) return json({ name: c.name, reference, lessons: null, lessonsError: error?.message ?? "the lessons could not be loaded" });
+  if (library === null) return json({ name: c.name, title: titleOf(c), reference, lessons: null, lessonsError: error?.message ?? "the lessons could not be loaded" });
   const done = await school.lessonProgress(c.name);
   return json({
     name: c.name,
+    title: titleOf(c),
     reference,
     lessons: library.pages.map((p) => {
       const ids = quizIds(p);
@@ -247,7 +261,7 @@ async function coursesJson(): Promise<Response> {
     const o = await outline(c);
     const quizCount = o === null ? null : o.lessons.reduce((n, l) => n + l.quizzes.length, 0);
     const correct = o === null ? null : o.lessons.reduce((n, l) => n + l.quizzes.filter((q) => o.progress[l.id]?.includes(q.id)).length, 0);
-    return { name: c.name, lessons: o === null ? null : o.lessons.length, reference: referenceDocs(c).length, quizzes: quizCount, answeredCorrectly: correct };
+    return { name: c.name, title: titleOf(c), lessons: o === null ? null : o.lessons.length, reference: referenceDocs(c).length, quizzes: quizCount, answeredCorrectly: correct };
   })));
 }
 

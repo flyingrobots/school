@@ -73,6 +73,8 @@ Entries are tagged:
 
 **Course file** *(School)* — A lesson file: one block-JSON page in a course's `lessons/` directory. There is no compiled bundle; the server reads the directory.
 
+**Course title**, **course name** *(School)* — A course's title is what the pages call it, declared in an optional `course.json` beside `lessons/` ([a course's folder](topics/course-format/README.md)). Its name is the slug it is registered under in `SCHOOL_COURSES`, which addresses and the record use; a course that declares no title is called by its name.
+
 **Course schema**, **format version** *(School)* — The block JSON format, validated when the server loads a course (`server/blocks.ts`). A small JSON Schema will describe it when an author needs one. [ADR 7](adr/0007-course-schema-in-graphql-compiled-by-wesley.md)'s GraphQL compiler was withdrawn on 2026-11-22. **Unsettled:** how a format version is declared.
 
 ## The learner's side

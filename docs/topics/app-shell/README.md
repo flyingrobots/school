@@ -80,7 +80,8 @@ viewer on one device. Where storage is blocked, the choice lasts for the visit.
 ## The sidebar's courses
 
 Below the pages, the sidebar's **Courses** group lists every course from `GET /api/courses`, on
-every page, in the server's order (by name). Each is a link to `/courses/:course`. The course in
+every page, in the server's order (by name). Each shows the course's title, or its name when it
+declares none ([a course's folder](../course-format/README.md)), and is a link to `/courses/:course`. The course in
 the address is marked active, on its own page and on the pages under it (its reference, its
 lessons); on Home, Settings and Not found none is. The links are focus stops for `j` and `k`.
 
@@ -116,3 +117,12 @@ under `visibility: hidden` cannot take focus and `j` pressed during the intro wo
 server. It runs in `bun test` from the repository root and needs `npm ci` in `web/` and Google
 Chrome installed. The sidebar's course list is `web/test/sidebar.test.ts`, against a real School;
 its cases are in [the test plan](test-plan.md).
+
+## Browser titles
+
+Every page names itself in the browser tab, history and tab switcher with `useDocumentTitle`
+(`web/src/lib/document-title.ts`), School's own hook rather than an installed component. It joins the
+parts it is given, most specific first, with ` · ` and ends with `School`: Home `School`, a course
+`<course> · School`, a lesson `<lesson> · <course> · School`, `Reference · <course> · School`,
+`Settings · School`, `Not found · School`. `web/index.html` carries `School` as the title before
+any page runs. Each page's test reads `page.title()`; see that page's test plan.

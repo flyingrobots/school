@@ -3,6 +3,7 @@
 import { Link } from "react-router"
 
 import { Button } from "@/components/ui/button"
+import { useDocumentTitle } from "@/lib/document-title"
 import { Placeholder } from "./placeholder"
 
 export { SettingsPage } from "./settings"
@@ -16,6 +17,7 @@ export { CoursePage } from "./course"
 export { ReferencePage } from "./reference"
 
 export function NotFoundPage() {
+  useDocumentTitle("Not found")
   return (
     <Placeholder title="Not found" crumbs={[home]}>
       <p className="text-lg text-muted-foreground">There is no page at this address.</p>

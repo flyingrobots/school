@@ -37,3 +37,4 @@ requests answered by a real School server whose progress the test records throug
 | HOME-9 | No courses | An empty course list shows an Empty state | implemented | `states > no courses at all says so` |
 | HOME-10 | Width | One column at 390 px; the lesson and the courses side by side at 1280 px | implemented | `a learner who has studied > uses the width: one column on a phone, the lesson and the courses side by side on a laptop` |
 | HOME-11 | Keys | `j` reaches every course in order and `↵` opens the focused one | implemented | `a learner who has studied > j reaches every course in order, and Enter opens the focused one` |
+| HOME-12 | Browser title | The tab reads `School` | implemented | `a learner who has studied > the browser title is School` |

@@ -39,6 +39,8 @@ import { Slides, type Slide } from "@/components/slides"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
+import { useDocumentTitle } from "@/lib/document-title"
+import { useCourseTitle } from "@/lib/courses"
 import { NotKept, outbox, Refused, type Waiting } from "@/lib/outbox"
 import * as api from "@/lib/school-api"
 
@@ -234,6 +236,8 @@ function BlockView({ block: b, play, depth }: { block: api.Block; play: Play | n
 
 function Played({ course, lesson, waiting }: { course: string; lesson: api.LessonReply; waiting: Waiting[] }) {
   const page = lesson.lesson
+  const title = useCourseTitle(course)
+  useDocumentTitle(page.type === "page" ? page.title : "", title)
   const [shown] = React.useState(() => Date.now())
   const play = React.useMemo<Play>(
     () => ({ encounterId: lesson.encounterId, shown, ...held(lesson), pending: waitingByBlock(waiting) }),
@@ -241,7 +245,7 @@ function Played({ course, lesson, waiting }: { course: string; lesson: api.Lesso
   )
   const crumbs: LessonCrumb[] = [
     { label: "Home", href: "/" },
-    { label: course, href: `/courses/${course}` },
+    { label: title, href: `/courses/${course}` },
   ]
   const href = (id: string) => `/courses/${course}/lessons/${id}`
   const navigate = useNavigate()
@@ -281,10 +285,12 @@ function LessonRoute({ course, lesson }: { course: string; lesson: string }) {
 
 /** Loading, not found or not loaded, in either view. Nothing was recorded in any of them. */
 function NotReady({ course, load, retry }: { course: string; load: { status: "loading" } | { status: "missing" | "failed"; message: string }; retry: () => void }) {
+  const title = useCourseTitle(course)
   const crumbs: LessonCrumb[] = [
     { label: "Home", href: "/" },
-    { label: course, href: `/courses/${course}` },
+    { label: title, href: `/courses/${course}` },
   ]
+  useDocumentTitle(load.status === "missing" ? "Lesson not found" : "", title)
   switch (load.status) {
     case "loading":
       return <LessonLoading crumbs={crumbs} renderLink={renderLink} />
@@ -298,7 +304,7 @@ function NotReady({ course, load, retry }: { course: string; load: { status: "lo
           action={
             <Button asChild size="lg">
               <Link to={`/courses/${course}`} data-nav="">
-                Back to {course}
+                Back to {title}
               </Link>
             </Button>
           }
@@ -364,12 +370,14 @@ function labelOf(b: api.Block): string {
 
 function Presented({ course, reply }: { course: string; reply: api.SlidesReply }) {
   const navigate = useNavigate()
+  const title = useCourseTitle(course)
   const page = reply.lesson
+  useDocumentTitle(page.type === "page" ? page.title : "", title)
   if (page.type !== "page") return null
   const web = `/courses/${course}/lessons/${page.id}`
   const crumbs: LessonCrumb[] = [
     { label: "Home", href: "/" },
-    { label: course, href: `/courses/${course}` },
+    { label: title, href: `/courses/${course}` },
   ]
   // One slide for each top-level block or section, shown with no `play`: to read only.
   const slides: Slide[] = page.children.map((b) => ({

@@ -121,6 +121,12 @@ describe("a course with reference documents", () => {
     await close(p.context())
   })
 
+  test("the browser title names the reference and its course", async () => {
+    const p = await open("/courses/aion/reference")
+    expect(await p.title()).toBe("Reference · aion · School")
+    await p.context().close()
+  })
+
   test("a document opens in a new tab, as School serves it", async () => {
     const p = await open("/courses/aion/reference")
     await docs(p).first().waitFor()
