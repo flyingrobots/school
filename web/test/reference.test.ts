@@ -150,6 +150,18 @@ describe("a course with reference documents", () => {
     await p.context().close()
   })
 
+  // The intro animation must not swallow keys: an element under visibility: hidden cannot take
+  // focus, so a document still fading in would make j skip it (seen in CI on this PR).
+  test("every document and crumb can take focus as soon as the list is shown, while it animates in", async () => {
+    const p = await open("/courses/aion/reference")
+    await docs(p).first().waitFor()
+    const refused = await main(p).locator("[data-nav]").evaluateAll((els) =>
+      (els as HTMLElement[]).filter((e) => (e.focus(), document.activeElement !== e)).map((e) => e.textContent)
+    )
+    expect(refused).toEqual([])
+    await p.context().close()
+  })
+
   test("shows the keys with Kbd", async () => {
     const p = await open("/courses/aion/reference")
     await docs(p).first().waitFor()

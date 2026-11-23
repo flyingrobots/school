@@ -19,3 +19,4 @@ the course in its `reference/` folder.
 | REF-10 | Unknown course | A 404 shows "There is no course called …" | implemented | `states > a course that does not exist says so` |
 | REF-11 | Unreachable server, Try again | A refused connection shows "The reference documents could not be loaded"; Try again then shows the documents | implemented | `states > a server that cannot be reached is reported, and Try again shows the documents once it answers` |
 | REF-12 | Wrong shape | A body that fails the Zod schema is reported as not loaded, and nothing is drawn | implemented | `states > an answer of the wrong shape is reported as not loaded, not drawn` |
+| REF-13 | Keys during the intro | As soon as the list is shown, while it animates in, every link in the main region (crumbs and documents) takes focus | implemented | `a course with reference documents > every document and crumb can take focus as soon as the list is shown, while it animates in` |

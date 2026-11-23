@@ -13,7 +13,8 @@ Reference: what `/courses/:course/reference` shows. The page sits in the
 
 The documents fill a grid of one column on a phone, two from `sm`, three from `xl` and four from
 `2xl`. A line under the grid shows the keys: `j` and `k` move between documents (the shell's focus
-movement) and `↵` opens the focused one.
+movement) and `↵` opens the focused one. The heading and the documents fade in by opacity only, so
+every link can take focus while they animate.
 
 ## Opening a document
 
