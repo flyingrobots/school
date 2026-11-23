@@ -4,9 +4,10 @@ import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
 import { PGlite, type PGliteInterface } from "@electric-sql/pglite";
 import { learningRecordContract } from "../contract/learning-record.ts";
 import { migrate } from "../db/migrate.ts";
-import { pgliteSql } from "./pglite.ts";
+import { pgliteSql } from "../testing/pglite.ts";
 import { postgresRecord } from "./postgres.ts";
 import type { Sql } from "./sql.ts";
+import type { Block } from "../core/model.ts";
 
 setDefaultTimeout(30_000); // PGlite starts a whole Postgres in process.
 
@@ -67,10 +68,10 @@ test("every port method is one call of its function, as school_app", async () =>
   expect((await db.query<{ u: string }>("SELECT current_user AS u")).rows[0]!.u).toBe("school_app");
   const seen: string[] = [];
   const r = postgresRecord(functionCallsOnly(pgliteSql(db), seen));
-  const page = { type: "page", id: "l1", title: "l1", subtitle: "", children: [
+  const page: Block = { type: "page", id: "l1", title: "l1", subtitle: "", children: [
     { type: "quiz", id: "q1", q: "?", why: ".", choices: [{ id: "a", text: "A", correct: true }] },
     { type: "explain", id: "e1", prompt: "?", model: ".", sources: [] },
-  ] } as const;
+  ] };
   const e = await r.openEncounter({ course: "c", lesson: "l1", page, now: "2026-11-21T10:00:00.000Z" });
   await r.submit({ submissionId: crypto.randomUUID(), encounterId: e.id, blockId: "q1", choiceId: "a", ms: 1 }, "2026-11-21T10:00:01.000Z");
   await r.encounterAnswers(e.id);
