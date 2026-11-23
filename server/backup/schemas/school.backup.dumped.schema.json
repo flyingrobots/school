@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "school.backup.dumped/1.0.0",
+  "title": "Dumped",
+  "description": "On stdout: a dump succeeded and was put in place under `file`.",
+  "type": "object",
+  "properties": {
+    "_schema": {
+      "type": "object",
+      "description": "The schema this line follows.",
+      "properties": {
+        "id": {
+          "const": "school.backup.dumped"
+        },
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "kind": {
+      "const": "backup",
+      "description": "The program (or, for the bridge, the message type) that printed the line."
+    },
+    "event": {
+      "const": "dumped"
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "One id per invocation (for the bridge, per process), on every line it prints."
+    },
+    "file": {
+      "type": "string",
+      "pattern": "^school-\\d{8}T\\d{6}Z\\.dump$",
+      "description": "The dump's name in /backups."
+    },
+    "bytes": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "_schema",
+    "kind",
+    "event",
+    "run",
+    "file",
+    "bytes"
+  ],
+  "additionalProperties": false
+}

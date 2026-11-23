@@ -39,6 +39,34 @@ const fds: Write = (stream, text) => {
   for (let off = 0; off < buf.length;) off += writeSync(stream === "stdout" ? 1 : 2, buf, off);
 };
 
+/** Writes whole lines of published message types: `_schema` first, every string scrubbed of `secrets`, prose with `human`. */
+export type Writer = {
+  /** Write `body` as a message of type `id` to `stream`. Throws, writing nothing, if `id` has no published schema. */
+  emit(stream: Stream, id: string, body: Record<string, unknown>): void;
+};
+
+/**
+ * The part of `jsonLines` that knows nothing of a line's envelope: for a program whose lines carry
+ * fields of their own besides `_schema` (the bridge's `kind` is the message type, not the program).
+ */
+export function lineWriter(o: { schemas: Schemas; human?: boolean; prose?: (line: Record<string, unknown>) => string; secrets?: string[]; write?: Write }): Writer {
+  const secrets = (o.secrets ?? []).filter((s) => s !== "");
+  const write = o.write ?? fds;
+  const scrubText = (t: string) => secrets.reduce((acc, s) => acc.replaceAll(s, "(redacted)"), t);
+  const scrub = (v: unknown): unknown => typeof v === "string" ? scrubText(v)
+    : Array.isArray(v) ? v.map(scrub)
+    : v !== null && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, scrub(x)]))
+    : v;
+  return {
+    emit(stream, id, body) {
+      const published = o.schemas.get(id);
+      if (published === undefined) throw new Error(`no published schema for ${id}`);
+      const line = scrub({ _schema: { id, version: published.version }, ...body }) as Record<string, unknown>;
+      write(stream, `${o.human && o.prose ? scrubText(o.prose(line)) : JSON.stringify(line)}\n`);
+    },
+  };
+}
+
 export type Lines = {
   /** This invocation's id, on every line. */
   run: string;
@@ -61,21 +89,10 @@ export function jsonLines(o: {
   exit?: (code: number) => void;
 }): Lines {
   const run = crypto.randomUUID();
-  const secrets = (o.secrets ?? []).filter((s) => s !== "");
-  const write = o.write ?? fds;
   const exit = o.exit ?? ((code: number) => process.exit(code));
-  const scrubText = (t: string) => secrets.reduce((acc, s) => acc.replaceAll(s, "(redacted)"), t);
-  const scrub = (v: unknown): unknown => typeof v === "string" ? scrubText(v)
-    : Array.isArray(v) ? v.map(scrub)
-    : v !== null && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, scrub(x)]))
-    : v;
-
-  const emit = (stream: Stream, id: string, fields: Fields) => {
-    const published = o.schemas.get(id);
-    if (published === undefined) throw new Error(`no published schema for ${id}`);
-    const line = scrub({ _schema: { id, version: published.version }, kind: o.kind, ...fields, run, at: new Date().toISOString() }) as Record<string, unknown>;
-    write(stream, `${o.human && o.prose ? scrubText(o.prose(line)) : JSON.stringify(line)}\n`);
-  };
+  const writer = lineWriter(o);
+  const emit = (stream: Stream, id: string, fields: Fields) =>
+    writer.emit(stream, id, { kind: o.kind, ...fields, run, at: new Date().toISOString() });
 
   const capture = (id: string) => {
     const saved = { log: console.log, info: console.info, debug: console.debug, warn: console.warn, error: console.error, trace: console.trace,

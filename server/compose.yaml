@@ -66,6 +66,8 @@ services:
       SCHOOL_BACKUP_KEEP: ${SCHOOL_BACKUP_KEEP:-28}
     volumes:
       - ./backup/backup.sh:/backup/backup.sh:ro
+      # Its published output schemas, which --help and --schema print (flyingrobots/school#135).
+      - ./backup/schemas:/backup/schemas:ro
       - backups:/backups
     # No ports: it only connects out, to the postgres service.
   school:

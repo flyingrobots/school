@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "school.backup.help/1.0.0",
+  "title": "Help",
+  "description": "What `backup.sh --help` prints first, on stdout: what the job does, its options, settings, exit codes and the message types it prints. A `schema` line for each message type follows.",
+  "type": "object",
+  "properties": {
+    "_schema": {
+      "type": "object",
+      "description": "The schema this line follows.",
+      "properties": {
+        "id": {
+          "const": "school.backup.help"
+        },
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "kind": {
+      "const": "backup",
+      "description": "The program (or, for the bridge, the message type) that printed the line."
+    },
+    "event": {
+      "const": "help"
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "One id per invocation (for the bridge, per process), on every line it prints."
+    },
+    "command": {
+      "const": "backup.sh"
+    },
+    "usage": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "options": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "flags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "flags",
+          "description"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "environment": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "description"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "exit": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer"
+          },
+          "meaning": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "meaning"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "output": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "The id of every message type the program can print."
+    }
+  },
+  "required": [
+    "_schema",
+    "kind",
+    "event",
+    "run",
+    "command",
+    "usage",
+    "summary",
+    "options",
+    "environment",
+    "exit",
+    "output"
+  ],
+  "additionalProperties": false
+}

@@ -13,9 +13,78 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { BridgeConfigError, loadConfig, runChain, type BridgeConfig } from "./run.ts";
+import { lineWriter, loadSchemas } from "../server/jsonl.ts";
 
+// Every line names its published schema, `school.bridge.<kind>` in bridge/schemas/, carries the
+// process's `run` id, and is scrubbed of the token (flyingrobots/school#135;
+// docs/topics/program-output/README.md). `--help` and `--schema` print JSON Lines and exit without
+// starting; `--human` (alias `--humanize`) prints prose instead; nothing else changes the format.
+const schemas = loadSchemas(join(import.meta.dir, "schemas"));
+const RUN = crypto.randomUUID();
+const ARGS = process.argv.slice(2);
+const FLAGS = ["--help", "-h", "--schema", "--human", "--humanize"];
+const human = ARGS.includes("--human") || ARGS.includes("--humanize");
+const writer = lineWriter({ schemas, human, prose, secrets: [process.env.SCHOOL_BRIDGE_TOKEN ?? ""] });
 const log = (kind: string, fields: Record<string, unknown> = {}) =>
-  console.log(JSON.stringify({ kind: `bridge.${kind}`, at: new Date().toISOString(), ...fields }));
+  writer.emit("stdout", `school.bridge.${kind}`, { kind: `bridge.${kind}`, at: new Date().toISOString(), ...fields, run: RUN });
+
+/** A line as prose, for --human. */
+function prose(l: Record<string, any>): string {
+  switch (l.kind) {
+    case "bridge.help":
+      return [`bridge: ${l.summary}`, "", `usage: ${l.usage}`, "", "options:",
+        ...l.options.map((o: { flags: string[]; description: string }) => `  ${o.flags.join(", ")}  ${o.description}`), "", "settings:",
+        ...l.environment.map((e: { name: string; description: string }) => `  ${e.name}  ${e.description}`), "", "exit codes:",
+        ...l.exit.map((e: { code: number; meaning: string }) => `  ${e.code}  ${e.meaning}`), "",
+        "output: JSON Lines unless --human is given, each line one of these message types (--schema prints their schemas):",
+        ...l.output.map((id: string) => `  ${id}`), "", `(run ${l.run})`].join("\n");
+    case "bridge.schema": return `schema ${l.id} ${l.version}\n${JSON.stringify(l.schema, null, 2)}`;
+    case "bridge.start": return `starting on ${l.host}:${l.port} with ${l.agents === null ? `no configuration yet (${l.config})` : `${l.agents.length} agents from ${l.config}`} (run ${l.run})`;
+    case "bridge.listening": return `listening on ${l.host}:${l.port}`;
+    case "bridge.config.saved": return `configuration saved: ${l.agents.join(", ")}`;
+    case "bridge.test": return `test of ${l.agent}: ${l.status}`;
+    case "bridge.run.start": return `run ${l.id} started`;
+    case "bridge.attempt": return `run ${l.id}: ${l.agent} ${l.status} in ${l.ms} ms${l.error === null ? "" : ` (${l.error})`}`;
+    case "bridge.run.end": return `run ${l.id} ${l.status}${l.agent === null ? "" : ` (${l.agent})`}`;
+    default: return `error: ${l.message}`;
+  }
+}
+
+{
+  const unknown = ARGS.filter((a) => !FLAGS.includes(a));
+  if (unknown.length > 0) {
+    log("error", { message: `unknown argument${unknown.length === 1 ? "" : "s"} ${unknown.join(" ")}; usage: bun bridge/bridge.ts [--help | --schema] [--human]` });
+    process.exit(2);
+  }
+  const printSchemas = () => { for (const s of schemas.values()) log("schema", { id: s.id, version: s.version, schema: s.schema }); };
+  if (ARGS.includes("--help") || ARGS.includes("-h")) {
+    log("help", { command: "bridge", usage: "SCHOOL_BRIDGE_TOKEN=<shared secret> bun bridge/bridge.ts [--help | --schema] [--human]",
+      summary: "Run the learner's configured LLM agents for the School server, over HTTP on the host, until stopped.",
+      options: [
+        { flags: ["--help", "-h"], description: "Print this help and the schema of every message type, then exit 0. Reads no setting and does not listen." },
+        { flags: ["--schema"], description: "Print every published message schema, then exit 0. Reads no setting and does not listen." },
+        { flags: ["--human", "--humanize"], description: "Print prose instead of JSON Lines. Nothing else switches the format." },
+      ],
+      environment: [
+        { name: "SCHOOL_BRIDGE_TOKEN", description: "The shared secret the server sends, at least 16 characters. Never printed." },
+        { name: "SCHOOL_BRIDGE_CONFIG", description: "The agents file, re-read on every request. Default ~/.config/school/bridge.json." },
+        { name: "SCHOOL_BRIDGE_HOST", description: "The address to listen on. Default 127.0.0.1." },
+        { name: "SCHOOL_BRIDGE_PORT", description: "The port to listen on; 0 lets the OS choose. Default 4748." },
+      ],
+      exit: [
+        { code: 0, meaning: "--help or --schema printed; or stopped." },
+        { code: 1, meaning: "An uncaught throw or rejection after start-up." },
+        { code: 2, meaning: "Refused to start: an unknown argument, a bad setting, an unreadable configuration file, or a port it cannot listen on." },
+      ],
+      output: [...schemas.keys()] });
+    if (!human) printSchemas();
+    process.exit(0);
+  }
+  if (ARGS.includes("--schema")) {
+    printSchemas();
+    process.exit(0);
+  }
+}
 
 const token = process.env.SCHOOL_BRIDGE_TOKEN ?? "";
 const configPath = process.env.SCHOOL_BRIDGE_CONFIG ?? join(homedir(), ".config", "school", "bridge.json");

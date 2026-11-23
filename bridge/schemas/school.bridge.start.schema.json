@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "school.bridge.start/1.0.0",
+  "title": "Start",
+  "description": "On stdout, once, with the settings accepted: where it will listen and the agents declared (null with no configuration file yet).",
+  "type": "object",
+  "properties": {
+    "_schema": {
+      "type": "object",
+      "description": "The schema this line follows.",
+      "properties": {
+        "id": {
+          "const": "school.bridge.start"
+        },
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "kind": {
+      "const": "bridge.start",
+      "description": "The program (or, for the bridge, the message type) that printed the line."
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "One id per invocation (for the bridge, per process), on every line it prints."
+    },
+    "at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "description": "When the line was printed, UTC."
+    },
+    "host": {
+      "type": "string"
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "config": {
+      "type": "string",
+      "description": "The configuration file's path."
+    },
+    "agents": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "program": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "enabled",
+              "program"
+            ],
+            "additionalProperties": false
+          }
+        }
+      ]
+    }
+  },
+  "required": [
+    "_schema",
+    "kind",
+    "run",
+    "at",
+    "host",
+    "port",
+    "config",
+    "agents"
+  ],
+  "additionalProperties": false
+}

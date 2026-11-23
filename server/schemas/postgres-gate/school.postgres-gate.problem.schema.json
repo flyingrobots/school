@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "school.postgres-gate.problem/1.0.0",
+  "title": "Problem",
+  "description": "On stdout, before the verdict: one thing wrong with the run. `skipped` or `failed`: a test that names Bun.SQL did not pass. `missing`: a PGlite case with no Bun.SQL counterpart. `none-ran`: no test named Bun.SQL at all.",
+  "type": "object",
+  "properties": {
+    "_schema": {
+      "type": "object",
+      "description": "The schema this line follows.",
+      "properties": {
+        "id": {
+          "const": "school.postgres-gate.problem"
+        },
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "kind": {
+      "const": "postgres-gate",
+      "description": "The program (or, for the bridge, the message type) that printed the line."
+    },
+    "event": {
+      "const": "problem"
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "One id per invocation (for the bridge, per process), on every line it prints."
+    },
+    "at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "description": "When the line was printed, UTC."
+    },
+    "problem": {
+      "enum": [
+        "skipped",
+        "failed",
+        "missing",
+        "none-ran"
+      ]
+    },
+    "name": {
+      "type": "string"
+    },
+    "file": {
+      "type": "string"
+    },
+    "counterpart": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "_schema",
+    "kind",
+    "event",
+    "run",
+    "at",
+    "problem"
+  ],
+  "oneOf": [
+    {
+      "properties": {
+        "problem": {
+          "enum": [
+            "skipped",
+            "failed"
+          ]
+        },
+        "name": true,
+        "file": true,
+        "counterpart": false
+      },
+      "required": [
+        "name",
+        "file"
+      ]
+    },
+    {
+      "properties": {
+        "problem": {
+          "const": "missing"
+        },
+        "name": true,
+        "counterpart": true,
+        "file": false
+      },
+      "required": [
+        "name",
+        "counterpart"
+      ]
+    },
+    {
+      "properties": {
+        "problem": {
+          "const": "none-ran"
+        },
+        "name": false,
+        "file": false,
+        "counterpart": false
+      }
+    }
+  ],
+  "additionalProperties": false
+}

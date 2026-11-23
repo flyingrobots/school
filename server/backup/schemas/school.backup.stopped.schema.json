@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "school.backup.stopped/1.0.0",
+  "title": "Stopped",
+  "description": "On stdout: stopped (TERM or INT), this run's temporary files removed; exit 0.",
+  "type": "object",
+  "properties": {
+    "_schema": {
+      "type": "object",
+      "description": "The schema this line follows.",
+      "properties": {
+        "id": {
+          "const": "school.backup.stopped"
+        },
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "kind": {
+      "const": "backup",
+      "description": "The program (or, for the bridge, the message type) that printed the line."
+    },
+    "event": {
+      "const": "stopped"
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "One id per invocation (for the bridge, per process), on every line it prints."
+    }
+  },
+  "required": [
+    "_schema",
+    "kind",
+    "event",
+    "run"
+  ],
+  "additionalProperties": false
+}
