@@ -4,6 +4,7 @@
 // Oracles (change detection, captured from their sources; see test/fixtures/README.md):
 //   stock-index.css         - shadcn CLI 4.23.0, `init -t vite -b radix -p nova`, src/index.css
 //   flyingrobots-theme.json - the @flyingrobots/theme registry item as built
+//   flyingrobots-markdown.json - the @flyingrobots/markdown registry item as built (its css @source)
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -15,6 +16,11 @@ const theme = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "flyingr
   cssVars: { light: Record<string, string>; dark: Record<string, string> };
 };
 const index = readFileSync(join(src, "index.css"), "utf8");
+const markdown = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "flyingrobots-markdown.json"), "utf8")) as {
+  css: Record<string, unknown>;
+};
+/** The `@source` lines installed registry items declare. A source tells Tailwind where to find class names; it is not a token. */
+const sources = Object.keys(markdown.css).filter((at) => at.startsWith("@source ")).map((at) => `${at};`);
 
 function files(dir: string, ext: string): string[] {
   return readdirSync(dir).flatMap((f) => {
@@ -49,9 +55,16 @@ test("index.css is the app's only stylesheet", () => {
   expect(files(src, ".css").map((f) => relative(src, f))).toEqual(["index.css"]);
 });
 
-test("index.css adds no rules: with token values removed it is the stock file", () => {
+test("index.css carries every @source a registry item declares, once", () => {
+  expect(sources.length).toBeGreaterThan(0); // zero witnesses would mean the fixture read nothing
+  for (const line of sources) expect(index.split("\n").filter((l) => l.trim() === line)).toEqual([line]);
+});
+
+test("index.css adds no rules: with token values and registry-declared @source lines removed it is the stock file", () => {
   const shape = (css: string) => css.replace(/(--[\w-]+)\s*:\s*[^;{}]+;/g, "$1: <value>;").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, " ").trim();
-  expect(shape(index)).toBe(shape(stock));
+  const declared = new Set(sources);
+  const withoutSources = index.split("\n").filter((l) => !declared.has(l.trim())).join("\n");
+  expect(shape(withoutSources)).toBe(shape(stock));
 });
 
 test.each([
