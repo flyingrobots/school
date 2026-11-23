@@ -1,0 +1,79 @@
+{
+  "type": "page",
+  "id": "orbits",
+  "title": "Orbits",
+  "subtitle": "Where the planets are, and why the seasons turn",
+  "children": [
+    {
+      "type": "section",
+      "id": "orbits-where",
+      "title": "Where the planets are",
+      "children": [
+        {
+          "type": "prose",
+          "id": "orbits-intro",
+          "html": "<p>The planets go round the Sun on nearly <strong>circular</strong> paths, all in roughly the same plane. The inner four are small and rocky; the outer four are giants.</p><ul><li>Mercury is the closest.</li><li>Neptune is the farthest.</li></ul>"
+        },
+        {
+          "type": "quiz",
+          "id": "closest",
+          "q": "Which planet is closest to the Sun?",
+          "choices": [
+            { "id": "venus", "text": "Venus", "correct": false },
+            { "id": "mercury", "text": "Mercury", "correct": true },
+            { "id": "mars", "text": "Mars", "correct": false }
+          ],
+          "why": "Mercury orbits at about 0.39 AU, closer than any other planet."
+        },
+        {
+          "type": "card",
+          "id": "orbits-au",
+          "html": "<p>An <em>astronomical unit</em> (AU) is the average distance from the Earth to the Sun, about 150 million kilometres.</p>"
+        },
+        {
+          "type": "aside",
+          "id": "orbits-pluto",
+          "html": "<p>Pluto was counted as a planet until 2006.</p>"
+        }
+      ]
+    },
+    {
+      "type": "section",
+      "id": "orbits-seasons",
+      "title": "Why the seasons turn",
+      "children": [
+        {
+          "type": "quote",
+          "id": "orbits-kepler",
+          "html": "<p>The orbit of every planet is an ellipse with the Sun at one of the two foci.</p>"
+        },
+        {
+          "type": "prose",
+          "id": "orbits-tilt",
+          "html": "<p>The Earth's distance from the Sun barely changes over a year. Its axis, though, is tilted by about 23.4 degrees, and the tilt keeps pointing the same way as the Earth goes round.</p><p>For half the year the northern hemisphere leans towards the Sun: its days are longer and the sunlight strikes it more steeply. For the other half the southern hemisphere does.</p>"
+        },
+        {
+          "type": "explain",
+          "id": "seasons",
+          "prompt": "Explain why the Earth has seasons.",
+          "model": "The Earth's axis is tilted. As the Earth orbits, each hemisphere in turn leans towards the Sun, getting longer days and more direct sunlight: that hemisphere's summer.",
+          "sources": [
+            { "id": "tilt", "title": "The tilt", "text": "The Earth's axis is tilted by about 23.4 degrees, and the tilt keeps pointing the same way as the Earth goes round." }
+          ]
+        },
+        {
+          "type": "nest",
+          "id": "orbits-nest",
+          "root": {
+            "label": "Seasons",
+            "atoms": ["tilt", "orbit"],
+            "children": [
+              { "label": "Tilt", "atoms": ["23.4 degrees"], "edge": "points the same way along", "children": [] },
+              { "label": "Orbit", "atoms": ["one year"], "children": [] }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
