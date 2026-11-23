@@ -15,7 +15,7 @@ the course in its `reference/` folder.
 | REF-6 | Width | One column at 390 px, four documents side by side at 1920 px | implemented | `a course with reference documents > uses the width: one column on a phone, several on a wide screen` |
 | REF-7 | Loading | Skeletons and a Spinner while the request is held, gone once it answers | implemented | `states > while the list loads, it shows Skeletons and a Spinner, then the documents` |
 | REF-8 | No references | A course with no reference folder shows "No reference documents" | implemented | `states > a course without reference documents says so` |
-| REF-9 | Unreadable course | A 500 shows "This course could not be read" and the server's reason | implemented | `states > an unreadable course says it could not be read, with the server's reason` |
+| REF-9 | Unreadable lessons | A course whose lessons fail validation answers 200 with `lessons: null`, `lessonsError` and its `reference`; the page links its documents, they open, and no alert is shown (flyingrobots/school#115) | implemented | `states > a course whose lessons cannot be read still lists its reference documents` |
 | REF-10 | Unknown course | A 404 shows "There is no course called …" | implemented | `states > a course that does not exist says so` |
 | REF-11 | Unreachable server, Try again | A refused connection shows "The reference documents could not be loaded"; Try again then shows the documents | implemented | `states > a server that cannot be reached is reported, and Try again shows the documents once it answers` |
 | REF-12 | Wrong shape | A body that fails the Zod schema is reported as not loaded, and nothing is drawn | implemented | `states > an answer of the wrong shape is reported as not loaded, not drawn` |

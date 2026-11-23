@@ -4,7 +4,7 @@ import { join, normalize, sep } from "node:path";
 import { readdirSync, realpathSync, statSync } from "node:fs";
 import { lastValidLoader, quizIds, quizzes, type Block } from "./blocks.ts";
 import { PROMPT_VERSION, RUBRIC_VERSION, bridgeConfig, callBridge } from "./grade.ts";
-import { openDatabase, redact } from "./adapters/database.ts";
+import { openDatabase, redact, Refused } from "./adapters/database.ts";
 import { InUse } from "./adapters/lock.ts";
 import { postgresRecord } from "./adapters/postgres.ts";
 import { legacyRefusal } from "./legacy.ts";
@@ -44,13 +44,15 @@ const served: Course[] = courses.map((name) => course(config, name)!);
   }
 }
 
-// The record (server/adapters/database.ts): migrated as the owner, then served as school_app.
+// The record (server/adapters/database.ts), served as school_app. On Postgres the server logs in
+// as school_app and migrates nothing (the migrate job did, server/migrate.ts); PGlite migrates here.
 let database;
 try {
   database = await openDatabase(config.database);
 } catch (e) {
-  // A record held by another server is a refusal to start, like a bad configuration: exit 2.
-  if (e instanceof InUse) {
+  // A record held by another server, or a login that fails the login check (loginRefusals in
+  // server/adapters/database.ts), is a refusal to start, like a bad configuration: exit 2.
+  if (e instanceof InUse || e instanceof Refused) {
     console.error(`school: ${e.message}`);
     process.exit(2);
   }
@@ -193,14 +195,19 @@ type View = "web" | "slides";
 const isView = (v: string | null): v is View => v === "web" || v === "slides";
 const summary = (p: Block | undefined) => (p === undefined || p.type !== "page" ? null : { id: p.id, title: p.title, subtitle: p.subtitle });
 
-/** A course: its lessons, each with how many of its quizzes have been answered correctly, and its reference documents. */
+/**
+ * A course: its lessons, each with how many of its quizzes have been answered correctly, and its
+ * reference documents. Lessons that cannot be read do not hide the documents
+ * (flyingrobots/school#115): `lessons` is then null and `lessonsError` says why, in a 200.
+ */
 async function courseJson(c: Course): Promise<Response> {
   const { library, error } = lessons(c);
-  if (library === null) return json({ error: error?.message ?? "the lessons could not be loaded" }, 500);
+  const reference = referenceDocs(c);
+  if (library === null) return json({ name: c.name, reference, lessons: null, lessonsError: error?.message ?? "the lessons could not be loaded" });
   const done = await school.lessonProgress(c.name);
   return json({
     name: c.name,
-    reference: referenceDocs(c),
+    reference,
     lessons: library.pages.map((p) => {
       const ids = quizIds(p);
       return { ...summary(p), quizzes: ids.size, answeredCorrectly: [...ids].filter((id) => done[p.id]?.includes(id)).length };
