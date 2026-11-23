@@ -32,6 +32,7 @@ async function run(argv: string[], over: Partial<Deps> & { answers?: string[]; c
     prompt: async (message) => { r.prompts.push(message); return answers.shift() ?? ""; },
     spawn: (args, opts): Spawned => {
       r.spawned.push({ args, cwd: opts.cwd, env: opts.env });
+      expect(opts.stdin).toBe("ignore");
       return {
         lines: (async function* () { for (const l of over.composeLines ?? []) yield l; })(),
         exited: Promise.resolve(over.composeCode ?? 0),
@@ -211,6 +212,30 @@ describe("school down", () => {
   });
 });
 
+describe("school compose", () => {
+  test("SEC-L17: passes its arguments to `docker compose` as they are, with the secrets resolved as for up and in the environment only, and stdin inherited", async () => {
+    const { store, items } = fakeStore({ SCHOOL_POSTGRES_PASSWORD: "Kc0123456789abcdefghij", SCHOOL_APP_PASSWORD: "Kc1123456789abcdefghij", SCHOOL_BRIDGE_TOKEN: "Kc2123456789abcdefghij" });
+    const stdins: (string | undefined)[] = [];
+    const r = await run(["--human", "compose", "run", "--rm", "-T", "--entrypoint", "psql", "backup", "--human"], {
+      store: () => store,
+      spawn: (args, opts) => { stdins.push(opts.stdin); r0.push({ args, env: opts.env }); return { lines: (async function* () {})(), exited: Promise.resolve(0) }; },
+    });
+    expect(r.code).toBe(0);
+    expect(r0.map((c) => c.args)).toEqual([["docker", "compose", "run", "--rm", "-T", "--entrypoint", "psql", "backup", "--human"]]);
+    expect(stdins).toEqual(["inherit"]);
+    for (const [k, v] of items) expect(r0[0]!.env[k]).toBe(v);
+    for (const v of items.values()) expect(all(r).join("\n")).not.toContain(v);
+  });
+
+  test("SEC-L18: `school compose` with nothing after it is an error line, exit 2", async () => {
+    const r = await run(["compose"]);
+    expect(r.code).toBe(2);
+    expect(parsed(r.stderr).at(-1)).toMatchObject({ kind: "school.compose", event: "error", code: 2 });
+  });
+});
+
+const r0: { args: string[]; env: Record<string, string | undefined> }[] = [];
+
 describe("school import", () => {
   const DOTENV = [
     "# settings",
@@ -263,7 +288,7 @@ describe("the command line", () => {
     expect(help.code).toBe(0);
     const lines = parsed(help.stdout);
     expect(lines.every((l) => l.kind === "school.help")).toBe(true);
-    expect(lines.filter((l) => l.command !== undefined).map((l) => l.command)).toEqual(["up", "down", "import"]);
+    expect(lines.filter((l) => l.command !== undefined).map((l) => l.command)).toEqual(["up", "down", "compose", "import"]);
     const bad = await run(["fly"]);
     expect(bad.code).toBe(2);
     expect(parsed(bad.stderr).at(-1)).toMatchObject({ kind: "school.error", event: "error", code: 2 });

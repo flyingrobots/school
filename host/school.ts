@@ -73,9 +73,9 @@ const deps: Deps = {
   store: (account) => keychainStore(account),
   isTTY: Boolean(process.stdin.isTTY && process.stderr.isTTY),
   prompt,
-  spawn: (args, { cwd, env }): Spawned => {
+  spawn: (args, { cwd, env, stdin }): Spawned => {
     // The secrets are in `env`, the child's environment; argv is `docker compose ...` only.
-    const child = Bun.spawn(args, { cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const child = Bun.spawn(args, { cwd, env, stdin, stdout: "pipe", stderr: "pipe" });
     return { lines: merge(linesOf(child.stdout, "stdout"), linesOf(child.stderr, "stderr")), exited: child.exited };
   },
   out: (line) => process.stdout.write(`${line}\n`),

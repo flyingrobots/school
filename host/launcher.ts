@@ -1,4 +1,4 @@
-// `school up`, `school down` and `school import` (flyingrobots/school#123): the host launcher.
+// `school up`, `school down`, `school compose` and `school import` (flyingrobots/school#123): the host launcher.
 // Containers cannot reach the Mac's Keychain, so this process resolves School's secrets on the host
 // (the environment first, then the Keychain; host/secrets.ts), and runs `docker compose` with them
 // in that child's environment only. Compose copies each into the services that need it as a file
@@ -6,7 +6,8 @@
 // puts one in argv.
 //
 // Output is JSON Lines on stdout and stderr alike: one object per line, `kind` naming the command
-// (`school.up`, `school.down`, `school.import`, `school.help`, `school.error`) and `event` the step.
+// (`school.up`, `school.down`, `school.compose`, `school.import`, `school.help`, `school.error`) and
+// `event` the step.
 // Errors are lines on stderr. `--human` prints prose instead. Exit codes: 0 done, 2 a missing or
 // invalid setting (nothing started), 1 anything else, such as compose failing.
 //
@@ -29,7 +30,8 @@ export type Deps = {
   isTTY: boolean;
   /** Reads one line from the terminal without echoing it. */
   prompt: (message: string) => Promise<string>;
-  spawn: (args: string[], options: { cwd: string; env: Record<string, string | undefined> }) => Spawned;
+  /** Runs `args`; `stdin` "inherit" hands the child this process's stdin, for `school compose run -T ... < file`. */
+  spawn: (args: string[], options: { cwd: string; env: Record<string, string | undefined>; stdin: "ignore" | "inherit" }) => Spawned;
   out: (line: string) => void;
   err: (line: string) => void;
   /** A file's text, or null if there is none. */
@@ -41,10 +43,11 @@ export type Deps = {
   serverDir: string;
 };
 
-type Command = "up" | "down" | "import";
+type Command = "up" | "down" | "compose" | "import";
 const COMMANDS: { command: Command; does: string }[] = [
   { command: "up", does: "Resolve School's secrets (environment, then the Keychain; ask for the superuser's password or generate the others when missing, and store them), then `docker compose up --detach --build` with them in compose's environment only" },
   { command: "down", does: "`docker compose down`. Needs no secret; keeps the record's volume" },
+  { command: "compose", does: "`docker compose <arguments>` from server/, the arguments passed as they are, with the secrets resolved as for `up` and in compose's environment only: for `run`, `up` of single services and the like in the how-tos. Flags for school itself, such as --human, go before `compose`" },
   { command: "import", does: "Move every secret still in server/.env into the Keychain, and remove those lines from server/.env" },
 ];
 
@@ -92,7 +95,8 @@ function dotenvSecrets(text: string): { name: SecretName; value: string; line: n
   return found;
 }
 
-async function up(deps: Deps, o: Output): Promise<number> {
+/** Every secret, resolved and stored as `school up` does; a number is the exit code of a refusal. */
+async function secrets(deps: Deps, o: Output): Promise<Record<string, string | undefined> | number> {
   const dotenv = join(deps.serverDir, ".env");
   const leaked = dotenvSecrets(deps.readText(dotenv) ?? "");
   for (const l of leaked) o.know(l.value);
@@ -153,12 +157,17 @@ async function up(deps: Deps, o: Output): Promise<number> {
 
   const env: Record<string, string | undefined> = { ...deps.env };
   for (const r of resolved) env[r.name] = r.value;
-  return compose(deps, o, ["up", "--detach", "--build"], env);
+  return env;
 }
 
-async function compose(deps: Deps, o: Output, args: string[], env: Record<string, string | undefined>): Promise<number> {
+async function withSecrets(deps: Deps, o: Output, args: string[], stdin: "ignore" | "inherit"): Promise<number> {
+  const env = await secrets(deps, o);
+  return typeof env === "number" ? env : compose(deps, o, args, env, stdin);
+}
+
+async function compose(deps: Deps, o: Output, args: string[], env: Record<string, string | undefined>, stdin: "ignore" | "inherit" = "ignore"): Promise<number> {
   const argv = ["docker", "compose", ...args];
-  const child = deps.spawn(argv, { cwd: deps.serverDir, env });
+  const child = deps.spawn(argv, { cwd: deps.serverDir, env, stdin });
   for await (const { stream, line } of child.lines) o.line("out", { event: "compose", stream, line }, line);
   const exitCode = await child.exited;
   if (exitCode !== 0) return o.error(1, `docker compose ${args.join(" ")} exited ${exitCode}`, { exitCode });
@@ -203,23 +212,33 @@ async function importDotenv(deps: Deps, o: Output): Promise<number> {
 
 function help(deps: Deps, human: boolean): number {
   const o = new Output(deps, "school.help", human);
-  o.line("out", { usage: "school <command> [--human]", does: "Run School under docker compose with its secrets in the macOS Keychain" }, "usage: school <up|down|import> [--human]");
+  o.line("out", { usage: "school [--human] <command>", does: "Run School under docker compose with its secrets in the macOS Keychain" }, "usage: school [--human] <up|down|compose ...|import>");
   for (const c of COMMANDS) o.line("out", { command: c.command, does: c.does }, `  ${c.command.padEnd(7)} ${c.does}`);
   o.line("out", { exitCodes: { 0: "done", 1: "a failure, such as compose failing or the Keychain refusing", 2: "a missing or invalid setting; nothing was started" } }, "exit codes: 0 done, 1 failure, 2 missing or invalid setting");
   return 0;
 }
 
+const HUMAN = (a: string) => a === "--human" || a === "--humanize";
+
 export async function main(argv: string[], deps: Deps): Promise<number> {
-  const human = argv.includes("--human") || argv.includes("--humanize");
-  const rest = argv.filter((a) => a !== "--human" && a !== "--humanize");
+  // Everything after `compose` is compose's; school's own flags come before it.
+  const at = argv.indexOf("compose");
+  const ours = at < 0 ? argv : argv.slice(0, at + 1);
+  const passed = at < 0 ? [] : argv.slice(at + 1);
+  const human = ours.some(HUMAN);
+  const rest = ours.filter((a) => !HUMAN(a));
   if (rest.length === 0 || rest[0] === "--help" || rest[0] === "-h" || rest[0] === "help") return help(deps, human);
   const command = rest[0] as Command;
+  if (command === "compose" && passed.length === 0) {
+    return new Output(deps, "school.compose", human).error(2, "`school compose` needs compose's arguments, such as `school compose ps`");
+  }
   if (!COMMANDS.some((c) => c.command === command) || rest.length > 1) {
     return new Output(deps, "school.error", human).error(2, `unknown command ${JSON.stringify(rest.join(" "))}; run \`school --help\``);
   }
   const o = new Output(deps, `school.${command}`, human);
   try {
-    if (command === "up") return await up(deps, o);
+    if (command === "up") return await withSecrets(deps, o, ["up", "--detach", "--build"], "ignore");
+    if (command === "compose") return await withSecrets(deps, o, passed, "inherit");
     if (command === "down") return await compose(deps, o, ["down"], { ...deps.env });
     return await importDotenv(deps, o);
   } catch (e) {
