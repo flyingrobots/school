@@ -1,7 +1,8 @@
 // The home page (flyingrobots/school#39). It answers "what do I study now?" first: the lesson to
 // continue, with its next question written out, from GET /api/resume. Then every course with its
-// progress in words, from GET /api/courses. Progress is never a percentage, a letter or a score
-// (RFC 2 §4.3). Composed only of stock shadcn components; the layout is Tailwind token classes.
+// progress in words, from GET /api/courses (web/src/lib/courses.ts, shared with the sidebar).
+// Progress is never a percentage, a letter or a score (RFC 2 §4.3). Composed only of stock shadcn
+// components; the layout is Tailwind token classes.
 import * as React from "react"
 import { useGSAP } from "@gsap/react"
 import gsap from "gsap"
@@ -28,20 +29,12 @@ import { Item, ItemContent, ItemDescription, ItemFooter, ItemGroup, ItemMedia, I
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
+import { useCourses, type CoursesLoad } from "@/lib/courses"
+import type { CourseSummary } from "@/lib/school-api"
 
 gsap.registerPlugin(useGSAP)
 
-// GET /api/courses (server/server.ts, coursesJson). Counts are null when a course's lessons cannot be read.
-const CoursesJson = z.array(
-  z.object({
-    name: z.string(),
-    lessons: z.number().int().nonnegative().nullable(),
-    reference: z.number().int().nonnegative(),
-    quizzes: z.number().int().nonnegative().nullable(),
-    answeredCorrectly: z.number().int().nonnegative().nullable(),
-  })
-)
-type Course = z.infer<typeof CoursesJson>[number]
+type Course = CourseSummary
 
 // GET /api/resume (server/core/school.ts, Resume).
 const ResumeLesson = z.object({
@@ -116,7 +109,8 @@ function ago(iso: string, now = Date.now()): string {
 const heading = "font-heading font-semibold tracking-tight"
 
 export function HomePage() {
-  const [courses, retryCourses] = useJson("/api/courses", CoursesJson)
+  // Shared with the sidebar, and asked again on each visit here so the progress is current.
+  const [courses, retryCourses] = useCourses({ fresh: true })
   const [resume, retryResume] = useJson("/api/resume", ResumeJson)
   const scope = React.useRef<HTMLDivElement>(null)
 
@@ -332,7 +326,7 @@ function Finished({ course }: { course: string }) {
   )
 }
 
-function CourseList({ courses, retry }: { courses: Load<Course[]>; retry: () => void }) {
+function CourseList({ courses, retry }: { courses: CoursesLoad; retry: () => void }) {
   switch (courses.kind) {
     case "loading":
       return (

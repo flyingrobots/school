@@ -27,7 +27,9 @@ The page answers "what do I study now?" first.
    (the record's `lastStudied`, see [architecture](../architecture/README.md)).
 3. **Your courses**: every course from `GET /api/courses`, in the server's order (by name), each a
    link to `/courses/:course` with its lesson count, whether it has reference documents, and its
-   progress in words:
+   progress in words. The list is the one the sidebar shows (see
+   [the app shell](../app-shell/README.md#the-sidebars-courses)); opening the page asks for it
+   again in the background, so the progress is current:
 
    | The API says | The page says |
    | --- | --- |

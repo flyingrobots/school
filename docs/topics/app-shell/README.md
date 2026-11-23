@@ -77,6 +77,29 @@ The theme switch in the header offers Light, Dark and System. System follows the
 The choice is stored in this browser's `localStorage` (`vite-ui-theme`), so it belongs to one
 viewer on one device. Where storage is blocked, the choice lasts for the visit.
 
+## The sidebar's courses
+
+Below the pages, the sidebar's **Courses** group lists every course from `GET /api/courses`, on
+every page, in the server's order (by name). Each is a link to `/courses/:course`. The course in
+the address is marked active, on its own page and on the pages under it (its reference, its
+lessons); on Home, Settings and Not found none is. The links are focus stops for `j` and `k`.
+
+| State | The group shows |
+| --- | --- |
+| Loading | Three Skeleton rows, and no links |
+| Loaded | The course links |
+| Failed (unreachable, an error, or a reply that is not a course list) | A destructive Alert, "Courses could not be loaded", with the server's reason when it gave one, and **Try again** |
+
+The list is asked for once per visit and shared: `web/src/lib/courses.ts` holds the one answer the
+sidebar and the [home page](../home-page/README.md) both read, and moving between pages does not
+ask again. The reply is parsed with Zod in `web/src/lib/school-api.ts` (`listCourses`). The home
+page also asks again in the background each time it opens, because it shows progress that studying
+changes; the sidebar keeps showing the list meanwhile, and keeps it if that request fails. A
+**Try again** in either place retries the shared request, so it recovers both.
+
+The group is composed from stock shadcn sidebar parts in `web/src/App.tsx` and passed through the
+block's `sidebar` slot; the block itself is unchanged.
+
 ## Layout
 
 The stock shadcn `Sidebar`; on a phone it becomes a sheet behind the header's sidebar button. The
@@ -88,4 +111,5 @@ each page's heading and placeholders in, unless the viewer prefers reduced motio
 
 `web/test/shell.test.ts` drives the app in Chrome through playwright-core against the Vite dev
 server. It runs in `bun test` from the repository root and needs `npm ci` in `web/` and Google
-Chrome installed.
+Chrome installed. The sidebar's course list is `web/test/sidebar.test.ts`, against a real School;
+its cases are in [the test plan](test-plan.md).
