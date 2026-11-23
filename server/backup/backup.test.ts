@@ -82,7 +82,9 @@ type Ran = { code: number; stdout: string; stderr: string };
  * Run `args` in the database's image with `dir` mounted at /backups and the script at
  * /backup/backup.sh, as compose runs it. The password goes in the environment, never in argv.
  */
-async function inImage(dir: string, database: string, args: string[], extra: Record<string, string> = {}, input?: string): Promise<Ran> {
+type Options = { input?: string; /** more `docker run` arguments, before the image */ docker?: string[] };
+
+async function inImage(dir: string, database: string, args: string[], extra: Record<string, string> = {}, { input, docker = [] }: Options = {}): Promise<Ran> {
   // Docker would mount a missing path as a new, empty directory in its place.
   if (!statSync(SCRIPT, { throwIfNoEntry: false })?.isFile()) throw new Error(`${SCRIPT} is not a file`);
   const { network, env } = connection(database);
@@ -90,7 +92,7 @@ async function inImage(dir: string, database: string, args: string[], extra: Rec
   const p = Bun.spawn([
     "docker", "run", "--rm", ...(input === undefined ? [] : ["-i"]), `--user=${process.getuid!()}:${process.getgid!()}`, ...network,
     "-v", `${SCRIPT}:/backup/backup.sh:ro`, "-v", `${dir}:/backups`,
-    ...Object.keys(all).flatMap((k) => ["-e", k]),
+    ...Object.keys(all).flatMap((k) => ["-e", k]), ...docker,
     "--entrypoint", args[0]!, IMAGE, ...args.slice(1),
   ], { env: { ...process.env, ...all }, stdin: input === undefined ? "ignore" : new TextEncoder().encode(input), stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
@@ -101,13 +103,24 @@ async function inImage(dir: string, database: string, args: string[], extra: Rec
 const backupOnce = (dir: string, database: string, extra: Record<string, string> = {}) =>
   inImage(dir, database, ["/bin/sh", "/backup/backup.sh", "once"], extra);
 
+/**
+ * `docker run` arguments that put a `date` first on PATH which always prints `stamp`, so every
+ * run names its dump school-<stamp>.dump: two runs "in the same second", on demand.
+ */
+function frozenClock(stamp: string): string[] {
+  const bin = mkdtempSync(join(tmpdir(), "school-backup-bin-"));
+  cleanup.push(bin);
+  writeFileSync(join(bin, "date"), `#!/bin/sh\necho ${stamp}\n`, { mode: 0o755 });
+  return ["-v", `${bin}:/frozen:ro`, "-e", "PATH=/frozen:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"];
+}
+
 /** The restore, as the how-to gives it. */
 const restore = (dir: string, database: string, file: string) =>
   inImage(dir, database, ["pg_restore", "--exit-on-error", "--single-transaction", `--dbname=${database}`, `/backups/${file}`]);
 
 /** verify.sql's lines for `database`, as the how-to runs it. */
 async function verify(dir: string, database: string): Promise<string[]> {
-  const r = await inImage(dir, database, ["psql", "--tuples-only", "--no-align", "--set=ON_ERROR_STOP=1"], {}, readFileSync(join(import.meta.dir, "verify.sql"), "utf8"));
+  const r = await inImage(dir, database, ["psql", "--tuples-only", "--no-align", "--set=ON_ERROR_STOP=1"], {}, { input: readFileSync(join(import.meta.dir, "verify.sql"), "utf8") });
   expect({ code: r.code, stderr: r.stderr }).toEqual({ code: 0, stderr: "" });
   return r.stdout.split("\n").filter((l) => l !== "");
 }
@@ -246,6 +259,39 @@ describe.skipIf(TEST_POSTGRES_URL === undefined)("backup and restore on a real P
     expect(readdirSync(dir).sort()).toEqual(old);
     expect(lines(ran)).toContainEqual(expect.objectContaining({ kind: "backup", event: "failed" }));
     expect(ran.stdout + ran.stderr).not.toContain(connection("x").env.PGPASSWORD);
+  });
+
+  test("Bun.SQL: a dump that cannot be put in place fails: it overwrites nothing, prints no dumped line, prunes nothing, and leaves no temporary file", async () => {
+    const { url } = await scratch.fresh();
+    const dir = folder();
+    cleanup.push(dir);
+    // A dump already has the name this run will want: putting the new one in place must fail.
+    const taken = "school-20260101T000000Z.dump";
+    const old = ["school-20250101T000000Z.dump", "school-20250102T000000Z.dump"];
+    for (const f of old) writeFileSync(join(dir, f), "x");
+    writeFileSync(join(dir, taken), "the earlier dump");
+    const ran = await inImage(dir, nameOf(url), ["/bin/sh", "/backup/backup.sh", "once"], { SCHOOL_BACKUP_KEEP: "1" }, { docker: frozenClock("20260101T000000Z") });
+    expect(ran.code).toBe(1);
+    expect(readdirSync(dir).sort()).toEqual([...old, taken]); // nothing pruned, nothing left behind
+    expect(readFileSync(join(dir, taken), "utf8")).toBe("the earlier dump");
+    const out = lines(ran);
+    expect(out.some((l) => l.event === "dumped" || l.event === "pruned")).toBe(false);
+    expect(out).toContainEqual(expect.objectContaining({ kind: "backup", event: "failed", file: taken }));
+  });
+
+  test("Bun.SQL: two dumps in the same second never share a file: one is put in place whole, the other fails", async () => {
+    const { url } = await scratch.fresh();
+    const dir = folder();
+    cleanup.push(dir);
+    const both = 'for i in 1 2; do (/bin/sh /backup/backup.sh once; echo "{\\"kind\\":\\"run\\",\\"exit\\":$?}") & done; wait';
+    const ran = await inImage(dir, nameOf(url), ["/bin/sh", "-c", both], {}, { docker: frozenClock("20260101T000000Z") });
+    expect(ran.code).toBe(0);
+    const out = lines(ran);
+    expect(out.filter((l) => l.kind === "run").map((l) => l.exit).sort()).toEqual([0, 1]);
+    expect(readdirSync(dir)).toEqual(["school-20260101T000000Z.dump"]); // no temporary file left
+    const listed = await inImage(dir, nameOf(url), ["pg_restore", "--list", "/backups/school-20260101T000000Z.dump"]);
+    expect(listed.code).toBe(0);
+    expect(listed.stdout).toContain("TABLE DATA school answers");
   });
 
   test("Bun.SQL: a retention or interval that is not a positive whole number is refused before anything runs", async () => {
