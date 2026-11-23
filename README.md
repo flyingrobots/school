@@ -12,7 +12,7 @@ It aims at long-term retention rather than the feeling of having covered somethi
 
 - The design is in [RFC 1](docs/rfc/0001-school.md). It is a **draft and has not been accepted**, and two of its open questions are unanswered.
 - The server serves a configured course: its index, lessons, reference documents and any source material it cites. Verified against two unrelated courses with no code changes between them.
-- **Progress is kept in the SQLite database and is append-only.** Every answer names what was shown and where. The database refuses to update or delete one, and a reload or a server restart resumes where the learner left off ([ADR 9](docs/adr/0009-the-learning-record-is-enforced-by-the-database.md)).
+- **Progress is kept in Postgres and is append-only.** Every answer names what was shown and where. The database refuses to update or delete one, and a reload or a server restart resumes where the learner left off ([ADR 9](docs/adr/0009-the-learning-record-is-enforced-by-the-database.md)).
 - **Lesson *conversion* is unfinished.** Lessons must be block JSON; the AIΩN course's lessons are still the static HTML that predates the format, so that course serves an empty lesson list until increment 3 converts them.
 - The AIΩN Foundations Series has moved to its own repository as the first course, alongside a private learner-state directory. This repository is now framework only.
 
@@ -69,7 +69,9 @@ What an agent may do is set by its own command: the example turns off Claude Cod
 | `SCHOOL_BRIDGE_CONFIG` | Default `~/.config/school/bridge.json`. Re-read on every request. |
 | `SCHOOL_BRIDGE_HOST`, `SCHOOL_BRIDGE_PORT` | Default `127.0.0.1:4748`. |
 
-`bun test` runs the suite. `server/compose.yaml` runs it in Docker behind `tailscale serve` (ADR 4); copy `server/compose.example.env` to `server/.env` and set your course, state and source paths first.
+The record lives in Postgres. Run directly, the server keeps it in PGlite, a Postgres inside the server's process, in `<SCHOOL_STATE>/db`, so nothing else needs installing; `SCHOOL_DATABASE_URL` points it elsewhere (`postgres://...` or `pglite:<dir>`).
+
+`bun test` runs the suite. `server/compose.yaml` runs School in Docker behind `tailscale serve` (ADR 4), with a Postgres server beside it; copy `server/compose.example.env` to `server/.env` and set your course, state and source paths and the Postgres password first.
 
 ## How it is put together
 
