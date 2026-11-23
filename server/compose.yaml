@@ -4,6 +4,11 @@
 #
 # The learner's record is in Postgres (RFC 3), in the named volume `postgres`. `docker compose down`
 # keeps it; `docker compose down -v` deletes it, and with it every answer.
+#
+# Three services, and only one holds the superuser's password (flyingrobots/school#91):
+# `postgres`; `migrate`, a one-shot job that applies the migrations as the owner, makes school_app a
+# login with SCHOOL_APP_PASSWORD, and exits; and `school`, which starts only once `migrate` has
+# exited 0 and logs in as school_app. The server refuses to start on any login that may do more.
 services:
   postgres:
     # Pinned by tag and digest: the major version is the record's on-disk format.
@@ -20,19 +25,35 @@ services:
       interval: 2s
       timeout: 5s
       retries: 30
-    # No ports: only the school service reaches it, on the compose network.
+    # No ports: only the migrate job and the school service reach it, on the compose network.
+  migrate:
+    # The server's image, running server/migrate.ts instead of the server. Each `docker compose up`
+    # runs it again; with nothing pending it applies nothing and exits 0.
+    build: .
+    command: ["bun", "migrate.ts"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # The owner's URL: the superuser, which creates the roles and runs each file as school_owner.
+      SCHOOL_MIGRATE_URL: postgres://postgres:${SCHOOL_POSTGRES_PASSWORD}@postgres:5432/school
+      # school_app's password, which the job sets (as a SCRAM verifier) and the server logs in with.
+      SCHOOL_APP_PASSWORD: ${SCHOOL_APP_PASSWORD:?set SCHOOL_APP_PASSWORD to a long random secret of letters and digits}
   school:
     build: .
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:4747:4747"   # local only; tailscale serve publishes it to the tailnet
     environment:
-      # The record. The server connects as the superuser, because it runs the migrations at
-      # startup; every request then runs as school_app (server/adapters/database.ts).
-      SCHOOL_DATABASE_URL: postgres://postgres:${SCHOOL_POSTGRES_PASSWORD}@postgres:5432/school
+      # The record, as school_app: it may only EXECUTE School's functions, and the server checks
+      # that before it serves (server/adapters/database.ts). No superuser password reaches here.
+      SCHOOL_DATABASE_URL: postgres://school_app:${SCHOOL_APP_PASSWORD}@postgres:5432/school
       # Host names School answers to besides localhost, comma-separated: the tailnet name that
       # `tailscale serve` publishes it under. Any other Host header is refused (DNS rebinding).
       SCHOOL_ALLOWED_HOSTS: ${SCHOOL_ALLOWED_HOSTS:-}

@@ -4,7 +4,7 @@ import { join, normalize, sep } from "node:path";
 import { readdirSync, realpathSync, statSync } from "node:fs";
 import { lastValidLoader, quizIds, quizzes, type Block } from "./blocks.ts";
 import { PROMPT_VERSION, RUBRIC_VERSION, bridgeConfig, callBridge } from "./grade.ts";
-import { openDatabase, redact } from "./adapters/database.ts";
+import { openDatabase, redact, Refused } from "./adapters/database.ts";
 import { InUse } from "./adapters/lock.ts";
 import { postgresRecord } from "./adapters/postgres.ts";
 import { legacyRefusal } from "./legacy.ts";
@@ -44,13 +44,15 @@ const served: Course[] = courses.map((name) => course(config, name)!);
   }
 }
 
-// The record (server/adapters/database.ts): migrated as the owner, then served as school_app.
+// The record (server/adapters/database.ts), served as school_app. On Postgres the server logs in
+// as school_app and migrates nothing (the migrate job did, server/migrate.ts); PGlite migrates here.
 let database;
 try {
   database = await openDatabase(config.database);
 } catch (e) {
-  // A record held by another server is a refusal to start, like a bad configuration: exit 2.
-  if (e instanceof InUse) {
+  // A record held by another server, or a login that may do more than school_app may, is a
+  // refusal to start, like a bad configuration: exit 2.
+  if (e instanceof InUse || e instanceof Refused) {
     console.error(`school: ${e.message}`);
     process.exit(2);
   }

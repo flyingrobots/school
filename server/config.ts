@@ -37,13 +37,13 @@ export class ConfigError extends Error {}
 
 /**
  * SCHOOL_DATABASE_URL: `postgres://` (or `postgresql://`) selects Bun.SQL against a Postgres
- * server; `pglite:<dir>` selects PGlite on disk, a relative dir resolving against `from`. There is
+ * server, logging in as school_app (the migrate job, server/migrate.ts, gives it LOGIN); `pglite:<dir>` selects PGlite on disk, a relative dir resolving against `from`. There is
  * no default: PGlite never fsyncs, so it is not crash-durable, and a learner's record goes only
  * where it was asked to.
  */
 export function parseDatabase(value: string | undefined, from: string): Target {
   if (value === undefined || value === "") {
-    throw new ConfigError("SCHOOL_DATABASE_URL is not set: set it to a postgres:// URL (postgres://user:password@host:5432/db), " +
+    throw new ConfigError("SCHOOL_DATABASE_URL is not set: set it to school_app's postgres:// URL (postgres://school_app:password@host:5432/db), " +
       "or to pglite:<directory> for development and tests (not crash-durable)");
   }
   if (/^postgres(ql)?:\/\//.test(value)) {

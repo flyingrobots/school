@@ -124,7 +124,8 @@ section names each piece as it is in the code.
 | HTTP adapter and composition root | `server/server.ts` | Parses each request with the model, calls one use case, and wires the core to its adapters; it also reads the course folders itself (`server/blocks.ts`), which are not behind a port |
 | Postgres adapter | `server/adapters/postgres.ts` | `LearningRecord` as one call of a `school.*` function per method, every result parsed by the model |
 | `Sql` port and its drivers | `server/adapters/sql.ts`, `pglite.ts`, `bunsql.ts` | One `query(text, params)`; PGlite in process, or `Bun.SQL` on a pool |
-| Opening the record | `server/adapters/database.ts`, `lock.ts` | Reads `SCHOOL_DATABASE_URL`, runs the migrations as the owner, takes `school_app`'s role, refuses any statement but a function call, and locks a PGlite folder |
+| Opening the record | `server/adapters/database.ts`, `lock.ts` | Reads `SCHOOL_DATABASE_URL`; on Postgres, refuses any login that may do more than `school_app` may; on PGlite, runs the migrations as the owner and takes `school_app`'s role; refuses any statement but a function call, and locks a PGlite folder |
+| The migrate job | `server/migrate.ts` | With `SCHOOL_MIGRATE_URL` (the owner's or superuser's URL), runs the migrations as the owner, makes `school_app` a login with `SCHOOL_APP_PASSWORD`, and exits; JSON Lines on stdout and stderr |
 | Grader | `server/server.ts`, `server/grade.ts` | The bridge client; with no bridge connected, an attempt fails and says so |
 | Clock | `server/server.ts` | The system clock; tests pass a fixed one |
 
@@ -178,13 +179,16 @@ start rather than serve from its own copy.
 | Step at startup | What happens |
 | --- | --- |
 | 1. The SQLite check | If `DB_PATH` (default `<SCHOOL_STATE>/progress.db`, the old SQLite record) exists and holds any answer, explanation or view, or cannot be read as SQLite, the server exits with code 2 and names the file, before it opens Postgres. Nothing migrates from SQLite (RFC 3 §3.3). |
-| 2. Migrations, as the owner | The connecting role, which must be able to create roles (in practice the superuser), runs `server/db/migrate.ts`. On `Bun.SQL` it runs on one reserved connection; on PGlite, on its one session. |
-| 3. Requests, as `school_app` | PGlite's session runs `SET ROLE school_app` once. On `Bun.SQL`, every statement runs in its own transaction that starts with `SET LOCAL ROLE school_app`, so no pooled connection keeps the role. The server checks that `current_user` is `school_app` before it serves. |
-| 4. Function calls only | The server's record accepts only `SELECT * FROM school.<function>($1, ...)`; anything else is refused before the driver sees it. |
+| 2. Migrations, as the owner | On Postgres, not in the server: the migrate job (`server/migrate.ts`; the one-shot `migrate` service in `server/compose.yaml`, which the server waits for with `service_completed_successfully`) connects with `SCHOOL_MIGRATE_URL`, runs `server/db/migrate.ts` on one reserved connection, gives `school_app` `LOGIN` and the password `SCHOOL_APP_PASSWORD` (sent as a SCRAM verifier), revokes `CREATE` and `TEMPORARY` on the database from `PUBLIC`, and exits. On PGlite the server runs the migrations itself, on its one session, which is the superuser. |
+| 3. The login check | On Postgres the server logs in with `school_app`'s URL and refuses to start (exit 2) unless the login is `school_app`, no superuser and no `CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS`, a member of no role, the owner of nothing (schema `school` included), with no privilege on any table, view or sequence, no `CREATE` in any schema or the database, no `TEMPORARY`, and denied a probe that creates a table, writes and truncates one, and runs `COPY ... TO PROGRAM`, in a transaction that is rolled back. Its message names each problem, and the host, never a password. PGlite has no login and skips this. |
+| 4. Requests, as `school_app` | PGlite's session runs `SET ROLE school_app` once. On `Bun.SQL`, every statement still runs in its own transaction that starts with `SET LOCAL ROLE school_app`. The server checks that `current_user` is `school_app` before it serves. |
+| 5. Function calls only | The server's record accepts only `SELECT * FROM school.<function>($1, ...)`; anything else is refused before the driver sees it. |
 
-Both drivers log in as the superuser and then take `school_app`'s role. A statement that resets
-the role would get the superuser back, which is why step 4 exists. That is a guard rail, not
-tamper-proofing: the server holds the superuser URL anyway, because it runs the migrations.
+On Postgres the server holds only `school_app`'s credentials, so a compromised server process can
+do what `school_app` can: call the granted functions (flyingrobots/school#91). Steps 4 and 5 stay
+as defence in depth. PGlite's session is the superuser and takes `school_app`'s role, so there a
+statement that resets the role would get the superuser back; step 5 is what stops it, a guard
+rail, not tamper-proofing. PGlite is for development and tests only.
 
 The record observes aid (RFC 2 §3). Migration 0002 records exposures through
 `record_exposure`, idempotent by the client's exposure id, and derives each answer's and
@@ -291,7 +295,7 @@ lesson page calls for each help it shows.*
 | Rule | How it is enforced | What it does not cover |
 | --- | --- | --- |
 | Rows are never updated, deleted or truncated | `BEFORE UPDATE OR DELETE` row triggers and `BEFORE TRUNCATE` statement triggers on every table | The owner or the superuser can drop a trigger. Guard rails, not tamper-proofing. |
-| The server can only call the public functions | `school_app` has `EXECUTE` on them by name and no table privilege; `EXECUTE` is revoked from `PUBLIC`; the server's record refuses any other statement | A process holding the superuser URL |
+| The server can only call the public functions | `school_app` has `EXECUTE` on them by name and no table privilege; `EXECUTE` is revoked from `PUBLIC`; the server's record refuses any other statement | A process holding the superuser or owner URL: on Postgres only the migrate job does; on PGlite the server's own session is the superuser |
 | A resent submission stores nothing | Unique `answers.submission_id`; `school.submit` answers `duplicate`, or `conflict` for a different answer under the same id | Nothing further |
 | `correct` and `first_try` come from the snapshot | `school.submit` derives them from the encounter's stored snapshot; the client's are ignored. A partial unique index allows one first try per block and encounter, even under concurrent answers | A direct `INSERT` by the owner |
 | An acknowledged answer survives the server's crash | The 200 is sent after the function's transaction commits; a test kills the server hard and reads the answer back | On PGlite, an operating-system crash or power cut: PGlite writes through to its folder but does not `fsync`, so the last commits may be lost. Real Postgres `fsync`s each commit. Nothing makes scheduled backups yet. |
@@ -442,7 +446,9 @@ is currently broken.
 | `SCHOOL_COURSES` | Server | `name=path` pairs, one per course | none |
 | `SCHOOL_COURSE` | Server | One unnamed course | none |
 | `SCHOOL_STATE` | Server | Learner state; must not be inside a course | `state/` |
-| `SCHOOL_DATABASE_URL` | Server | The record: `postgres://user:password@host:port/db` (`Bun.SQL`; the user must be able to create roles) or `pglite:<dir>` (PGlite on disk, not inside a course) | none: required |
+| `SCHOOL_DATABASE_URL` | Server | The record: `postgres://school_app:password@host:port/db` (`Bun.SQL`; `school_app`'s own login, refused if it may do more) or `pglite:<dir>` (PGlite on disk, not inside a course) | none: required |
+| `SCHOOL_MIGRATE_URL` | Migrate job | The owner's URL: a role that can create roles, in practice the superuser | none: required |
+| `SCHOOL_APP_PASSWORD` | Migrate job | The password the job gives `school_app`, at least 20 letters and digits; the same one is in the server's URL | none: required |
 | `DB_PATH` | Server | The old SQLite record, only read: startup refuses while it holds learner work | `<SCHOOL_STATE>/progress.db` |
 | `SCHOOL_MOUNTS` | Server | `name=path` pairs served read-only | none |
 | `SCHOOL_WEB` | Server | The built web app | `web/dist` |

@@ -19,7 +19,9 @@ Practical notes for anyone — human or agent — changing the framework.
 - The Postgres record (RFC 3) is built by numbered migrations in `server/db/migrations/`
   (`NNNN_name.sql`, from 0001, no gaps), applied by `server/db/migrate.ts`, one transaction per
   file. `0001_init.sql` documents each public function's signature above it. Its tests run on
-  PGlite (`server/db/*.test.ts`). The server runs it at every startup, before serving.
+  PGlite (`server/db/*.test.ts`). On Postgres only the migrate job runs it (`server/migrate.ts`,
+  the one-shot `migrate` service in `server/compose.yaml`); on PGlite the server runs it at
+  startup, before serving.
   - **Applied** means applied to any database that holds or will hold learner data. Never edit an
     applied migration; the runner refuses a changed or missing file, so add a new one. Until the
     first such database applies a file, it may still be corrected in place, and the pull request
@@ -28,14 +30,26 @@ Practical notes for anyone — human or agent — changing the framework.
     then runs every file as `school_owner`, which may create objects only in `school`. A file
     may not contain `BEGIN`, `COMMIT`, `ROLLBACK`, `SET ROLE` or similar; the runner owns the
     transaction and the role. Apply migrations only through the runner, never with `psql -f`.
-  - The runner connects as the database's superuser: it creates roles and switches to them. So
-    the server's `SCHOOL_DATABASE_URL` names the superuser (compose: `postgres`).
-  - Both roles are created `NOLOGIN`, and School's server needs neither to log in: it logs in as
-    the superuser and takes `school_app`'s role for requests (`SET ROLE` on PGlite's one session,
-    `SET LOCAL ROLE` per transaction on the `Bun.SQL` pool; `server/adapters/database.ts`). Any
-    other client that should log in as `school_app` needs `ALTER ROLE school_app LOGIN PASSWORD ...`
-    from the deployment, not a migration, so no secret lives in the repository. The roles are
+  - The runner connects as the database's superuser: it creates roles and switches to them. Only
+    the migrate job holds that URL, `SCHOOL_MIGRATE_URL` (compose: `postgres`, in the `migrate`
+    service alone). After the migrations it runs `ALTER ROLE school_app LOGIN ... PASSWORD` with a
+    SCRAM-SHA-256 verifier of `SCHOOL_APP_PASSWORD` computed in the job, so the password itself never
+    reaches Postgres or a log, and revokes `CREATE` and `TEMPORARY` on the database from `PUBLIC`.
+    No secret lives in the repository or in a migration (flyingrobots/school#91).
+  - Both roles are created `NOLOGIN`; the migrate job gives `school_app` `LOGIN`. On Postgres the
+    server's `SCHOOL_DATABASE_URL` is `school_app`'s own login, and before serving it refuses to
+    start (exit 2, `Refused`) if that login is not `school_app`, is a superuser or has `CREATEROLE`,
+    `CREATEDB`, `REPLICATION` or `BYPASSRLS`, is a member of any role, owns schema `school` or any
+    object, has any privilege on a table, view or sequence, may create in any schema, create schemas
+    or create temporary tables, or is not denied a probe that creates a table, writes one, truncates
+    one and runs `COPY ... TO PROGRAM` (`loginRefusals` in `server/adapters/database.ts`). It still
+    runs each statement with `SET LOCAL ROLE school_app` and only function calls, as defence in
+    depth. PGlite (development and tests) keeps its single-process path: its one session is the
+    superuser, migrates, then `SET ROLE school_app`; it has no login to check. The roles are
     cluster-wide: do not pre-create them with other memberships.
+  - The Bun.SQL tests do the same: `fresh()` in `server/testing/postgres.ts` runs the migrate job
+    with the scratch server's superuser URL and opens the record with `school_app`'s URL. The test
+    password is derived from `SCHOOL_TEST_POSTGRES_URL`, so none is kept in the repository.
 - The server is a hexagon (RFC 3, §4): `server/core/` holds the model (Zod), the ports and the use
   cases, and imports nothing but itself and Zod (`server/core/boundary.test.ts`). Adapters live in
   `server/adapters/`; every `LearningRecord` adapter must pass `server/contract/learning-record.ts`.
