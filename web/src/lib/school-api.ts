@@ -193,3 +193,43 @@ export type Exposure = { exposureId: string; encounterId: string; blockId: strin
 export function sendExposure(x: Exposure): Promise<Delivery<null>> {
   return deliver("/api/exposure", x, z.unknown().transform(() => null), [400, 409, 501])
 }
+
+// GET /api/courses (server/server.ts, coursesJson): every course, in the server's order (by name).
+// Counts are null when a course's lessons cannot be read.
+export const CoursesReply = z.array(
+  z.object({
+    name: z.string(),
+    lessons: z.number().int().nonnegative().nullable(),
+    reference: z.number().int().nonnegative(),
+    quizzes: z.number().int().nonnegative().nullable(),
+    answeredCorrectly: z.number().int().nonnegative().nullable(),
+  })
+)
+export type CourseSummary = z.infer<typeof CoursesReply>[number]
+
+/** Why the course list is not shown. `reason` is School's own, when it gave one. */
+export class CoursesUnavailable extends Error {
+  readonly reason: string | null
+  constructor(reason: string | null) {
+    super(reason ?? "School's course list could not be loaded.")
+    this.reason = reason
+  }
+}
+
+/** Every course. Rejects with CoursesUnavailable when School is unreachable, fails, or answers in another shape. */
+export async function listCourses(): Promise<CourseSummary[]> {
+  let res: Response
+  try {
+    res = await fetch("/api/courses", { headers: { accept: "application/json" } })
+  } catch {
+    throw new CoursesUnavailable(null)
+  }
+  const body: unknown = await res.json().catch(() => null)
+  if (!res.ok) {
+    const said = z.object({ error: z.string() }).safeParse(body)
+    throw new CoursesUnavailable(said.success ? said.data.error : null)
+  }
+  const parsed = CoursesReply.safeParse(body)
+  if (!parsed.success) throw new CoursesUnavailable(null)
+  return parsed.data
+}
