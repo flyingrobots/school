@@ -11,11 +11,11 @@ import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDatabase } from "../adapters/database.ts";
+import { migrateRecord, openDatabase } from "../adapters/database.ts";
 import { postgresRecord } from "../adapters/postgres.ts";
 import { replayLearnerHistory } from "../contract/learner-history.ts";
 import type { LearningRecord } from "../core/ports.ts";
-import { scratchPostgres, TEST_POSTGRES_URL } from "../testing/postgres.ts";
+import { appUrl, scratchPostgres, TEST_APP_PASSWORD, TEST_POSTGRES_URL } from "../testing/postgres.ts";
 
 setDefaultTimeout(120_000); // each case starts containers and copies databases
 
@@ -195,8 +195,10 @@ describe.skipIf(TEST_POSTGRES_URL === undefined)("backup and restore on a real P
     const restored = await restore(dir, nameOf(empty), file!);
     expect({ code: restored.code, stderr: restored.stderr }).toEqual({ code: 0, stderr: "" });
 
-    // The restored database opens as the server opens it: its migration history came with it.
-    const back = scratch.track(await openDatabase({ driver: "postgres", url: empty }));
+    // The restored database opens as a deployment opens it (flyingrobots/school#91): the migrate job
+    // applies nothing, since its migration history came with it, and the server logs in as school_app.
+    expect(await migrateRecord(empty, TEST_APP_PASSWORD)).toEqual({ applied: [] });
+    const back = scratch.track(await openDatabase({ driver: "postgres", url: appUrl(empty) }));
     expect(back.applied).toEqual([]);
     const again = postgresRecord(back.sql);
     const now = postgresRecord(original.sql);
