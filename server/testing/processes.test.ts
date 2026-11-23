@@ -1,10 +1,14 @@
 // The process helper's ports (flyingrobots/school#82): no test picks a port, two starts never
-// share one, and a port that turns out to be taken is retried rather than failing the test.
+// share one, and a port that turns out to be taken is retried rather than failing the test. Its
+// start-up (flyingrobots/school#129): each server gets a migrated record of its own, and a start
+// that never gets ready says how long it waited and what the process wrote.
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { NotStarted, PORT_ATTEMPTS, announcedBridgePort, probePort, startBridge, startSchool, timeout, type Started } from "./processes.ts";
+import { readMigrations } from "../db/migrate.ts";
+import { NotStarted, PORT_ATTEMPTS, announcedBridgePort, migratedRecord, probePort, startBridge, startSchool, timeout, type Started } from "./processes.ts";
+import { ownerQuery } from "./record.ts";
 
 const TOKEN = "processes-token-0123456789";
 const live: Started[] = [];
@@ -100,3 +104,54 @@ test("the bridge's port is read from its bridge.listening line", () => {
   expect(announcedBridgePort('{"kind":"bridge.start","port":0}\n{"kind":"bridge.listening","host":"127.0.0.1","port":41234}\n')).toBe(41234);
   expect(announcedBridgePort('{"kind":"bridge.listening","host":"127.0.0.1","po')).toBeNull();
 });
+
+// flyingrobots/school#129: a server gets a record already created and migrated, a copy of its own.
+test("each School start on a pglite: record that does not exist gets a migrated copy of its own, and applies no migration", async () => {
+  const versions = readMigrations().map((m) => m.version);
+  const a = schoolEnv();
+  const first = await startSchool(a);
+  first.proc.kill();
+  const ran = await first.output();
+  expect(ran.stdout).toContain("school: record in PGlite at");
+  expect(ran.stdout).not.toContain("applied migration");
+  const record = (env: Record<string, string | undefined>) => env.SCHOOL_DATABASE_URL!.slice("pglite:".length);
+  const applied = async (dir: string) => (await ownerQuery<{ version: number }>(dir, "SELECT version FROM public.schema_migrations ORDER BY version")).map((r) => Number(r.version));
+  expect(await applied(record(a))).toEqual(versions);
+  // Writing to one copy reaches neither the template nor a record copied after it.
+  await ownerQuery(record(a), "CREATE TABLE public.only_in_a (x int)");
+  const b = schoolEnv();
+  const second = await startSchool(b);
+  second.proc.kill();
+  await second.proc.exited;
+  const has = async (dir: string) => (await ownerQuery<{ n: number }>(dir, "SELECT count(*)::int AS n FROM pg_tables WHERE tablename = 'only_in_a'"))[0]!.n;
+  expect(record(b)).not.toBe(record(a));
+  expect(await has(record(a))).toBe(1);
+  expect(await has(record(b))).toBe(0);
+  expect(await has(await migratedRecord())).toBe(0);
+  expect(await applied(record(b))).toEqual(versions);
+}, timeout(2) + 10_000);
+
+test("with record: \"server\" the server creates and migrates the record itself", async () => {
+  const env = schoolEnv();
+  const s = await startSchool(env, { record: "server" });
+  s.proc.kill();
+  const { stdout } = await s.output();
+  expect(stdout).toContain(`applied migration(s) ${readMigrations().map((m) => m.version).join(", ")}`);
+}, timeout(1));
+
+test("a start that is never ready fails with the time it waited and everything the process wrote", async () => {
+  const root = mkdtempSync(join(tmpdir(), "school-never-ready-"));
+  dirs.push(root);
+  const script = join(root, "never-ready.ts");
+  writeFileSync(script, 'console.log("still opening the record"); console.error("a warning on stderr"); setInterval(() => {}, 1000);\n');
+  const began = Date.now();
+  const e = await startSchool(schoolEnv(), { script, readyMs: 1_000 }).then(() => null, (x) => x);
+  expect(e).toBeInstanceOf(NotStarted);
+  expect(Date.now() - began).toBeGreaterThanOrEqual(1_000);
+  expect(e.exitCode).toBeNull();
+  expect(e.message).toMatch(/was not ready within 1000 ms \(waited \d+ ms; last: /);
+  expect(e.message).toContain("its stdout:\nstill opening the record");
+  expect(e.message).toContain("its stderr:\na warning on stderr");
+  expect(e.stdout).toContain("still opening the record");
+  expect(e.stderr).toContain("a warning on stderr");
+}, timeout(1));
