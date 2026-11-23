@@ -1,0 +1,25 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+  "name": "markdown",
+  "title": "Markdown",
+  "description": "shadcn's apps/v4/components/markdown.tsx (Streamdown with Code Block), with only its import paths updated to the project, as the AI Elements install steps direct. Its css adds the @source line Streamdown's README requires, so Tailwind sees its classes.",
+  "dependencies": [
+    "streamdown",
+    "cn"
+  ],
+  "registryDependencies": [
+    "code-block"
+  ],
+  "files": [
+    {
+      "path": "registry/flyingrobots/markdown/markdown.tsx",
+      "content": "\"use client\"\n\nimport * as React from \"react\"\nimport { cn } from \"cn\"\nimport {\n  Streamdown,\n  useIsCodeFenceIncomplete,\n  type ExtraProps,\n} from \"streamdown\"\n\nimport { useHighlightedCode } from \"@/hooks/use-highlighted-code\"\nimport {\n  CodeBlock,\n  CodeBlockActions,\n  CodeBlockContent,\n  CodeBlockCopyButton,\n  CodeBlockHeader,\n  CodeBlockLine,\n  CodeBlockTitle,\n} from \"@/components/ui/code-block\"\n\nfunction MarkdownCodeBlock({\n  code,\n  language,\n}: {\n  code: string\n  language: string\n}) {\n  // True while the closing fence has not arrived yet.\n  const incomplete = useIsCodeFenceIncomplete()\n  const lines = useHighlightedCode(code, language)\n\n  return (\n    <CodeBlock>\n      <CodeBlockHeader>\n        <CodeBlockTitle>{language || \"text\"}</CodeBlockTitle>\n        <CodeBlockActions>\n          <CodeBlockCopyButton value={code} disabled={incomplete} />\n        </CodeBlockActions>\n      </CodeBlockHeader>\n      <CodeBlockContent lineNumbers>\n        {lines.map((line, index) => (\n          <CodeBlockLine key={index}>{line}</CodeBlockLine>\n        ))}\n      </CodeBlockContent>\n    </CodeBlock>\n  )\n}\n\nfunction MarkdownCode({\n  node,\n  className,\n  children,\n  ...props\n}: React.ComponentProps<\"code\"> & ExtraProps) {\n  // Streamdown marks fenced code with data-block. Inline code stays inline.\n  if (!(\"data-block\" in props)) {\n    return (\n      <code\n        className={cn(\n          \"rounded-sm bg-muted px-1 py-0.5 font-mono text-[0.9em]\",\n          className\n        )}\n        {...props}\n      >\n        {children}\n      </code>\n    )\n  }\n\n  return (\n    <MarkdownCodeBlock\n      code={typeof children === \"string\" ? children : \"\"}\n      language={/language-(\\S+)/.exec(className ?? \"\")?.[1] ?? \"\"}\n    />\n  )\n}\n\n// Streamdown memoizes on components, so keep the default stable.\nconst DEFAULT_COMPONENTS = { code: MarkdownCode }\n\nfunction Markdown({\n  className,\n  components = DEFAULT_COMPONENTS,\n  controls = false,\n  ...props\n}: React.ComponentProps<typeof Streamdown>) {\n  return (\n    <Streamdown\n      data-slot=\"markdown\"\n      components={components}\n      controls={controls}\n      className={cn(\"cn-markdown w-full min-w-0 overflow-hidden\", className)}\n      {...props}\n    />\n  )\n}\n\nexport { Markdown }\n",
+      "type": "registry:component",
+      "target": "components/markdown.tsx"
+    }
+  ],
+  "css": {
+    "@source \"../node_modules/streamdown/dist/*.js\"": {}
+  },
+  "type": "registry:component"
+}

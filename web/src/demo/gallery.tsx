@@ -66,12 +66,12 @@ export function Gallery() {
     // shadcn's website provides TooltipProvider in its layout; the registry examples assume it.
     <TooltipProvider>
       <div className="flex min-h-svh flex-col bg-muted dark:bg-background">
-        <header className="flex items-center justify-between px-6 py-4">
+        <header className="flex items-center justify-between px-4 py-4 sm:px-6">
           <span className="text-sm font-medium">School UI</span>
           <ModeToggle />
         </header>
 
-        <main ref={stage} className="flex flex-1 items-center justify-center p-6">
+        <main ref={stage} className="flex flex-1 items-center justify-center px-4 py-6 sm:p-6">
           <VariantContext.Provider value={variants}>
             <React.Suspense fallback={<Spinner />}>
               <current.View key={current.slug} />
@@ -79,15 +79,16 @@ export function Gallery() {
           </VariantContext.Provider>
         </main>
 
-        {/* Controls follow the registry's kbd-button and kbd-tooltip patterns (apps/v4/examples/radix). */}
-        <footer className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-6 py-4">
-          <Button variant="outline" className="justify-self-start" onClick={() => go(-1)} aria-keyshortcuts="ArrowLeft">
+        {/* Controls follow the registry's kbd-button and kbd-tooltip patterns (apps/v4/examples/radix).
+            On a phone the position sits on its own row above the two buttons, so nothing is wider than the page. */}
+        <footer className="grid grid-cols-2 items-center gap-x-4 gap-y-3 px-4 py-4 sm:grid-cols-[1fr_auto_1fr] sm:px-6">
+          <Button variant="outline" className="max-w-full min-w-0 justify-self-start" onClick={() => go(-1)} aria-keyshortcuts="ArrowLeft">
             <Kbd data-icon="inline-start" className="-translate-x-0.5">
               ←
             </Kbd>{" "}
-            {previous.name}
+            <span className="truncate">{previous.name}</span>
           </Button>
-          <div className="flex items-center gap-3">
+          <div className="order-first col-span-2 flex items-center justify-self-center gap-3 sm:order-none sm:col-span-1">
             <div className="flex flex-col items-end">
               <h1 className="text-sm font-medium">{current.name}</h1>
               <span aria-live="polite" className="text-xs text-muted-foreground">
@@ -117,8 +118,8 @@ export function Gallery() {
               </Tooltip>
             </ButtonGroup>
           </div>
-          <Button variant="outline" className="justify-self-end" onClick={() => go(1)} aria-keyshortcuts="ArrowRight">
-            {next.name}{" "}
+          <Button variant="outline" className="max-w-full min-w-0 justify-self-end" onClick={() => go(1)} aria-keyshortcuts="ArrowRight">
+            <span className="truncate">{next.name}</span>{" "}
             <Kbd data-icon="inline-end" className="translate-x-0.5">
               →
             </Kbd>

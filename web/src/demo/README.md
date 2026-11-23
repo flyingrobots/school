@@ -38,11 +38,15 @@ wrote. Each example file holds several `<Example title="…">` blocks, and those
 The only code written here is the frame:
 
 - `gallery.tsx`: the page. It uses stock shadcn Button, Kbd, Spinner and Toaster, the registry
-  mode toggle, and ui-sdk's `useShortcut` for the arrow keys.
+  mode toggle, and ui-sdk's `useShortcut` for the arrow keys. It keeps a 16 px gutter on phones,
+  and there the footer puts the component name and position on their own row above the previous
+  and next buttons, whose names truncate, so at 360 px the page never scrolls sideways.
 - `example.tsx`: stands in for shadcn's `@/components/example` frame. It has the same two exports,
   `Example` and `ExampleWrapper`, but shows one example at a time instead of a grid. Like shadcn's,
   an example's `containerClassName` goes on the outer frame, so the nest example can use the page's
-  full width.
+  full width. Below the `sm` breakpoint the card's padding drops from `p-12` to `p-6`, and an
+  example wider than a phone (a long code line, a row of tabs, a navigation menu) scrolls sideways
+  inside its card, not the page.
 - `shims/`: the examples are written for shadcn's Next.js website, so these stand in for its
   modules: `next/link`, `next/image`, the chart example's style setting, and a type the message
   example imports.
