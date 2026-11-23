@@ -8,6 +8,8 @@ import { join } from "node:path"
 import { chromium, type Browser, type Page } from "playwright-core"
 import { createServer, type ViteDevServer } from "vite"
 
+import { warm } from "./vite.ts"
+
 setDefaultTimeout(30_000)
 
 const web = join(import.meta.dir, "..")
@@ -24,7 +26,8 @@ beforeAll(async () => {
   base = server.resolvedUrls!.local[0]!.replace(/\/$/, "")
   // A missing Chrome fails here, loudly; it is never a skip.
   browser = await chromium.launch({ channel: "chrome" })
-})
+  await warm(browser, base)
+}, 60_000)
 
 afterAll(async () => {
   await browser?.close()
