@@ -16,6 +16,12 @@ opens or resumes the learner's encounter, and renders the lesson's blocks in ord
 | `explain` | The registry `explain` block, saving through `POST /api/explanation` and grading through `POST /api/grade` |
 | `nest` | The registry `nest` block |
 
+A link in that HTML to School's own site, relative (`/aion/README.md`) or with School's own
+origin written out, is a plain link and opens in the same tab, as a full page load. A link to any
+other origin opens Streamdown's "Open external link?" confirmation first, and opens in a new tab
+once confirmed. The `markdown` item decides this by resolving the link against the page's address;
+it cannot tell an app route from a file under a source mount, so both open in the same tab.
+
 From the `xl` breakpoint an outline of the lesson's sections sits beside the blocks. Links to the
 previous and next lessons close the page; the first lesson has no previous link and the last no
 next one.
@@ -193,6 +199,12 @@ is back. The blocks' queued state and pending prop are tested in `web/test/quiz.
 `web/test/explain.test.tsx`. The Figure 4
 case reads the derived aid from `GET /api/aid/:submissionId`: no recorded aid for the first
 explanation, aided for the revision.
+
+The "links in lesson prose (flyingrobots/school#125)" group serves a course of its own, written
+when the test starts so its prose can name the Vite server's origin: a relative, a same-origin
+and an external link. The first two must be links with an `href` that open the course's orbits lesson in the
+same tab with no confirmation and no new tab; the external one must show the confirmation and
+neither navigate nor open a tab.
 
 The "the slides view (flyingrobots/school#43)" group uses a School of its own for its first case:
 it walks every slide, tries to answer the read-only quiz, and checks that no request other than a
