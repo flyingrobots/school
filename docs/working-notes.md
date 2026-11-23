@@ -63,6 +63,13 @@ Practical notes for anyone — human or agent — changing the framework.
   `aid_tracking` its caller passes: the lesson API's `?aid=` capture version, or NULL (aid not
   observed) when the client sends none. A client may send `?aid=1` only if it records, through
   `POST /api/exposure`, every exposure it shows; the lesson page does (flyingrobots/school#51).
+- Due review (`server/db/migrations/0006_due_review.sql`, `docs/topics/due-review/`) puts items in
+  a section with id `school:review` at the top of a lesson, so authored block ids may not start
+  `school:` (`server/blocks.ts`). The web view opens lessons through `open_lesson_encounter`, which
+  finds the encounter to resume by the lesson as written, not by the snapshot's hash; the old
+  `open_encounter` stays for the contract. A reason names a day in the server's time zone:
+  `bun test` runs in UTC, but a School it starts inherits the host's `TZ` unless the test sets
+  one, as `server/review.test.ts` does.
 - Every `LearningRecord` adapter stores exposures and must pass the contract's aid cases; there is
   no "unsupported" answer since SQLite was deleted (flyingrobots/school#49).
 - `SCHOOL_DATABASE_URL` picks the record: `postgres://...` is `Bun.SQL`, `pglite:<dir>` is PGlite on

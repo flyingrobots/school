@@ -261,7 +261,8 @@ function aidParam(params: URLSearchParams): { aid: AidTracking } | null {
 
 /**
  * One lesson. In the web view this opens or resumes the learner's encounter and includes what is
- * already answered in it, which is what opening the page used to do. The slides view records nothing.
+ * already answered in it, which is what opening the page used to do, and any items due for review.
+ * The slides view records nothing.
  */
 async function lessonJson(c: Course, id: string, viewParam: string | null, aidTracking: AidTracking): Promise<Response> {
   const view = isView(viewParam) ? viewParam : "web";
@@ -273,8 +274,10 @@ async function lessonJson(c: Course, id: string, viewParam: string | null, aidTr
   if (page === undefined) return json({ error: "no such lesson" }, 404);
   const base = { course: c.name, view, lesson: page, prev: summary(pages[i - 1]), next: summary(pages[i + 1]), hasReference: referenceDocs(c).length > 0 };
   if (view !== "web") return json(base);
-  const opened = await school.openLesson(c.name, page, aidTracking);
-  return json({ ...base, encounterId: opened.encounter.id, answers: opened.answers, explanations: opened.explanations },
+  // Any quiz of the course may come back for review at the top of this lesson (RFC 2 §5). `lesson` is
+  // then what the encounter snapshotted, review included, and `review` holds each item's reason.
+  const opened = await school.openLesson(c.name, page, aidTracking, [...library.byId.values()]);
+  return json({ ...base, lesson: opened.page, encounterId: opened.encounter.id, answers: opened.answers, explanations: opened.explanations, review: opened.review },
     200, { "cache-control": "no-store" });
 }
 

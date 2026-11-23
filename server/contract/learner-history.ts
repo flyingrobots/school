@@ -5,8 +5,9 @@
 // registers it (Postgres on PGlite, and a real Postgres through Bun.SQL in CI) must tell the
 // same story. The story grows as the record does.
 import { expect, test } from "bun:test";
-import type { Aid, Block, ExplainBlock, ExplanationState, ExposureKind, GradingRecord, Recorded } from "../core/model.ts";
-import type { LearningRecord } from "../core/ports.ts";
+import type { Aid, Block, DueItem, ExplainBlock, ExplanationState, ExposureKind, GradingRecord, Recorded } from "../core/model.ts";
+import type { Grader, LearningRecord } from "../core/ports.ts";
+import { REVIEW_DELAY_MS, REVIEW_LIMIT, createSchool } from "../core/school.ts";
 
 // The lesson: two quizzes and one explain block.
 const closest: Block = {
@@ -23,6 +24,14 @@ const seasons: ExplainBlock = {
   sources: [{ id: "tilt", title: "Axial tilt", text: "Earth's axis is tilted about 23.4 degrees to its orbit." }],
 };
 const page: Block = { type: "page", id: "orbits", title: "Orbits", subtitle: "", children: [closest, moons, seasons] };
+// The next lesson, where the review appears.
+const rings: Block = {
+  type: "quiz", id: "rings", q: "Which planet has the brightest rings?", why: "Saturn's rings are mostly ice.",
+  choices: [{ id: "saturn", text: "Saturn", correct: true }, { id: "jupiter", text: "Jupiter", correct: false }],
+};
+const planets: Block = { type: "page", id: "planets", title: "Planets", subtitle: "", children: [rings] };
+/** The review never grades anything. */
+const noGrader: Grader = { adapter: "none", model: "", rubricVersion: "-", promptVersion: "-", grade: async () => { throw new Error("no grading in this story"); } };
 const COURSE = "astronomy";
 
 const T0 = Date.parse("2026-11-21T09:00:00Z");
@@ -185,5 +194,63 @@ export function learnerHistory(name: string, make: () => Promise<LearningRecord>
     expect(await reload(old)).toEqual({ closest: "Answered (mercury)" });
     expect(await aidOf(early)).toBe("Unknown aid");
     expect(await r.lessonProgress(COURSE)).toEqual({ orbits: ["closest", "moons"] });
+
+    // Delayed review (RFC 2 §5, flyingrobots/school#32), from the record's order and its exposures.
+    const rows = await r.encounterEvidence(e.id);
+    const seq = (kind: string, blockId: string, nth = 0) => rows.filter((x) => x.kind === kind && x.blockId === blockId)[nth]!.seq;
+    const asked = { course: COURSE, blocks: ["closest", "moons", "seasons", "rings"], delayMs: REVIEW_DELAY_MS, limit: REVIEW_LIMIT };
+
+    // Still 11:00 on day two. Nothing is due: both quizzes were last answered two hours ago.
+    expect(await r.dueReview({ ...asked, now: at(2 * 3600) })).toEqual([]);
+
+    // Day three, 22 November, 09:00. Both are due, each because its first answer yesterday was
+    // wrong. The closest planet's note names the wrong answer, the feedback shown after it and the
+    // correction; the moons' names Mars and the second try. Day one's right answer, whose aid is
+    // unknown, is older than yesterday's wrong one, so it decides nothing. The explanation is not
+    // a quiz, and this selector reads quiz answers only.
+    const closestDue: DueItem = {
+      blockId: "closest", rule: "due-review/wrong-first-try", answeredAt: at(60), corrected: true, shown: ["feedback"],
+      lastSeen: at(120), evidence: [seq("answer", "closest"), seq("exposure", "closest"), seq("answer", "closest", 1)],
+    };
+    const moonsDue: DueItem = {
+      blockId: "moons", rule: "due-review/wrong-first-try", answeredAt: at(600), corrected: true, shown: [],
+      lastSeen: at(600), evidence: [seq("answer", "moons"), seq("answer", "moons", 1)],
+    };
+    expect(await r.dueReview({ ...asked, now: at(DAY) })).toEqual([closestDue, moonsDue]);
+
+    // They open the next lesson, "Planets". School puts the two at the top of it, in a Review
+    // section, each with its reason, and snapshots them with the lesson.
+    let now = at(DAY);
+    const school = createSchool({ record: r, grader: noGrader, clock: { now: () => now } });
+    const reviewed = await school.openLesson(COURSE, planets, 1, [closest, moons, seasons, rings]);
+    expect(reviewed.encounter.resumed).toBe(false);
+    expect(reviewed.page).toEqual({ ...(planets as Extract<Block, { type: "page" }>), children: [{ type: "section", id: "school:review", title: "Review", children: [closest, moons] }, rings] });
+    expect(reviewed.review).toEqual([
+      { blockId: "closest", rule: "due-review/wrong-first-try", reason: "Back because your first answer on 21 November was wrong, and the right one came after the explanation was shown." },
+      { blockId: "moons", rule: "due-review/wrong-first-try", reason: "Back because your first answer on 21 November was wrong; you put it right on a later try." },
+    ]);
+    // One note per item, for this encounter, citing exactly the rows the selector named.
+    expect((await r.encounterDecisionNotes(reviewed.encounter.id)).map((n) => [n.choice, n.rule, n.evidence])).toEqual([
+      [{ course: COURSE, lesson: "planets", blockId: "closest" }, closestDue.rule, closestDue.evidence],
+      [{ course: COURSE, lesson: "planets", blockId: "moons" }, moonsDue.rule, moonsDue.evidence],
+    ]);
+
+    // 09:01. The closest planet, right first try, nothing shown before it: the strongest evidence
+    // School can hold, a day after it was last wrong.
+    now = at(DAY + 60);
+    const recalled = crypto.randomUUID();
+    expect(await r.submit({ submissionId: recalled, encounterId: reviewed.encounter.id, blockId: "closest", choiceId: "mercury", ms: 2000 }, now))
+      .toEqual({ status: "stored", correct: true, firstTry: true });
+    expect(await aidOf(recalled)).toBe("No recorded aid");
+
+    // 09:30. A reload is the same encounter, with the same review and the same reasons, though the
+    // closest planet would not be chosen now.
+    now = at(DAY + 1800);
+    const again = await school.openLesson(COURSE, planets, 1, [closest, moons, seasons, rings]);
+    expect(again).toEqual({ ...reviewed, encounter: { ...reviewed.encounter, resumed: true }, answers: [{ blockId: "closest", choiceId: "mercury", correct: true }] });
+    expect(await r.encounterDecisionNotes(reviewed.encounter.id)).toHaveLength(2);
+
+    // Day four. The closest planet is cleared; the moons, shown yesterday but not answered, is still due.
+    expect((await r.dueReview({ ...asked, now: at(2 * DAY + 60) })).map((x) => x.blockId)).toEqual(["moons"]);
   });
 }
