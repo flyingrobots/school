@@ -83,13 +83,17 @@ export class LessonUnavailable extends Error {
 }
 
 /**
- * Opens the lesson in the web view, which opens or resumes the learner's encounter. No `aid` is
- * sent: the page does not record the exposures it shows yet (flyingrobots/school#51).
+ * The aid capture version the page follows (RFC 2 §3): it records every hint, model answer,
+ * feedback and reference it shows. Sent as `?aid=` when it opens a lesson, so the encounter is
+ * tracked and School can tell an aided submission from one with no recorded aid.
  */
+export const AID_CAPTURE_VERSION = 1
+
+/** Opens the lesson in the web view, which opens or resumes the learner's tracked encounter. */
 export async function openLesson(course: string, lesson: string, signal?: AbortSignal): Promise<LessonReply> {
   let res: Response
   try {
-    res = await fetch(`/api/courses/${encodeURIComponent(course)}/lessons/${encodeURIComponent(lesson)}`, { headers: { accept: "application/json" }, signal })
+    res = await fetch(`/api/courses/${encodeURIComponent(course)}/lessons/${encodeURIComponent(lesson)}?aid=${AID_CAPTURE_VERSION}`, { headers: { accept: "application/json" }, signal })
   } catch (e) {
     if (signal?.aborted) throw e
     throw new LessonUnavailable("failed", "School could not be reached.")
@@ -111,8 +115,8 @@ async function post<T>(path: string, body: unknown, reply: z.ZodType<T>): Promis
 
 const Stored = z.enum(["stored", "duplicate"])
 
-/** A v4 UUID. randomUUID exists only in a secure context, and a tailnet name over http is not one. */
-function uuid(): string {
+/** A v4 UUID, made here so that a resend carries the same id and is stored once. randomUUID exists only in a secure context, and a tailnet name over http is not one. */
+export function uuid(): string {
   if (typeof crypto.randomUUID === "function") return crypto.randomUUID()
   const b = crypto.getRandomValues(new Uint8Array(16))
   b[6] = (b[6]! & 0x0f) | 0x40
@@ -137,4 +141,21 @@ export async function saveExplanation(x: { encounterId: string; blockId: string;
 export async function grade(submissionId: string): Promise<Explanation> {
   const r = await post("/api/grade", { submissionId }, z.object({ status: z.string(), explanation: Explanation }))
   return r.explanation
+}
+
+export type ExposureKind = "hint" | "model-answer" | "feedback" | "reference"
+export type Exposure = { exposureId: string; encounterId: string; blockId: string; kind: ExposureKind }
+
+/**
+ * Records that the page showed help for a block. Resolves once School has an answer that a resend
+ * would not change: stored or a duplicate; 501, School on SQLite, which records no exposures, so
+ * the encounter is not tracked; or a refusal (400, 409), which the same body would get again.
+ * Rejects when School could not be reached or failed otherwise, so the caller can resend it.
+ */
+export async function expose(x: Exposure): Promise<"recorded" | "not-tracked" | "refused"> {
+  const res = await fetch("/api/exposure", { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(x) })
+  if (res.ok) return "recorded"
+  if (res.status === 501) return "not-tracked"
+  if (res.status === 400 || res.status === 409) return "refused"
+  throw new Error(`/api/exposure answered ${res.status}`)
 }

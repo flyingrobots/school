@@ -126,6 +126,9 @@ explanation's aid in `submission_aid`: **unknown** when the encounter's `aid_tra
 **no recorded aid** otherwise. Aid is never stored, and `seq`, not `at`, decides before and after.
 The SQLite adapter declares that it records no exposures: it refuses them and reports every aid as
 unknown.
+The lesson page opens lessons with `?aid=1` and posts each exposure it shows (see
+[the lesson page](../lesson-page/README.md#the-help-it-records)); on SQLite those posts are
+answered 501 and the page treats them as not tracked.
 
 **Figure 2. The learning record's tables**
 

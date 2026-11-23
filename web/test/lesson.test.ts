@@ -113,7 +113,8 @@ async function newPage(s: Stack = main): Promise<Page> {
     try {
       await route.fulfill({ response: await route.fetch({ url: s.school.url + u.pathname + u.search }) })
     } catch {
-      await route.abort("connectionrefused")
+      // A request still in flight when its context closes (an exposure, say) is already gone.
+      await route.abort("connectionrefused").catch(() => {})
     }
   })
   const p = await c.newPage()
@@ -266,7 +267,7 @@ describe("loading", () => {
     const p = await newPage()
     let release!: () => void
     const held = new Promise<void>((r) => (release = r))
-    await p.route("**/api/courses/loading/lessons/orbits", async (route) => {
+    await p.route("**/api/courses/loading/lessons/orbits?aid=1", async (route) => {
       await held
       await route.fallback()
     })
@@ -411,9 +412,11 @@ describe("RFC 2 Figure 4 over the page: submit, reveal, revise (flyingrobots/sch
       "/api/exposure model-answer", // the revision shows the model answer again
     ])
     expect(new Set(seen.sent.map((s) => s.body.encounterId))).toEqual(new Set([encounterOf(seen)]))
-    expect((await record(main, "trace")).explanations.map((e) => e.text)).toEqual([
-      "Because the Earth is closer to the Sun in summer.",
-      "The axis is tilted, so each hemisphere in turn leans towards the Sun.",
+    // Two submissions, both stored: the lesson API shows a block's latest, the revision.
+    const saves = seen.sent.filter((s) => s.path === "/api/explanation").map((s) => s.body.submissionId)
+    expect(new Set(saves).size).toBe(2)
+    expect((await record(main, "trace")).explanations).toMatchObject([
+      { blockId: "seasons", text: "The axis is tilted, so each hemisphere in turn leans towards the Sun." },
     ])
     await p.context().close()
   })
