@@ -56,6 +56,40 @@ export type ViewEvent = z.infer<typeof ViewEvent>;
 
 export const GradeRequest = z.object({ submissionId: uuid });
 
+/**
+ * The versions of aid capture this server knows (RFC 2 §3). A client that records every exposure it
+ * shows says which version it follows when it opens a lesson; an encounter opened without one has
+ * aid tracking NULL, and its aid is unknown. 1: feedback, model answers, hints and references.
+ */
+export const AID_CAPTURE_VERSIONS = [1] as const;
+export const AidTracking = z.union(AID_CAPTURE_VERSIONS.map((v) => z.literal(v))).nullable();
+export type AidTracking = z.infer<typeof AidTracking>;
+
+/** The lesson API's query: `view`, and `aid`, the capture version the client records; absent means untracked. */
+export const LessonQuery = z.object({
+  view: z.string().nullable(),
+  aid: z.enum(AID_CAPTURE_VERSIONS.map(String) as [string, ...string[]]).transform(Number).pipe(AidTracking).nullable(),
+});
+
+/** Help shown to the learner for one block (RFC 2 §3). */
+export const ExposureKind = z.enum(["hint", "model-answer", "feedback", "reference"]);
+export type ExposureKind = z.infer<typeof ExposureKind>;
+
+/** An exposure the page reports having shown. `exposureId` is the client's, so a resend is stored once. */
+export const Exposure = z.object({ exposureId: uuid, encounterId: uuid, blockId, kind: ExposureKind });
+export type Exposure = z.infer<typeof Exposure>;
+
+/**
+ * `rejected`: no such encounter, it is not tracked, or the block is not a quiz or explain block in
+ * its snapshot. `unsupported`: this record cannot store exposures at all (the SQLite adapter).
+ */
+export const ExposureResult = z.object({ status: z.enum(["stored", "duplicate", "conflict", "rejected", "unsupported"]) });
+export type ExposureResult = z.infer<typeof ExposureResult>;
+
+/** Whether a submission was aided: derived from exposures by the record's order, never stored (RFC 2 §3). */
+export const Aid = z.enum(["aided", "no-recorded-aid", "unknown"]);
+export type Aid = z.infer<typeof Aid>;
+
 export const Encounter = z.object({ id: z.string(), hash: z.string(), resumed: z.boolean() });
 export type Encounter = z.infer<typeof Encounter>;
 
