@@ -94,17 +94,23 @@ const SOURCE_PROSE: Record<Source, string> = {
  * compose reads. `quote` is the quote the value was in, if any: compose interpolates `$` in an
  * unquoted or double-quoted value and keeps a single-quoted one literal.
  */
-function dotenvSecrets(text: string): { name: SecretName; value: string; quote: "'" | '"' | null; line: number }[] {
+type DotenvSecret = { name: SecretName; value: string; quote: "'" | '"' | null; unclosed: boolean; line: number };
+
+function dotenvSecrets(text: string): DotenvSecret[] {
   const names = new Set<string>(SECRETS.map((s) => s.name));
-  const found: { name: SecretName; value: string; quote: "'" | '"' | null; line: number }[] = [];
+  const found: DotenvSecret[] = [];
   text.split("\n").forEach((raw, line) => {
     const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*[=:](.*)$/.exec(raw);
     if (m === null || !names.has(m[1]!)) return;
     let value = m[2]!.trim();
     let quote: "'" | '"' | null = null;
     const q = value[0];
-    if ((q === "'" || q === '"') && value.length >= 2 && value.endsWith(q)) [value, quote] = [value.slice(1, -1), q];
-    found.push({ name: m[1] as SecretName, value, quote, line });
+    // A quote that opens the value and does not close it on this line: unclosed, or a value compose
+    // reads across several lines. Either way this line is not the whole value (`unclosed`).
+    const unclosed = (q === "'" || q === '"') && !(value.length >= 2 && value.endsWith(q));
+    if ((q === "'" || q === '"') && !unclosed) [value, quote] = [value.slice(1, -1), q];
+    else if (unclosed) [value, quote] = [value.slice(1), q]; // never stored; kept only to be scrubbed
+    found.push({ name: m[1] as SecretName, value, quote, unclosed, line });
   });
   return found;
 }
@@ -207,6 +213,9 @@ async function importDotenv(deps: Deps, o: Output): Promise<number> {
   for (const f of found) {
     if (names.has(f.name)) return o.error(2, `${dotenv} sets ${f.name} more than once; keep one line and run \`school import\` again`, { name: f.name });
     names.add(f.name);
+    if (f.unclosed) {
+      return o.error(2, `${f.name} in ${dotenv} opens a quote that does not close on the same line, so the line is not the whole value compose reads; nothing was changed. Put the value on one line, with its closing quote, and run \`school import\` again`, { name: f.name, line: f.line + 1 });
+    }
     // Compose would substitute a `$` here, so the text on the line is not the password compose
     // passes; working out what it does pass means reimplementing compose's interpolation. Refused.
     if (f.quote !== "'" && f.value.includes("$")) {

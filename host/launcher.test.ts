@@ -351,3 +351,19 @@ describe("scrubbing and server/.env, flyingrobots/school#132 review", () => {
     expect(items.get("SCHOOL_POSTGRES_PASSWORD")).toBe("Lit$eral0123456789");
   });
 });
+
+describe("school import, second review of flyingrobots/school#132", () => {
+  test("SEC-L23: a quoted value whose quote does not close on its line (unclosed, or spanning lines) is refused; the Keychain and server/.env are unchanged", async () => {
+    for (const dotenv of ["SCHOOL_POSTGRES_PASSWORD='OldSuperuser0123456789\ntail'\n", 'SCHOOL_POSTGRES_PASSWORD="OldSuperuser0123456789\n', "SCHOOL_APP_PASSWORD='OldApp0123456789\n"]) {
+      const { store, calls, items } = fakeStore();
+      const r = await run(["import"], { store: () => store, readText: () => dotenv });
+      expect(r.code).toBe(2);
+      expect(calls.set).toEqual([]);
+      expect(items.size).toBe(0);
+      const e = parsed(r.stderr).at(-1)!;
+      expect(e).toMatchObject({ kind: "school.import", event: "error", code: 2 });
+      expect(String(e.message)).toContain("quote");
+      contract(r, ["OldSuperuser0123456789", "OldApp0123456789"]);
+    }
+  });
+});
