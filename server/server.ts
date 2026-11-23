@@ -313,7 +313,6 @@ const http = Bun.serve({
       const r = await school.recordExposure(e.data);
       if (r.status === "rejected") return json(r, 400);
       if (r.status === "conflict") return json(r, 409);
-      if (r.status === "unsupported") return json(r, 501);
       return json(r);
     }
     if (req.method === "POST" && pathname === "/api/settings/bridge") {

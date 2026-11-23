@@ -1,6 +1,20 @@
 # 9. The learning record is enforced by the database
 
-Date: 2026-11-21 · Status: Accepted
+Date: 2026-11-21 · Status: Accepted, amended 2026-11-22
+
+> **Amended 2026-11-22: the rules moved from SQLite to Postgres, and the decision stands.** The record is Postgres ([RFC 3](../rfc/0003-postgres-functions-and-generated-types.md); flyingrobots/school#47, flyingrobots/school#49), which is the alternative below "Postgres, with every operation a database function", taken. What replaced each SQLite mechanism:
+>
+> | SQLite, as decided below | Postgres, as built |
+> | --- | --- |
+> | Triggers aborting `UPDATE` and `DELETE` on `answers`, `encounters`, `snapshots` | `BEFORE UPDATE OR DELETE` row triggers and `BEFORE TRUNCATE` statement triggers on every record table, in `server/db/migrations/0001_init.sql` |
+> | One `INSERT … SELECT` over `json_tree` deriving `correct` and `first_try` | The function `school.submit`, which derives both from the stored snapshot; a partial unique index allows one first try per block and encounter under concurrent answers |
+> | A trigger refusing a submission without its encounter or choice | `NOT NULL` columns and foreign keys; the pre-version-5 `NULL` columns are gone, since no data was migrated |
+> | Any code holding the file could write | The server takes the role `school_app`, which may only `EXECUTE` the public functions and holds no table privilege |
+> | `PRAGMA synchronous = FULL` | Postgres's `fsync` on commit; PGlite, for development and tests only, does not `fsync` and the server warns so |
+> | Resume in `server/record.ts` | Resume in `school.open_encounter`, with the same six-hour rule and the encounter's aid tracking |
+> | Backup by `VACUUM INTO` | `pg_dump`; nothing makes one on a schedule yet |
+>
+> The SQLite record, `server/record.ts`, `server/explain.ts` and `server/migrate.ts`, is deleted; so are `server/record.test.ts` and its siblings. These rules are now tested by the `LearningRecord` contract suite on PGlite and real Postgres (`server/contract/learning-record.ts`), the migration tests (`server/db/init.test.ts`), and the HTTP tests, including the hard kill (`server/server.test.ts`). Where the text below says SQLite, `sqlite3`, `json_tree` or `PRAGMA`, read it as the decision as first made.
 
 ## Context
 RFC 1's learning record contract asks that every answer identify what the learner was shown, where and when they answered it, which choice they picked, and which submission it was. It also asks that the server, not the browser, decide first try.

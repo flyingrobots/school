@@ -1,11 +1,15 @@
 // The LearningRecord contract (RFC 1, "The learning record contract"; RFC 3, §4). Every adapter
-// of the port must pass this suite, so SQLite, PGlite and real Postgres cannot drift apart.
+// of the port must pass this suite, so PGlite and real Postgres cannot drift apart.
 // It speaks only through the port; storage-level rules (append-only triggers, privileges) are
 // tested beside each adapter, since how they are enforced is the adapter's business.
 import { expect, test } from "bun:test";
 import { ExposureKind, type Block, type GradingRecord } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
 
+/**
+ * Six hours: `school.open_encounter`'s resume window. 0001_init.sql's comment calls it
+ * server/record.ts RESUME_WINDOW_MS; that module went with SQLite (flyingrobots/school#49).
+ */
 export const RESUME_WINDOW_MS = 6 * 60 * 60 * 1000;
 
 const quiz = (id: string): Block => ({
@@ -37,15 +41,12 @@ const succeeded = (submissionId: string): GradingRecord => ({
 
 /**
  * Register the contract's tests for one adapter. `make` returns a fresh, empty record each time.
- * `declared.recordsExposures` is what the adapter says of itself (LearningRecord.recordsExposures):
- * an adapter that records exposures must pass the aid cases (RFC 2 §3); one that does not must
- * refuse every exposure and report every aid as unknown, never as "no recorded aid".
+ * Every adapter records exposures and must pass the aid cases (RFC 2 §3).
  */
-export function learningRecordContract(name: string, make: () => Promise<LearningRecord>, declared: { recordsExposures: boolean }): void {
+export function learningRecordContract(name: string, make: () => Promise<LearningRecord>): void {
   const t = (title: string, fn: (r: LearningRecord) => Promise<void>) => test(`${name}: ${title}`, async () => fn(await make()));
-  /** A case that holds only for an adapter that records exposures; skipped, visibly, for one that does not. */
-  const tx = (title: string, fn: (r: LearningRecord) => Promise<void>) =>
-    test.skipIf(!declared.recordsExposures)(`${name}: aid: ${title}`, async () => fn(await make()));
+  /** An aid case (RFC 2 §3). */
+  const tx = (title: string, fn: (r: LearningRecord) => Promise<void>) => test(`${name}: aid: ${title}`, async () => fn(await make()));
 
   t("wrong, then right, then a resend: correctness and first try are derived, and the resend is a duplicate", async (r) => {
     const e = await r.openEncounter({ course: "c", lesson: "l1", aidTracking: null, page: lesson("l1", [quiz("q1")]), now: at(0) });
@@ -208,27 +209,9 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
 
   // ---- Exposures and derived aid (RFC 2 §3, Listing 1; flyingrobots/school#29) ----------------
 
-  t("the adapter declares whether it records exposures, as registered", async (r) => {
-    expect(r.recordsExposures).toBe(declared.recordsExposures);
-  });
-
   const exposure = (encounterId: string, blockId: string, kind: ExposureKind = "model-answer") =>
     ({ exposureId: uuid(), encounterId, blockId, kind });
   const tracked = (r: LearningRecord, page: Block, now = at(0)) => r.openEncounter({ course: "c", lesson: "l1", page, now, aidTracking: 1 });
-
-  if (!declared.recordsExposures) {
-    t("an adapter that does not record exposures refuses them, and every aid it reports is unknown", async (r) => {
-      const e = await tracked(r, lesson("l1", [quiz("q1"), explain]));
-      const answer = uuid();
-      const explanation = uuid();
-      await r.submit({ submissionId: answer, encounterId: e.id, blockId: "q1", choiceId: "right", ms: 1 }, at(1));
-      expect(await r.recordExposure(exposure(e.id, "e1"), at(2))).toEqual({ status: "unsupported" });
-      await r.saveExplanation({ submissionId: explanation, encounterId: e.id, blockId: "e1", text: "Because.", ms: 1 }, at(3));
-      expect(await r.aid(answer)).toBe("unknown");
-      expect(await r.aid(explanation)).toBe("unknown");
-      expect(await r.aid(uuid())).toBeNull();
-    });
-  }
 
   tx("RFC 2 Figure 4: submit, reveal, revise is no recorded aid, then aided", async (r) => {
     const e = await tracked(r, lesson("l1", [explain]));

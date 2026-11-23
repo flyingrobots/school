@@ -3,8 +3,8 @@ title: "School's architecture"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-22
 updated: 2026-11-22
-version: 1.1.0
-status: "Living reference. Describes flyingrobots/school at commit a959505, with the record on Postgres since flyingrobots/school#47; proposals are in RFCs 2 and 3."
+version: 1.2.0
+status: "Living reference. Describes flyingrobots/school at commit a959505, with the record on Postgres since flyingrobots/school#47 and SQLite deleted by flyingrobots/school#49; proposals are in RFCs 2 and 3."
 ---
 
 # School's architecture
@@ -20,6 +20,7 @@ proposed; for that, read [RFC 2](../../rfc/0002-lessons-written-for-each-learner
 | --- | --- |
 | [The three parts](#the-three-parts) | Framework, course, learner state, and the trust between them |
 | [The server](#the-server) | Routes, the write guard, file serving |
+| [The hexagon](#the-hexagon) | The core, its ports and the adapters that implement them |
 | [The learning record](#the-learning-record) | Tables, rules, encounters, what the rules do and do not guarantee |
 | [The bridge](#the-bridge) | How explanations are graded |
 | [The web app](#the-web-app) | What exists of the interface |
@@ -83,7 +84,7 @@ JSON API.
 | POST | `/api/explanation` | Saves an explanation, before any grading |
 | POST | `/api/grade` | One grading attempt through the bridge |
 | POST | `/api/view` | Records a view |
-| POST | `/api/exposure` | Records help shown for a block: `{ exposureId, encounterId, blockId, kind }`, kind `hint`, `model-answer`, `feedback` or `reference`. A stored or resent id answers 200 (`stored`, `duplicate`); the id naming something else is a conflict (409); no such encounter, an untracked one, or a block that is not a quiz or explain block in its snapshot is rejected (400). An adapter that records no exposures (SQLite, no longer used by the server) answers unsupported (501) |
+| POST | `/api/exposure` | Records help shown for a block: `{ exposureId, encounterId, blockId, kind }`, kind `hint`, `model-answer`, `feedback` or `reference`. A stored or resent id answers 200 (`stored`, `duplicate`); the id naming something else is a conflict (409); no such encounter, an untracked one, or a block that is not a quiz or explain block in its snapshot is rejected (400). |
 | GET | `/api/settings/status` | Whether the bridge answers |
 | GET, POST | `/api/settings/bridge` | The bridge address and token; the token is never returned except once when generated. A new address clears a saved token, and is refused (409) while the token comes from the environment |
 | GET, POST | `/api/settings/agents` | The bridge's agents as its file declares them; a POST only reorders them and switches them on or off |
@@ -106,6 +107,55 @@ its file already declares; commands are written by editing that file on the host
 
 In short: the server is thin. It answers only to its own names, serves files safely, guards
 writes against ordinary cross-site requests, and hands learning-record work to Postgres functions.
+
+## The hexagon
+
+The server is built as a hexagon[^rfc3]: the **core** holds School's use cases and talks only to
+**ports**, interfaces it defines; **adapters** implement the ports, one technology each. This
+section names each piece as it is in the code.
+
+| Piece | Where | Does |
+| --- | --- | --- |
+| Model | `server/core/model.ts` | Zod schemas for every value that crosses a port or the HTTP API |
+| Ports | `server/core/ports.ts` | `LearningRecord` (the record), `Grader` (an explanation to findings or a failure) and `Clock` |
+| Use cases | `server/core/school.ts` | `createSchool`: open a lesson, submit an answer, save, grade and read explanations, record views and exposures, read aid |
+| HTTP adapter and composition root | `server/server.ts` | Parses each request with the model, calls one use case, and wires the core to its adapters; it also reads the course folders itself (`server/blocks.ts`), which are not behind a port |
+| Postgres adapter | `server/adapters/postgres.ts` | `LearningRecord` as one call of a `school.*` function per method, every result parsed by the model |
+| `Sql` port and its drivers | `server/adapters/sql.ts`, `pglite.ts`, `bunsql.ts` | One `query(text, params)`; PGlite in process, or `Bun.SQL` on a pool |
+| Opening the record | `server/adapters/database.ts`, `lock.ts` | Reads `SCHOOL_DATABASE_URL`, runs the migrations as the owner, takes `school_app`'s role, refuses any statement but a function call, and locks a PGlite folder |
+| Grader | `server/server.ts`, `server/grade.ts` | The bridge client; with no bridge connected, an attempt fails and says so |
+| Clock | `server/server.ts` | The system clock; tests pass a fixed one |
+
+**Figure 2. The server's hexagon**
+
+```mermaid
+flowchart LR
+  http["HTTP adapter<br/>server.ts: Bun.serve + Zod"] --> core
+  subgraph core["Core: server/core/"]
+    uc["createSchool: openLesson · submitAnswer<br/>saveExplanation · gradeExplanation · recordExposure"]
+  end
+  core --> lr["LearningRecord port"]
+  core --> gr["Grader port"]
+  core --> cl["Clock port"]
+  lr --> pg["Postgres adapter<br/>school.* function calls"]
+  pg --> sql["Sql port"]
+  sql --> pglite["PGlite driver<br/>tests and development"]
+  sql --> bunsql["Bun.SQL driver<br/>a Postgres server"]
+  gr --> bridge["Bridge client"]
+  cl --> sys["System clock"]
+```
+
+*Figure 2. The server's hexagon. One driving adapter, three driven ports, and two drivers under
+the one SQL port, so tests and production run the same functions.*
+
+| Rule | Enforced by |
+| --- | --- |
+| The core imports nothing but itself and Zod | `server/core/boundary.test.ts` |
+| Every `LearningRecord` adapter behaves the same | The contract suite, `server/contract/learning-record.ts`, and the learner-history story beside it, registered for the Postgres adapter on PGlite (`server/adapters/postgres.test.ts`) and on `Bun.SQL` against a real Postgres when `SCHOOL_TEST_POSTGRES_URL` is set (`server/adapters/bunsql.test.ts`) |
+| The Postgres adapter issues only function calls | Its test refuses any other statement, and so does the server's record at run time |
+
+In short: the use cases know only their ports, there is one record adapter, Postgres, and the
+contract suite holds every driver under it to the same behaviour.
 
 ## The learning record
 
@@ -133,16 +183,14 @@ Both drivers log in as the superuser and then take `school_app`'s role. A statem
 the role would get the superuser back, which is why step 4 exists. That is a guard rail, not
 tamper-proofing: the server holds the superuser URL anyway, because it runs the migrations.
 
-Only the Postgres record observes aid (RFC 2 §3). Migration 0002 records exposures through
+The record observes aid (RFC 2 §3). Migration 0002 records exposures through
 `record_exposure`, idempotent by the client's exposure id, and derives each answer's and
 explanation's aid in `submission_aid`: **unknown** when the encounter's `aid_tracking` is NULL,
 **aided** when an exposure to the same block in the same encounter has a smaller `seq`, and
 **no recorded aid** otherwise. Aid is never stored, and `seq`, not `at`, decides before and after.
-The server runs on this record, so `POST /api/exposure` stores exposures. The SQLite adapter,
-no longer used by the server, declares that it records none: it refuses them and reports every aid
-as unknown.
+`POST /api/exposure` stores them.
 
-**Figure 2. The learning record's tables**
+**Figure 3. The learning record's tables**
 
 ```mermaid
 erDiagram
@@ -200,7 +248,7 @@ erDiagram
     }
 ```
 
-*Figure 2. The learning record's tables, in schema `school`. Every row takes its `seq` from one
+*Figure 3. The learning record's tables, in schema `school`. Every row takes its `seq` from one
 shared sequence, so "before" and "after" across tables compare `seq`, never `at`. `VIEWS` is
 omitted; it records page views only. `EXPOSURES` is written only by `POST /api/exposure`, and the
 web pages do not call it yet.*
@@ -234,9 +282,11 @@ count.
 *Listing 1. The resume rule, inside `school.open_encounter`. Real source code from
 flyingrobots/school, `<server/db/migrations/0001_init.sql#L213-L220@eb70a31>`.*
 
-The SQLite record (`server/record.ts`, `server/explain.ts`, `server/adapters/sqlite.ts`,
-`server/migrate.ts`) is still in the repository but the server no longer uses it; it goes with
-[flyingrobots/school#49](https://github.com/flyingrobots/school/issues/49).
+There is no SQLite record. Its code was deleted with
+[flyingrobots/school#49](https://github.com/flyingrobots/school/issues/49); nothing was migrated
+from it, because it held no learner data, and startup step 1 checks that this is still so. That
+check, `server/legacy.ts`, is the only code that reads SQLite: read-only, through Bun's built-in
+`bun:sqlite`, and `server/docker.test.ts` fails if any other module imports it.
 
 The record can observe assistance, but nothing in the web app reports it yet. RFC 1 requires that a
 submission made after a hint or a model-answer reveal is recorded as aided[^rfc1]. The API records
@@ -252,7 +302,7 @@ the owner and the superuser, and the web app does not yet report assistance to i
 Explanations are graded by agent programs the learner already uses, run by the bridge on the host
 outside Docker, so their credentials never enter the container the network can reach[^rfc1].
 
-**Figure 3. One grading**
+**Figure 4. One grading**
 
 ```mermaid
 sequenceDiagram
@@ -272,7 +322,7 @@ sequenceDiagram
     S-->>L: Feedback, or "feedback is unavailable" and Retry
 ```
 
-*Figure 3. One grading. The explanation is saved before any model is called, and every attempt is
+*Figure 4. One grading. The explanation is saved before any model is called, and every attempt is
 stored whether it succeeds or fails. One gap: a bridge reply that is valid JSON but the wrong shape
 throws before the failure is stored ([flyingrobots/school#17](https://github.com/flyingrobots/school/issues/17)).*
 
