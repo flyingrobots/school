@@ -13,6 +13,7 @@ import { createServer, type ViteDevServer } from "vite"
 
 import { startBridge, startSchool, timeout, type Started } from "../../server/testing/processes.ts"
 import { heldIntro, opacities, pressJ, stops } from "./intro.ts"
+import { close } from "./routes.ts"
 
 setDefaultTimeout(timeout(2) + 15_000)
 
@@ -132,7 +133,7 @@ describe("connecting the bridge", () => {
     expect(await address(p).inputValue()).toBe("")
     expect(await address(p).isEditable()).toBe(true)
     expect(await p.getByRole("list", { name: "Agents" }).count()).toBe(0)
-    await p.context().close()
+    await close(p.context())
   })
 
   test("while the status loads, the page shows skeletons", async () => {
@@ -143,7 +144,7 @@ describe("connecting the bridge", () => {
     release()
     await status(p).getByText(/No bridge is connected/).waitFor()
     expect(await status(p).locator("[data-slot=skeleton]").count()).toBe(0)
-    await p.context().close()
+    await close(p.context())
   })
 
   test("saving connects the bridge; the token field is cleared and the token never appears in the page", async () => {
@@ -159,7 +160,7 @@ describe("connecting the bridge", () => {
     await status(p).getByText(/has no agents yet/).waitFor()
     expect(await address(p).inputValue()).toBe(w.bridge)
     expect(await p.content()).not.toContain(TOKEN)
-    await p.context().close()
+    await close(p.context())
   })
 
   test("a wrong token says the bridge refused it", async () => {
@@ -167,7 +168,7 @@ describe("connecting the bridge", () => {
     const p = await open(w)
     await connect(p, w.bridge, "a-wrong-token-long-enough")
     await status(p).getByText(/refused the token/).waitFor()
-    await p.context().close()
+    await close(p.context())
   })
 
   test("an unreachable bridge says School could not reach it", async () => {
@@ -175,7 +176,7 @@ describe("connecting the bridge", () => {
     const p = await open(w)
     await connect(p, "http://127.0.0.1:9")
     await status(p).getByText(/could not reach/i).waitFor()
-    await p.context().close()
+    await close(p.context())
   })
 
   // Each reply is parsed with Zod (web/src/lib/settings-api.ts): a reply of the wrong shape is the
@@ -196,7 +197,7 @@ describe("connecting the bridge", () => {
     } else {
       expect(await address(p).count()).toBe(0) // no form built from a reply it could not read
     }
-    await p.context().close()
+    await close(p.context())
   })
 
   test("a refused setting shows why", async () => {
@@ -204,7 +205,7 @@ describe("connecting the bridge", () => {
     const p = await open(w)
     await connect(p, w.bridge, "short")
     await p.getByText(/at least 16 characters/).waitFor()
-    await p.context().close()
+    await close(p.context())
   })
 
   test("a generated token is shown once, to start the bridge with, and never again", async () => {
@@ -226,7 +227,7 @@ describe("connecting the bridge", () => {
     await p.getByRole("heading", { level: 1, name: "Settings" }).waitFor()
     await status(p).getByText(/refused the token/).waitFor()
     expect(await p.content()).not.toContain(generated)
-    await p.context().close()
+    await close(p.context())
   })
 
   test("saving a new address says the token must be entered again", async () => {
@@ -239,7 +240,7 @@ describe("connecting the bridge", () => {
     await p.locator("[data-settings=token-cleared]").getByText(/enter the token again/i).waitFor()
     expect(await token(p).getAttribute("placeholder")).not.toMatch(/saved/i)
     await status(p).getByText(/No bridge is connected/).waitFor()
-    await p.context().close()
+    await close(p.context())
   })
 
   test("fields set in the environment are locked and say why", async () => {
@@ -255,7 +256,7 @@ describe("connecting the bridge", () => {
     expect(said).toContain("SCHOOL_BRIDGE_TOKEN")
     expect(said).toMatch(/environment/)
     expect(await p.content()).not.toContain(TOKEN)
-    await p.context().close()
+    await close(p.context())
   })
 })
 
@@ -283,7 +284,7 @@ describe("the bridge's agents", () => {
     expect(note).toContain(w.bridgeFile)
     expect(note).toMatch(/commands/i)
     expect(await p.getByRole("textbox", { name: /command/i }).count()).toBe(0)
-    await p.context().close()
+    await close(p.context())
   })
 
   test("the keyboard reorders the agents, with its keys shown, and the bridge's file keeps the order", async () => {
@@ -308,7 +309,7 @@ describe("the bridge's agents", () => {
       expect.stringContaining("missing"),
       expect.stringContaining("fake"),
     ])
-    await p.context().close()
+    await close(p.context())
   })
 
   test("Esc puts a picked-up agent back", async () => {
@@ -319,7 +320,7 @@ describe("the bridge's agents", () => {
     await p.keyboard.press("Escape")
     await Bun.sleep(300)
     expect(order(w)[0]![0]).toBe("missing")
-    await p.context().close()
+    await close(p.context())
   })
 
   test("switching an agent off saves it in the bridge's file", async () => {
@@ -329,7 +330,7 @@ describe("the bridge's agents", () => {
     await use.click()
     await until(() => order(w)[0]![1] === false, "missing to be switched off")
     expect(await use.getAttribute("aria-checked")).toBe("false")
-    await p.context().close()
+    await close(p.context())
   })
 
   test("testing an agent is labelled as AI and shows its attempts", async () => {
@@ -344,7 +345,7 @@ describe("the bridge's agents", () => {
     expect(await attempts.count()).toBe(1)
     expect(await attempts.first().textContent()).toContain("fake")
     expect(await attempts.first().textContent()).toMatch(/schema/)
-    await p.context().close()
+    await close(p.context())
   })
 })
 
@@ -379,6 +380,6 @@ describe("the intro", () => {
     expect(await opacities(p, "[data-animate=card]")).toEqual(["0", "0", "0"])
     await p.clock.resume()
     await p.waitForFunction(() => [...document.querySelectorAll("[data-animate=card]")].every((e) => getComputedStyle(e).opacity === "1"))
-    await p.context().close()
+    await close(p.context())
   })
 })

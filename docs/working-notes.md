@@ -127,6 +127,13 @@ Practical notes for anyone — human or agent — changing the framework.
   announces its port in `bridge.listening`; School refuses `PORT=0`, so the helper probes a free port
   and retries a start that exits with EADDRINUSE (flyingrobots/school#82). Start the bridge first
   when School needs its URL.
+- A browser test closes its context with `close` from `web/test/routes.ts`, never `context.close()`.
+  Its pages' `/api` requests are answered by route handlers that fetch from School, and a context
+  closed while one is still running (the lesson a link has just opened, the sidebar's course list)
+  disposes the fetch under it: the handler throws "Request context disposed" or "Fetch response has
+  been disposed" into the run, on a loaded machine only (flyingrobots/school#121). `close` waits for
+  the context's and its pages' handlers to finish first; `web/test/routes.test.ts` holds one across
+  the close.
 - The bridge (`bridge/`) is a separate host process, deliberately outside the Docker image
   and its allowlist. It has no dependencies beyond Bun and is started by hand:
   `SCHOOL_BRIDGE_TOKEN=... bun bridge/bridge.ts`. Its tests write fake agent scripts and

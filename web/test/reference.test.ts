@@ -12,6 +12,7 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { createServer, type ViteDevServer } from "vite"
 
 import { startSchool, timeout, type Started } from "../../server/testing/processes.ts"
+import { close } from "./routes.ts"
 
 setDefaultTimeout(30_000)
 
@@ -115,7 +116,7 @@ describe("a course with reference documents", () => {
     const text = (await main(p).textContent()) ?? ""
     expect(text).not.toContain("notes")
     expect(text).not.toContain("leak")
-    await p.context().close()
+    await close(p.context())
   })
 
   test("a document opens in a new tab, as School serves it", async () => {
@@ -130,7 +131,7 @@ describe("a course with reference documents", () => {
     expect(await tab.locator("body").textContent()).toContain("The northern sky.")
     // The app tab stays where it was.
     expect(new URL(p.url()).pathname).toBe("/courses/aion/reference")
-    await p.context().close()
+    await close(p.context())
   })
 
   test("the documents are reachable with j and k, and Enter opens the focused one", async () => {
@@ -148,7 +149,7 @@ describe("a course with reference documents", () => {
     const [tab] = await Promise.all([p.context().waitForEvent("page"), p.keyboard.press("Enter")])
     await tab.waitForLoadState()
     expect(await tab.locator("body").textContent()).toContain("The northern sky.")
-    await p.context().close()
+    await close(p.context())
   })
 
   // The intro animation must not swallow keys: an element under visibility: hidden cannot take
@@ -160,7 +161,7 @@ describe("a course with reference documents", () => {
       (els as HTMLElement[]).filter((e) => (e.focus(), document.activeElement !== e)).map((e) => e.textContent)
     )
     expect(refused).toEqual([])
-    await p.context().close()
+    await close(p.context())
   })
 
   test("shows the keys with Kbd", async () => {
@@ -168,7 +169,7 @@ describe("a course with reference documents", () => {
     await docs(p).first().waitFor()
     const keys = await main(p).locator("[data-slot=kbd]").allTextContents()
     expect(keys).toEqual(expect.arrayContaining(["j", "k", "↵"]))
-    await p.context().close()
+    await close(p.context())
   })
 
   test("the breadcrumb leads back to the course, routed on the client", async () => {
@@ -180,7 +181,7 @@ describe("a course with reference documents", () => {
     await crumbs.getByRole("link", { name: "aion" }).click()
     await p.waitForURL(base + "/courses/aion")
     expect(await p.evaluate(() => (window as unknown as { marker?: number }).marker)).toBe(1)
-    await p.context().close()
+    await close(p.context())
   })
 
   test("uses the width: one column on a phone, several on a wide screen", async () => {
@@ -188,7 +189,7 @@ describe("a course with reference documents", () => {
       const p = await open("/courses/aion/reference", await context(viewport))
       await docs(p).first().waitFor()
       const xs = await docs(p).evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().left)))
-      await p.context().close()
+      await close(p.context())
       return new Set(xs).size
     }
     expect(await columns({ width: 390, height: 844 })).toBe(1)
@@ -212,7 +213,7 @@ describe("states", () => {
     release()
     await docs(p).first().waitFor()
     expect(await main(p).locator("[data-slot=skeleton]").count()).toBe(0)
-    await c.close()
+    await close(c)
   })
 
   test("a course without reference documents says so", async () => {
@@ -223,7 +224,7 @@ describe("states", () => {
     expect(await empty.textContent()).toContain("No reference documents")
     expect(await docs(p).count()).toBe(0)
     expect(await main(p).locator("[data-slot=skeleton]").count()).toBe(0)
-    await p.context().close()
+    await close(p.context())
   })
 
   // flyingrobots/school#115: a course whose lessons fail validation still lists its documents.
@@ -242,7 +243,7 @@ describe("states", () => {
     const [tab] = await Promise.all([p.context().waitForEvent("page"), docs(p).first().click()])
     await tab.waitForLoadState()
     expect(await tab.locator("body").textContent()).toContain("kept")
-    await p.context().close()
+    await close(p.context())
   })
 
   test("a course that does not exist says so", async () => {
@@ -251,7 +252,7 @@ describe("states", () => {
     const empty = main(p).locator("[data-slot=empty]")
     await empty.waitFor()
     expect(await empty.textContent()).toContain("There is no course called nowhere")
-    await p.context().close()
+    await close(p.context())
   })
 
   test("a server that cannot be reached is reported, and Try again shows the documents once it answers", async () => {
@@ -267,7 +268,7 @@ describe("states", () => {
     await main(p).getByRole("button", { name: "Try again" }).click()
     await docs(p).first().waitFor()
     expect(await main(p).getByRole("alert").count()).toBe(0)
-    await c.close()
+    await close(c)
   })
 
   test("an answer of the wrong shape is reported as not loaded, not drawn", async () => {
@@ -277,6 +278,6 @@ describe("states", () => {
     await main(p).getByRole("alert").waitFor()
     expect(await main(p).getByRole("alert").textContent()).toContain("The reference documents could not be loaded")
     expect(await docs(p).count()).toBe(0)
-    await c.close()
+    await close(c)
   })
 })
