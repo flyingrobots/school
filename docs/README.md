@@ -10,6 +10,7 @@ Start here. Each page has one job; this page routes to all of them.
 | [Home page](topics/home-page/README.md) | Reference: what Home shows first (the lesson to study now), the courses with their progress in words, and the page's states. |
 | [Settings page](topics/settings-page/README.md) | Reference: what `/settings` shows and does, state by state. |
 | [Course page](topics/course-page/README.md) | Reference: a course's lessons, the learner's progress in words, and the page's states. |
+| [Reference page](topics/reference-page/README.md) | Reference: a course's reference documents, how each opens, and the page's states. |
 | [Lesson page](topics/lesson-page/README.md) | Reference: what the lesson page shows, records and reloads. |
 | [Back up and restore](workflows/backup-and-restore/README.md) | How-to: check the scheduled `pg_dump` backups, drill a restore, and restore the record for real. |
 | [Due review](topics/due-review/README.md) | Reference: which quizzes come back for delayed review, why, and where they are shown; with its [test plan](topics/due-review/test-plan.md). |
