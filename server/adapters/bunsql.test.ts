@@ -4,62 +4,21 @@
 // It needs SCHOOL_TEST_POSTGRES_URL, a superuser URL to a scratch server (CI starts one; locally,
 // `docker run -e POSTGRES_PASSWORD=pw -p 127.0.0.1:5432:5432 postgres:18.7` and
 // postgres://postgres:pw@127.0.0.1:5432/postgres). Each test gets its own database, copied from
-// one migrated template, and every database it makes is dropped at the end.
-import { afterAll, describe, expect, test } from "bun:test";
+// one migrated template, and every database it makes is dropped at the end
+// (server/testing/postgres.ts).
+import { describe, expect, test } from "bun:test";
 import { learningRecordContract } from "../contract/learning-record.ts";
-import { APP, FUNCTION_CALL, openDatabase, redact, type Opened } from "./database.ts";
+import { scratchPostgres, TEST_POSTGRES_URL as URL_ } from "../testing/postgres.ts";
+import { APP, FUNCTION_CALL, openDatabase, redact } from "./database.ts";
 import { bunSql } from "./bunsql.ts";
 import { postgresRecord } from "./postgres.ts";
 
-const URL_ = process.env.SCHOOL_TEST_POSTGRES_URL;
 const SLOW = 30_000;
 
-const run = `school_test_${process.pid}_${Date.now()}`;
-const made: string[] = [];
-const opened: { close(): Promise<void> }[] = [];
-const withDb = (url: string, db: string) => { const u = new URL(url); u.pathname = `/${db}`; return u.toString(); };
+// Every database made here is dropped when the file ends (server/testing/postgres.ts).
+const { database, fresh, track } = scratchPostgres();
 
-let admin: InstanceType<typeof Bun.SQL> | undefined;
-let template: Promise<string> | undefined;
-
-/** A new, empty database on the test server; dropped in afterAll. */
-async function database(from?: string): Promise<string> {
-  admin ??= new Bun.SQL(URL_!);
-  const name = `${run}_${made.length}`;
-  made.push(name);
-  await admin.unsafe(`CREATE DATABASE ${name}${from === undefined ? "" : ` TEMPLATE ${from}`}`);
-  return withDb(URL_!, name);
-}
-
-/** A migrated database of its own, opened as the server opens one; `url` is its superuser URL. */
-async function fresh(): Promise<Opened & { url: string }> {
-  template ??= (async () => {
-    const url = await database();
-    await (await openDatabase({ driver: "postgres", url })).close(); // a template may have no connections
-    return made[made.length - 1]!;
-  })();
-  // Tests in a file run one at a time, so the previous test's pool is done with: close it, or the
-  // pools would exhaust the server's connections.
-  for (const o of opened.splice(0)) await o.close();
-  const url = await database(await template);
-  const o = await openDatabase({ driver: "postgres", url });
-  opened.push(o);
-  return { ...o, url };
-}
-
-afterAll(async () => {
-  // A pool's graceful close once hung past this hook's timeout on a loaded machine, leaving every
-  // database behind. So each close gets two seconds, then DROP ... WITH (FORCE) ends whatever
-  // connections are left, and the databases always go.
-  const bounded = (p: Promise<unknown>) => Promise.race([p, Bun.sleep(2_000)]);
-  for (const o of opened.splice(0)) await bounded(o.close());
-  if (admin !== undefined) {
-    for (const name of made.reverse()) await admin.unsafe(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
-    await bounded(admin.close());
-  }
-}, SLOW);
-
-describe.skipIf(URL_ === undefined || URL_ === "")("Bun.SQL on a real Postgres (SCHOOL_TEST_POSTGRES_URL)", () => {
+describe.skipIf(URL_ === undefined)("Bun.SQL on a real Postgres (SCHOOL_TEST_POSTGRES_URL)", () => {
   learningRecordContract("postgres (Bun.SQL)", async () => postgresRecord((await fresh()).sql), { recordsExposures: true });
 
   test("opening migrates on first start and applies nothing on the next", async () => {
@@ -81,8 +40,7 @@ describe.skipIf(URL_ === undefined || URL_ === "")("Bun.SQL on a real Postgres (
 
   test("every request runs as school_app, and no pooled connection keeps the role afterwards", async () => {
     const { url } = await fresh();
-    const pool = new Bun.SQL(url);
-    opened.push(pool);
+    const pool = track(new Bun.SQL(url));
     const sql = bunSql(pool, APP);
     const who = await Promise.all(Array.from({ length: 40 }, () => sql.query<{ u: string }>("SELECT current_user AS u", [])));
     expect(new Set(who.map((r) => r[0]!.u))).toEqual(new Set([APP]));
@@ -93,8 +51,7 @@ describe.skipIf(URL_ === undefined || URL_ === "")("Bun.SQL on a real Postgres (
 
   test("school_app may not touch a table, and the server's record refuses any statement but a function call", async () => {
     const { url, sql: record } = await fresh();
-    const pool = new Bun.SQL(url);
-    opened.push(pool);
+    const pool = track(new Bun.SQL(url));
     const sql = bunSql(pool, APP);
     await expect(sql.query("INSERT INTO school.views (course, lesson, at) VALUES ($1, $2, now())", ["c", "l"])).rejects.toThrow(/permission denied/);
     await expect(sql.query("SELECT * FROM school.answers", [])).rejects.toThrow(/permission denied/);
@@ -109,8 +66,7 @@ describe.skipIf(URL_ === undefined || URL_ === "")("Bun.SQL on a real Postgres (
 
   test("a statement that fails rolls back its own transaction and leaves the pool usable", async () => {
     const { url } = await fresh();
-    const pool = new Bun.SQL(url);
-    opened.push(pool);
+    const pool = track(new Bun.SQL(url));
     const sql = bunSql(pool, APP);
     await expect(sql.query("SELECT 1/0", [])).rejects.toThrow(/division by zero/);
     expect((await sql.query<{ u: string }>("SELECT current_user AS u", []))[0]!.u).toBe(APP);
