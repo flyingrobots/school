@@ -4,7 +4,7 @@ import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
 import { PGlite, type PGliteInterface } from "@electric-sql/pglite";
 import { learningRecordContract } from "../contract/learning-record.ts";
 import { migrate } from "../db/migrate.ts";
-import { pgliteSql } from "../testing/pglite.ts";
+import { pgliteSql } from "./pglite.ts";
 import { postgresRecord } from "./postgres.ts";
 import { createSchool } from "../core/school.ts";
 import type { Sql } from "./sql.ts";
