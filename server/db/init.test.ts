@@ -7,12 +7,13 @@ import { PGlite } from "@electric-sql/pglite";
 import { migrate, readMigrations } from "./migrate.ts";
 
 /** Every table of the record. Asserted equal to the schema's tables, so a new one cannot be missed. */
-const RECORD_TABLES = ["answers", "encounters", "explanations", "exposures", "gradings", "snapshots", "views"];
+const RECORD_TABLES = ["answers", "decision_notes", "encounters", "explanations", "exposures", "gradings", "snapshots", "views"];
 
 /** The functions `school_app` may execute, and nothing else. */
 const APP_FUNCTIONS = [
-  "encounter_answers", "encounter_explanations", "explanation", "last_studied", "lesson_progress", "open_encounter",
-  "record_exposure", "record_grading", "record_view", "save_explanation", "submission_aid", "submit",
+  "choice_decision_notes", "encounter_answers", "encounter_decision_notes", "encounter_evidence", "encounter_explanations",
+  "explanation", "last_studied", "lesson_progress", "open_encounter", "record_decision_note", "record_exposure", "record_grading",
+  "record_view", "save_explanation", "submission_aid", "submit",
 ];
 
 const SLOW = 30_000; // PGlite starts a whole Postgres in process.
@@ -79,6 +80,9 @@ async function populate(db: PGlite): Promise<{ encounter: string; submission: st
     await recordGrading(db, submission, at(3));
     await db.query("SELECT school.record_view('c', 'l1', $1)", [at(4)]);
     expect((await db.query<{ s: string }>("SELECT school.record_exposure($1, $2, 'e1', 'model-answer', $3) AS s", [uuid(), e.id, at(5)])).rows[0]!.s).toBe("stored");
+    const evidence = (await db.query<{ seq: number }>("SELECT seq FROM school.encounter_evidence($1)", [e.id])).rows.map((r) => Number(r.seq));
+    expect((await db.query<{ status: string }>("SELECT * FROM school.record_decision_note($1, 'c', 'l1', 'q1', $2, 'due-review/wrong-first-try', 'Because.', $3, $4)",
+      [uuid(), e.id, evidence, at(6)])).rows[0]!.status).toBe("stored");
     return { encounter: e.id, submission };
   });
 }
@@ -207,7 +211,7 @@ describe("acceptance", () => {
     // The snapshot and encounter take the open's at; each later write its own.
     expect(stored).toEqual({
       snapshots: [us(0)], encounters: [us(0)], answers: [us(1)], explanations: [us(2)],
-      gradings: [us(3)], views: [us(4)], exposures: [us(5)],
+      gradings: [us(3)], views: [us(4)], exposures: [us(5)], decision_notes: [us(6)],
     });
   }, SLOW);
 

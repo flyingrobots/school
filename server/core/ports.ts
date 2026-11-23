@@ -1,7 +1,7 @@
 // The ports: what School's core needs from the world, defined by the core (RFC 3, §4).
 // Adapters implement them; the core never imports an adapter.
 import type {
-  Aid, AidTracking, Block, Encounter, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingInput,
+  Aid, AidTracking, Block, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingInput,
   GradingRecord, LastStudied, LessonProgress, Outcome, Recorded, SaveResult, SavedExplanation, Submission, SubmitResult, ViewEvent,
 } from "./model.ts";
 
@@ -39,6 +39,17 @@ export interface LearningRecord {
   recordExposure(e: Exposure, now: string): Promise<ExposureResult>;
   /** A quiz answer's or explanation's aid, derived by the record's order; null if there is no such submission. */
   aid(submissionId: string): Promise<Aid | null>;
+  /** Every row this encounter holds that a decision note may cite, by seq, oldest first; empty if there is no such encounter. */
+  encounterEvidence(encounterId: string): Promise<EvidenceRow[]>;
+  /**
+   * Store a decision note once per note id (RFC 2 §3, §5). Refused, and nothing stored, if a cited
+   * row does not exist or is not evidence of the choice's course; see DecisionNoteResult.
+   */
+  recordDecisionNote(n: DecisionNoteInput, now: string): Promise<DecisionNoteResult>;
+  /** The notes for exactly this choice (a course's notes do not include its lessons'), oldest first. */
+  decisionNotes(choice: DecisionChoice): Promise<DecisionNote[]>;
+  /** The notes recorded for this encounter, oldest first. */
+  encounterDecisionNotes(encounterId: string): Promise<DecisionNote[]>;
 }
 
 /** Turns an explanation into findings, or an honest failure. Never throws for a grading failure. */

@@ -6,8 +6,11 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # A real Postgres for the Bun.SQL driver's tests (server/adapters/bunsql.test.ts); the rest of
-    # the suite runs on PGlite. The same image compose runs.
+    # A real Postgres (RFC 3 §2, flyingrobots/school#23): the whole LearningRecord contract and the
+    # learner-history story run on it through the Bun.SQL driver, beside the Bun.SQL driver's own
+    # tests (server/adapters/bunsql.test.ts, server/contract/learner-history.test.ts); the same cases
+    # run on PGlite in the same `bun test`. Each test gets a database of its own on this server
+    # (server/testing/postgres.ts). The same image, by digest, as server/compose.yaml.
     services:
       postgres:
         image: postgres:18.7@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
@@ -36,4 +39,9 @@ jobs:
         working-directory: web
       - run: npx tsc -b
         working-directory: web
-      - run: bun test
+      # The JUnit report feeds the gate below; the console output is unchanged.
+      - run: bun test --reporter=junit --reporter-outfile=${{ runner.temp }}/junit.xml
+      # Those tests skip without SCHOOL_TEST_POSTGRES_URL, and a skip passes. This fails the build
+      # unless every Bun.SQL test ran and passed and every PGlite contract or story case also ran
+      # on Bun.SQL.
+      - run: bun run server/testing/postgres-gate.ts ${{ runner.temp }}/junit.xml

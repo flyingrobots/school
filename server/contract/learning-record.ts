@@ -3,7 +3,7 @@
 // It speaks only through the port; storage-level rules (append-only triggers, privileges) are
 // tested beside each adapter, since how they are enforced is the adapter's business.
 import { expect, test } from "bun:test";
-import { ExposureKind, type Block, type GradingRecord } from "../core/model.ts";
+import { ExposureKind, type Block, type DecisionNoteInput, type GradingRecord } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
 
 /**
@@ -351,5 +351,153 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
 
   tx("the aid of a submission that does not exist is null", async (r) => {
     expect(await r.aid(uuid())).toBeNull();
+  });
+  // ---- Decision notes (RFC 2 §3 and §5; flyingrobots/school#31) --------------------------------
+
+  const note = (o: Partial<DecisionNoteInput> & Pick<DecisionNoteInput, "evidence">): DecisionNoteInput => ({
+    noteId: uuid(), choice: { course: "c", lesson: "l1", blockId: "q1" }, encounterId: null,
+    rule: "due-review/wrong-first-try", reason: "The first answer was wrong, and the correction followed a model-answer reveal.", ...o,
+  });
+  const seqs = async (r: LearningRecord, encounterId: string, kind: string) =>
+    (await r.encounterEvidence(encounterId)).filter((x) => x.kind === kind).map((x) => x.seq);
+
+  tx("an encounter's evidence is every row it holds, by seq, with its kind and block", async (r) => {
+    const e = await tracked(r, lesson("l1", [quiz("q1"), explain]));
+    await r.submit({ submissionId: uuid(), encounterId: e.id, blockId: "q1", choiceId: "wrong", ms: 1 }, at(1));
+    await r.recordExposure(exposure(e.id, "q1", "feedback"), at(2));
+    const x = uuid();
+    await r.saveExplanation({ submissionId: x, encounterId: e.id, blockId: "e1", text: "Because.", ms: 1 }, at(3));
+    await r.recordGrading(failed(x, "down"), at(4));
+    const rows = await r.encounterEvidence(e.id);
+    expect(rows.map((row) => [row.kind, row.blockId])).toEqual([
+      ["encounter", null], ["answer", "q1"], ["exposure", "q1"], ["explanation", "e1"], ["grading", "e1"],
+    ]);
+    expect(rows.map((row) => row.seq)).toEqual(rows.map((row) => row.seq).sort((a, b) => a - b));
+    expect(new Set(rows.map((row) => row.seq)).size).toBe(rows.length);
+    expect(await r.encounterEvidence(uuid())).toEqual([]);
+  });
+
+  tx("decision note, golden: it cites a wrong first try and a later aided correction, and reads back for its choice and encounter", async (r) => {
+    const page = lesson("l1", [quiz("q1")]);
+    const first = await tracked(r, page);
+    const wrong = uuid();
+    const fixed = uuid();
+    await r.submit({ submissionId: wrong, encounterId: first.id, blockId: "q1", choiceId: "wrong", ms: 1 }, at(1));
+    await r.recordExposure(exposure(first.id, "q1", "feedback"), at(2));
+    await r.submit({ submissionId: fixed, encounterId: first.id, blockId: "q1", choiceId: "right", ms: 1 }, at(3));
+    expect(await r.aid(fixed)).toBe("aided");
+    const [wrongSeq, fixedSeq] = await seqs(r, first.id, "answer");
+    const [shownSeq] = await seqs(r, first.id, "exposure");
+    // The review is a later encounter, past the resume window, that the note was made for.
+    const review = await tracked(r, page, at(4 * RESUME_WINDOW_MS));
+    expect(review.id).not.toBe(first.id);
+    const n = note({ encounterId: review.id, evidence: [wrongSeq!, shownSeq!, fixedSeq!] });
+    const stored = await r.recordDecisionNote(n, at(4 * RESUME_WINDOW_MS + 1));
+    expect(stored).toEqual({ status: "stored", note: {
+      id: n.noteId, seq: expect.any(Number), choice: n.choice, encounterId: review.id, rule: n.rule, reason: n.reason,
+      evidence: [wrongSeq!, shownSeq!, fixedSeq!], at: at(4 * RESUME_WINDOW_MS + 1),
+    } });
+    if (stored.status !== "stored") throw new Error("not stored");
+    // Its evidence precedes it in the record's order.
+    expect(Math.max(...stored.note.evidence)).toBeLessThan(stored.note.seq);
+    expect(await r.decisionNotes(n.choice)).toEqual([stored.note]);
+    expect(await r.encounterDecisionNotes(review.id)).toEqual([stored.note]);
+    expect(await r.encounterDecisionNotes(first.id)).toEqual([]);
+  });
+
+  tx("a decision note citing a row that does not exist is refused, and stores nothing", async (r) => {
+    const e = await tracked(r, lesson("l1", [quiz("q1")]));
+    await r.submit({ submissionId: uuid(), encounterId: e.id, blockId: "q1", choiceId: "wrong", ms: 1 }, at(1));
+    const [answer] = await seqs(r, e.id, "answer");
+    const missing = 1_000_000_000;
+    expect(await r.recordDecisionNote(note({ evidence: [missing] }), at(2))).toEqual({ status: "rejected" });
+    expect(await r.recordDecisionNote(note({ evidence: [answer!, missing] }), at(3))).toEqual({ status: "rejected" });
+    expect(await r.decisionNotes({ course: "c", lesson: "l1", blockId: "q1" })).toEqual([]);
+  });
+
+  tx("a decision note citing another course's evidence is refused", async (r) => {
+    const mine = await tracked(r, lesson("l1", [quiz("q1")]));
+    const theirs = await r.openEncounter({ course: "other", lesson: "l1", page: lesson("l1", [quiz("q1")]), now: at(1), aidTracking: 1 });
+    await r.submit({ submissionId: uuid(), encounterId: mine.id, blockId: "q1", choiceId: "wrong", ms: 1 }, at(2));
+    await r.submit({ submissionId: uuid(), encounterId: theirs.id, blockId: "q1", choiceId: "wrong", ms: 1 }, at(3));
+    const [own] = await seqs(r, mine.id, "answer");
+    const [foreign] = await seqs(r, theirs.id, "answer");
+    expect(await r.recordDecisionNote(note({ evidence: [foreign!] }), at(4))).toEqual({ status: "rejected" });
+    expect(await r.recordDecisionNote(note({ evidence: [own!, foreign!] }), at(5))).toEqual({ status: "rejected" });
+    expect(await r.recordDecisionNote(note({ evidence: [own!] }), at(6))).toMatchObject({ status: "stored" });
+    expect((await r.decisionNotes({ course: "c", lesson: "l1", blockId: "q1" })).map((x) => x.evidence)).toEqual([[own!]]);
+  });
+
+  tx("a decision note cites evidence, not notes: citing another note is refused", async (r) => {
+    const e = await tracked(r, lesson("l1", [quiz("q1")]));
+    await r.submit({ submissionId: uuid(), encounterId: e.id, blockId: "q1", choiceId: "wrong", ms: 1 }, at(1));
+    const first = await r.recordDecisionNote(note({ evidence: await seqs(r, e.id, "answer") }), at(2));
+    if (first.status !== "stored") throw new Error("not stored");
+    expect(await r.recordDecisionNote(note({ evidence: [first.note.seq] }), at(3))).toEqual({ status: "rejected" });
+  });
+
+  tx("a decision note for an encounter of another course or lesson, or one without its block, is refused", async (r) => {
+    const page = lesson("l1", [quiz("q1")]);
+    const e = await tracked(r, page);
+    await r.submit({ submissionId: uuid(), encounterId: e.id, blockId: "q1", choiceId: "wrong", ms: 1 }, at(1));
+    const evidence = await seqs(r, e.id, "answer");
+    const otherLesson = await r.openEncounter({ course: "c", lesson: "l2", page: lesson("l2", [quiz("q1")]), now: at(2), aidTracking: 1 });
+    const otherCourse = await r.openEncounter({ course: "other", lesson: "l1", page, now: at(3), aidTracking: 1 });
+    for (const encounterId of [otherLesson.id, otherCourse.id, uuid()]) {
+      expect(await r.recordDecisionNote(note({ encounterId, evidence }), at(4))).toEqual({ status: "rejected" });
+    }
+    expect(await r.recordDecisionNote(note({ encounterId: e.id, choice: { course: "c", lesson: "l1", blockId: "q9" }, evidence }), at(5)))
+      .toEqual({ status: "rejected" });
+    // A course-level choice may be made for any encounter of the course.
+    expect(await r.recordDecisionNote(note({ encounterId: otherLesson.id, choice: { course: "c", lesson: null, blockId: null }, evidence }), at(6)))
+      .toMatchObject({ status: "stored" });
+  });
+
+  tx("a decision note is stored once: a resend is a duplicate, and its id naming another note a conflict", async (r) => {
+    const e = await tracked(r, lesson("l1", [quiz("q1")]));
+    await r.submit({ submissionId: uuid(), encounterId: e.id, blockId: "q1", choiceId: "wrong", ms: 1 }, at(1));
+    const n = note({ evidence: await seqs(r, e.id, "answer") });
+    const stored = await r.recordDecisionNote(n, at(2));
+    if (stored.status !== "stored") throw new Error("not stored");
+    expect(await r.recordDecisionNote(n, at(3))).toEqual({ status: "duplicate", note: stored.note });
+    expect(await r.recordDecisionNote({ ...n, reason: "Another reason." }, at(4))).toEqual({ status: "conflict" });
+    expect(await r.recordDecisionNote({ ...n, rule: "due-review/other-rule" }, at(4))).toEqual({ status: "conflict" });
+    expect(await r.recordDecisionNote({ ...n, evidence: [...n.evidence, ...(await seqs(r, e.id, "encounter"))] }, at(4))).toEqual({ status: "conflict" });
+    expect(await r.decisionNotes(n.choice)).toEqual([stored.note]);
+  });
+
+  tx("decision notes are read for exactly their choice: a course, a lesson and a block are different choices", async (r) => {
+    const e = await tracked(r, lesson("l1", [quiz("q1"), quiz("q2")]));
+    const evidence = await seqs(r, e.id, "encounter");
+    const choices = [
+      { course: "c", lesson: null, blockId: null }, { course: "c", lesson: "l1", blockId: null },
+      { course: "c", lesson: "l1", blockId: "q1" }, { course: "c", lesson: "l1", blockId: "q2" },
+    ];
+    const ids: string[] = [];
+    for (const [i, choice] of choices.entries()) {
+      const n = note({ choice, evidence });
+      ids.push(n.noteId);
+      expect(await r.recordDecisionNote(n, at(10 + i))).toMatchObject({ status: "stored" });
+    }
+    for (const [i, choice] of choices.entries()) expect((await r.decisionNotes(choice)).map((x) => x.id)).toEqual([ids[i]!]);
+    expect(await r.decisionNotes({ course: "other", lesson: null, blockId: null })).toEqual([]);
+  });
+
+  tx("a decision note keeps citing the rows it named after a reinterpretation: a later grading supersedes, the note does not move", async (r) => {
+    const e = await tracked(r, lesson("l1", [explain]));
+    const x = uuid();
+    await r.saveExplanation({ submissionId: x, encounterId: e.id, blockId: "e1", text: "Because.", ms: 1 }, at(1));
+    const judged = await r.recordGrading(failed(x, "down"), at(2));
+    const evidence = [...await seqs(r, e.id, "explanation"), ...await seqs(r, e.id, "grading")];
+    expect(evidence).toHaveLength(2);
+    const stored = await r.recordDecisionNote(note({ choice: { course: "c", lesson: "l1", blockId: "e1" }, evidence }), at(3));
+    if (stored.status !== "stored") throw new Error("not stored");
+    const regraded = await r.recordGrading(succeeded(x), at(4));
+    expect(regraded.supersedes).toBe(judged.id);
+    const [again] = await r.decisionNotes({ course: "c", lesson: "l1", blockId: "e1" });
+    expect(again).toEqual(stored.note);
+    expect(again!.evidence).not.toContain(regraded.id);
+    // The cited grading is still in the record, though no longer the latest.
+    expect(await seqs(r, e.id, "grading")).toEqual([evidence[1]!, regraded.id]);
   });
 }
