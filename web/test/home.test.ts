@@ -88,8 +88,8 @@ afterAll(async () => {
 })
 
 /** A browser context whose /api requests reach `school`. */
-async function context(school = studied, viewport = { width: 1280, height: 900 }): Promise<BrowserContext> {
-  const c = await browser.newContext({ viewport })
+async function context(school = studied, viewport = { width: 1280, height: 900 }, reducedMotion: "reduce" | "no-preference" = "no-preference"): Promise<BrowserContext> {
+  const c = await browser.newContext({ viewport, reducedMotion })
   await c.route(/\/api\//, async (route) => {
     const u = new URL(route.request().url())
     await route.fulfill({ response: await route.fetch({ url: school.url + u.pathname + u.search }) })
@@ -159,8 +159,8 @@ describe("a learner who has studied", () => {
     expect(text).toContain("Question q4?")
     const go = resume(p).getByRole("link", { name: /Continue/ })
     expect(await go.getAttribute("href")).toBe("/courses/aion/lessons/l2")
-    // Nothing in the main area comes before it.
-    const first = await main(p).locator("[data-nav]").first().getAttribute("href")
+    // Nothing in the page's content comes before it (the shell's header buttons are not the page's).
+    const first = await main(p).locator("[data-nav]").evaluateAll((els) => els.find((e) => e.closest("header") === null)?.getAttribute("href"))
     expect(first).toBe("/courses/aion/lessons/l2")
     await p.context().close()
   })
@@ -197,7 +197,8 @@ describe("a learner who has studied", () => {
 
   test("uses the width: one column on a phone, the lesson and the courses side by side on a laptop", async () => {
     const layout = async (viewport: { width: number; height: number }) => {
-      const p = await open(await context(studied, viewport))
+      // Reduced motion, so the entrance timeline's offsets are not measured as layout.
+      const p = await open(await context(studied, viewport, "reduce"))
       await courses(p).first().waitFor()
       await resume(p).waitFor()
       const box = async (l: ReturnType<typeof resume>) => (await l.boundingBox())!
