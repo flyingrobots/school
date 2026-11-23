@@ -3,10 +3,11 @@
 // together, and checks two things at every step: the facts as the port reports them, and what
 // the lesson page would show for them. It speaks only through the port, so every adapter that
 // registers it (SQLite and Postgres on PGlite today; real Postgres with flyingrobots/school#23)
-// must tell the same story. It grows as the record does: steps the port cannot express yet are
-// `test.todo`, each naming the issue that adds them.
+// must tell the same story. An adapter that records no exposures (SQLite) tells it with every
+// aid unknown and every exposure refused, which is what the port requires of it; it never claims
+// "no recorded aid". The story grows as the record does.
 import { expect, test } from "bun:test";
-import type { Block, ExplainBlock, ExplanationState, GradingRecord, Recorded } from "../core/model.ts";
+import type { Aid, Block, ExplainBlock, ExplanationState, ExposureKind, GradingRecord, Recorded } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
 
 // The lesson: two quizzes and one explain block.
@@ -28,6 +29,7 @@ const COURSE = "astronomy";
 
 const T0 = Date.parse("2026-11-21T09:00:00Z");
 const at = (seconds: number) => new Date(T0 + seconds * 1000).toISOString();
+const DAY = 24 * 3600;
 
 const grading = (submissionId: string): Omit<GradingRecord, "status" | "findings" | "error"> => ({
   submissionId, rubricVersion: "rubric-v1", promptVersion: "prompt-v1", adapter: "test", model: "m", sources: seasons.sources, raw: null,
@@ -50,38 +52,84 @@ export function pageShows(answers: readonly Recorded[], explanations: readonly E
   return shown;
 }
 
-/** Register the story for one adapter. `make` returns a fresh, empty record. */
-export function learnerHistory(name: string, make: () => Promise<LearningRecord>): void {
-  const pending = (step: string, issue: string) => test.todo(`${name}: learner history, pending ${issue}: ${step}`);
+/**
+ * How a submission's aid reads, in RFC 2's words (§3). The lesson page does not show aid yet
+ * (flyingrobots/school#51); these are the names any view of it must use. "No recorded aid" is the
+ * most School can know, and is never called "unaided".
+ */
+export function aidReads(aid: Aid | null): string {
+  if (aid === null) throw new Error("aid of a submission the record does not hold");
+  return { aided: "Aided", "no-recorded-aid": "No recorded aid", unknown: "Unknown aid" }[aid];
+}
 
-  test(`${name}: learner history replays, and the page shows each step as it happened`, async () => {
+/**
+ * Register the story for one adapter. `make` returns a fresh, empty record. `declared` is what the
+ * adapter's registration says of it, as for the contract suite.
+ */
+export function learnerHistory(name: string, make: () => Promise<LearningRecord>, declared: { recordsExposures: boolean }): void {
+  test(`${name}: learner history replays, and each step reads as it happened`, async () => {
     const r = await make();
+    expect(r.recordsExposures).toBe(declared.recordsExposures);
+    const tracks = declared.recordsExposures;
+    /** The aid this record must report: the tracked answer when it records exposures, unknown when it cannot. */
+    const tracked = (aid: Aid) => (tracks ? aid : "unknown");
+    const aidOf = async (submissionId: string) => aidReads(await r.aid(submissionId));
     const reload = async (e: { id: string }) => pageShows(await r.encounterAnswers(e.id), await r.encounterExplanations(e.id));
+    /** The page reports help it has shown. A record that cannot store exposures refuses them. */
+    const shown = async (encounterId: string, blockId: string, kind: ExposureKind, now: string) =>
+      expect(await r.recordExposure({ exposureId: crypto.randomUUID(), encounterId, blockId, kind }, now))
+        .toEqual({ status: tracks ? "stored" : "unsupported" });
 
-    // 09:00. The learner opens "Orbits" for the first time: a new encounter, nothing answered.
-    const e = await r.openEncounter({ course: COURSE, lesson: "orbits", page, now: at(0) });
+    // Day one, 20 November, 09:00. The learner opens "Orbits" on an old client that records no
+    // help it shows, so the encounter is opened with aid tracking off.
+    const old = await r.openEncounter({ course: COURSE, lesson: "orbits", page, now: at(-DAY), aidTracking: null });
+    expect(old.resumed).toBe(false);
+
+    // 09:01. They answer the closest planet right, first try. Whether they had help, School cannot
+    // say: unknown aid, on every adapter.
+    const early = crypto.randomUUID();
+    expect(await r.submit({ submissionId: early, encounterId: old.id, blockId: "closest", choiceId: "mercury", ms: 3000 }, at(-DAY + 60)))
+      .toEqual({ status: "stored", correct: true, firstTry: true });
+    expect(await aidOf(early)).toBe("Unknown aid");
+    expect(await reload(old)).toEqual({ closest: "Answered (mercury)" });
+
+    // Day two, 21 November, 09:00. A day later, well past the resume window, they come back on a
+    // client that records the help it shows: a new, tracked encounter, and nothing answered in it.
+    const e = await r.openEncounter({ course: COURSE, lesson: "orbits", page, now: at(0), aidTracking: 1 });
     expect(e.resumed).toBe(false);
+    expect(e.id).not.toBe(old.id);
     expect(await reload(e)).toEqual({});
 
-    // 09:01. They guess Venus for the closest planet. Wrong, and it was their first try.
+    // 09:01. This time they guess Venus for the closest planet. Wrong, and their first try in this
+    // encounter. Nothing was shown for the quiz before it: no recorded aid.
     const venus = crypto.randomUUID();
     expect(await r.submit({ submissionId: venus, encounterId: e.id, blockId: "closest", choiceId: "venus", ms: 4000 }, at(60)))
       .toEqual({ status: "stored", correct: false, firstTry: true });
+    expect(await aidOf(venus)).toBe(aidReads(tracked("no-recorded-aid")));
     expect(await reload(e)).toEqual({ closest: "Not quite (venus)" });
 
-    // 09:02. They try Mercury. Right, but no longer a first try: the record remembers the miss.
-    expect(await r.submit({ submissionId: crypto.randomUUID(), encounterId: e.id, blockId: "closest", choiceId: "mercury", ms: 3000 }, at(120)))
+    // The page tells them "Not quite": that is feedback, and the page reports it as shown.
+    await shown(e.id, "closest", "feedback", at(61));
+
+    // 09:02. They try Mercury. Right, but no longer a first try, and aided: it came after feedback.
+    const mercury = crypto.randomUUID();
+    expect(await r.submit({ submissionId: mercury, encounterId: e.id, blockId: "closest", choiceId: "mercury", ms: 3000 }, at(120)))
       .toEqual({ status: "stored", correct: true, firstTry: false });
+    expect(await aidOf(mercury)).toBe(aidReads(tracked("aided")));
+    expect(await aidOf(venus)).toBe(aidReads(tracked("no-recorded-aid"))); // later help never reclassifies earlier work
     expect(await reload(e)).toEqual({ closest: "Answered (mercury)" });
 
     // 09:05. The connection drops. They answer the moons quiz twice, Mars then Venus, and both sit
-    // in the outbox. 09:10: it reconnects and flushes them in one go, so both arrive with the same
-    // time. Order still comes out as they were sent: Mars is the first try, Venus is not.
+    // in the outbox with no verdict shown. 09:10: it reconnects and flushes them in one go, so both
+    // arrive with the same time. Order still comes out as they were sent: Mars is the first try,
+    // Venus is not, and neither had help.
     const mars = crypto.randomUUID();
     const venusMoons = { submissionId: crypto.randomUUID(), encounterId: e.id, blockId: "moons", choiceId: "venus", ms: 2000 };
     expect(await r.submit({ submissionId: mars, encounterId: e.id, blockId: "moons", choiceId: "mars", ms: 5000 }, at(600)))
       .toEqual({ status: "stored", correct: false, firstTry: true });
     expect(await r.submit(venusMoons, at(600))).toEqual({ status: "stored", correct: true, firstTry: false });
+    expect(await aidOf(mars)).toBe(aidReads(tracked("no-recorded-aid")));
+    expect(await aidOf(venusMoons.submissionId)).toBe(aidReads(tracked("no-recorded-aid")));
 
     // 09:10. The outbox never heard back about Venus, so it sends the same submission again. The
     // record recognises the id, stores nothing, and gives the same verdict it gave the first time.
@@ -94,16 +142,22 @@ export function learnerHistory(name: string, make: () => Promise<LearningRecord>
     ]);
     expect(await reload(e)).toEqual({ closest: "Answered (mercury)", moons: "Answered (venus)" });
 
-    // 09:15. They explain the seasons. It is saved before anything grades it, and the page now
-    // shows the model answer beside it.
+    // 09:15. They explain the seasons. It is saved before anything grades it, with no recorded aid.
     const draft = { submissionId: crypto.randomUUID(), encounterId: e.id, blockId: "seasons", text: "Earth is closer in summer.", ms: 60_000 };
     expect(await r.saveExplanation(draft, at(900))).toEqual({ status: "stored" });
+    expect(await aidOf(draft.submissionId)).toBe(aidReads(tracked("no-recorded-aid")));
     expect((await reload(e)).seasons).toBe("Saved: Earth is closer in summer.");
 
+    // Once it is saved, the page reveals the model answer beside it, and reports the reveal.
+    await shown(e.id, "seasons", "model-answer", at(901));
+
     // 09:20. Having read the model answer, they write a better explanation. The revision is a new
-    // submission; the draft is kept, and the page shows the revision.
+    // submission and it is aided; the draft is kept, still with no recorded aid, and the page shows
+    // the revision.
     const revised = { submissionId: crypto.randomUUID(), encounterId: e.id, blockId: "seasons", text: "The tilt of Earth's axis.", ms: 30_000 };
     expect(await r.saveExplanation(revised, at(1200))).toEqual({ status: "stored" });
+    expect(await aidOf(revised.submissionId)).toBe(aidReads(tracked("aided")));
+    expect(await aidOf(draft.submissionId)).toBe(aidReads(tracked("no-recorded-aid")));
     expect((await r.explanation(draft.submissionId))?.state).toEqual({
       submissionId: draft.submissionId, blockId: "seasons", text: draft.text, at: at(900), grading: null,
     });
@@ -126,7 +180,7 @@ export function learnerHistory(name: string, make: () => Promise<LearningRecord>
 
     // 11:00. They come back and reload. Inside the resume window, so it is the same encounter, and
     // the page shows everything they did, each block as it ended.
-    const back = await r.openEncounter({ course: COURSE, lesson: "orbits", page, now: at(2 * 3600) });
+    const back = await r.openEncounter({ course: COURSE, lesson: "orbits", page, now: at(2 * 3600), aidTracking: 1 });
     expect(back).toEqual({ id: e.id, hash: e.hash, resumed: true });
     expect(await r.encounterExplanations(back.id)).toEqual([
       { submissionId: revised.submissionId, blockId: "seasons", text: revised.text, at: at(1200), grading: graded },
@@ -136,11 +190,9 @@ export function learnerHistory(name: string, make: () => Promise<LearningRecord>
       moons: "Answered (venus)",
       seasons: "Graded: Names the tilt; could say why it matters.",
     });
+    // Day one's encounter is untouched, and its answer still has unknown aid.
+    expect(await reload(old)).toEqual({ closest: "Answered (mercury)" });
+    expect(await aidOf(early)).toBe("Unknown aid");
     expect(await r.lessonProgress(COURSE)).toEqual({ orbits: ["closest", "moons"] });
   });
-
-  // The record cannot say these yet. Each becomes a step of the story above when its issue lands.
-  pending("an answer in an encounter with aid tracking off is stored as unknown aid, and shown so", "flyingrobots/school#29");
-  pending("a tracked answer given with no help shown is stored with no recorded aid, and shown so", "flyingrobots/school#29");
-  pending("showing the model answer is recorded as an exposure, so the revised explanation after it is aided, and shown so", "flyingrobots/school#29");
 }

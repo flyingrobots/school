@@ -28,7 +28,7 @@ learnerHistory("sqlite", async () => {
   db.exec("PRAGMA foreign_keys = ON;");
   migrateSqlite(db);
   return sqliteRecord(db);
-});
+}, { recordsExposures: false }); // SQLite has no exposures table; it is being deleted (flyingrobots/school#49).
 
 learnerHistory("postgres (PGlite)", async () => {
   const db = new PGlite();
@@ -36,4 +36,4 @@ learnerHistory("postgres (PGlite)", async () => {
   await migratePostgres(db);
   await db.exec("SET ROLE school_app");
   return postgresRecord(pgliteSql(db));
-});
+}, { recordsExposures: true });
