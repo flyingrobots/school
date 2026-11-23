@@ -11,6 +11,7 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { createServer, type ViteDevServer } from "vite"
 
 import { startSchool, timeout, type Started } from "../../server/testing/processes.ts"
+import { heldIntro, opacities, pressJ, stops } from "./intro.ts"
 
 setDefaultTimeout(30_000)
 
@@ -162,6 +163,21 @@ describe("a course with lessons", () => {
     expect(await p.evaluate(() => document.activeElement?.getAttribute("href"))).toBe("/courses/aion/lessons/l2")
     await p.keyboard.press("Enter")
     await p.waitForURL(base + "/courses/aion/lessons/l2")
+    await p.context().close()
+  })
+
+  // flyingrobots/school#114: j pressed while the lessons fade in reaches each of them, in order.
+  test("j pressed during the intro reaches every focus stop in order", async () => {
+    const p = await heldIntro(await context(), base + "/courses/aion", (p) => lessons(p).last().waitFor({ state: "attached" }))
+    // The intro is under way: no lesson has started to fade in.
+    expect(await opacities(p, "[data-lesson]")).toEqual(["0", "0", "0"])
+    const all = await stops(p)
+    expect(all.slice(-5)).toEqual(["/", "/courses/aion/reference", "/courses/aion/lessons/l1", "/courses/aion/lessons/l2", "/courses/aion/lessons/l3"])
+    expect(await pressJ(p, all.length)).toEqual(all)
+    // Still the intro's start; once time runs, it finishes with every lesson shown.
+    expect(await opacities(p, "[data-lesson]")).toEqual(["0", "0", "0"])
+    await p.clock.resume()
+    await p.waitForFunction(() => [...document.querySelectorAll("[data-lesson]")].every((e) => getComputedStyle(e).opacity === "1"))
     await p.context().close()
   })
 

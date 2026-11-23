@@ -74,6 +74,9 @@ function Crumbs({ crumbs, current, renderLink }: { crumbs: LessonCrumb[]; curren
   )
 }
 
+/** The lesson's breadcrumb: `crumbs`, then `current` as the page. For a view of the lesson outside the frame. */
+export const LessonCrumbs = Crumbs
+
 function Heading({ children }: { children: React.ReactNode }) {
   return <h1 className="font-heading text-4xl font-semibold tracking-tight sm:text-5xl 2xl:text-6xl">{children}</h1>
 }
@@ -148,6 +151,7 @@ export function Lesson({
   prev,
   next,
   renderLink = anchor,
+  actions,
   children,
 }: {
   title: string
@@ -157,6 +161,8 @@ export function Lesson({
   prev?: LessonNeighbour | null
   next?: LessonNeighbour | null
   renderLink?: RenderLink
+  /** Shown under the title, such as a link to another view of the lesson. */
+  actions?: React.ReactNode
   children: React.ReactNode
 }) {
   const scope = React.useRef<HTMLDivElement>(null)
@@ -167,6 +173,11 @@ export function Lesson({
         <Crumbs crumbs={crumbs} current={title} renderLink={renderLink} />
         <Heading>{title}</Heading>
         {subtitle && <p className="text-xl text-muted-foreground 2xl:text-2xl">{subtitle}</p>}
+        {actions && (
+          <div data-lesson="actions" className="flex flex-wrap gap-2">
+            {actions}
+          </div>
+        )}
       </div>
       <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_18rem] 2xl:grid-cols-[minmax(0,1fr)_24rem]">
         <div data-lesson="body" className="flex min-w-0 flex-col gap-8">
