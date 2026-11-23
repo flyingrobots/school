@@ -6,8 +6,8 @@
 #   backup.sh once    dump now, prune, exit: 0 on success, 1 if the dump failed, 2 on bad settings
 #
 # Each dump is pg_dump's custom format, written to /backups/school-<UTC time>.dump: first to a
-# hidden .partial file, renamed only once pg_dump succeeds, so a dump that fails leaves nothing
-# that looks like a backup. After a good dump the newest SCHOOL_BACKUP_KEEP files named like that
+# hidden .partial file of its own, put in place under that name only once pg_dump succeeds and
+# only if no dump has the name yet, so a dump that fails leaves nothing that looks like a backup. After a good dump the newest SCHOOL_BACKUP_KEEP files named like that
 # are kept and older ones deleted; nothing else in the folder is touched. A failed dump deletes
 # nothing. The folder is closed to everyone but its owner (0700) and every file is 0600.
 #
@@ -44,22 +44,36 @@ if ! chmod 700 "$DIR" 2>/dev/null; then
   exit 2
 fi
 
-# Stopped mid-dump (docker compose stop): leave no partial file behind.
-trap 'rm -f "$DIR"/.school-*.partial "$DIR"/.school-*.errors; say "\"event\":\"stopped\""; exit 0' TERM INT
+# Stopped mid-dump (docker compose stop): remove this run's temporary files, and no one else's.
+trap 'rm -f ${partial:+"$partial"} ${errors:+"$errors"}; say "\"event\":\"stopped\""; exit 0' TERM INT
 
-# One dump and, if it succeeded, the retention. Returns 1 if pg_dump failed.
+# One dump and, if it was put in place, the retention. Returns 1 if anything failed, having printed
+# a `failed` line, deleted nothing and left no temporary file.
+#
+# The temporary files are made by mktemp, so two runs never share one, even in the same second (a
+# manual `once` beside the schedule). The finished dump is put in place with `ln`, which refuses an
+# existing name, so a dump never overwrites another: a second run in the same second fails, and
+# the schedule tries again later.
 once() {
   file="school-$(date -u +%Y%m%dT%H%M%SZ).dump"
-  partial="$DIR/.$file.partial"
-  errors="$DIR/.$file.errors"
+  if ! partial=$(mktemp "$DIR/.school-XXXXXXXX.partial") || ! errors=$(mktemp "$DIR/.school-XXXXXXXX.errors"); then
+    [ -n "${partial:-}" ] && rm -f "$partial"
+    fail "\"event\":\"failed\",\"file\":\"$file\",\"message\":\"cannot make a temporary file in $DIR\""
+    return 1
+  fi
   if ! pg_dump --format=custom --file="$partial" 2>"$errors"; then
-    fail "\"event\":\"failed\",\"message\":\"$(json "$(cat "$errors")")\""
+    fail "\"event\":\"failed\",\"file\":\"$file\",\"message\":\"$(json "$(cat "$errors")")\""
     rm -f "$partial" "$errors"
     return 1
   fi
-  rm -f "$errors"
-  mv "$partial" "$DIR/$file"
-  say "\"event\":\"dumped\",\"file\":\"$file\",\"bytes\":$(wc -c <"$DIR/$file" | tr -d ' ')"
+  if ! ln "$partial" "$DIR/$file" 2>"$errors"; then
+    fail "\"event\":\"failed\",\"file\":\"$file\",\"message\":\"$(json "could not put the dump in place: $(cat "$errors")")\""
+    rm -f "$partial" "$errors"
+    return 1
+  fi
+  rm -f "$partial" "$errors"
+  bytes=$(wc -c <"$DIR/$file" | tr -d ' ')
+  say "\"event\":\"dumped\",\"file\":\"$file\",\"bytes\":$bytes"
   # The names sort by time; keep the newest KEEP.
   ls -1 "$DIR" | grep -E '^school-[0-9]{8}T[0-9]{6}Z\.dump$' | sort -r | tail -n +"$((KEEP + 1))" | while read -r old; do
     rm -f "$DIR/$old" && say "\"event\":\"pruned\",\"file\":\"$old\""
