@@ -60,6 +60,10 @@ export type Explanation = z.infer<typeof Explanation>
 const Answer = z.object({ blockId: z.string(), choiceId: z.string(), correct: z.boolean() })
 export type Answer = z.infer<typeof Answer>
 
+/** A block School brought back for review, the rule that chose it, and why, in words (RFC 2 §5). */
+const ReviewReason = z.object({ blockId: z.string(), rule: z.string(), reason: z.string() })
+export type ReviewReason = z.infer<typeof ReviewReason>
+
 const Neighbour = z.object({ id: z.string(), title: z.string(), subtitle: z.string() }).nullable()
 
 export const LessonReply = z.object({
@@ -70,6 +74,8 @@ export const LessonReply = z.object({
   encounterId: z.string(),
   answers: z.array(Answer),
   explanations: z.array(Explanation),
+  /** The review items in `lesson` (its section `school:review`), each with its reason. */
+  review: z.array(ReviewReason),
 })
 export type LessonReply = z.infer<typeof LessonReply>
 

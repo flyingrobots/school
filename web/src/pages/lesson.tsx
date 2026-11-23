@@ -4,7 +4,10 @@
 // encounter already holds; every verdict and grading on screen is the server's.
 // It records every exposure it shows (flyingrobots/school#51): the blocks say when they show help,
 // and each showing is sent once, under its own id, before the block's next submission.
+// Items School brought back for review (flyingrobots/school#32) arrive in the lesson, in a Review
+// section at its top; each is shown with its reason, in a stock Alert, above the block.
 import * as React from "react"
+import { HistoryIcon } from "lucide-react"
 import { Link, useParams } from "react-router"
 
 import { Explain } from "@/components/explain"
@@ -23,6 +26,7 @@ import {
 } from "@/components/lesson"
 import { Nest } from "@/components/nest"
 import { Quiz, type QuizVerdict } from "@/components/quiz"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import * as api from "@/lib/school-api"
 
@@ -59,7 +63,11 @@ function useLesson(course: string, lesson: string) {
 function held(lesson: api.LessonReply) {
   const answers = new Map<string, QuizVerdict>()
   for (const a of lesson.answers) answers.set(a.blockId, { choiceId: a.choiceId, correct: a.correct })
-  return { answers, explanations: new Map(lesson.explanations.map((x) => [x.blockId, x])) }
+  return {
+    answers,
+    explanations: new Map(lesson.explanations.map((x) => [x.blockId, x])),
+    reasons: new Map(lesson.review.map((r) => [r.blockId, r.reason])),
+  }
 }
 
 /**
@@ -96,6 +104,8 @@ type Play = {
   shown: number
   answers: Map<string, QuizVerdict>
   explanations: Map<string, api.Explanation>
+  /** Why each review item came back, by block. */
+  reasons: Map<string, string>
 }
 
 const sinceShown = (play: Play) => Math.max(0, Math.round(Date.now() - play.shown))
@@ -122,9 +132,17 @@ function BlockView({ block: b, play, depth }: { block: api.Block; play: Play; de
       return <LessonQuote id={b.id} html={b.html} />
     case "aside":
       return <LessonAside id={b.id} html={b.html} />
-    case "quiz":
+    case "quiz": {
+      const reason = play.reasons.get(b.id)
       return (
         <LessonBlock kind="quiz" id={b.id}>
+          {reason !== undefined && (
+            <Alert className="mb-4 text-base">
+              <HistoryIcon />
+              <AlertTitle className="text-lg">Back for review</AlertTitle>
+              <AlertDescription className="text-base">{reason}</AlertDescription>
+            </Alert>
+          )}
           <Quiz
             id={b.id}
             q={b.q}
@@ -139,6 +157,7 @@ function BlockView({ block: b, play, depth }: { block: api.Block; play: Play; de
           />
         </LessonBlock>
       )
+    }
     case "explain":
       return (
         <LessonBlock kind="explain" id={b.id}>

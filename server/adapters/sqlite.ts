@@ -8,7 +8,7 @@
 import type { Database } from "bun:sqlite";
 import type { LearningRecord } from "../core/ports.ts";
 import { encounterExplanations, explanationState, recordGrading, saveExplanation } from "../explain.ts";
-import { encounterAnswers, lessonProgress, openEncounter, submit } from "../record.ts";
+import { canonical, encounterAnswers, lessonProgress, openEncounter, submit } from "../record.ts";
 
 export function sqliteRecord(db: Database): LearningRecord {
   const insertView = db.prepare("INSERT INTO views (course, lesson, at) VALUES ($course, $lesson, $at)");
@@ -25,6 +25,11 @@ export function sqliteRecord(db: Database): LearningRecord {
     "SELECT (SELECT count(*) FROM answers WHERE submission_id = $id) + (SELECT count(*) FROM explanations WHERE submission_id = $id) AS n");
   return {
     openEncounter: async ({ course, lesson, page, now }) => openEncounter(db, { course, lesson, page, now }),
+    // No review either (it needs exposures and the record's order): it opens the lesson as written, and nothing else.
+    openLessonEncounter: async ({ course, lesson, lessonPage, page, notes, now }) => {
+      if (notes.length > 0 || canonical(page) !== canonical(lessonPage)) throw new Error("the SQLite record keeps no review");
+      return { encounter: openEncounter(db, { course, lesson, page, now }), page };
+    },
     submit: async (s, now) => submit(db, s, now),
     encounterAnswers: async (id) => encounterAnswers(db, id),
     lessonProgress: async (course) =>
@@ -43,5 +48,6 @@ export function sqliteRecord(db: Database): LearningRecord {
     recordDecisionNote: async () => { throw new Error("the SQLite record keeps no decision notes"); },
     decisionNotes: async () => { throw new Error("the SQLite record keeps no decision notes"); },
     encounterDecisionNotes: async () => { throw new Error("the SQLite record keeps no decision notes"); },
+    dueReview: async () => { throw new Error("the SQLite record keeps no review"); },
   };
 }

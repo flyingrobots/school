@@ -112,7 +112,7 @@ writes against ordinary cross-site requests, and hands learning-record work to P
 ## The learning record
 
 The record is Postgres, built by the numbered migrations in `server/db/migrations/` (`0001_init.sql`,
-`0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`) and reached only through the
+`0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_due_review.sql`) and reached only through the
 functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
@@ -156,9 +156,18 @@ evidence of another course than the choice's; an encounter it names must be of t
 and lesson and hold its block. The table checks that a note cites at least one row and that every
 cited `seq` is smaller than its own. Notes cite rows, never judgments, so a later regrading leaves
 a note pointing at the grading it named. `encounter_evidence` lists the rows of an encounter a
-note may cite; `choice_decision_notes` and `encounter_decision_notes` read notes back. Nothing
-writes notes yet: the due-review selector will ([flyingrobots/school#32](https://github.com/flyingrobots/school/issues/32)).
+note may cite; `choice_decision_notes` and `encounter_decision_notes` read notes back. The
+due-review selector writes them, one per item it brings back (see [due review](../due-review/README.md)).
 The SQLite adapter keeps no notes, and the contract's note cases do not run on it.
+
+Delayed review is migration 0005 (RFC 2 §5). `due_review` reads quiz answers, first tries,
+exposures and the time each block was last answered, by `seq`, and returns the blocks due with the
+rule that chose each and the rows it cites; it writes nothing. `open_lesson_encounter` opens a
+lesson with the items chosen at its top, snapshotted with it, and stores their decision notes with
+the new encounter in the same transaction. It finds an encounter to resume by the lesson as written
+(`encounters.lesson_hash`, or the snapshot's hash when no review was added), so a reload inside the
+resume window shows the review it opened with. The rule, the reasons and the page are in
+[due review](../due-review/README.md).
 
 Where the learner left off is the port's `lastStudied()`: the course, lesson and time of the latest
 encounter opened, answer or explanation stored, or view recorded. On Postgres it is
@@ -186,6 +195,7 @@ erDiagram
         text lesson
         text snapshot_hash FK
         integer aid_tracking "NULL: aid not observed"
+        text lesson_hash "the lesson as written; NULL: the snapshot is"
         timestamptz at
     }
     ANSWERS {

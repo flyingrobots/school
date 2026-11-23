@@ -232,3 +232,49 @@ export const DecisionNoteResult = z.discriminatedUnion("status", [
   z.object({ status: z.enum(["conflict", "rejected"]) }),
 ]);
 export type DecisionNoteResult = z.infer<typeof DecisionNoteResult>;
+
+// ---- Due review (RFC 2 §5; flyingrobots/school#32) --------------------------------------------
+
+/**
+ * Why a block came back: its latest weak first try was wrong; right, but after help shown for it in
+ * that encounter; or right while School was not recording help, so its aid is unknown.
+ */
+export const ReviewRule = z.enum(["due-review/wrong-first-try", "due-review/aided-first-try", "due-review/unknown-aid"]);
+export type ReviewRule = z.infer<typeof ReviewRule>;
+
+/**
+ * What to ask the selector: which of the course's quiz blocks could be shown, now, how long since a
+ * block was last answered before it may return, and at most how many to return.
+ */
+export const DueReviewQuery = z.object({
+  course: z.string().min(1).max(200),
+  blocks: z.array(blockId).max(10_000),
+  now: timestamp,
+  delayMs: ms,
+  limit: z.int().nonnegative().max(100),
+});
+export type DueReviewQuery = z.infer<typeof DueReviewQuery>;
+
+/**
+ * A block due for review, with the facts its reason is told from. `answeredAt` is the time of the
+ * first try that decided it; `corrected`, for a wrong first try, whether a later answer in that
+ * encounter was right; `shown`, the kinds of help among the evidence, each once, in the record's
+ * order; `lastSeen`, the time of the block's latest answer; `evidence`, the rows a note cites, by seq.
+ */
+export const DueItem = z.object({
+  blockId: z.string(),
+  rule: ReviewRule,
+  answeredAt: timestamp,
+  corrected: z.boolean(),
+  shown: z.array(ExposureKind),
+  lastSeen: timestamp,
+  evidence: z.array(Seq).min(1).max(100),
+});
+export type DueItem = z.infer<typeof DueItem>;
+
+/** A decision note for a block put in a lesson for review: stored for the encounter that shows it. */
+export type ReviewNote = { blockId: string; rule: string; reason: string; evidence: number[] };
+
+/** A review item as the lesson page shows it: the block, the rule that chose it, and its reason in words. */
+export const ReviewReason = z.object({ blockId: z.string(), rule: z.string(), reason: z.string() });
+export type ReviewReason = z.infer<typeof ReviewReason>;

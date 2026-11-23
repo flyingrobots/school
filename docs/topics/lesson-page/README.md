@@ -25,6 +25,17 @@ The frame and the reading blocks are the `@flyingrobots/lesson` registry block
 code, `web/src/pages/lesson.tsx` and `web/src/lib/school-api.ts`, loads the lesson and wires the
 blocks to the API.
 
+## Review items
+
+A lesson can open with quizzes from elsewhere in the course brought back for delayed review
+([due review](../due-review/README.md)). They arrive inside the lesson the API returns, in a section
+titled "Review" at its top (id `school:review`), and the reply's `review` lists each one's reason.
+The page renders that section like any other. Above each review quiz it shows a stock `Alert`
+titled "Back for review", with the reason in words, for example "Back because your first answer on
+21 November was wrong; you put it right on a later try." A review quiz is answered and recorded
+like the lesson's own. The review is part of the encounter's snapshot, so a reload shows the same
+items with the same reasons.
+
 ## What it records, and what it shows on load
 
 - Every verdict and grading on screen is the server's. The lesson JSON carries each choice's
@@ -102,3 +113,7 @@ not reach School" groups check `?aid=1`, one exposure per kind and showing, the 
 model answer, revision, resends by the same id, and that 400, 409 and 501 are final. The Figure 4
 case reads the derived aid from `GET /api/aid/:submissionId`: no recorded aid for the first
 explanation, aided for the revision.
+
+The "delayed review" group seeds the record with an answer from two days ago before School starts.
+It checks that the Review section and its reason come before the lesson's own quiz, and that a
+reload after answering shows the same reason with the quiz settled.
