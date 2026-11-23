@@ -1,8 +1,8 @@
 // The ports: what School's core needs from the world, defined by the core (RFC 3, §4).
 // Adapters implement them; the core never imports an adapter.
 import type {
-  Block, Encounter, ExplanationState, ExplanationSubmission, Grading, GradingInput, GradingRecord,
-  LessonProgress, Outcome, Recorded, SaveResult, SavedExplanation, Submission, SubmitResult, ViewEvent,
+  Aid, AidTracking, Block, Encounter, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingInput,
+  GradingRecord, LessonProgress, Outcome, Recorded, SaveResult, SavedExplanation, Submission, SubmitResult, ViewEvent,
 } from "./model.ts";
 
 /**
@@ -11,8 +11,12 @@ import type {
  * or deleted. Each method is atomic.
  */
 export interface LearningRecord {
-  /** Store the page as a snapshot, then resume this lesson's encounter inside the resume window or open a new one. */
-  openEncounter(o: { course: string; lesson: string; page: Block; now: string }): Promise<Encounter>;
+  /**
+   * Store the page as a snapshot, then resume this lesson's encounter inside the resume window or open a new one.
+   * `aidTracking` is the aid capture version the client follows, or null when it records no exposures; it has
+   * no default. An encounter resumes only under the same value, so a change of capture starts a new one.
+   */
+  openEncounter(o: { course: string; lesson: string; page: Block; now: string; aidTracking: AidTracking }): Promise<Encounter>;
   submit(s: Submission, now: string): Promise<SubmitResult>;
   /** What the learner has already answered in this encounter, oldest first. */
   encounterAnswers(encounterId: string): Promise<Recorded[]>;
@@ -25,6 +29,15 @@ export interface LearningRecord {
   /** The latest explanation per block in this encounter, each with its latest grading. */
   encounterExplanations(encounterId: string): Promise<ExplanationState[]>;
   recordView(v: ViewEvent, now: string): Promise<void>;
+  /**
+   * Whether this record stores exposures. One that does not refuses every exposure as `unsupported`
+   * and reports every aid as unknown: it never claims "no recorded aid" (RFC 2 §3).
+   */
+  readonly recordsExposures: boolean;
+  /** Store help shown for a block, once per exposure id. */
+  recordExposure(e: Exposure, now: string): Promise<ExposureResult>;
+  /** A quiz answer's or explanation's aid, derived by the record's order; null if there is no such submission. */
+  aid(submissionId: string): Promise<Aid | null>;
 }
 
 /** Turns an explanation into findings, or an honest failure. Never throws for a grading failure. */

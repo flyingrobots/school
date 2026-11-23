@@ -4,7 +4,7 @@
 // the functions through the LearningRecord port is flyingrobots/school#46.
 import { describe, expect, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
-import { migrate } from "./migrate.ts";
+import { migrate, readMigrations } from "./migrate.ts";
 
 /** Every table of the record. Asserted equal to the schema's tables, so a new one cannot be missed. */
 const RECORD_TABLES = ["answers", "encounters", "explanations", "exposures", "gradings", "snapshots", "views"];
@@ -214,7 +214,7 @@ describe("acceptance", () => {
   test("running the migrations twice changes nothing", async () => {
     const db = new PGlite();
     const first = await migrate(db);
-    expect(first.applied).toEqual([1]);
+    expect(first.applied).toEqual(readMigrations().map((m) => m.version));
     const before = await fingerprint(db);
     const second = await migrate(db);
     expect(second.applied).toEqual([]);

@@ -31,7 +31,7 @@ const signatures = async (db: PGlite, name: string) => (await db.query<{ f: stri
 test("0002 replaces record_exposure: the unchecked signature without an id is gone", async () => {
   const db = new PGlite();
   await migrate(db);
-  expect(await signatures(db, "record_exposure")).toEqual(["p_exposure uuid, p_encounter uuid, p_block text, p_kind text, p_at timestamptz"]);
+  expect(await signatures(db, "record_exposure")).toEqual(["p_exposure uuid, p_encounter uuid, p_block text, p_kind text, p_at timestamp with time zone"]);
   expect(await signatures(db, "submission_aid")).toEqual(["p_submission uuid"]);
 }, SLOW);
 

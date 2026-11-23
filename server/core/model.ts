@@ -62,14 +62,11 @@ export const GradeRequest = z.object({ submissionId: uuid });
  * aid tracking NULL, and its aid is unknown. 1: feedback, model answers, hints and references.
  */
 export const AID_CAPTURE_VERSIONS = [1] as const;
-export const AidTracking = z.union(AID_CAPTURE_VERSIONS.map((v) => z.literal(v))).nullable();
+export const AidTracking = z.literal(AID_CAPTURE_VERSIONS).nullable();
 export type AidTracking = z.infer<typeof AidTracking>;
 
-/** The lesson API's query: `view`, and `aid`, the capture version the client records; absent means untracked. */
-export const LessonQuery = z.object({
-  view: z.string().nullable(),
-  aid: z.enum(AID_CAPTURE_VERSIONS.map(String) as [string, ...string[]]).transform(Number).pipe(AidTracking).nullable(),
-});
+/** The lesson API's `aid` query value: a known capture version, written as a plain decimal. */
+export const AidQuery = z.string().regex(/^[1-9][0-9]{0,8}$/).transform(Number).pipe(z.literal(AID_CAPTURE_VERSIONS));
 
 /** Help shown to the learner for one block (RFC 2 §3). */
 export const ExposureKind = z.enum(["hint", "model-answer", "feedback", "reference"]);
