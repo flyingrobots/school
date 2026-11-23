@@ -11,10 +11,11 @@ const dockerfile = readFileSync(join(dir, "Dockerfile"), "utf8");
 
 /**
  * What the build context keeps, per .dockerignore: the manifest, the lockfile, every non-test module outside contract/
- * and testing/, and the SQL migrations under db/.
+ * and testing/, the SQL migrations under db/, and the published output schemas under schemas/.
  */
 const admitted = (path: string) => path === "package.json" || path === "bun.lock" ||
   (path.startsWith("db/") && path.endsWith(".sql")) ||
+  (/^schemas\/[^/]+\.schema\.json$/.test(path)) ||
   (path.endsWith(".ts") && !path.endsWith(".test.ts") && !path.startsWith("contract/") && !path.startsWith("testing/") && !path.startsWith("node_modules/"));
 
 function modules(at = dir): string[] {
@@ -28,7 +29,7 @@ const shipped = modules().filter(admitted);
 
 test("the image admits modules at any depth, the manifest and lockfile, the migrations, and no tests, test helpers, contract suites or host node_modules", () => {
   const rules = readFileSync(join(dir, ".dockerignore"), "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
-  expect(rules).toEqual(["*", "!package.json", "!bun.lock", "!**/*.ts", "!db/**/*.sql", "**/*.test.ts", "contract/**", "testing/**", "node_modules/**"]);
+  expect(rules).toEqual(["*", "!package.json", "!bun.lock", "!**/*.ts", "!db/**/*.sql", "!schemas/*.schema.json", "**/*.test.ts", "contract/**", "testing/**", "node_modules/**"]);
   expect(dockerfile).toMatch(/^COPY package\.json bun\.lock \.\/$/m);
   expect(dockerfile).toMatch(/^RUN bun install --production --frozen-lockfile$/m);
   expect(dockerfile).toMatch(/^COPY \. \.\/$/m);
@@ -111,4 +112,15 @@ test("compose runs the migrate job once, as the superuser, before the server, an
 
 test("the image ships the migrate command", () => {
   expect(shipped).toContain("migrate.ts");
+});
+
+// flyingrobots/school#120: `migrate.ts --help` and `--schema` read the published schemas at run
+// time, and every line it prints names one, so the image must carry every one of them.
+test("every published output schema is shipped, beside the migrate command that reads them", () => {
+  const files = readdirSync(join(dir, "schemas")).filter((f) => f.endsWith(".schema.json"));
+  expect(files.length).toBeGreaterThan(0);
+  expect(shipped).toContain("migrate.ts");
+  expect(shipped).toContain("jsonl.ts");
+  for (const f of files) expect(admitted(join("schemas", f))).toBe(true);
+  expect(admitted("schemas/notes.md")).toBe(false);
 });

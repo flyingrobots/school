@@ -15,11 +15,13 @@ Start here. Each page has one job; this page routes to all of them.
 | [Back up and restore](workflows/backup-and-restore/README.md) | How-to: check the scheduled `pg_dump` backups, drill a restore, and restore the record for real. |
 | [School's secrets](topics/secrets/README.md) | Reference: the three secrets in the macOS Keychain, `./school up`, and how each reaches its process as a compose secret file; with its [test plan](topics/secrets/test-plan.md). |
 | [Upgrade a compose deployment](workflows/upgrade/README.md) | How-to: take a new version into a running deployment, including the first upgrades to the migrate job and to the Keychain (`./school import`), and what each failure means. |
+| [The migrate job's output](topics/migrate-job/README.md) | Reference: what `server/migrate.ts` prints, its message types and schemas, `--help`, `--schema` and `--human`, and what the contract cannot cover; with its [test plan](topics/migrate-job/test-plan.md). |
 | [Due review](topics/due-review/README.md) | Reference: which quizzes come back for delayed review, why, and where they are shown; with its [test plan](topics/due-review/test-plan.md). |
 | [Working notes](working-notes.md) | How-to notes for anyone changing the framework. |
 | [RFC 1: School](rfc/0001-school.md) | The original design and the learning record contract. Draft. |
 | [RFC 2: Lessons written for each learner](rfc/0002-lessons-written-for-each-learner.md) | Proposal: courses as curricula, lessons and quizzes prepared per learner, exams, completion. Draft. |
 | [RFC 3: Postgres functions and generated types](rfc/0003-postgres-functions-and-generated-types.md) | Decided, in progress: the server as a hexagon, the record in Postgres functions, PGlite in tests, types from Wesley. Draft. |
+| [RFC 4: Publishing courses](rfc/0004-publishing-courses.md) | Proposal: a public index of course repositories and a static catalog built from it; School stays private. Awaiting the maintainer's decision. |
 | [ADRs](adr/) | The decisions, in order, with what each cost. |
 
 Living pages describe only what exists on the default branch. Proposals live in RFCs until they

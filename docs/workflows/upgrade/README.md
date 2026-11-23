@@ -130,7 +130,9 @@ migrate-1  | {"kind":"school.migrate","event":"done","ok":true,"where":"postgres
 school-1   | school: record in Postgres at postgres://postgres:5432/school as school_app
 ```
 
-`applied` lists the migrations this run applied; `[]` means the record was already current.
+`applied` lists the migrations this run applied; `[]` means the record was already current. A run
+that applies migrations also prints an `applied` line for each as it commits. Every line, and
+`--help` and `--schema`, are described in [the migrate job's output](../../topics/migrate-job/README.md).
 
 ## When it fails
 
@@ -142,8 +144,8 @@ school-1   | school: record in Postgres at postgres://postgres:5432/school as sc
 | `./school up` exits 2: `SCHOOL_POSTGRES_PASSWORD ... there is no terminal to ask at` | It was run without a terminal, and the Keychain has no superuser password | Do step 3, or run `./school up` once at a terminal |
 | `migrate` is `Exited (1)` with `password authentication failed for user "postgres"` | The Keychain's superuser password is not the one the database was created with, for example one generated at the prompt | Store the right one: `security delete-generic-password -a school -s SCHOOL_POSTGRES_PASSWORD`, then `./school up` at a terminal and type it |
 | `environment variable "SCHOOL_POSTGRES_PASSWORD" required by secret ... is not set` | `docker compose up` was run directly | Run `./school up` |
-| `migrate` is `Exited (2)`, with an `error` line in `./school compose logs migrate` | A setting is missing or invalid, for example `SCHOOL_APP_PASSWORD` too short or with other characters than letters and digits. The line says which | Fix it in the Keychain (delete the item and let `./school up` generate it), then step 4 |
-| `migrate` is `Exited (1)`, with an `error` line | The database refused, for example a migration failed (the line names the file, which was rolled back) or the superuser password is wrong | Read the message. Compose does not start the new server while the job fails; whether a server container already running keeps serving was not drilled |
+| `migrate` is `Exited (2)`, with an `"error":"settings"` line in `./school compose logs migrate` | A setting is missing or invalid, for example `SCHOOL_APP_PASSWORD` too short or with other characters than letters and digits. The line says which | Fix it in the Keychain (delete the item and let `./school up` generate it), then step 4 |
+| `migrate` is `Exited (1)`, with an `"error":"failed"` line | The database refused, for example a migration failed (the line names the file, which was rolled back) or the superuser password is wrong | Read the message. Compose does not start the new server while the job fails; whether a server container already running keeps serving was not drilled |
 | `school` restarts over and over, and its log says `the server logs into Postgres only as school_app ... this one ...` | The login check refused: it names each reason. For example `school_app` was granted something by hand, or the record's database lacks the job's `REVOKE` | Undo the hand grant (never grant `school_app` anything by hand), or run step 4 so the job runs again |
 | `school` restarts over and over, and its log says `permission denied for schema public` | An old server image, from before flyingrobots/school#91, is running beside the new settings (seen in review, with a `compose.yaml` without `pull_policy: build`) | Run `./school up` |
 | `No such image: <project>-migrate:latest` | `up` ran with `--no-build`, so nothing was built | Run `./school up` |
@@ -166,7 +168,8 @@ was adding `SCHOOL_APP_PASSWORD` there. The starting point was a deployment at `
 layout in which the server migrated as the superuser. It held one answer written through School's
 API. `up` was run first without `--build`, to check that `pull_policy: build` replaces the old
 server image, and then with it. The full transcript, with no password in it, is in that pull
-request. Abridged:
+request. Its `migrate` lines predate flyingrobots/school#120, which added `_schema`, `run` and
+`at` to every line. Abridged:
 
 ```text
 $ docker compose up -d            # before adding SCHOOL_APP_PASSWORD

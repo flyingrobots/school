@@ -126,7 +126,7 @@ section names each piece as it is in the code.
 | Postgres adapter | `server/adapters/postgres.ts` | `LearningRecord` as one call of a `school.*` function per method, every result parsed by the model |
 | `Sql` port and its drivers | `server/adapters/sql.ts`, `pglite.ts`, `bunsql.ts` | One `query(text, params)`; PGlite in process, or `Bun.SQL` on a pool |
 | Opening the record | `server/adapters/database.ts`, `lock.ts` | Reads `SCHOOL_DATABASE_URL`; on Postgres, refuses a login that fails any of [the login check](#the-login-check)'s listed checks; on PGlite, runs the migrations as the owner and takes `school_app`'s role; refuses any statement but a function call, and locks a PGlite folder |
-| The migrate job | `server/migrate.ts` | With `SCHOOL_MIGRATE_URL` (the owner's or superuser's URL), runs the migrations as the owner, makes `school_app` a login with `SCHOOL_APP_PASSWORD`, clears its role settings, and exits; JSON Lines on stdout and stderr |
+| The migrate job | `server/migrate.ts` | With `SCHOOL_MIGRATE_URL` (the owner's or superuser's URL), runs the migrations as the owner, makes `school_app` a login with `SCHOOL_APP_PASSWORD`, clears its role settings, and exits; prints schema'd JSON Lines on stdout and stderr through `server/jsonl.ts`, each line's schema in `server/schemas/` ([the migrate job's output](../migrate-job/README.md)) |
 | Grader | `server/server.ts`, `server/grade.ts` | The bridge client; with no bridge connected, an attempt fails and says so |
 | Clock | `server/server.ts` | The system clock; tests pass a fixed one |
 

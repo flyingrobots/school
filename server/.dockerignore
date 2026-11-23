@@ -3,6 +3,7 @@
 !bun.lock
 !**/*.ts
 !db/**/*.sql
+!schemas/*.schema.json
 **/*.test.ts
 contract/**
 testing/**
