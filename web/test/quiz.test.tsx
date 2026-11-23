@@ -291,3 +291,48 @@ test("the block and its example import only React, ui-sdk entries, stock shadcn 
   expect(foreign("quiz.tsx", ["react", "@ui-sdk/react/radio"])).toEqual([])
   expect(foreign("quiz-example.tsx", ["@/components/example", "@/components/quiz"])).toEqual([])
 })
+
+// Showing the explanation is help the record must see (RFC 2 §3, flyingrobots/school#51): the block
+// says when it shows it, once per showing, and the page records it. Strict mode runs every effect
+// twice in development, so the count is checked there too.
+test("onWhyShown: once when a right answer brings up the explanation, never for a wrong one", async () => {
+  const s = server()
+  const shown: number[] = []
+  const host = render(
+    <React.StrictMode>
+      <Quiz {...quiz} onAnswer={s.onAnswer} onWhyShown={() => shown.push(1)} />
+    </React.StrictMode>
+  )
+  expect(shown).toEqual([])
+  act(() => click(choice(host, "venus")))
+  await resolve(s.calls[0]!, false)
+  expect(why(host)).toBeNull()
+  expect(shown).toEqual([])
+  act(() => click(choice(host, "mercury")))
+  await resolve(s.calls[1]!, true)
+  expect(why(host)).toBe(quiz.why)
+  expect(shown).toEqual([1])
+})
+
+test("onWhyShown: once when a settled quiz first renders with its explanation", () => {
+  const shown: number[] = []
+  render(
+    <React.StrictMode>
+      <Quiz {...quiz} onAnswer={server().onAnswer} recorded={{ choiceId: "mercury", correct: true }} onWhyShown={() => shown.push(1)} />
+    </React.StrictMode>
+  )
+  expect(shown).toEqual([1])
+})
+
+test.each<[string, QuizState, number]>([
+  ["unanswered", { status: "unanswered" }, 0],
+  ["in-flight", { status: "in-flight", choiceId: "venus" }, 0],
+  ["wrong", { status: "wrong", choiceId: "venus" }, 0],
+  ["right", { status: "right", choiceId: "mercury" }, 1],
+  ["settled", { status: "settled", choiceId: "mercury" }, 1],
+])("QuizView in %s calls onWhyShown exactly when it shows the explanation", (_, state, times) => {
+  const shown: number[] = []
+  const host = render(<QuizView {...quiz} state={state} onChoose={() => {}} onWhyShown={() => shown.push(1)} />)
+  expect(shown.length).toBe(times)
+  expect(why(host) !== null).toBe(times === 1)
+})

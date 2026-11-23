@@ -84,6 +84,7 @@ JSON API.
 | POST | `/api/grade` | One grading attempt through the bridge |
 | POST | `/api/view` | Records a view |
 | POST | `/api/exposure` | Records help shown for a block: `{ exposureId, encounterId, blockId, kind }`, kind `hint`, `model-answer`, `feedback` or `reference`. A stored or resent id answers 200 (`stored`, `duplicate`); the id naming something else is a conflict (409); no such encounter, an untracked one, or a block that is not a quiz or explain block in its snapshot is rejected (400). An adapter that records no exposures (SQLite, no longer used by the server) answers unsupported (501) |
+| GET | `/api/aid/:submissionId` | One answer's or explanation's derived aid: `{ submissionId, aid }`, aid `aided`, `no-recorded-aid` or `unknown`. No such submission is 404; an id that is not a UUID is refused (400) |
 | GET | `/api/settings/status` | Whether the bridge answers |
 | GET, POST | `/api/settings/bridge` | The bridge address and token; the token is never returned except once when generated. A new address clears a saved token, and is refused (409) while the token comes from the environment |
 | GET, POST | `/api/settings/agents` | The bridge's agents as its file declares them; a POST only reorders them and switches them on or off |
@@ -140,7 +141,8 @@ explanation's aid in `submission_aid`: **unknown** when the encounter's `aid_tra
 **no recorded aid** otherwise. Aid is never stored, and `seq`, not `at`, decides before and after.
 The server runs on this record, so `POST /api/exposure` stores exposures. The SQLite adapter,
 no longer used by the server, declares that it records none: it refuses them and reports every aid
-as unknown.
+as unknown. The lesson page opens lessons with `?aid=1` and posts each exposure it shows (see
+[the lesson page](../lesson-page/README.md#the-help-it-records)).
 
 Decisions are notes that name their evidence (RFC 2 §3 and §5). Migration 0003 adds
 `decision_notes`: what School chose (a course, a lesson, or a block of a lesson), the rule that
