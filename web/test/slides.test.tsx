@@ -128,12 +128,14 @@ test("every key has its Kbd hint on screen", () => {
   expect(part(host, "next")!.getAttribute("aria-keyshortcuts")).toBe("ArrowRight l ArrowDown j PageDown")
 })
 
-test("the progress bar names the position in words", () => {
+test("the progress bar fills to the position, for the eye only: the position is said in words, politely", () => {
   const host = render(<Slides title="Orbits" slides={deck} />)
   press("l")
-  const bar = host.querySelector("[data-slot=progress]")!
-  expect(bar.getAttribute("aria-valuetext")).toBe("Slide 2 of 4")
-  expect(bar.getAttribute("aria-valuenow")).toBe("50")
+  const bar = host.querySelector<HTMLElement>("[data-slot=progress]")!
+  expect(bar.getAttribute("aria-hidden")).toBe("true")
+  expect(bar.querySelector<HTMLElement>("[data-slot=progress-indicator]")!.style.transform).toBe("translateX(-50%)")
+  expect(part(host, "position")!.getAttribute("aria-live")).toBe("polite")
+  expect(position(host)).toBe("Slide 2 of 4")
 })
 
 test("the keys do nothing while focus is elsewhere on the page, such as a sidebar beside the slides", () => {

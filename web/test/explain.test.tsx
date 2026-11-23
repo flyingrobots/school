@@ -53,10 +53,10 @@ const succeeded = (f: Findings = findings): Explanation["grading"] =>
 const failed = (error = "The grader timed out."): Explanation["grading"] =>
   ({ id: 1, status: "failed", error, model: "grader-model", supersedes: null, at: "2026-11-22T12:01:00.000Z" })
 
-let unmount: (() => void) | undefined
+// Every root a test renders is unmounted after it, so none keeps a shortcut registered into the next file.
+const unmounts: (() => void)[] = []
 afterEach(() => {
-  act(() => unmount?.())
-  unmount = undefined
+  act(() => unmounts.splice(0).forEach((u) => u()))
   document.body.innerHTML = ""
 })
 
@@ -65,7 +65,7 @@ function render(node: React.ReactNode): HTMLElement {
   document.body.appendChild(host)
   const root = createRoot(host)
   act(() => root.render(node))
-  unmount = () => root.unmount()
+  unmounts.push(() => root.unmount())
   return host
 }
 

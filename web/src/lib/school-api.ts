@@ -97,9 +97,14 @@ export const AID_CAPTURE_VERSION = 1
 
 /** Opens the lesson in the web view, which opens or resumes the learner's tracked encounter. */
 export async function openLesson(course: string, lesson: string, signal?: AbortSignal): Promise<LessonReply> {
+  return lessonRequest(`/api/courses/${encodeURIComponent(course)}/lessons/${encodeURIComponent(lesson)}?aid=${AID_CAPTURE_VERSION}`, LessonReply, signal)
+}
+
+/** One GET of a lesson, in either view, parsed with `reply`; rejects with LessonUnavailable. */
+async function lessonRequest<T>(path: string, reply: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
   let res: Response
   try {
-    res = await fetch(`/api/courses/${encodeURIComponent(course)}/lessons/${encodeURIComponent(lesson)}?aid=${AID_CAPTURE_VERSION}`, { headers: { accept: "application/json" }, signal })
+    res = await fetch(path, { headers: { accept: "application/json" }, signal })
   } catch (e) {
     if (signal?.aborted) throw e
     throw new LessonUnavailable("failed", "School could not be reached.")
@@ -108,9 +113,21 @@ export async function openLesson(course: string, lesson: string, signal?: AbortS
   // School's own 404 names what is missing; any other 404 (a proxy's, say) is a failure to load.
   if (res.status === 404 && z.object({ error: z.string() }).safeParse(body).success) throw new LessonUnavailable("missing", "There is no such lesson in this course.")
   if (!res.ok) throw new LessonUnavailable("failed", `School answered ${res.status}.`)
-  const parsed = LessonReply.safeParse(body)
+  const parsed = reply.safeParse(body)
   if (!parsed.success) throw new LessonUnavailable("failed", "School's reply was not a lesson.")
   return parsed.data
+}
+
+/** The slides view's reply (server/server.ts, lessonJson): the lesson and its neighbours, and no encounter. */
+export const SlidesReply = z.object({ course: z.string(), view: z.literal("slides"), lesson: block, prev: Neighbour, next: Neighbour })
+export type SlidesReply = z.infer<typeof SlidesReply>
+
+/**
+ * Reads the lesson in the slides view, which opens no encounter and records nothing. It sends no
+ * `?aid=`: nothing in the slides view is recorded, so it declares no capture version.
+ */
+export async function readSlides(course: string, lesson: string, signal?: AbortSignal): Promise<SlidesReply> {
+  return lessonRequest(`/api/courses/${encodeURIComponent(course)}/lessons/${encodeURIComponent(lesson)}?view=slides`, SlidesReply, signal)
 }
 
 async function post<T>(path: string, body: unknown, reply: z.ZodType<T>): Promise<T> {
