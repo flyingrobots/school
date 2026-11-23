@@ -195,14 +195,19 @@ type View = "web" | "slides";
 const isView = (v: string | null): v is View => v === "web" || v === "slides";
 const summary = (p: Block | undefined) => (p === undefined || p.type !== "page" ? null : { id: p.id, title: p.title, subtitle: p.subtitle });
 
-/** A course: its lessons, each with how many of its quizzes have been answered correctly, and its reference documents. */
+/**
+ * A course: its lessons, each with how many of its quizzes have been answered correctly, and its
+ * reference documents. Lessons that cannot be read do not hide the documents
+ * (flyingrobots/school#115): `lessons` is then null and `lessonsError` says why, in a 200.
+ */
 async function courseJson(c: Course): Promise<Response> {
   const { library, error } = lessons(c);
-  if (library === null) return json({ error: error?.message ?? "the lessons could not be loaded" }, 500);
+  const reference = referenceDocs(c);
+  if (library === null) return json({ name: c.name, reference, lessons: null, lessonsError: error?.message ?? "the lessons could not be loaded" });
   const done = await school.lessonProgress(c.name);
   return json({
     name: c.name,
-    reference: referenceDocs(c),
+    reference,
     lessons: library.pages.map((p) => {
       const ids = quizIds(p);
       return { ...summary(p), quizzes: ids.size, answeredCorrectly: [...ids].filter((id) => done[p.id]?.includes(id)).length };
