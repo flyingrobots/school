@@ -48,7 +48,9 @@ import {
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
-import { useCourse } from "@/lib/course"
+import { useDocumentTitle } from "@/lib/document-title"
+import { titleOf, useCourse } from "@/lib/course"
+import { useCourseTitle } from "@/lib/courses"
 import type { Course, CourseLoad } from "@/lib/school-api"
 
 gsap.registerPlugin(useGSAP)
@@ -79,6 +81,8 @@ const grid =
 export function CoursePage() {
   const { course: name } = useParams()
   const [state, retry] = useCourse(name!)
+  const title = titleOf(state, useCourseTitle(name!))
+  useDocumentTitle(title)
   const scope = React.useRef<HTMLDivElement>(null)
 
   useGSAP(
@@ -113,12 +117,12 @@ export function CoursePage() {
             </BreadcrumbItem>
             <BreadcrumbSeparator />
             <BreadcrumbItem>
-              <BreadcrumbPage>{name}</BreadcrumbPage>
+              <BreadcrumbPage>{title}</BreadcrumbPage>
             </BreadcrumbItem>
           </BreadcrumbList>
         </Breadcrumb>
         <h1 className="font-heading text-4xl font-semibold tracking-tight sm:text-5xl 2xl:text-6xl">
-          {name}
+          {title}
         </h1>
         {referenceOf(state).length > 0 && (
           <Button asChild size="lg" variant="outline" className="self-start">

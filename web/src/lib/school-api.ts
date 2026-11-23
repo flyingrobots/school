@@ -391,10 +391,13 @@ export function sendExposure(x: Exposure): Promise<Delivery<null>> {
 }
 
 // GET /api/courses (server/server.ts, coursesJson): every course, in the server's order (by name).
-// Counts are null when a course's lessons cannot be read.
+// `name` is the slug the addresses carry; `title` is what the pages show: the course's course.json
+// title, or its name when it declares none (flyingrobots/school#143). Counts are null when a course's
+// lessons cannot be read.
 export const CoursesReply = z.array(
   z.object({
     name: z.string(),
+    title: z.string(),
     lessons: z.number().int().nonnegative().nullable(),
     reference: z.number().int().nonnegative(),
     quizzes: z.number().int().nonnegative().nullable(),
@@ -449,11 +452,13 @@ const CourseLessons = z.array(
 export const CourseReply = z.union([
   z.object({
     name: z.string(),
+    title: z.string(),
     reference: z.array(z.string()),
     lessons: CourseLessons,
   }),
   z.object({
     name: z.string(),
+    title: z.string(),
     reference: z.array(z.string()),
     lessons: z.null(),
     lessonsError: z.string(),
@@ -462,6 +467,7 @@ export const CourseReply = z.union([
 /** A course whose lessons were read. */
 export type Course = {
   name: string
+  title: string
   reference: string[]
   lessons: z.infer<typeof CourseLessons>
 }
@@ -471,7 +477,7 @@ export type CourseLoad =
   | { kind: "ready"; course: Course }
   | { kind: "missing" }
   // The course's lessons cannot be read, with the server's reason; its reference documents can be.
-  | { kind: "unreadable"; reason: string; reference: string[] }
+  | { kind: "unreadable"; title: string; reason: string; reference: string[] }
   // No usable answer at all: the server is unreachable or answered something else.
   | { kind: "unloaded" }
 
@@ -492,12 +498,18 @@ export async function loadCourse(
     if (c.lessons === null)
       return {
         kind: "unreadable",
+        title: c.title,
         reason: c.lessonsError,
         reference: c.reference,
       }
     return {
       kind: "ready",
-      course: { name: c.name, reference: c.reference, lessons: c.lessons },
+      course: {
+        name: c.name,
+        title: c.title,
+        reference: c.reference,
+        lessons: c.lessons,
+      },
     }
   } catch {
     return { kind: "unloaded" }

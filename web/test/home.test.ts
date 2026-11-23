@@ -29,6 +29,8 @@ import {
   timeout,
   type Started,
 } from "../../server/testing/processes.ts"
+import { close } from "./routes.ts"
+import { warm } from "./vite.ts"
 
 setDefaultTimeout(30_000)
 
@@ -153,8 +155,9 @@ beforeAll(
     await vite.listen()
     base = vite.resolvedUrls!.local[0]!.replace(/\/$/, "")
     browser = await chromium.launch({ channel: "chrome" })
+    await warm(browser, base)
   },
-  timeout(2) + 20_000
+  timeout(2) + 50_000
 )
 
 afterAll(async () => {
@@ -208,6 +211,12 @@ const words = (c: CourseJson) =>
         : `${c.answeredCorrectly} of ${c.quizzes} ${c.quizzes === 1 ? "quiz" : "quizzes"} answered correctly`
 
 describe("a learner who has studied", () => {
+  test("the browser title is School", async () => {
+    const p = await open()
+    expect(await p.title()).toBe("School")
+    await p.context().close()
+  })
+
   test("lists every course, in order, with its progress in words, matching the API", async () => {
     const expected = await api<CourseJson[]>(studied, "/api/courses")
     expect(expected.map((c) => c.name)).toEqual([
@@ -231,7 +240,7 @@ describe("a learner who has studied", () => {
     expect(await courses(p).nth(1).textContent()).toContain(
       "1 lesson and a reference"
     )
-    await p.context().close()
+    await close(p.context())
   })
 
   test("shows no percentage, letter or score", async () => {
@@ -243,7 +252,7 @@ describe("a learner who has studied", () => {
     expect(
       await main(p).locator("[role=progressbar], [data-slot=progress]").count()
     ).toBe(0)
-    await p.context().close()
+    await close(p.context())
   })
 
   test("comes first with the lesson to continue: its progress and the next question, linking to it", async () => {
@@ -273,7 +282,7 @@ describe("a learner who has studied", () => {
         els.find((e) => e.closest("header") === null)?.getAttribute("href")
       )
     expect(first).toBe("/courses/aion/lessons/l2")
-    await p.context().close()
+    await close(p.context())
   })
 
   test("Enter, straight after the page loads, continues the lesson", async () => {
@@ -286,7 +295,7 @@ describe("a learner who has studied", () => {
     )
     await p.keyboard.press("Enter")
     await p.waitForURL(base + "/courses/aion/lessons/l2")
-    await p.context().close()
+    await close(p.context())
   })
 
   test("j reaches every course in order, and Enter opens the focused one", async () => {
@@ -316,7 +325,7 @@ describe("a learner who has studied", () => {
     ).toBe("/courses/broken")
     await p.keyboard.press("Enter")
     await p.waitForURL(base + "/courses/broken")
-    await p.context().close()
+    await close(p.context())
   })
 
   test("uses the width: one column on a phone, the lesson and the courses side by side on a laptop", async () => {
@@ -328,7 +337,7 @@ describe("a learner who has studied", () => {
       const box = async (l: ReturnType<typeof resume>) =>
         (await l.boundingBox())!
       const [r, c] = [await box(resume(p)), await box(courses(p).first())]
-      await p.context().close()
+      await close(p.context())
       return {
         sideBySide: c.x >= r.x + r.width,
         stacked: Math.round(c.x) === Math.round(r.x) && c.y > r.y + r.height,
@@ -361,7 +370,7 @@ describe("a fresh record", () => {
     expect(
       await resume(p).getByRole("link", { name: /Start/ }).getAttribute("href")
     ).toBe("/courses/aion/lessons/l1")
-    await p.context().close()
+    await close(p.context())
   })
 })
 
@@ -384,7 +393,7 @@ describe("states", () => {
     await courses(p).first().waitFor()
     await resume(p).waitFor()
     expect(await main(p).locator("[data-slot=skeleton]").count()).toBe(0)
-    await c.close()
+    await close(c)
   })
 
   test("a course list that cannot be loaded is reported, and Try again recovers", async () => {
@@ -404,7 +413,7 @@ describe("states", () => {
     await alert.getByRole("button", { name: "Try again" }).click()
     await courses(p).first().waitFor()
     expect(await main(p).getByRole("alert").count()).toBe(0)
-    await c.close()
+    await close(c)
   })
 
   test("where the learner left off failing is reported, and the courses are still listed", async () => {
@@ -423,7 +432,7 @@ describe("states", () => {
     expect(text).toContain("the record is unavailable")
     await courses(p).first().waitFor()
     expect(await courses(p).count()).toBe(4)
-    await c.close()
+    await close(c)
   })
 
   test("no courses at all says so", async () => {
@@ -438,6 +447,6 @@ describe("states", () => {
     expect(await empty.textContent()).toContain("No courses yet")
     expect(await resume(p).count()).toBe(0)
     expect(await main(p).locator("[data-slot=skeleton]").count()).toBe(0)
-    await c.close()
+    await close(c)
   })
 })

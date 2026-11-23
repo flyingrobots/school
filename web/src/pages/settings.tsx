@@ -52,6 +52,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
+import { useDocumentTitle } from "@/lib/document-title"
 import {
   readSettings,
   saveAgents as postAgents,
@@ -114,6 +115,7 @@ const envLock = (name: string) =>
   `Set by ${name} in the server's environment, which overrides this page. Change it there.`
 
 export function SettingsPage() {
+  useDocumentTitle("Settings")
   const scope = React.useRef<HTMLDivElement>(null)
   const [bridge, setBridge] = React.useState<Bridge | null>(null)
   const [status, setStatus] = React.useState<Status | null>(null)

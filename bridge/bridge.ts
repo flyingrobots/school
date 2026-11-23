@@ -8,7 +8,9 @@
 // re-read on every request so an edit takes effect without a restart. Agents and their commands
 // are declared only in that file; over HTTP they can be reordered, switched on and off, and
 // tested, never given a command (flyingrobots/school#18). Logs are JSON Lines on
-// stdout; they never contain a prompt or an answer, which are the learner's private work.
+// stdout; they never contain a prompt or an answer, which are the learner's private work. Every
+// failure is a `bridge.error` line too: a refusal to start (a bad setting, a taken port) exits 2,
+// and any other uncaught throw or rejection exits 1 (flyingrobots/school#134).
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -22,10 +24,21 @@ const configPath = process.env.SCHOOL_BRIDGE_CONFIG ?? join(homedir(), ".config"
 const host = process.env.SCHOOL_BRIDGE_HOST ?? "127.0.0.1";
 const port = Number(process.env.SCHOOL_BRIDGE_PORT ?? 4748);
 
-function exit(message: string): never {
-  log("error", { message });
+const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+function exit(message: string, fields: Record<string, unknown> = {}): never {
+  log("error", { message, ...fields });
   process.exit(2);
 }
+
+// The top-level handler: whatever escapes is one error line and a non-zero exit, never Bun's own
+// uncaught-error output. Only the message is logged; a stack could quote the learner's work.
+const crash = (e: unknown) => {
+  log("error", { message: messageOf(e) });
+  process.exit(1);
+};
+process.on("uncaughtException", crash);
+process.on("unhandledRejection", crash);
 if (token.length < 16) exit("set SCHOOL_BRIDGE_TOKEN to a shared secret of at least 16 characters; the server sends the same one");
 // Port 0 asks the OS for a free port; the `bridge.listening` line says which one it got.
 if (!Number.isInteger(port) || port < 0 || port > 65535) exit(`SCHOOL_BRIDGE_PORT ${process.env.SCHOOL_BRIDGE_PORT} is not a port`);
@@ -110,10 +123,25 @@ const serially = <T>(work: () => Promise<T>): Promise<T> => {
   return next;
 };
 
-const server = Bun.serve({
+function listen(options: Parameters<typeof Bun.serve>[0]) {
+  try {
+    return Bun.serve(options);
+  } catch (e) {
+    const code = (e as { code?: unknown } | null)?.code;
+    if (code === "EADDRINUSE") exit(`${host}:${port} is already in use; stop what holds it or set SCHOOL_BRIDGE_PORT to another port`, { host, port, code });
+    exit(`could not listen on ${host}:${port} (${messageOf(e)})`, { host, port, code: typeof code === "string" ? code : null });
+  }
+}
+
+const server = listen({
   hostname: host,
   port,
   idleTimeout: 255,
+  // A request handler's throw is a line and a 500, not Bun's error page and stack on stderr.
+  error(e) {
+    log("error", { message: messageOf(e) });
+    return json({ status: "failed", error: "the bridge failed on this request; its log has the reason" }, 500);
+  },
   async fetch(req) {
     const { pathname } = new URL(req.url);
     if (!authorised(req)) return json({ status: "unauthorised" }, 401);

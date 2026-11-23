@@ -6,8 +6,9 @@ Reference: what `/courses/:course/reference` shows. The page sits in the
 
 ## What it shows
 
-- **Reference** as the page heading, under a breadcrumb: Home, the course (a link back to its
-  [course page](../course-page/README.md)), Reference.
+- **Reference** as the page heading, under a breadcrumb: Home, the course by its title
+  ([a course's folder](../course-format/README.md)), a link back to its
+  [course page](../course-page/README.md), then Reference.
 - Every document the API lists, in the server's order (by file name), as a link. Each shows its
   file name without `.html`, and says it opens in a new tab.
 
@@ -52,3 +53,5 @@ Empty, Alert, Button, Skeleton, Spinner, Kbd). It shares `useCourse` (`web/src/l
 `loadCourse` with the course page. `web/test/reference.test.ts` drives it in Chrome against the
 Vite dev server, with `/api` requests and document requests answered by a real School server over
 course folders written by the test; [the test plan](test-plan.md) lists its cases.
+
+The browser title is `Reference · <course> · School`.

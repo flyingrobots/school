@@ -28,6 +28,8 @@ import {
   type Started,
 } from "../../server/testing/processes.ts"
 import { heldIntro, opacities, pressJ, stops } from "./intro.ts"
+import { close } from "./routes.ts"
+import { warm } from "./vite.ts"
 
 setDefaultTimeout(30_000)
 
@@ -161,8 +163,9 @@ beforeAll(
     await vite.listen()
     base = vite.resolvedUrls!.local[0]!.replace(/\/$/, "")
     browser = await chromium.launch({ channel: "chrome" })
+    await warm(browser, base)
   },
-  timeout(1) + 20_000
+  timeout(1) + 50_000
 )
 
 afterAll(async () => {
@@ -206,6 +209,12 @@ const words = (l: { quizzes: number; answeredCorrectly: number }) =>
     : `${l.answeredCorrectly} of ${l.quizzes} ${l.quizzes === 1 ? "quiz" : "quizzes"} answered correctly`
 
 describe("a course with lessons", () => {
+  test("the browser title names the course", async () => {
+    const p = await open("/courses/aion")
+    expect(await p.title()).toBe("aion · School")
+    await p.context().close()
+  })
+
   test("lists every lesson, in order, with its progress in words, matching the API", async () => {
     const expected = await api("aion")
     expect(
@@ -228,7 +237,7 @@ describe("a course with lessons", () => {
       expect(text).toContain(l.title)
       expect(text).toContain(words(l))
     }
-    await p.context().close()
+    await close(p.context())
   })
 
   test("shows no percentage, letter or score", async () => {
@@ -239,7 +248,7 @@ describe("a course with lessons", () => {
     expect(
       await main(p).locator("[role=progressbar], [data-slot=progress]").count()
     ).toBe(0)
-    await p.context().close()
+    await close(p.context())
   })
 
   test("each lesson links to its lesson page, routed on the client", async () => {
@@ -255,7 +264,7 @@ describe("a course with lessons", () => {
     expect(
       await p.evaluate(() => (window as unknown as { marker?: number }).marker)
     ).toBe(1)
-    await p.context().close()
+    await close(p.context())
   })
 
   test("the lessons are reachable with j and k, and Enter opens one", async () => {
@@ -276,7 +285,7 @@ describe("a course with lessons", () => {
     ).toBe("/courses/aion/lessons/l2")
     await p.keyboard.press("Enter")
     await p.waitForURL(base + "/courses/aion/lessons/l2")
-    await p.context().close()
+    await close(p.context())
   })
 
   // flyingrobots/school#114: j pressed while the lessons fade in reaches each of them, in order.
@@ -303,7 +312,7 @@ describe("a course with lessons", () => {
         (e) => getComputedStyle(e).opacity === "1"
       )
     )
-    await p.context().close()
+    await close(p.context())
   })
 
   test("links to the course's reference when it has reference documents", async () => {
@@ -314,7 +323,7 @@ describe("a course with lessons", () => {
         .getByRole("link", { name: /Reference/ })
         .getAttribute("href")
     ).toBe("/courses/aion/reference")
-    await p.context().close()
+    await close(p.context())
   })
 
   test("uses the width: one column on a phone, several on a wide screen", async () => {
@@ -324,7 +333,7 @@ describe("a course with lessons", () => {
       const xs = await lessons(p).evaluateAll((els) =>
         els.map((e) => Math.round(e.getBoundingClientRect().left))
       )
-      await p.context().close()
+      await close(p.context())
       return new Set(xs).size
     }
     expect(await columns({ width: 390, height: 844 })).toBe(1)
@@ -350,7 +359,7 @@ describe("states", () => {
     release()
     await lessons(p).first().waitFor()
     expect(await main(p).locator("[data-slot=skeleton]").count()).toBe(0)
-    await c.close()
+    await close(c)
   })
 
   test("a course with no lessons says so", async () => {
@@ -361,7 +370,7 @@ describe("states", () => {
     expect(await empty.textContent()).toContain("No lessons yet")
     expect(await lessons(p).count()).toBe(0)
     expect(await main(p).locator("[data-slot=skeleton]").count()).toBe(0)
-    await p.context().close()
+    await close(p.context())
   })
 
   test("an unreadable course says it could not be read, with the server's reason", async () => {
@@ -380,7 +389,7 @@ describe("states", () => {
     expect(text).toContain(reason)
     expect(await lessons(p).count()).toBe(0)
     expect(await main(p).locator("[data-slot=skeleton]").count()).toBe(0)
-    await p.context().close()
+    await close(p.context())
   })
 
   test("an unreadable course still offers its reference documents", async () => {
@@ -388,7 +397,7 @@ describe("states", () => {
     await main(p).getByRole("alert").waitFor()
     const button = main(p).getByRole("link", { name: "Reference" })
     expect(await button.getAttribute("href")).toBe("/courses/broken/reference")
-    await p.context().close()
+    await close(p.context())
   })
 
   test("a course that does not exist says so", async () => {
@@ -399,7 +408,7 @@ describe("states", () => {
     expect(await empty.textContent()).toContain(
       "There is no course called nowhere"
     )
-    await p.context().close()
+    await close(p.context())
   })
 
   test("a server that cannot be reached is reported, not shown as loading forever", async () => {
@@ -414,7 +423,7 @@ describe("states", () => {
       "This course could not be loaded"
     )
     expect(await main(p).locator("[data-slot=skeleton]").count()).toBe(0)
-    await c.close()
+    await close(c)
   })
 
   test("Try again asks the server again and shows the lessons once it answers", async () => {
@@ -429,6 +438,6 @@ describe("states", () => {
     await main(p).getByRole("button", { name: "Try again" }).click()
     await lessons(p).first().waitFor()
     expect(await main(p).getByRole("alert").count()).toBe(0)
-    await c.close()
+    await close(c)
   })
 })

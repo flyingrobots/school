@@ -35,7 +35,7 @@ framework, a course, and one learner's state[^adr6]. This section shows how they
 | Part | Holds | Visibility | Where |
 | --- | --- | --- | --- |
 | Framework | Server, block model, bridge, web app, docs | Public | This repository |
-| Course | Objectives, resources, lessons as block JSON, reference documents | Public by default | Its own repository |
+| Course | Objectives, resources, an optional `course.json` with its title, lessons as block JSON, reference documents ([a course's folder](../course-format/README.md)) | Public by default | Its own repository |
 | Learner state | Mission, notes, learning records, `settings.json` (the record is in Postgres) | Private | Its own folder; the server refuses to start if it, or a PGlite record, is inside a course |
 
 **Figure 1. How the three parts meet at run time**
@@ -77,9 +77,9 @@ JSON API.
 
 | Method | Path | Does |
 | --- | --- | --- |
-| GET | `/api/courses` | Lists installed courses with lesson and reference counts, and each course's `quizzes` and `answeredCorrectly`; the counts are `null` for a course whose lessons cannot be read |
+| GET | `/api/courses` | Lists installed courses, each with its `name` (the slug in addresses) and `title` ([a course's folder](../course-format/README.md)), with lesson and reference counts, and each course's `quizzes` and `answeredCorrectly`; the counts are `null` for a course whose lessons cannot be read |
 | GET | `/api/resume` | What to study now, from where the learner left off: `continue`, `next`, `start`, `finished` or `nothing` ([the home page](../home-page/README.md)) |
-| GET | `/api/courses/:c` | One course: lessons with correct-quiz counts, reference documents. Lessons that cannot be read are `lessons: null` with the reason in `lessonsError`, still a 200 with the reference documents |
+| GET | `/api/courses/:c` | One course: its `name` and `title`, lessons with correct-quiz counts, reference documents. Lessons that cannot be read are `lessons: null` with the reason in `lessonsError`, still a 200 with the reference documents |
 | GET | `/api/courses/:c/lessons/:id` | One lesson; `?view=web` opens or resumes an encounter, `?view=slides` records nothing. `?aid=1` declares that the client records every exposure it shows, so the encounter is opened with aid tracking 1; absent, it is untracked and its aid unknown. Any other `aid` value is refused (400) |
 | POST | `/api/answer` | Records a quiz answer |
 | POST | `/api/explanation` | Saves an explanation, before any grading |
@@ -125,7 +125,7 @@ section names each piece as it is in the code.
 | Postgres adapter | `server/adapters/postgres.ts` | `LearningRecord` as one call of a `school.*` function per method, every result parsed by the model |
 | `Sql` port and its drivers | `server/adapters/sql.ts`, `pglite.ts`, `bunsql.ts` | One `query(text, params)`; PGlite in process, or `Bun.SQL` on a pool |
 | Opening the record | `server/adapters/database.ts`, `lock.ts` | Reads `SCHOOL_DATABASE_URL`; on Postgres, refuses a login that fails any of [the login check](#the-login-check)'s listed checks; on PGlite, runs the migrations as the owner and takes `school_app`'s role; refuses any statement but a function call, and locks a PGlite folder |
-| The migrate job | `server/migrate.ts` | With `SCHOOL_MIGRATE_URL` (the owner's or superuser's URL), runs the migrations as the owner, makes `school_app` a login with `SCHOOL_APP_PASSWORD`, clears its role settings, and exits; JSON Lines on stdout and stderr |
+| The migrate job | `server/migrate.ts` | With `SCHOOL_MIGRATE_URL` (the owner's or superuser's URL), runs the migrations as the owner, makes `school_app` a login with `SCHOOL_APP_PASSWORD`, clears its role settings, and exits; prints schema'd JSON Lines on stdout and stderr through `server/jsonl.ts`, each line's schema in `server/schemas/` ([the migrate job's output](../migrate-job/README.md)) |
 | Grader | `server/server.ts`, `server/grade.ts` | The bridge client; with no bridge connected, an attempt fails and says so |
 | Clock | `server/server.ts` | The system clock; tests pass a fixed one |
 
@@ -467,6 +467,29 @@ throws before the failure is stored ([flyingrobots/school#17](https://github.com
 
 In short: the bridge confines model work to the host and records every outcome, with one known
 gap in handling a malformed reply.
+
+### The bridge's output
+
+The bridge writes JSON Lines on stdout: one JSON object per line, each with a `kind` beginning
+`bridge.` and the time `at`. No line contains a prompt or an answer.
+
+| `kind` | When |
+| --- | --- |
+| `bridge.start` | Once at start-up: `host`, `port`, `config`, and the declared agents (null with no file yet) |
+| `bridge.listening` | Once it listens: `host` and the `port` it got (the OS's choice for port `0`) |
+| `bridge.run.start`, `bridge.attempt`, `bridge.run.end` | Each `POST /run`, its attempts, and its outcome |
+| `bridge.test` | Each `POST /test` |
+| `bridge.config.saved` | Each accepted `PUT /config` |
+| `bridge.error` | Every failure, with a `message` |
+
+A refusal to start is one `bridge.error` line and exit 2: a token under 16 characters, a port that
+is not a port, an unreadable configuration file, or a port already in use, whose line also carries
+`host`, `port` and `code: "EADDRINUSE"`. Any other uncaught throw or rejection is one `bridge.error`
+line with only its message, never a stack, and exit 1. A request handler that throws logs a
+`bridge.error` line and answers 500. The cases are in the [test plan](test-plan.md#the-bridges-output).
+Output that Bun itself or a native module writes straight to the file descriptors, a hard crash
+and a signal kill are outside this: they are not lines. The lines have no published schemas yet
+([flyingrobots/school#135](https://github.com/flyingrobots/school/issues/135)).
 
 ## The web app
 

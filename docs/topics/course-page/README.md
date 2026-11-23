@@ -5,7 +5,10 @@ and reads one endpoint, `GET /api/courses/:course`.
 
 ## What it shows
 
-- The course's name as the page heading, under a breadcrumb back to Home.
+- The course's title as the page heading, under a breadcrumb back to Home: the `title` of
+  `GET /api/courses/:course`, which is the course's name when it declares none
+  ([a course's folder](../course-format/README.md)). Before that answers, the title from the
+  sidebar's course list, or the name from the address.
 - A **Reference** button to `/courses/:course/reference` (the [reference page](../reference-page/README.md)), only when the course has reference
   documents. It is shown even when the course's lessons cannot be read.
 - Every lesson, in the server's order, as a link to `/courses/:course/lessons/:lesson`. Each shows
@@ -45,3 +48,5 @@ The page is `web/src/pages/course.tsx`, composed of stock shadcn components (Bre
 Item, Badge, Empty, Alert, Skeleton, Spinner, Kbd). `web/test/course.test.ts` drives it in Chrome
 against the Vite dev server, with the page's `/api` requests answered by a real School server over
 course folders written by the test; [the test plan](test-plan.md) lists its cases.
+
+The browser title is `<course> · School`, with the course's name as the API lists it.

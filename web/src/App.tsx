@@ -102,7 +102,7 @@ function SidebarCourses() {
                         data-course={c.name}
                       >
                         <BookOpenIcon />
-                        <span>{c.name}</span>
+                        <span>{c.title}</span>
                       </NavLink>
                     </SidebarMenuButton>
                   </SidebarMenuItem>

@@ -51,7 +51,9 @@ import {
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
-import { useCourse } from "@/lib/course"
+import { useDocumentTitle } from "@/lib/document-title"
+import { titleOf, useCourse } from "@/lib/course"
+import { useCourseTitle } from "@/lib/courses"
 import { referenceHref, type CourseLoad } from "@/lib/school-api"
 
 gsap.registerPlugin(useGSAP)
@@ -62,6 +64,8 @@ const grid =
 export function ReferencePage() {
   const { course: name } = useParams()
   const [state, retry] = useCourse(name!)
+  const title = titleOf(state, useCourseTitle(name!))
+  useDocumentTitle("Reference", title)
   const scope = React.useRef<HTMLDivElement>(null)
 
   useGSAP(
@@ -98,7 +102,7 @@ export function ReferencePage() {
             <BreadcrumbItem>
               <BreadcrumbLink asChild>
                 <Link to={`/courses/${encodeURIComponent(name!)}`} data-nav>
-                  {name}
+                  {title}
                 </Link>
               </BreadcrumbLink>
             </BreadcrumbItem>

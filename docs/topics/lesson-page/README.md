@@ -9,7 +9,7 @@ opens or resumes the learner's encounter, and renders the lesson's blocks in ord
 
 | Block | Rendered with |
 | --- | --- |
-| `page` | The frame: breadcrumb, title, subtitle, then its children |
+| `page` | The frame: breadcrumb (Home, the course by its title from the sidebar's course list, or by its name until that answers; see [a course's folder](../course-format/README.md)), title, subtitle, then its children |
 | `section` | A heading (`h2`, one level deeper per nested section) and its children |
 | `prose`, `card`, `quote`, `aside` | The block's HTML through the registry `markdown` item, which sanitises it; plain, in a Card, in an Item, in an Alert |
 | `quiz` | The registry `quiz` block, answering through `POST /api/answer` |
@@ -162,6 +162,13 @@ and hjkl move between slides"); a slide taller than the window scrolls with the 
 | Did not load | "The lesson did not load", when School cannot be reached or its reply is not a lesson, with Try again |
 
 The slides view shows the same three states.
+
+## Browser title
+
+The tab reads `<lesson title> · <course> · School` in both views, `Lesson not found · <course> · School`
+when the lesson is missing, and `<course> · School` while it loads or when it did not load. Checked by
+`browser title > names the lesson, its course and School, in the web view and in slides` and
+`browser title > a lesson that is not found says so in the title` in `web/test/lesson.test.ts`.
 
 ## Keys
 

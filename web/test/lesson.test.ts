@@ -53,6 +53,7 @@ import {
   timeout,
   type Started,
 } from "../../server/testing/processes.ts"
+import { warm } from "./vite.ts"
 
 setDefaultTimeout(30_000)
 
@@ -187,8 +188,9 @@ beforeAll(
     base = vite.resolvedUrls!.local[0]!.replace(/\/$/, "")
     // A missing Chrome fails here, loudly; it is never a skip.
     browser = await chromium.launch({ channel: "chrome" })
+    await warm(browser, base)
   },
-  timeout(1) + 10_000
+  timeout(1) + 40_000
 )
 
 afterAll(async () => {
@@ -516,6 +518,27 @@ describe("reload shows what the encounter holds", () => {
     expect(
       await explain(p, "seasons").locator("[data-explain=grade]").textContent()
     ).toContain("Retry")
+    await p.context().close()
+  })
+})
+
+describe("browser title", () => {
+  test("names the lesson, its course and School, in the web view and in slides", async () => {
+    const p = await open(main, lessonPath("golden"))
+    expect(await p.title()).toBe("Orbits · golden · School")
+    await p.goto(base + lessonPath("golden") + "?view=slides")
+    await p.getByRole("heading", { name: "Orbits" }).first().waitFor()
+    expect(await p.title()).toBe("Orbits · golden · School")
+    await p.context().close()
+  })
+
+  test("a lesson that is not found says so in the title", async () => {
+    const p = await newPage()
+    await p.goto(base + "/courses/golden/lessons/no-such-lesson")
+    await p
+      .getByRole("heading", { level: 1, name: "Lesson not found", exact: true })
+      .waitFor()
+    expect(await p.title()).toBe("Lesson not found · golden · School")
     await p.context().close()
   })
 })

@@ -55,7 +55,8 @@ import {
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
-import { useCourses, type CoursesLoad } from "@/lib/courses"
+import { useDocumentTitle } from "@/lib/document-title"
+import { useCourses, useCourseTitle, type CoursesLoad } from "@/lib/courses"
 import type { CourseSummary } from "@/lib/school-api"
 
 gsap.registerPlugin(useGSAP)
@@ -161,6 +162,7 @@ function ago(iso: string, now = Date.now()): string {
 const heading = "font-heading font-semibold tracking-tight"
 
 export function HomePage() {
+  useDocumentTitle()
   // Shared with the sidebar, and asked again on each visit here so the progress is current.
   const [courses, retryCourses] = useCourses({ fresh: true })
   const [resume, retryResume] = useJson("/api/resume", ResumeJson)
@@ -337,6 +339,7 @@ const label: Record<
 /** The lesson to study now: the first thing on the page, and the first focus stop. */
 function Continue({ step }: { step: Step }) {
   const { kind, course, lesson, question } = step
+  const title = useCourseTitle(course)
   const go = React.useRef<HTMLAnchorElement>(null)
   const href = `/courses/${course}/lessons/${lesson.id}`
   const done = lesson.quizzes > 0 && lesson.answeredCorrectly === lesson.quizzes
@@ -362,7 +365,7 @@ function Continue({ step }: { step: Step }) {
             {label[kind].text}
           </Badge>
           <span className="text-base text-muted-foreground 2xl:text-lg">
-            Lesson {lesson.position} of {lesson.of} in {course}
+            Lesson {lesson.position} of {lesson.of} in {title}
           </span>
         </div>
         <CardTitle
@@ -429,7 +432,7 @@ function Continue({ step }: { step: Step }) {
         </Button>
         <Button asChild size="lg" variant="ghost" className={bigButton}>
           <Link to={`/courses/${course}`} data-nav>
-            All lessons in {course}
+            All lessons in {title}
           </Link>
         </Button>
       </CardFooter>
@@ -438,6 +441,7 @@ function Continue({ step }: { step: Step }) {
 }
 
 function Finished({ course }: { course: string }) {
+  const title = useCourseTitle(course)
   return (
     <Card data-animate="resume" data-resume="finished" className={card}>
       <CardHeader className="gap-4">
@@ -453,7 +457,7 @@ function Finished({ course }: { course: string }) {
           aria-level={2}
           className={`${heading} text-4xl leading-tight sm:text-5xl 2xl:text-6xl`}
         >
-          Every quiz in {course} is answered correctly
+          Every quiz in {title} is answered correctly
         </CardTitle>
         <CardDescription
           data-animate="resume-part"
@@ -465,7 +469,7 @@ function Finished({ course }: { course: string }) {
       <CardFooter data-animate="resume-part">
         <Button asChild size="lg" className={bigButton}>
           <Link to={`/courses/${course}`} data-nav>
-            Open {course}
+            Open {title}
           </Link>
         </Button>
       </CardFooter>
@@ -580,7 +584,7 @@ function CourseItem({ course: c }: { course: Course }) {
           )}
         </ItemMedia>
         <ItemContent className="gap-1">
-          <ItemTitle className="text-xl 2xl:text-2xl">{c.name}</ItemTitle>
+          <ItemTitle className="text-xl 2xl:text-2xl">{c.title}</ItemTitle>
           <ItemDescription className="text-base 2xl:text-lg">
             {description}
           </ItemDescription>
