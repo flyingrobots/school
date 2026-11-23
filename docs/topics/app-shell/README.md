@@ -80,7 +80,8 @@ viewer on one device. Where storage is blocked, the choice lasts for the visit.
 ## The sidebar's courses
 
 Below the pages, the sidebar's **Courses** group lists every course from `GET /api/courses`, on
-every page, in the server's order (by name). Each is a link to `/courses/:course`. The course in
+every page, in the server's order (by name). Each shows the course's title, or its name when it
+declares none ([a course's folder](../course-format/README.md)), and is a link to `/courses/:course`. The course in
 the address is marked active, on its own page and on the pages under it (its reference, its
 lessons); on Home, Settings and Not found none is. The links are focus stops for `j` and `k`.
 
