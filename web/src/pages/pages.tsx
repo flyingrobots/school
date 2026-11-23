@@ -1,4 +1,4 @@
-// The routes' pages. Each one's content is its own task; for now each is a placeholder.
+// The routes' pages. Each one's content is its own task; until it lands, a page is a placeholder.
 import { Link, useParams } from "react-router"
 
 import { Button } from "@/components/ui/button"
@@ -10,10 +10,7 @@ export function HomePage() {
   return <Placeholder title="Home" />
 }
 
-export function CoursePage() {
-  const { course } = useParams()
-  return <Placeholder title={course!} crumbs={[home]} />
-}
+export { CoursePage } from "./course"
 
 export function ReferencePage() {
   const { course } = useParams()
