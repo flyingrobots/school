@@ -25,6 +25,7 @@ import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, 
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
+import { useDocumentTitle } from "@/lib/document-title"
 import { useCourse } from "@/lib/course"
 import { referenceHref, type CourseLoad } from "@/lib/school-api"
 
@@ -34,6 +35,7 @@ const grid = "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols
 
 export function ReferencePage() {
   const { course: name } = useParams()
+  useDocumentTitle("Reference", name!)
   const [state, retry] = useCourse(name!)
   const scope = React.useRef<HTMLDivElement>(null)
 

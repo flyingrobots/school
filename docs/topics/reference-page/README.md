@@ -52,3 +52,5 @@ Empty, Alert, Button, Skeleton, Spinner, Kbd). It shares `useCourse` (`web/src/l
 `loadCourse` with the course page. `web/test/reference.test.ts` drives it in Chrome against the
 Vite dev server, with `/api` requests and document requests answered by a real School server over
 course folders written by the test; [the test plan](test-plan.md) lists its cases.
+
+The browser title is `Reference · <course> · School`.

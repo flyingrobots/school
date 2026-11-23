@@ -39,6 +39,7 @@ import { Slides, type Slide } from "@/components/slides"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
+import { useDocumentTitle } from "@/lib/document-title"
 import { NotKept, outbox, Refused, type Waiting } from "@/lib/outbox"
 import * as api from "@/lib/school-api"
 
@@ -234,6 +235,7 @@ function BlockView({ block: b, play, depth }: { block: api.Block; play: Play | n
 
 function Played({ course, lesson, waiting }: { course: string; lesson: api.LessonReply; waiting: Waiting[] }) {
   const page = lesson.lesson
+  useDocumentTitle(page.type === "page" ? page.title : "", course)
   const [shown] = React.useState(() => Date.now())
   const play = React.useMemo<Play>(
     () => ({ encounterId: lesson.encounterId, shown, ...held(lesson), pending: waitingByBlock(waiting) }),
@@ -285,6 +287,7 @@ function NotReady({ course, load, retry }: { course: string; load: { status: "lo
     { label: "Home", href: "/" },
     { label: course, href: `/courses/${course}` },
   ]
+  useDocumentTitle(load.status === "missing" ? "Lesson not found" : "", course)
   switch (load.status) {
     case "loading":
       return <LessonLoading crumbs={crumbs} renderLink={renderLink} />
@@ -365,6 +368,7 @@ function labelOf(b: api.Block): string {
 function Presented({ course, reply }: { course: string; reply: api.SlidesReply }) {
   const navigate = useNavigate()
   const page = reply.lesson
+  useDocumentTitle(page.type === "page" ? page.title : "", course)
   if (page.type !== "page") return null
   const web = `/courses/${course}/lessons/${page.id}`
   const crumbs: LessonCrumb[] = [

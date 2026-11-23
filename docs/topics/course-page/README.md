@@ -45,3 +45,5 @@ The page is `web/src/pages/course.tsx`, composed of stock shadcn components (Bre
 Item, Badge, Empty, Alert, Skeleton, Spinner, Kbd). `web/test/course.test.ts` drives it in Chrome
 against the Vite dev server, with the page's `/api` requests answered by a real School server over
 course folders written by the test; [the test plan](test-plan.md) lists its cases.
+
+The browser title is `<course> · School`, with the course's name as the API lists it.

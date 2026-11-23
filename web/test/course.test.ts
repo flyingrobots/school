@@ -113,6 +113,12 @@ const words = (l: { quizzes: number; answeredCorrectly: number }) =>
   l.quizzes === 0 ? "No quizzes" : `${l.answeredCorrectly} of ${l.quizzes} ${l.quizzes === 1 ? "quiz" : "quizzes"} answered correctly`
 
 describe("a course with lessons", () => {
+  test("the browser title names the course", async () => {
+    const p = await open("/courses/aion")
+    expect(await p.title()).toBe("aion · School")
+    await p.context().close()
+  })
+
   test("lists every lesson, in order, with its progress in words, matching the API", async () => {
     const expected = await api("aion")
     expect(expected.lessons.map((l) => [l.id, l.quizzes, l.answeredCorrectly])).toEqual([["l1", 2, 1], ["l2", 3, 2], ["l3", 0, 0]])
