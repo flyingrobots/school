@@ -20,7 +20,8 @@ import { Spinner } from "@/components/ui/spinner"
 // It never decides correctness: the verdict comes from `onAnswer` (the server) or `recorded`.
 // The choices are ui-sdk's radio group (roles, name, roving focus) rendered as shadcn buttons.
 // `onWhyShown` says when the explanation is shown, once per showing, so a page can record the
-// help it gave.
+// help it gave. An answer the page keeps to send later (an outbox) is `queued`: it shows as not
+// sent yet, with a spinner, until the server's verdict comes back or the server refuses it.
 
 export type QuizChoice = { id: string; text: string }
 
@@ -31,13 +32,15 @@ export type QuizVerdict = { choiceId: string; correct: boolean }
  * Where a quiz stands.
  * - `unanswered`: nothing sent yet; every choice can be chosen.
  * - `in-flight`: one answer is with the server; nothing can be chosen.
+ * - `queued`: the server could not be reached; the answer is kept and will be sent, and nothing
+ *   can be chosen until the server answers it.
  * - `wrong`: the server said no; the other choices can be tried.
  * - `right`: the server said yes just now; nothing more can be chosen.
  * - `settled`: the record already held a right answer; nothing can be chosen.
  */
 export type QuizState =
   | { status: "unanswered" }
-  | { status: "in-flight" | "wrong" | "right" | "settled"; choiceId: string }
+  | { status: "in-flight" | "queued" | "wrong" | "right" | "settled"; choiceId: string }
 
 type QuizContent = {
   id: string
@@ -51,6 +54,7 @@ const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
 const STATUS: Record<QuizState["status"], { label: string; variant: "secondary" | "destructive" | "default" | "outline" } | null> = {
   unanswered: null,
   "in-flight": { label: "Checking", variant: "secondary" },
+  queued: { label: "Not sent yet", variant: "secondary" },
   wrong: { label: "Not quite", variant: "destructive" },
   right: { label: "Correct", variant: "default" },
   settled: { label: "Answered", variant: "outline" },
@@ -119,13 +123,26 @@ export function QuizView({
   useShowing(done, onWhyShown)
 
   return (
-    <Card data-quiz="root" data-quiz-id={id} data-state={state.status} aria-busy={state.status === "in-flight"} onKeyDown={onKeyDown} className="w-full">
+    <Card
+      data-quiz="root"
+      data-quiz-id={id}
+      data-state={state.status}
+      aria-busy={state.status === "in-flight" || state.status === "queued"}
+      onKeyDown={onKeyDown}
+      className="w-full"
+    >
       <CardHeader>
         <CardTitle id={title} className="text-2xl">
           {q}
         </CardTitle>
         <CardDescription className="text-base">
-          {state.status === "wrong" ? "Not quite. Try another answer." : done ? null : "Choose an answer, or press its number."}
+          {state.status === "wrong"
+            ? "Not quite. Try another answer."
+            : state.status === "queued"
+              ? "Not saved yet. Your answer is kept and is sent when School can be reached."
+              : done
+                ? null
+                : "Choose an answer, or press its number."}
         </CardDescription>
         {status && (
           <CardAction>
@@ -167,7 +184,11 @@ export function QuizView({
                   // The chosen answer stays at full strength while the others are disabled around it.
                   className={`h-auto justify-start py-3 text-left text-lg whitespace-normal${mine ? " disabled:opacity-100" : ""}`}
                 >
-                  {mine && state.status === "in-flight" ? <Spinner data-icon="inline-start" /> : key && <Kbd data-icon="inline-start">{key}</Kbd>}
+                  {mine && (state.status === "in-flight" || state.status === "queued") ? (
+                    <Spinner data-icon="inline-start" />
+                  ) : (
+                    key && <Kbd data-icon="inline-start">{key}</Kbd>
+                  )}
                   {c.text}
                 </Button>
               )}
@@ -191,47 +212,98 @@ export function QuizView({
   )
 }
 
-function initial(recorded: QuizVerdict | null | undefined): QuizState {
+/**
+ * An answer refused in words the learner should read. When `onAnswer` (or a pending verdict)
+ * rejects with one, the quiz shows its message instead of its own "not recorded".
+ */
+export class QuizAnswerError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "QuizAnswerError"
+  }
+}
+
+const NOT_RECORDED = "That answer was not recorded. Try again."
+const errorText = (e: unknown) => (e instanceof QuizAnswerError ? e.message : NOT_RECORDED)
+
+/** An answer given earlier that the server has not answered yet, and its verdict when it does. */
+export type QuizPending = { choiceId: string; verdict: Promise<{ correct: boolean }> }
+
+function initial(recorded: QuizVerdict | null | undefined, pending: QuizPending | null | undefined): QuizState {
+  if (pending) return { status: "queued", choiceId: pending.choiceId }
   if (!recorded) return { status: "unanswered" }
   return { status: recorded.correct ? "settled" : "wrong", choiceId: recorded.choiceId }
 }
 
 /**
- * The quiz, answering through `onAnswer`. One answer at a time: while one is in flight, no other
- * can be sent, even from the same tick. A right answer, given now or already `recorded`, is final.
+ * The quiz, answering through `onAnswer`. One answer at a time: while one is in flight or queued,
+ * no other can be sent, even from the same tick. A right answer, given now or already `recorded`,
+ * is final.
  */
 export function Quiz({
   onAnswer,
   recorded,
+  pending,
   ...content
 }: QuizContent & {
-  /** Sends one answer; resolves with the server's verdict, or rejects if it was not recorded. */
-  onAnswer: (choiceId: string) => Promise<{ correct: boolean }>
+  /**
+   * Sends one answer; resolves with the server's verdict, or rejects if it was not recorded (with a
+   * `QuizAnswerError` to say why in its own words). Calls `queued` if the server could not be
+   * reached and the answer is kept to send later; the promise then settles when it is answered.
+   */
+  onAnswer: (choiceId: string, progress: { queued: () => void }) => Promise<{ correct: boolean }>
   /** The latest answer the record holds for this quiz, read when the quiz first renders. */
   recorded?: QuizVerdict | null
+  /** An answer kept from earlier that the server has not answered yet; it wins over `recorded`. Read on first render. */
+  pending?: QuizPending | null
   /** Called once each time the explanation (`why`) is shown. */
   onWhyShown?: () => void
 }) {
-  const [state, setState] = React.useState<QuizState>(() => initial(recorded))
+  const [state, setState] = React.useState<QuizState>(() => initial(recorded, pending))
   const [error, setError] = React.useState<string>()
   // The guard reads this, not `state`: a second click in the same tick sees the rendered state.
   const current = React.useRef(state)
+  // Where a refused pending answer returns to: the record as it was before it.
+  const [first] = React.useState(() => ({ pending, before: initial(recorded, null) }))
 
   const move = (next: QuizState) => {
     current.current = next
     setState(next)
   }
 
+  React.useEffect(() => {
+    const p = first.pending
+    if (!p) return
+    let live = true
+    p.verdict.then(
+      ({ correct }) => {
+        if (live && current.current.status === "queued") move({ status: correct ? "right" : "wrong", choiceId: p.choiceId })
+      },
+      (e: unknown) => {
+        if (!live || current.current.status !== "queued") return
+        move(first.before)
+        setError(errorText(e))
+      }
+    )
+    return () => {
+      live = false
+    }
+  }, [first])
+
   const answer = (choiceId: string) => {
     const before = current.current
     if (!canChoose(before, choiceId)) return
     setError(undefined)
-    move({ status: "in-flight", choiceId })
-    onAnswer(choiceId).then(
+    const sent: QuizState = { status: "in-flight", choiceId }
+    move(sent)
+    const queued = () => {
+      if (current.current === sent) move({ status: "queued", choiceId })
+    }
+    onAnswer(choiceId, { queued }).then(
       ({ correct }) => move({ status: correct ? "right" : "wrong", choiceId }),
-      () => {
+      (e: unknown) => {
         move(before)
-        setError("That answer was not recorded. Try again.")
+        setError(errorText(e))
       }
     )
   }
