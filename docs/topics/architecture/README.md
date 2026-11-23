@@ -35,7 +35,7 @@ framework, a course, and one learner's state[^adr6]. This section shows how they
 | Part | Holds | Visibility | Where |
 | --- | --- | --- | --- |
 | Framework | Server, block model, bridge, web app, docs | Public | This repository |
-| Course | Objectives, resources, lessons as block JSON, reference documents | Public by default | Its own repository |
+| Course | Objectives, resources, an optional `course.json` with its title, lessons as block JSON, reference documents ([a course's folder](../course-format/README.md)) | Public by default | Its own repository |
 | Learner state | Mission, notes, learning records, `settings.json` (the record is in Postgres) | Private | Its own folder; the server refuses to start if it, or a PGlite record, is inside a course |
 
 **Figure 1. How the three parts meet at run time**
@@ -77,9 +77,9 @@ JSON API.
 
 | Method | Path | Does |
 | --- | --- | --- |
-| GET | `/api/courses` | Lists installed courses with lesson and reference counts, and each course's `quizzes` and `answeredCorrectly`; the counts are `null` for a course whose lessons cannot be read |
+| GET | `/api/courses` | Lists installed courses, each with its `name` (the slug in addresses) and `title` ([a course's folder](../course-format/README.md)), with lesson and reference counts, and each course's `quizzes` and `answeredCorrectly`; the counts are `null` for a course whose lessons cannot be read |
 | GET | `/api/resume` | What to study now, from where the learner left off: `continue`, `next`, `start`, `finished` or `nothing` ([the home page](../home-page/README.md)) |
-| GET | `/api/courses/:c` | One course: lessons with correct-quiz counts, reference documents. Lessons that cannot be read are `lessons: null` with the reason in `lessonsError`, still a 200 with the reference documents |
+| GET | `/api/courses/:c` | One course: its `name` and `title`, lessons with correct-quiz counts, reference documents. Lessons that cannot be read are `lessons: null` with the reason in `lessonsError`, still a 200 with the reference documents |
 | GET | `/api/courses/:c/lessons/:id` | One lesson; `?view=web` opens or resumes an encounter, `?view=slides` records nothing. `?aid=1` declares that the client records every exposure it shows, so the encounter is opened with aid tracking 1; absent, it is untracked and its aid unknown. Any other `aid` value is refused (400) |
 | POST | `/api/answer` | Records a quiz answer |
 | POST | `/api/explanation` | Saves an explanation, before any grading |

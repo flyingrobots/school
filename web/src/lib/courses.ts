@@ -56,3 +56,17 @@ export function useCourses({ fresh = false }: { fresh?: boolean } = {}): [Course
   }, [fresh])
   return [courses, ask]
 }
+
+/**
+ * What the pages call the course `name` (flyingrobots/school#143): its title from the shared course
+ * list, or `name` itself while the list loads, when it failed, or when the course is not in it.
+ */
+export function useCourseTitle(name: string): string {
+  const [courses] = useCourses()
+  return titleIn(courses, name)
+}
+
+/** The title of the course `name` in `courses`, or `name` when the list has none for it. */
+export function titleIn(courses: CoursesLoad, name: string): string {
+  return (courses.kind === "ready" ? courses.data.find((c) => c.name === name)?.title : undefined) ?? name
+}

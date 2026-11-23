@@ -9,7 +9,7 @@ opens or resumes the learner's encounter, and renders the lesson's blocks in ord
 
 | Block | Rendered with |
 | --- | --- |
-| `page` | The frame: breadcrumb, title, subtitle, then its children |
+| `page` | The frame: breadcrumb (Home, the course by its title from the sidebar's course list, or by its name until that answers; see [a course's folder](../course-format/README.md)), title, subtitle, then its children |
 | `section` | A heading (`h2`, one level deeper per nested section) and its children |
 | `prose`, `card`, `quote`, `aside` | The block's HTML through the registry `markdown` item, which sanitises it; plain, in a Card, in an Item, in an Alert |
 | `quiz` | The registry `quiz` block, answering through `POST /api/answer` |
