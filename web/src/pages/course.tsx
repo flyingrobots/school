@@ -37,6 +37,10 @@ export function progressWords({ quizzes, answeredCorrectly }: Pick<Lesson, "quiz
   return `${answeredCorrectly} of ${quizzes} ${quizzes === 1 ? "quiz" : "quizzes"} answered correctly`
 }
 
+/** The course's reference documents, which are listed even when its lessons cannot be read. */
+const referenceOf = (state: State): string[] =>
+  state.kind === "ready" ? state.course.reference : state.kind === "unreadable" ? state.reference : []
+
 const grid = "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
 
 export function CoursePage() {
@@ -75,7 +79,7 @@ export function CoursePage() {
           </BreadcrumbList>
         </Breadcrumb>
         <h1 className="font-heading text-4xl font-semibold tracking-tight sm:text-5xl 2xl:text-6xl">{name}</h1>
-        {state.kind === "ready" && state.course.reference.length > 0 && (
+        {referenceOf(state).length > 0 && (
           <Button asChild size="lg" variant="outline" className="self-start">
             <Link to={`/courses/${name}/reference`} data-nav>
               <LibraryIcon data-icon="inline-start" />

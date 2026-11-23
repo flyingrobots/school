@@ -38,12 +38,12 @@ Those addresses are served by School. The Vite dev server has no proxy to School
 | The request is in flight | A Spinner with "Loading the reference documents" and a grid of Skeletons |
 | The course has no reference documents (`reference: []`, including a course with no reference folder) | An Empty state, "No reference documents" |
 | The server answers 404 | An Empty state, "There is no course called …", with a link home |
-| The server answers with an error and a reason (a 500 for lessons that never validated) | A destructive Alert, "This course could not be read", with the server's reason |
 | No usable answer: the server is unreachable, or the body is not the expected shape | A destructive Alert, "The reference documents could not be loaded", with **Try again** |
 
 The response is parsed with Zod (`CourseReply` in `web/src/lib/school-api.ts`) before anything is
-shown. A course whose lessons cannot be read answers 500, so its reference documents are not
-listed either, even though School still serves them.
+shown. A course whose lessons cannot be read still answers 200, with `lessons: null` and the
+reason in `lessonsError`, and its `reference` list is shown as for any other course. The lesson
+error is not shown here; the [course page](../course-page/README.md) shows it.
 
 ## Code and tests
 

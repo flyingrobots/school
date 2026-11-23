@@ -237,27 +237,30 @@ export async function listCourses(): Promise<CourseSummary[]> {
 // GET /api/courses/:course (server/server.ts, courseJson): its lessons with their progress, and
 // the file names of its reference documents, which School serves at /courses/:course/reference/<file>
 // only while they stay inside the course.
-export const CourseReply = z.object({
-  name: z.string(),
-  reference: z.array(z.string()),
-  lessons: z.array(
-    z.object({
-      id: z.string(),
-      title: z.string(),
-      subtitle: z.string().nullish(),
-      quizzes: z.number().int().nonnegative(),
-      answeredCorrectly: z.number().int().nonnegative(),
-    })
-  ),
-})
-export type Course = z.infer<typeof CourseReply>
+const CourseLessons = z.array(
+  z.object({
+    id: z.string(),
+    title: z.string(),
+    subtitle: z.string().nullish(),
+    quizzes: z.number().int().nonnegative(),
+    answeredCorrectly: z.number().int().nonnegative(),
+  })
+)
+// Lessons that cannot be read are null, with the server's reason beside them; the reference
+// documents are listed either way (flyingrobots/school#115).
+export const CourseReply = z.union([
+  z.object({ name: z.string(), reference: z.array(z.string()), lessons: CourseLessons }),
+  z.object({ name: z.string(), reference: z.array(z.string()), lessons: z.null(), lessonsError: z.string() }),
+])
+/** A course whose lessons were read. */
+export type Course = { name: string; reference: string[]; lessons: z.infer<typeof CourseLessons> }
 
 export type CourseLoad =
   | { kind: "loading" }
   | { kind: "ready"; course: Course }
   | { kind: "missing" }
-  // The server answered that the course's lessons cannot be read, with its reason.
-  | { kind: "unreadable"; reason: string }
+  // The course's lessons cannot be read, with the server's reason; its reference documents can be.
+  | { kind: "unreadable"; reason: string; reference: string[] }
   // No usable answer at all: the server is unreachable or answered something else.
   | { kind: "unloaded" }
 
@@ -266,13 +269,12 @@ export async function loadCourse(name: string, signal?: AbortSignal): Promise<Ex
   try {
     const res = await fetch(`/api/courses/${encodeURIComponent(name)}`, { signal })
     if (res.status === 404) return { kind: "missing" }
-    const body: unknown = await res.json()
-    if (!res.ok) {
-      const reason = z.object({ error: z.string() }).safeParse(body)
-      return reason.success ? { kind: "unreadable", reason: reason.data.error } : { kind: "unloaded" }
-    }
-    const course = CourseReply.safeParse(body)
-    return course.success ? { kind: "ready", course: course.data } : { kind: "unloaded" }
+    if (!res.ok) return { kind: "unloaded" }
+    const course = CourseReply.safeParse(await res.json())
+    if (!course.success) return { kind: "unloaded" }
+    const c = course.data
+    if (c.lessons === null) return { kind: "unreadable", reason: c.lessonsError, reference: c.reference }
+    return { kind: "ready", course: { name: c.name, reference: c.reference, lessons: c.lessons } }
   } catch {
     return { kind: "unloaded" }
   }
