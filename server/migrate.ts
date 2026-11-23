@@ -6,23 +6,43 @@
 //
 //   SCHOOL_MIGRATE_URL=postgres://postgres:...@host:5432/school SCHOOL_APP_PASSWORD=... bun migrate.ts
 //
+// Under compose neither password is in the environment (flyingrobots/school#123): the URL names the
+// superuser and the host only, SCHOOL_MIGRATE_PASSWORD_FILE names the file holding the superuser's
+// password, and SCHOOL_APP_PASSWORD_FILE school_app's; a file wins over the plain variable
+// (server/secrets.ts).
+//
 // Output is JSON Lines, one object per line, each with `kind: "school.migrate"` and an `event`:
 // `start` and `done` on stdout, `error` on stderr. No line holds either password: the URL is
 // logged by host and database only (`redact`), and any message is scrubbed of both passwords.
 // Exit codes: 0 applied (or nothing to apply), 2 a missing or invalid setting, 1 any other failure.
 import { APP, migrateRecord, redact } from "./adapters/database.ts";
+import { withPassword, withSecretFiles } from "./secrets.ts";
 
 const line = (stream: "out" | "err", o: object) =>
   (stream === "out" ? console.log : console.error)(JSON.stringify({ kind: "school.migrate", ...o }));
 
-const url = process.env.SCHOOL_MIGRATE_URL ?? "";
-const password = process.env.SCHOOL_APP_PASSWORD ?? "";
-const secrets = [password, (() => { try { return decodeURIComponent(new URL(url).password); } catch { return ""; } })()].filter((s) => s !== "");
+const secrets: string[] = [];
 const scrub = (text: string) => secrets.reduce((t, s) => t.replaceAll(s, "(redacted)"), text);
 
 function refuse(message: string): never {
   line("err", { event: "error", code: 2, message: scrub(message) });
   process.exit(2);
+}
+
+let env: Record<string, string | undefined> = {};
+let url = "";
+try {
+  env = withSecretFiles(process.env);
+  for (const s of [env.SCHOOL_APP_PASSWORD, env.SCHOOL_MIGRATE_PASSWORD]) if (s !== undefined && s !== "") secrets.push(s);
+  url = withPassword(env.SCHOOL_MIGRATE_URL, env.SCHOOL_MIGRATE_PASSWORD, "SCHOOL_MIGRATE_URL", "SCHOOL_MIGRATE_PASSWORD") ?? "";
+} catch (e) {
+  refuse(e instanceof Error ? e.message : String(e));
+}
+const password = env.SCHOOL_APP_PASSWORD ?? "";
+{
+  let inUrl = "";
+  try { inUrl = decodeURIComponent(new URL(url).password); } catch { /* refused below */ }
+  if (inUrl !== "") secrets.push(inUrl);
 }
 
 if (!/^postgres(ql)?:\/\//.test(url)) refuse("SCHOOL_MIGRATE_URL must be the owner's or superuser's postgres:// URL (the role must be able to create roles)");

@@ -127,3 +127,18 @@ test("a bridge with no configuration file starts, reports itself unconfigured, a
     rmSync(d, { recursive: true, force: true });
   }
 }, timeout(1));
+
+// flyingrobots/school#123 (SEC-T1): the token comes from the environment, else from the Keychain
+// item `school up` stores (host/secrets.ts). Here the account is a fresh name that holds nothing, so
+// the test reads no existing Keychain item and writes none.
+test("SEC-T1: with no token in the environment or the Keychain the bridge refuses to start, exit 2, naming both places", async () => {
+  const account = `school-test-${crypto.randomUUID().slice(0, 8)}`;
+  const env: Record<string, string | undefined> = { ...process.env, SCHOOL_KEYCHAIN_ACCOUNT: account, SCHOOL_BRIDGE_PORT: "0" };
+  delete env.SCHOOL_BRIDGE_TOKEN;
+  const p = Bun.spawn(["bun", join(import.meta.dir, "bridge.ts")], { env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+  expect(code).toBe(2);
+  const error = (stdout + stderr).split("\n").filter((l) => l !== "").map((l) => JSON.parse(l)).find((l) => l.kind === "bridge.error");
+  expect(error?.message).toContain("SCHOOL_BRIDGE_TOKEN");
+  expect(error?.message).toContain(`Keychain (account ${account})`);
+});
