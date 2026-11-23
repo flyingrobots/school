@@ -1,6 +1,7 @@
 import * as React from "react"
 import { cn } from "cn"
 import {
+  defaultComponents,
   Streamdown,
   useIsCodeFenceIncomplete,
   type ExtraProps,
@@ -74,8 +75,57 @@ function MarkdownCode({
   )
 }
 
+// True for a link to this page's own origin: a relative URL, a fragment, or an
+// absolute http(s) URL with the same origin. Anything else is another site.
+function isSameOrigin(href: string) {
+  if (typeof window === "undefined") return false
+  try {
+    const url = new URL(href, window.location.href)
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      url.origin === window.location.origin
+    )
+  } catch {
+    return false
+  }
+}
+
+function MarkdownLink({
+  node,
+  className,
+  href,
+  children,
+  ...props
+}: React.ComponentProps<"a"> & ExtraProps) {
+  // Streamdown's link safety asks before every link. Only another origin is
+  // external: a link to this site opens directly, in the same tab.
+  if (!href || href === "streamdown:incomplete-link" || !isSameOrigin(href)) {
+    const StreamdownLink = defaultComponents.a
+    return (
+      <StreamdownLink node={node} className={className} href={href} {...props}>
+        {children}
+      </StreamdownLink>
+    )
+  }
+
+  // Streamdown's rehype plugins give every link target="_blank" and rel; a
+  // link to this site leaves them off so it opens in this tab.
+  return (
+    <a
+      data-streamdown="link"
+      className={cn("wrap-anywhere font-medium text-primary underline", className)}
+      href={href}
+      {...props}
+      target={undefined}
+      rel={undefined}
+    >
+      {children}
+    </a>
+  )
+}
+
 // Streamdown memoizes on components, so keep the default stable.
-const DEFAULT_COMPONENTS = { code: MarkdownCode }
+const DEFAULT_COMPONENTS = { a: MarkdownLink, code: MarkdownCode }
 
 function Markdown({
   className,
