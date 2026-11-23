@@ -10,7 +10,7 @@
 // that order.
 // What a reload shows is the learner history's oracle (server/contract/learner-history.ts,
 // `pageShows`): each quiz by its latest answer, each explanation by its latest grading.
-import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
+import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -42,6 +42,12 @@ const findings = {
 }
 let bridge: ReturnType<typeof Bun.serve>
 let gradings = 0
+// Each test owns the fake bridge's state: no grading counted or reply queued by another test,
+// whatever order the tests run in (`bun test --randomize`).
+beforeEach(() => {
+  gradings = 0
+  replies.length = 0
+})
 
 /** A School process, and the environment it was started with so it can be started again. */
 type Stack = { school: Started; env: Record<string, string | undefined> }
