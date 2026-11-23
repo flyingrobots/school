@@ -42,7 +42,10 @@ export type QuizVerdict = { choiceId: string; correct: boolean }
  */
 export type QuizState =
   | { status: "unanswered" }
-  | { status: "in-flight" | "queued" | "wrong" | "right" | "settled"; choiceId: string }
+  | {
+      status: "in-flight" | "queued" | "wrong" | "right" | "settled"
+      choiceId: string
+    }
 
 type QuizContent = {
   id: string
@@ -53,7 +56,13 @@ type QuizContent = {
 
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
 
-const STATUS: Record<QuizState["status"], { label: string; variant: "secondary" | "destructive" | "default" | "outline" } | null> = {
+const STATUS: Record<
+  QuizState["status"],
+  {
+    label: string
+    variant: "secondary" | "destructive" | "default" | "outline"
+  } | null
+> = {
   unanswered: null,
   "in-flight": { label: "Checking", variant: "secondary" },
   queued: { label: "Not sent yet", variant: "secondary" },
@@ -126,7 +135,8 @@ export function QuizView({
   }
   const chosen = state.status === "unanswered" ? undefined : state.choiceId
   const status = readOnly ? READ_ONLY : STATUS[state.status]
-  const done = !readOnly && (state.status === "right" || state.status === "settled")
+  const done =
+    !readOnly && (state.status === "right" || state.status === "settled")
   const title = React.useId()
   useShowing(done, onWhyShown)
 
@@ -148,12 +158,12 @@ export function QuizView({
           {readOnly
             ? "To read only: nothing is answered here."
             : state.status === "wrong"
-            ? "Not quite. Try another answer."
-            : state.status === "queued"
-              ? "Not saved yet. Your answer is kept and is sent when School can be reached."
-              : done
-                ? null
-                : "Choose an answer, or press its number."}
+              ? "Not quite. Try another answer."
+              : state.status === "queued"
+                ? "Not saved yet. Your answer is kept and is sent when School can be reached."
+                : done
+                  ? null
+                  : "Choose an answer, or press its number."}
         </CardDescription>
         {status && (
           <CardAction>
@@ -170,42 +180,60 @@ export function QuizView({
           onValueChange={(next, details) => {
             // Checking a radio sends the answer, so arrow keys move focus without checking.
             details.cancel()
-            if (next !== null && details.reason !== "list-navigation") choose(next)
+            if (next !== null && details.reason !== "list-navigation")
+              choose(next)
           }}
           className="flex flex-col gap-2"
         >
-        {choices.map((c, i) => {
-          const mine = c.id === chosen
-          const verdict = !mine ? undefined : state.status === "wrong" ? "wrong" : done ? "right" : undefined
-          const key = KEYS[i]
-          return (
-            <Radio
-              key={c.id}
-              value={c.id}
-              data-quiz="choice"
-              data-choice={c.id}
-              data-verdict={verdict}
-              aria-keyshortcuts={readOnly ? undefined : key}
-              disabled={!allowed(c.id)}
-              render={(props) => (
-                <Button
-                  {...props}
-                  variant={verdict === "right" ? "default" : verdict === "wrong" ? "destructive" : mine ? "secondary" : "outline"}
-                  size="lg"
-                  // The chosen answer stays at full strength while the others are disabled around it.
-                  className={`h-auto justify-start py-3 text-left text-lg whitespace-normal${mine ? " disabled:opacity-100" : ""}`}
-                >
-                  {mine && (state.status === "in-flight" || state.status === "queued") ? (
-                    <Spinner data-icon="inline-start" />
-                  ) : (
-                    key && !readOnly && <Kbd data-icon="inline-start">{key}</Kbd>
-                  )}
-                  {c.text}
-                </Button>
-              )}
-            />
-          )
-        })}
+          {choices.map((c, i) => {
+            const mine = c.id === chosen
+            const verdict = !mine
+              ? undefined
+              : state.status === "wrong"
+                ? "wrong"
+                : done
+                  ? "right"
+                  : undefined
+            const key = KEYS[i]
+            return (
+              <Radio
+                key={c.id}
+                value={c.id}
+                data-quiz="choice"
+                data-choice={c.id}
+                data-verdict={verdict}
+                aria-keyshortcuts={readOnly ? undefined : key}
+                disabled={!allowed(c.id)}
+                render={(props) => (
+                  <Button
+                    {...props}
+                    variant={
+                      verdict === "right"
+                        ? "default"
+                        : verdict === "wrong"
+                          ? "destructive"
+                          : mine
+                            ? "secondary"
+                            : "outline"
+                    }
+                    size="lg"
+                    // The chosen answer stays at full strength while the others are disabled around it.
+                    className={`h-auto justify-start py-3 text-left text-lg whitespace-normal${mine ? "disabled:opacity-100" : ""}`}
+                  >
+                    {mine &&
+                    (state.status === "in-flight" ||
+                      state.status === "queued") ? (
+                      <Spinner data-icon="inline-start" />
+                    ) : (
+                      key &&
+                      !readOnly && <Kbd data-icon="inline-start">{key}</Kbd>
+                    )}
+                    {c.text}
+                  </Button>
+                )}
+              />
+            )
+          })}
         </RadioGroup>
         {done && (
           <Alert data-quiz="why" role="status" className="mt-2">
@@ -235,15 +263,25 @@ export class QuizAnswerError extends Error {
 }
 
 const NOT_RECORDED = "That answer was not recorded. Try again."
-const errorText = (e: unknown) => (e instanceof QuizAnswerError ? e.message : NOT_RECORDED)
+const errorText = (e: unknown) =>
+  e instanceof QuizAnswerError ? e.message : NOT_RECORDED
 
 /** An answer given earlier that the server has not answered yet, and its verdict when it does. */
-export type QuizPending = { choiceId: string; verdict: Promise<{ correct: boolean }> }
+export type QuizPending = {
+  choiceId: string
+  verdict: Promise<{ correct: boolean }>
+}
 
-function initial(recorded: QuizVerdict | null | undefined, pending: QuizPending | null | undefined): QuizState {
+function initial(
+  recorded: QuizVerdict | null | undefined,
+  pending: QuizPending | null | undefined
+): QuizState {
   if (pending) return { status: "queued", choiceId: pending.choiceId }
   if (!recorded) return { status: "unanswered" }
-  return { status: recorded.correct ? "settled" : "wrong", choiceId: recorded.choiceId }
+  return {
+    status: recorded.correct ? "settled" : "wrong",
+    choiceId: recorded.choiceId,
+  }
 }
 
 /**
@@ -262,7 +300,10 @@ export function Quiz({
    * `QuizAnswerError` to say why in its own words). Calls `queued` if the server could not be
    * reached and the answer is kept to send later; the promise then settles when it is answered.
    */
-  onAnswer: (choiceId: string, progress: { queued: () => void }) => Promise<{ correct: boolean }>
+  onAnswer: (
+    choiceId: string,
+    progress: { queued: () => void }
+  ) => Promise<{ correct: boolean }>
   /** The latest answer the record holds for this quiz, read when the quiz first renders. */
   recorded?: QuizVerdict | null
   /** An answer kept from earlier that the server has not answered yet; it wins over `recorded`. Read on first render. */
@@ -270,12 +311,17 @@ export function Quiz({
   /** Called once each time the explanation (`why`) is shown. */
   onWhyShown?: () => void
 }) {
-  const [state, setState] = React.useState<QuizState>(() => initial(recorded, pending))
+  const [state, setState] = React.useState<QuizState>(() =>
+    initial(recorded, pending)
+  )
   const [error, setError] = React.useState<string>()
   // The guard reads this, not `state`: a second click in the same tick sees the rendered state.
   const current = React.useRef(state)
   // Where a refused pending answer returns to: the record as it was before it.
-  const [first] = React.useState(() => ({ pending, before: initial(recorded, null) }))
+  const [first] = React.useState(() => ({
+    pending,
+    before: initial(recorded, null),
+  }))
 
   const move = (next: QuizState) => {
     current.current = next
@@ -288,7 +334,8 @@ export function Quiz({
     let live = true
     p.verdict.then(
       ({ correct }) => {
-        if (live && current.current.status === "queued") move({ status: correct ? "right" : "wrong", choiceId: p.choiceId })
+        if (live && current.current.status === "queued")
+          move({ status: correct ? "right" : "wrong", choiceId: p.choiceId })
       },
       (e: unknown) => {
         if (!live || current.current.status !== "queued") return
@@ -326,8 +373,22 @@ export function Quiz({
  * The quiz to read only, as a slides view shows it: the question and its choices, nothing to
  * choose, no explanation, and no callback, so nothing it shows can be recorded.
  */
-export function QuizReadOnly({ id, q, choices }: Pick<QuizContent, "id" | "q" | "choices">) {
-  return <QuizView id={id} q={q} choices={choices} why="" state={UNANSWERED} onChoose={ignore} readOnly />
+export function QuizReadOnly({
+  id,
+  q,
+  choices,
+}: Pick<QuizContent, "id" | "q" | "choices">) {
+  return (
+    <QuizView
+      id={id}
+      q={q}
+      choices={choices}
+      why=""
+      state={UNANSWERED}
+      onChoose={ignore}
+      readOnly
+    />
+  )
 }
 
 const UNANSWERED: QuizState = { status: "unanswered" }

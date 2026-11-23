@@ -11,28 +11,50 @@ import { sortableList } from "@/lib/sortable-list-behavior"
 // A list reordered by each item's handle, with the pointer or the keyboard (lib/sortable-list-behavior.ts).
 // Stock ItemGroup and Item draw it; the keys it takes are shown beneath it with Kbd.
 
-const parts = createParts(sortableList, { root: "div", list: "div", keys: "p", item: "div", handle: "button" })
+const parts = createParts(sortableList, {
+  root: "div",
+  list: "div",
+  keys: "p",
+  item: "div",
+  handle: "button",
+})
 
 type RootProps = React.ComponentProps<typeof parts.Root>
 
 function SortableList({ className, children, ...props }: RootProps) {
   return (
-    <parts.Root data-slot="sortable-list" className={cn("flex w-full flex-col gap-3", className)} {...props}>
+    <parts.Root
+      data-slot="sortable-list"
+      className={cn("flex w-full flex-col gap-3", className)}
+      {...props}
+    >
       {children}
     </parts.Root>
   )
 }
 
-function SortableListItems({ className, ...props }: React.ComponentProps<typeof parts.List>) {
-  return <parts.List render={<ItemGroup />} className={cn("gap-3", className)} {...props} />
+function SortableListItems({
+  className,
+  ...props
+}: React.ComponentProps<typeof parts.List>) {
+  return (
+    <parts.List
+      render={<ItemGroup />}
+      className={cn("gap-3", className)}
+      {...props}
+    />
+  )
 }
 
-function SortableListItem({ className, ...props }: React.ComponentProps<typeof parts.Item>) {
+function SortableListItem({
+  className,
+  ...props
+}: React.ComponentProps<typeof parts.Item>) {
   return (
     <parts.Item
       render={<Item variant="outline" />}
       className={cn(
-        "touch-none bg-card data-grabbed:border-ring data-grabbed:ring-[3px] data-grabbed:ring-ring/50 data-dragging:relative data-dragging:z-10 data-dragging:translate-x-(--drag-x) data-dragging:translate-y-(--drag-y) data-dragging:shadow-lg",
+        "touch-none bg-card data-dragging:relative data-dragging:z-10 data-dragging:translate-x-(--drag-x) data-dragging:translate-y-(--drag-y) data-dragging:shadow-lg data-grabbed:border-ring data-grabbed:ring-[3px] data-grabbed:ring-ring/50",
         className
       )}
       {...props}
@@ -40,17 +62,34 @@ function SortableListItem({ className, ...props }: React.ComponentProps<typeof p
   )
 }
 
-function SortableListHandle({ className, children, ...props }: React.ComponentProps<typeof parts.Handle>) {
+function SortableListHandle({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<typeof parts.Handle>) {
   return (
-    <parts.Handle render={<Button variant="ghost" size="icon-lg" />} className={cn("cursor-grab aria-pressed:bg-accent", className)} {...props}>
+    <parts.Handle
+      render={<Button variant="ghost" size="icon-lg" />}
+      className={cn("cursor-grab aria-pressed:bg-accent", className)}
+      {...props}
+    >
       {children ?? <GripVerticalIcon aria-hidden="true" />}
     </parts.Handle>
   )
 }
 
-function SortableListKeys({ className, ...props }: React.ComponentProps<typeof parts.Keys>) {
+function SortableListKeys({
+  className,
+  ...props
+}: React.ComponentProps<typeof parts.Keys>) {
   return (
-    <parts.Keys className={cn("flex flex-wrap items-center gap-x-4 gap-y-2 text-base text-muted-foreground", className)} {...props}>
+    <parts.Keys
+      className={cn(
+        "flex flex-wrap items-center gap-x-4 gap-y-2 text-base text-muted-foreground",
+        className
+      )}
+      {...props}
+    >
       <span className="inline-flex items-center gap-2">
         <Kbd>↵</Kbd> picks up and drops
       </span>
@@ -80,4 +119,10 @@ function SortableListKeys({ className, ...props }: React.ComponentProps<typeof p
   )
 }
 
-export { SortableList, SortableListHandle, SortableListItem, SortableListItems, SortableListKeys }
+export {
+  SortableList,
+  SortableListHandle,
+  SortableListItem,
+  SortableListItems,
+  SortableListKeys,
+}

@@ -39,7 +39,12 @@ type Orientation = "vertical" | "horizontal"
 // The width one level needs, in px, before the nest is drawn as a tree with a column per level.
 const COLUMN = 224
 
-const VIM: Record<string, string> = { h: "ArrowLeft", j: "ArrowDown", k: "ArrowUp", l: "ArrowRight" }
+const VIM: Record<string, string> = {
+  h: "ArrowLeft",
+  j: "ArrowDown",
+  k: "ArrowUp",
+  l: "ArrowRight",
+}
 
 function index(node: NestNode, value: string, next?: Node["next"]): Node {
   return {
@@ -48,7 +53,11 @@ function index(node: NestNode, value: string, next?: Node["next"]): Node {
     next,
     children: node.children.map((child, i) => {
       const after = node.children[i + 1]
-      return index(child, `${value}.${i}`, after && { value: `${value}.${i + 1}`, label: after.label })
+      return index(
+        child,
+        `${value}.${i}`,
+        after && { value: `${value}.${i + 1}`, label: after.label }
+      )
     }),
   }
 }
@@ -59,12 +68,17 @@ function asItem(n: Node): TreeItemData {
     : { value: n.value, label: n.node.label }
 }
 
-const branches = (n: Node): string[] => (n.children.length ? [n.value, ...n.children.flatMap(branches)] : [])
-const count = (n: Node): number => n.children.reduce((sum, c) => sum + 1 + count(c), 0)
+const branches = (n: Node): string[] =>
+  n.children.length ? [n.value, ...n.children.flatMap(branches)] : []
+const count = (n: Node): number =>
+  n.children.reduce((sum, c) => sum + 1 + count(c), 0)
 
 type Place = { gridColumn: string; gridRow: string; marginInlineStart?: string }
 
-function place(visible: HierarchyNode<Node>, orientation: Orientation): Map<string, Place> {
+function place(
+  visible: HierarchyNode<Node>,
+  orientation: Orientation
+): Map<string, Place> {
   const places = new Map<string, Place>()
   if (orientation === "vertical") {
     let row = 0
@@ -82,29 +96,54 @@ function place(visible: HierarchyNode<Node>, orientation: Orientation): Map<stri
   const at = new Map(leaves.map((leaf, i) => [leaf, i]))
   visible.eachBefore((d) => {
     const under = d.leaves()
-    places.set(d.data.value, { gridColumn: String(d.depth + 1), gridRow: `${at.get(under[0]!)! + 1} / span ${under.length}` })
+    places.set(d.data.value, {
+      gridColumn: String(d.depth + 1),
+      gridRow: `${at.get(under[0]!)! + 1} / span ${under.length}`,
+    })
   })
   return places
 }
 
 type Box = { x: number; y: number; w: number; h: number }
 
-function draw(svg: SVGSVGElement, frame: HTMLElement, visible: HierarchyNode<Node>, orientation: Orientation) {
+function draw(
+  svg: SVGSVGElement,
+  frame: HTMLElement,
+  visible: HierarchyNode<Node>,
+  orientation: Orientation
+) {
   const origin = frame.getBoundingClientRect()
   const box = (value: string): Box | undefined => {
     const el = frame.querySelector(`[data-nest-value="${value}"]`)
     if (!el) return undefined
     const r = el.getBoundingClientRect()
-    return { x: r.left - origin.left, y: r.top - origin.top, w: r.width, h: r.height }
+    return {
+      x: r.left - origin.left,
+      y: r.top - origin.top,
+      w: r.width,
+      h: r.height,
+    }
   }
-  const horizontal = linkHorizontal<{ source: [number, number]; target: [number, number] }, [number, number]>()
+  const horizontal = linkHorizontal<
+    { source: [number, number]; target: [number, number] },
+    [number, number]
+  >()
 
   const links = visible.links().flatMap(({ source, target }) => {
     const s = box(source.data.value)
     const t = box(target.data.value)
     if (!s || !t) return []
     if (orientation === "horizontal")
-      return [{ key: target.data.value, d: horizontal({ source: [s.x + s.w, s.y + s.h / 2], target: [t.x, t.y + t.h / 2] }) ?? "" }]
+      return [
+        {
+          key: target.data.value,
+          d:
+            horizontal({
+              source: [s.x + s.w, s.y + s.h / 2],
+              target: [t.x, t.y + t.h / 2],
+            }) ?? "",
+        },
+      ]
     const x = s.x + 12
     const y = t.y + t.h / 2
     const p = path()
@@ -148,14 +187,18 @@ function draw(svg: SVGSVGElement, frame: HTMLElement, visible: HierarchyNode<Nod
 
   const layer = select(svg)
   layer
-    .selectAll<SVGPathElement, { key: string; d: string }>("path[data-nest=link]")
+    .selectAll<SVGPathElement, { key: string; d: string }>(
+      "path[data-nest=link]"
+    )
     .data(links, (l) => l.key)
     .join("path")
     .attr("data-nest", "link")
     .attr("class", "fill-none stroke-muted-foreground stroke-2")
     .attr("d", (l) => l.d)
   layer
-    .selectAll<SVGPathElement, { key: string; d: string }>("path[data-nest=edge-arrow]")
+    .selectAll<SVGPathElement, { key: string; d: string }>(
+      "path[data-nest=edge-arrow]"
+    )
     .data(edges, (e) => e.key)
     .join("path")
     .attr("data-nest", "edge-arrow")
@@ -172,7 +215,11 @@ function useSize(ref: React.RefObject<HTMLElement | null>) {
     if (!el || typeof ResizeObserver === "undefined") return
     const observer = new ResizeObserver((entries) => {
       const last = entries[entries.length - 1]
-      if (last) setSize({ width: last.contentRect.width, height: last.contentRect.height })
+      if (last)
+        setSize({
+          width: last.contentRect.width,
+          height: last.contentRect.height,
+        })
     })
     observer.observe(el)
     return () => observer.disconnect()
@@ -181,7 +228,15 @@ function useSize(ref: React.RefObject<HTMLElement | null>) {
 }
 
 /** A nest block's tree, drawn with d3 and explored with the keyboard. */
-export function Nest({ id, root, className }: { id: string; root: NestNode; className?: string }) {
+export function Nest({
+  id,
+  root,
+  className,
+}: {
+  id: string
+  root: NestNode
+  className?: string
+}) {
   const indexed = React.useMemo(() => index(root, "0"), [root])
   const items = React.useMemo(() => [asItem(indexed)], [indexed])
   const [expanded, setExpanded] = React.useState(() => branches(indexed))
@@ -191,10 +246,18 @@ export function Nest({ id, root, className }: { id: string; root: NestNode; clas
   const size = useSize(frame)
 
   const open = React.useMemo(() => new Set(expanded), [expanded])
-  const visible = React.useMemo(() => hierarchy(indexed, (d) => (open.has(d.value) ? d.children : undefined)), [indexed, open])
+  const visible = React.useMemo(
+    () =>
+      hierarchy(indexed, (d) => (open.has(d.value) ? d.children : undefined)),
+    [indexed, open]
+  )
   const levels = visible.height + 1
-  const orientation: Orientation = size.width >= levels * COLUMN ? "horizontal" : "vertical"
-  const places = React.useMemo(() => place(visible, orientation), [visible, orientation])
+  const orientation: Orientation =
+    size.width >= levels * COLUMN ? "horizontal" : "vertical"
+  const places = React.useMemo(
+    () => place(visible, orientation),
+    [visible, orientation]
+  )
   const rows = React.useMemo(() => {
     const all: HierarchyNode<Node>[] = []
     visible.eachBefore((d) => all.push(d))
@@ -202,7 +265,8 @@ export function Nest({ id, root, className }: { id: string; root: NestNode; clas
   }, [visible])
 
   React.useLayoutEffect(() => {
-    if (svg.current && frame.current) draw(svg.current, frame.current, visible, orientation)
+    if (svg.current && frame.current)
+      draw(svg.current, frame.current, visible, orientation)
   }, [visible, orientation, size])
 
   // h j k l are the arrow keys. Caught before the tree sees them, or its typeahead would take them.
@@ -211,37 +275,73 @@ export function Nest({ id, root, className }: { id: string; root: NestNode; clas
     if (!el) return
     const onKeyDown = (event: KeyboardEvent) => {
       const arrow = VIM[event.key]
-      if (!arrow || event.metaKey || event.ctrlKey || event.altKey || !(event.target instanceof HTMLElement)) return
+      if (
+        !arrow ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        !(event.target instanceof HTMLElement)
+      )
+        return
       event.preventDefault()
       event.stopPropagation()
-      event.target.dispatchEvent(new KeyboardEvent("keydown", { key: arrow, bubbles: true, cancelable: true }))
+      event.target.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: arrow,
+          bubbles: true,
+          cancelable: true,
+        })
+      )
     }
     el.addEventListener("keydown", onKeyDown, true)
     return () => el.removeEventListener("keydown", onKeyDown, true)
   }, [])
 
   return (
-    <div data-nest="root" data-nest-id={id} data-orientation={orientation} className={cn("flex w-full min-w-0 flex-col gap-4", className)}>
+    <div
+      data-nest="root"
+      data-nest-id={id}
+      data-orientation={orientation}
+      className={cn("flex w-full min-w-0 flex-col gap-4", className)}
+    >
       <div ref={keys} className="w-full min-w-0">
         <div ref={frame} className="relative w-full min-w-0">
-          <svg ref={svg} data-nest="links" aria-hidden="true" className="pointer-events-none absolute inset-0 size-full overflow-visible" />
+          <svg
+            ref={svg}
+            data-nest="links"
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 size-full overflow-visible"
+          />
           <Tree
             aria-label={`Nest diagram: ${root.label}`}
             items={items}
             expanded={expanded}
             onExpandedChange={(next) => setExpanded(next)}
-            className={cn("relative grid w-full", orientation === "horizontal" ? "items-center gap-x-12 gap-y-8" : "grid-cols-1 gap-3 pe-8")}
-            style={orientation === "horizontal" ? { gridTemplateColumns: `repeat(${levels}, minmax(0, 1fr))` } : undefined}
+            className={cn(
+              "relative grid w-full",
+              orientation === "horizontal"
+                ? "items-center gap-x-12 gap-y-8"
+                : "grid-cols-1 gap-3 pe-8"
+            )}
+            style={
+              orientation === "horizontal"
+                ? { gridTemplateColumns: `repeat(${levels}, minmax(0, 1fr))` }
+                : undefined
+            }
           >
             {rows.map((d) => {
               const { node, next, value } = d.data
-              const hidden = d.data.children.length && !open.has(value) ? count(d.data) : 0
+              const hidden =
+                d.data.children.length && !open.has(value) ? count(d.data) : 0
               return (
                 <TreeItem
                   key={value}
                   value={value}
                   style={places.get(value)}
-                  className={cn("group/item min-w-0 rounded-xl outline-none", orientation === "horizontal" ? "self-center" : "self-start")}
+                  className={cn(
+                    "group/item min-w-0 rounded-xl outline-none",
+                    orientation === "horizontal" ? "self-center" : "self-start"
+                  )}
                 >
                   <TreeItemLabel
                     render={(props) => (
@@ -258,30 +358,53 @@ export function Nest({ id, root, className }: { id: string; root: NestNode; clas
                         <div className="flex items-start gap-2">
                           {d.data.children.length > 0 && (
                             <TreeItemIndicator className="mt-1 shrink-0 text-muted-foreground transition-transform data-expanded:rotate-90">
-                              <ChevronRightIcon aria-hidden="true" className="size-5" />
+                              <ChevronRightIcon
+                                aria-hidden="true"
+                                className="size-5"
+                              />
                             </TreeItemIndicator>
                           )}
-                          <span data-nest="label" className="min-w-0 text-lg leading-snug font-medium break-words">
+                          <span
+                            data-nest="label"
+                            className="min-w-0 text-lg leading-snug font-medium break-words"
+                          >
                             {node.label}
                           </span>
                         </div>
                         {node.atoms.length > 0 && (
                           <div className="flex flex-wrap gap-2">
                             {atomKeys(node.atoms).map(([key, atom]) => (
-                              <Badge key={key} data-nest="atom" variant="outline" className="h-auto px-2.5 py-0.5 font-mono text-base whitespace-normal">
+                              <Badge
+                                key={key}
+                                data-nest="atom"
+                                variant="outline"
+                                className="h-auto px-2.5 py-0.5 font-mono text-base whitespace-normal"
+                              >
                                 {atom}
                               </Badge>
                             ))}
                           </div>
                         )}
                         {node.edge !== undefined && (
-                          <p data-nest="edge" className="flex flex-wrap items-center gap-x-2 text-base text-muted-foreground">
-                            <ArrowRightIcon aria-hidden="true" className="size-4 shrink-0 text-primary" />
-                            <span className="font-mono text-foreground">{node.edge}</span>
+                          <p
+                            data-nest="edge"
+                            className="flex flex-wrap items-center gap-x-2 text-base text-muted-foreground"
+                          >
+                            <ArrowRightIcon
+                              aria-hidden="true"
+                              className="size-4 shrink-0 text-primary"
+                            />
+                            <span className="font-mono text-foreground">
+                              {node.edge}
+                            </span>
                             {next && <span>to {next.label}</span>}
                           </p>
                         )}
-                        {hidden > 0 && <p className="text-base text-muted-foreground">{hidden} inside</p>}
+                        {hidden > 0 && (
+                          <p className="text-base text-muted-foreground">
+                            {hidden} inside
+                          </p>
+                        )}
                       </Card>
                     )}
                   />
@@ -291,7 +414,10 @@ export function Nest({ id, root, className }: { id: string; root: NestNode; clas
           </Tree>
         </div>
       </div>
-      <div data-nest="keys" className="flex flex-wrap items-center gap-x-6 gap-y-2 text-base text-muted-foreground">
+      <div
+        data-nest="keys"
+        className="flex flex-wrap items-center gap-x-6 gap-y-2 text-base text-muted-foreground"
+      >
         <span className="flex items-center gap-2">
           <KbdGroup>
             <Kbd>↑</Kbd>

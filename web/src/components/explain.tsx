@@ -120,7 +120,11 @@ export type ExplainState =
   | { status: "empty" }
   | { status: "saving" | "queued"; text: string }
   | { status: "saved" | "grading"; explanation: ExplainExplanation }
-  | { status: "graded"; explanation: ExplainExplanation; findings: ExplainFindings }
+  | {
+      status: "graded"
+      explanation: ExplainExplanation
+      findings: ExplainFindings
+    }
   | { status: "failed"; explanation: ExplainExplanation; error: string }
 
 type ExplainContent = {
@@ -132,18 +136,39 @@ type ExplainContent = {
 }
 
 const CRITERIA = [
-  { key: "fidelity", title: "Fidelity", question: "Does it agree with the sources?" },
-  { key: "completeness", title: "Completeness", question: "Does it cover what matters?" },
-  { key: "accessibility", title: "Accessibility", question: "Would a newcomer follow it?" },
+  {
+    key: "fidelity",
+    title: "Fidelity",
+    question: "Does it agree with the sources?",
+  },
+  {
+    key: "completeness",
+    title: "Completeness",
+    question: "Does it cover what matters?",
+  },
+  {
+    key: "accessibility",
+    title: "Accessibility",
+    question: "Would a newcomer follow it?",
+  },
 ] as const
 
-const VERDICT: Record<ExplainVerdict, { label: string; variant: "default" | "secondary" | "destructive" }> = {
+const VERDICT: Record<
+  ExplainVerdict,
+  { label: string; variant: "default" | "secondary" | "destructive" }
+> = {
   meets: { label: "Meets", variant: "default" },
   partly: { label: "Partly meets", variant: "secondary" },
   misses: { label: "Misses", variant: "destructive" },
 }
 
-const STATUS: Record<ExplainState["status"], { label: string; variant: "secondary" | "outline" | "default" | "destructive" } | null> = {
+const STATUS: Record<
+  ExplainState["status"],
+  {
+    label: string
+    variant: "secondary" | "outline" | "default" | "destructive"
+  } | null
+> = {
   empty: null,
   saving: { label: "Saving", variant: "secondary" },
   queued: { label: "Not sent yet", variant: "secondary" },
@@ -162,12 +187,17 @@ const REVISE_KEYS = "r"
 export function explainStateOf(explanation: ExplainExplanation): ExplainState {
   const g = explanation.grading
   if (g === null) return { status: "saved", explanation }
-  if (g.status === "succeeded") return { status: "graded", explanation, findings: g.findings }
+  if (g.status === "succeeded")
+    return { status: "graded", explanation, findings: g.findings }
   return { status: "failed", explanation, error: g.error }
 }
 
-const canGrade = (state: ExplainState) => state.status === "saved" || state.status === "failed"
-const canRevise = (state: ExplainState) => state.status === "saved" || state.status === "graded" || state.status === "failed"
+const canGrade = (state: ExplainState) =>
+  state.status === "saved" || state.status === "failed"
+const canRevise = (state: ExplainState) =>
+  state.status === "saved" ||
+  state.status === "graded" ||
+  state.status === "failed"
 
 /**
  * Calls `onShown` once each time `shown` turns true, including on the first render. A ref, not
@@ -223,13 +253,22 @@ export function ExplainView({
 }) {
   const sending = state.status === "saving" || state.status === "queued"
   const writing = state.status === "empty" || sending
-  const text = state.status === "empty" ? draft : "text" in state ? state.text : state.explanation.text
+  const text =
+    state.status === "empty"
+      ? draft
+      : "text" in state
+        ? state.text
+        : state.explanation.text
   const blank = text.trim() === ""
   const status = STATUS[state.status]
 
   const root = React.useRef<HTMLDivElement>(null)
-  const focusedHere = () => root.current?.contains(document.activeElement) ?? false
-  useShortcut(GRADE_KEYS, onGrade, { when: () => focusedHere() && canGrade(state), description: "Get AI feedback" })
+  const focusedHere = () =>
+    root.current?.contains(document.activeElement) ?? false
+  useShortcut(GRADE_KEYS, onGrade, {
+    when: () => focusedHere() && canGrade(state),
+    description: "Get AI feedback",
+  })
   useShortcut(REVISE_KEYS, () => onRevise?.(), {
     when: () => focusedHere() && canRevise(state) && onRevise !== undefined,
     description: "Revise your explanation",
@@ -271,7 +310,9 @@ export function ExplainView({
       <CardContent className="@container flex flex-col gap-6">
         {writing ? (
           <FieldBehavior name={`explain-${id}`} render={<Field />}>
-            <FieldLabelBehavior render={<FieldLabel className="text-lg" />}>Your explanation</FieldLabelBehavior>
+            <FieldLabelBehavior render={<FieldLabel className="text-lg" />}>
+              Your explanation
+            </FieldLabelBehavior>
             <TextareaBehavior
               data-explain="draft"
               render={<Textarea className="min-h-40 text-lg md:text-lg" />}
@@ -285,26 +326,48 @@ export function ExplainView({
                 if (state.status === "empty" && !blank) onSave()
               }}
             />
-            <FieldDescriptionBehavior render={<FieldDescription className="text-base" />}>
+            <FieldDescriptionBehavior
+              render={<FieldDescription className="text-base" />}
+            >
               Press {saveHint.text} to save. Enter starts a new line.
             </FieldDescriptionBehavior>
           </FieldBehavior>
         ) : (
           <div className="grid gap-4 @2xl:grid-cols-2">
-            <Item data-explain="explanation" variant="outline" className="items-start">
+            <Item
+              data-explain="explanation"
+              variant="outline"
+              className="items-start"
+            >
               <ItemContent>
                 <ItemTitle className="text-base">Your explanation</ItemTitle>
                 <p className="text-lg whitespace-pre-wrap">{text}</p>
               </ItemContent>
             </Item>
             <Collapsible defaultOpen>
-              <Item data-explain="model" variant="muted" className="items-start">
+              <Item
+                data-explain="model"
+                variant="muted"
+                className="items-start"
+              >
                 <ItemContent>
-                  <CollapsibleTrigger render={<Button variant="ghost" className="-ml-2.5 w-fit text-base group/model" />}>
+                  <CollapsibleTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        className="group/model -ml-2.5 w-fit text-base"
+                      />
+                    }
+                  >
                     Model answer
-                    <ChevronDownIcon data-icon="inline-end" className="transition-transform group-aria-expanded/model:rotate-180" />
+                    <ChevronDownIcon
+                      data-icon="inline-end"
+                      className="transition-transform group-aria-expanded/model:rotate-180"
+                    />
                   </CollapsibleTrigger>
-                  <CollapsiblePanel className="text-lg whitespace-pre-wrap">{model}</CollapsiblePanel>
+                  <CollapsiblePanel className="text-lg whitespace-pre-wrap">
+                    {model}
+                  </CollapsiblePanel>
                 </ItemContent>
               </Item>
             </Collapsible>
@@ -317,32 +380,47 @@ export function ExplainView({
             multiple
             className="flex w-full flex-col"
             onValueChange={(open: string[]) => {
-              for (const sourceId of open) if (!opened.current.includes(sourceId)) onSourceOpened?.(sourceId)
+              for (const sourceId of open)
+                if (!opened.current.includes(sourceId))
+                  onSourceOpened?.(sourceId)
               opened.current = open
             }}
           >
             {sources.map((s) => (
-              <AccordionItem key={s.id} value={s.id} className="not-last:border-b">
+              <AccordionItem
+                key={s.id}
+                value={s.id}
+                className="not-last:border-b"
+              >
                 <AccordionHeader className="flex">
                   <AccordionTrigger className="group/source flex flex-1 items-center justify-between rounded-lg border border-transparent py-2.5 text-left text-base font-medium outline-none hover:underline focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50">
                     {s.title}
                     <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground transition-transform group-aria-expanded/source:rotate-180" />
                   </AccordionTrigger>
                 </AccordionHeader>
-                <AccordionPanel className="pb-2.5 text-base whitespace-pre-wrap">{s.text}</AccordionPanel>
+                <AccordionPanel className="pb-2.5 text-base whitespace-pre-wrap">
+                  {s.text}
+                </AccordionPanel>
               </AccordionItem>
             ))}
           </Accordion>
         )}
 
         {state.status === "grading" && <FindingsLoading />}
-        {state.status === "graded" && <Findings findings={state.findings} sources={sources} />}
+        {state.status === "graded" && (
+          <Findings findings={state.findings} sources={sources} />
+        )}
 
         {state.status === "failed" && (
           <Alert data-explain="failed" variant="destructive">
-            <AlertTitle className="text-base">The feedback did not finish</AlertTitle>
+            <AlertTitle className="text-base">
+              The feedback did not finish
+            </AlertTitle>
             <AlertDescription className="text-base">
-              <p>This is not a verdict on your explanation. Your explanation is saved; try again.</p>
+              <p>
+                This is not a verdict on your explanation. Your explanation is
+                saved; try again.
+              </p>
               <p>{state.error}</p>
             </AlertDescription>
           </Alert>
@@ -396,8 +474,14 @@ export function ExplainView({
                 if (canGrade(state)) onGrade()
               }}
             >
-              {state.status === "grading" ? <Spinner data-icon="inline-start" /> : <BotIcon data-icon="inline-start" />}
-              {state.status === "failed" ? "Retry AI feedback" : "Get AI feedback"}
+              {state.status === "grading" ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <BotIcon data-icon="inline-start" />
+              )}
+              {state.status === "failed"
+                ? "Retry AI feedback"
+                : "Get AI feedback"}
               <Kbd data-icon="inline-end">{gradeHint.text}</Kbd>
             </ButtonBehavior>
           )}
@@ -411,12 +495,23 @@ export function ExplainView({
  * The explain block to read only: its prompt and nothing else. No field, no Save, no model answer,
  * no sources and no callback, so nothing it shows can be recorded.
  */
-export function ExplainReadOnly({ id, prompt }: Pick<ExplainContent, "id" | "prompt">) {
+export function ExplainReadOnly({
+  id,
+  prompt,
+}: Pick<ExplainContent, "id" | "prompt">) {
   return (
-    <Card data-explain="root" data-explain-id={id} data-state="empty" data-read-only className="w-full">
+    <Card
+      data-explain="root"
+      data-explain-id={id}
+      data-state="empty"
+      data-read-only
+      className="w-full"
+    >
       <CardHeader>
         <CardTitle className="text-2xl">{prompt}</CardTitle>
-        <CardDescription className="text-base">To read only: nothing is written or saved here.</CardDescription>
+        <CardDescription className="text-base">
+          To read only: nothing is written or saved here.
+        </CardDescription>
         <CardAction>
           <Badge variant="outline">Read only</Badge>
         </CardAction>
@@ -438,8 +533,15 @@ function FindingsLoading() {
   )
 }
 
-function Findings({ findings, sources }: { findings: ExplainFindings; sources: ExplainSource[] }) {
-  const titleOf = (sourceId: string) => sources.find((s) => s.id === sourceId)?.title ?? sourceId
+function Findings({
+  findings,
+  sources,
+}: {
+  findings: ExplainFindings
+  sources: ExplainSource[]
+}) {
+  const titleOf = (sourceId: string) =>
+    sources.find((s) => s.id === sourceId)?.title ?? sourceId
   return (
     <div data-explain="findings" className="flex flex-col gap-6">
       <Separator />
@@ -447,7 +549,8 @@ function Findings({ findings, sources }: { findings: ExplainFindings; sources: E
         <Alert data-explain="insufficient">
           <AlertTitle className="text-base">Not enough to judge</AlertTitle>
           <AlertDescription className="text-base">
-            The explanation was too short or off the topic for feedback. Try writing more next time.
+            The explanation was too short or off the topic for feedback. Try
+            writing more next time.
           </AlertDescription>
         </Alert>
       ) : (
@@ -456,13 +559,22 @@ function Findings({ findings, sources }: { findings: ExplainFindings; sources: E
             const { verdict, note } = findings[c.key]
             const v = VERDICT[verdict]
             return (
-              <Item key={c.key} data-explain="criterion" data-criterion={c.key} data-verdict={verdict} variant="outline" className="items-start">
+              <Item
+                key={c.key}
+                data-explain="criterion"
+                data-criterion={c.key}
+                data-verdict={verdict}
+                variant="outline"
+                className="items-start"
+              >
                 <ItemContent>
                   <ItemTitle className="flex-wrap text-lg">
                     {c.title}
                     <Badge variant={v.variant}>{v.label}</Badge>
                   </ItemTitle>
-                  <ItemDescription className="text-sm">{c.question}</ItemDescription>
+                  <ItemDescription className="text-sm">
+                    {c.question}
+                  </ItemDescription>
                   <p className="text-base">{note}</p>
                 </ItemContent>
               </Item>
@@ -473,20 +585,35 @@ function Findings({ findings, sources }: { findings: ExplainFindings; sources: E
 
       <Alert data-explain="summary">
         <AlertTitle className="text-base">Summary</AlertTitle>
-        <AlertDescription className="text-base">{findings.summary}</AlertDescription>
+        <AlertDescription className="text-base">
+          {findings.summary}
+        </AlertDescription>
       </Alert>
 
       {findings.contradictions.length > 0 && (
         <ItemGroup className="gap-4">
-          <ItemTitle className="text-lg">Where it disagrees with the sources</ItemTitle>
+          <ItemTitle className="text-lg">
+            Where it disagrees with the sources
+          </ItemTitle>
           {findings.contradictions.map((c, i) => (
-            <Item key={i} data-explain="contradiction" data-verified={String(c.quote_verified)} variant="outline">
+            <Item
+              key={i}
+              data-explain="contradiction"
+              data-verified={String(c.quote_verified)}
+              variant="outline"
+            >
               <ItemContent>
                 <ItemTitle className="flex-wrap text-base">
                   {titleOf(c.source_id)}
-                  {!c.quote_verified && <Badge variant="outline">Quote not found in the source</Badge>}
+                  {!c.quote_verified && (
+                    <Badge variant="outline">
+                      Quote not found in the source
+                    </Badge>
+                  )}
                 </ItemTitle>
-                <blockquote className="border-l-2 pl-4 text-base text-muted-foreground italic">{c.quote}</blockquote>
+                <blockquote className="border-l-2 pl-4 text-base text-muted-foreground italic">
+                  {c.quote}
+                </blockquote>
                 <p className="text-base">{c.note}</p>
               </ItemContent>
             </Item>
@@ -509,10 +636,14 @@ export class ExplainSaveError extends Error {
 }
 
 const NOT_SAVED = "Your explanation was not saved. Try again."
-const saveErrorText = (e: unknown) => (e instanceof ExplainSaveError ? e.message : NOT_SAVED)
+const saveErrorText = (e: unknown) =>
+  e instanceof ExplainSaveError ? e.message : NOT_SAVED
 
 /** An explanation written earlier that the server has not stored yet, and the stored explanation when it is. */
-export type ExplainPending = { text: string; saved: Promise<ExplainExplanation> }
+export type ExplainPending = {
+  text: string
+  saved: Promise<ExplainExplanation>
+}
 
 /**
  * The explain block, saving through `onSave` and grading through `onGrade`. One request at a time:
@@ -533,7 +664,10 @@ export function Explain({
    * `ExplainSaveError` to say why in its own words). Calls `queued` if the server could not be
    * reached and the explanation is kept to send later; the promise then settles when it is stored.
    */
-  onSave: (text: string, progress: { queued: () => void }) => Promise<ExplainExplanation>
+  onSave: (
+    text: string,
+    progress: { queued: () => void }
+  ) => Promise<ExplainExplanation>
   /** Asks the server to grade the saved submission; resolves with the explanation and its new grading. */
   onGrade: (submissionId: string) => Promise<ExplainExplanation>
   /** The explanation the record already holds for this block, read when the block first renders. */
@@ -545,8 +679,15 @@ export function Explain({
   /** Called once each time a source is opened, with its id. */
   onSourceOpened?: (sourceId: string) => void
 }) {
-  const [first] = React.useState(() => ({ pending, before: saved ? explainStateOf(saved) : ({ status: "empty" } as ExplainState) }))
-  const [state, setState] = React.useState<ExplainState>(() => (pending ? { status: "queued", text: pending.text } : first.before))
+  const [first] = React.useState(() => ({
+    pending,
+    before: saved
+      ? explainStateOf(saved)
+      : ({ status: "empty" } as ExplainState),
+  }))
+  const [state, setState] = React.useState<ExplainState>(() =>
+    pending ? { status: "queued", text: pending.text } : first.before
+  )
   // A refused pending explanation goes back to being written, so nothing typed is lost.
   const [draft, setDraft] = React.useState("")
   const [error, setError] = React.useState<string>()
@@ -564,7 +705,8 @@ export function Explain({
     let live = true
     p.saved.then(
       (explanation) => {
-        if (live && current.current.status === "queued") move(explainStateOf(explanation))
+        if (live && current.current.status === "queued")
+          move(explainStateOf(explanation))
       },
       (e: unknown) => {
         if (!live || current.current.status !== "queued") return
@@ -605,10 +747,19 @@ export function Explain({
       (next) =>
         move(
           next.grading === null
-            ? { status: "failed", explanation: next, error: "No feedback came back." }
+            ? {
+                status: "failed",
+                explanation: next,
+                error: "No feedback came back.",
+              }
             : explainStateOf(next)
         ),
-      () => move({ status: "failed", explanation, error: "The request for feedback did not reach the server." })
+      () =>
+        move({
+          status: "failed",
+          explanation,
+          error: "The request for feedback did not reach the server.",
+        })
     )
   }
 

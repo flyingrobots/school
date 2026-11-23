@@ -20,7 +20,9 @@ export function NotFoundPage() {
   useDocumentTitle("Not found")
   return (
     <Placeholder title="Not found" crumbs={[home]}>
-      <p className="text-lg text-muted-foreground">There is no page at this address.</p>
+      <p className="text-lg text-muted-foreground">
+        There is no page at this address.
+      </p>
       <Button asChild size="lg" className="self-start">
         <Link to="/" data-nav>
           Go home

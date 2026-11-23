@@ -4,10 +4,21 @@
 import * as React from "react"
 import { useGSAP } from "@gsap/react"
 import gsap from "gsap"
-import { BookOpenIcon, CheckIcon, FileQuestionIcon, LibraryIcon, TriangleAlertIcon } from "lucide-react"
+import {
+  BookOpenIcon,
+  CheckIcon,
+  FileQuestionIcon,
+  LibraryIcon,
+  TriangleAlertIcon,
+} from "lucide-react"
 import { Link, useParams } from "react-router"
 
-import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import {
   Breadcrumb,
@@ -18,8 +29,22 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
-import { Item, ItemContent, ItemDescription, ItemFooter, ItemGroup, ItemTitle } from "@/components/ui/item"
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty"
+import {
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemFooter,
+  ItemGroup,
+  ItemTitle,
+} from "@/components/ui/item"
 import { Kbd } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
@@ -34,16 +59,24 @@ type Lesson = Course["lessons"][number]
 type State = CourseLoad
 
 /** A lesson's progress in words: "2 of 3 quizzes answered correctly". */
-export function progressWords({ quizzes, answeredCorrectly }: Pick<Lesson, "quizzes" | "answeredCorrectly">): string {
+export function progressWords({
+  quizzes,
+  answeredCorrectly,
+}: Pick<Lesson, "quizzes" | "answeredCorrectly">): string {
   if (quizzes === 0) return "No quizzes"
   return `${answeredCorrectly} of ${quizzes} ${quizzes === 1 ? "quiz" : "quizzes"} answered correctly`
 }
 
 /** The course's reference documents, which are listed even when its lessons cannot be read. */
 const referenceOf = (state: State): string[] =>
-  state.kind === "ready" ? state.course.reference : state.kind === "unreadable" ? state.reference : []
+  state.kind === "ready"
+    ? state.course.reference
+    : state.kind === "unreadable"
+      ? state.reference
+      : []
 
-const grid = "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
+const grid =
+  "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
 
 export function CoursePage() {
   const { course: name } = useParams()
@@ -60,7 +93,11 @@ export function CoursePage() {
         gsap
           .timeline({ defaults: { ease: "power2.out" } })
           .from("[data-animate=heading]", { y: 24, opacity: 0, duration: 0.4 })
-          .from("[data-animate=body] > *", { y: 16, opacity: 0, duration: 0.3, stagger: 0.04 }, "-=0.2")
+          .from(
+            "[data-animate=body] > *",
+            { y: 16, opacity: 0, duration: 0.3, stagger: 0.04 },
+            "-=0.2"
+          )
       })
     },
     { scope, dependencies: [name, state.kind], revertOnUpdate: true }
@@ -84,7 +121,9 @@ export function CoursePage() {
             </BreadcrumbItem>
           </BreadcrumbList>
         </Breadcrumb>
-        <h1 className="font-heading text-4xl font-semibold tracking-tight sm:text-5xl 2xl:text-6xl">{title}</h1>
+        <h1 className="font-heading text-4xl font-semibold tracking-tight sm:text-5xl 2xl:text-6xl">
+          {title}
+        </h1>
         {referenceOf(state).length > 0 && (
           <Button asChild size="lg" variant="outline" className="self-start">
             <Link to={`/courses/${name}/reference`} data-nav>
@@ -99,7 +138,15 @@ export function CoursePage() {
   )
 }
 
-function Body({ state, name, retry }: { state: State; name: string; retry: () => void }) {
+function Body({
+  state,
+  name,
+  retry,
+}: {
+  state: State
+  name: string
+  retry: () => void
+}) {
   switch (state.kind) {
     case "loading":
       return (
@@ -122,8 +169,12 @@ function Body({ state, name, retry }: { state: State; name: string; retry: () =>
             <EmptyMedia variant="icon">
               <FileQuestionIcon />
             </EmptyMedia>
-            <EmptyTitle className="text-2xl">There is no course called {name}</EmptyTitle>
-            <EmptyDescription className="text-lg">Check the address, or pick a course from the sidebar.</EmptyDescription>
+            <EmptyTitle className="text-2xl">
+              There is no course called {name}
+            </EmptyTitle>
+            <EmptyDescription className="text-lg">
+              Check the address, or pick a course from the sidebar.
+            </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
             <Button asChild size="lg">
@@ -139,8 +190,12 @@ function Body({ state, name, retry }: { state: State; name: string; retry: () =>
         <div data-animate="body">
           <Alert variant="destructive" className="text-base">
             <TriangleAlertIcon />
-            <AlertTitle className="text-lg">This course could not be read</AlertTitle>
-            <AlertDescription className="text-base">{state.reason}</AlertDescription>
+            <AlertTitle className="text-lg">
+              This course could not be read
+            </AlertTitle>
+            <AlertDescription className="text-base">
+              {state.reason}
+            </AlertDescription>
           </Alert>
         </div>
       )
@@ -149,8 +204,13 @@ function Body({ state, name, retry }: { state: State; name: string; retry: () =>
         <div data-animate="body">
           <Alert variant="destructive" className="text-base">
             <TriangleAlertIcon />
-            <AlertTitle className="text-lg">This course could not be loaded</AlertTitle>
-            <AlertDescription className="text-base">School's server did not answer as expected. Check that it is running, then try again.</AlertDescription>
+            <AlertTitle className="text-lg">
+              This course could not be loaded
+            </AlertTitle>
+            <AlertDescription className="text-base">
+              School's server did not answer as expected. Check that it is
+              running, then try again.
+            </AlertDescription>
             <AlertAction>
               <Button size="sm" variant="outline" onClick={retry} data-nav>
                 Try again
@@ -169,7 +229,8 @@ function Body({ state, name, retry }: { state: State; name: string; retry: () =>
               </EmptyMedia>
               <EmptyTitle className="text-2xl">No lessons yet</EmptyTitle>
               <EmptyDescription className="text-lg">
-                Lessons show up here once they are added to the course's lessons folder.
+                Lessons show up here once they are added to the course's lessons
+                folder.
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
@@ -198,13 +259,26 @@ function LessonItem({ course, lesson }: { course: string; lesson: Lesson }) {
   const done = lesson.quizzes > 0 && lesson.answeredCorrectly === lesson.quizzes
   return (
     <Item asChild variant="outline" className="items-start p-5">
-      <Link to={`/courses/${course}/lessons/${lesson.id}`} data-nav data-lesson={lesson.id}>
+      <Link
+        to={`/courses/${course}/lessons/${lesson.id}`}
+        data-nav
+        data-lesson={lesson.id}
+      >
         <ItemContent className="gap-2">
           <ItemTitle className="text-xl">{lesson.title}</ItemTitle>
-          {lesson.subtitle ? <ItemDescription className="text-base">{lesson.subtitle}</ItemDescription> : null}
+          {lesson.subtitle ? (
+            <ItemDescription className="text-base">
+              {lesson.subtitle}
+            </ItemDescription>
+          ) : null}
         </ItemContent>
         <ItemFooter>
-          <Badge variant={done ? "default" : lesson.quizzes === 0 ? "outline" : "secondary"} className="h-auto text-sm">
+          <Badge
+            variant={
+              done ? "default" : lesson.quizzes === 0 ? "outline" : "secondary"
+            }
+            className="h-auto text-sm"
+          >
             {done && <CheckIcon data-icon="inline-start" />}
             {progressWords(lesson)}
           </Badge>

@@ -11,7 +11,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 const themes = [
   { value: "light", label: "Light" },
@@ -38,7 +42,12 @@ export function ThemeSwitch({
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="icon-lg" aria-label="Theme" {...props}>
+            <Button
+              variant="outline"
+              size="icon-lg"
+              aria-label="Theme"
+              {...props}
+            >
               <Sun className="scale-100 rotate-0 transition-all dark:scale-0 dark:-rotate-90" />
               <Moon className="absolute scale-0 rotate-90 transition-all dark:scale-100 dark:rotate-0" />
             </Button>
@@ -57,7 +66,10 @@ export function ThemeSwitch({
       </Tooltip>
       <DropdownMenuContent align="end">
         <DropdownMenuLabel>Theme</DropdownMenuLabel>
-        <DropdownMenuRadioGroup value={theme} onValueChange={(v) => setTheme(v as Theme)}>
+        <DropdownMenuRadioGroup
+          value={theme}
+          onValueChange={(v) => setTheme(v as Theme)}
+        >
           {themes.map((t) => (
             <DropdownMenuRadioItem key={t.value} value={t.value}>
               {t.label}

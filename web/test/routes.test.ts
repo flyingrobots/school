@@ -13,7 +13,11 @@ let browser: Browser
 let school: ReturnType<typeof Bun.serve>
 
 beforeAll(async () => {
-  school = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => Response.json({ from: "school" }) })
+  school = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: () => Response.json({ from: "school" }),
+  })
   browser = await chromium.launch({ channel: "chrome" })
 })
 
@@ -40,7 +44,9 @@ test("a route handler still fetching when the context is closed finishes, and fu
     running()
     await closing
     try {
-      const response = await route.fetch({ url: school.url.origin + "/api/thing" })
+      const response = await route.fetch({
+        url: school.url.origin + "/api/thing",
+      })
       await route.fulfill({ response })
       outcome = `fulfilled with ${await response.text()}`
     } catch (e) {
@@ -51,7 +57,11 @@ test("a route handler still fetching when the context is closed finishes, and fu
   })
   const p = await c.newPage()
   await p.route("http://page.test/", (route) =>
-    route.fulfill({ contentType: "text/html", body: "<script>fetch('/api/thing')</script>" }))
+    route.fulfill({
+      contentType: "text/html",
+      body: "<script>fetch('/api/thing')</script>",
+    })
+  )
   await p.goto("http://page.test/")
   await handling
   await close(c)
