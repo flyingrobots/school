@@ -11,7 +11,6 @@ import { startSchool, timeout, type Started } from "./testing/processes.ts";
 let root = "";
 let courseDir = "";
 let state = "";
-let PORT = 0;
 let base = "";
 let server: Started | null = null;
 
@@ -21,7 +20,8 @@ const quiz = (id: string) => ({
 });
 
 async function start(): Promise<void> {
-  server = await startSchool({ ...process.env, SCHOOL_COURSE: courseDir, SCHOOL_STATE: state, PORT: String(PORT), HOST: "127.0.0.1" });
+  server = await startSchool({ ...process.env, SCHOOL_COURSE: courseDir, SCHOOL_STATE: state, HOST: "127.0.0.1" });
+  base = server.url;
 }
 async function stop(): Promise<void> {
   server?.proc.kill("SIGKILL"); // no graceful shutdown: a committed answer must survive a hard kill
@@ -33,8 +33,6 @@ beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), "school-http-"));
   courseDir = join(root, "demo");
   state = join(root, "state");
-  PORT = 20000 + Math.floor(Math.random() * 20000);
-  base = `http://127.0.0.1:${PORT}`;
   mkdirSync(join(courseDir, "lessons"), { recursive: true });
   writeFileSync(join(courseDir, "lessons", "0001.json"),
     JSON.stringify({ type: "page", id: "l1", title: "One", subtitle: "", children: [quiz("q1"), quiz("q2")] }));

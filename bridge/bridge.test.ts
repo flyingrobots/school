@@ -7,7 +7,6 @@ import { startBridge, timeout, type Started } from "../server/testing/processes.
 
 // Every test gets its own bridge, directory and port: none depends on another having run first.
 let dir = "";
-let PORT = 0;
 let base = "";
 const TOKEN = "test-token-0123456789";
 let bridge: Started | null = null;
@@ -16,8 +15,6 @@ const schema = { type: "object", additionalProperties: false, required: ["ok"], 
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "school-bridge-http-"));
-  PORT = 20000 + Math.floor(Math.random() * 20000);
-  base = `http://127.0.0.1:${PORT}`;
   const good = join(dir, "good");
   writeFileSync(good, `#!/bin/sh\necho '{"ok": true}'\n`);
   chmodSync(good, 0o755);
@@ -25,7 +22,8 @@ beforeEach(async () => {
     { name: "missing", command: "no-such-cli-qqq {prompt}" },
     { name: "good", command: `${good} {prompt}` },
   ] }));
-  bridge = await startBridge({ ...process.env, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: join(dir, "bridge.json"), SCHOOL_BRIDGE_PORT: String(PORT) });
+  bridge = await startBridge({ ...process.env, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: join(dir, "bridge.json") });
+  base = bridge.url;
 }, timeout(1));
 afterEach(async () => {
   bridge?.proc.kill();
@@ -76,9 +74,8 @@ test("logs are JSON Lines and never contain the prompt", async () => {
 // no request can write a command.
 test("a bridge with no configuration file starts, reports itself unconfigured, and takes its agents only from that file", async () => {
   const d = mkdtempSync(join(tmpdir(), "school-bridge-fresh-"));
-  const port = PORT + 7;
   const file = join(d, "nested", "bridge.json");
-  const p = await startBridge({ ...process.env, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: file, SCHOOL_BRIDGE_PORT: String(port) });
+  const p = await startBridge({ ...process.env, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: file });
   const at = p.url;
   const send = (method: string, path: string, body?: unknown) =>
     fetch(at + path, { method, headers: { ...auth, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });

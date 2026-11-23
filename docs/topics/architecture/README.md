@@ -294,7 +294,7 @@ is currently broken.
 | `SCHOOL_BRIDGE_URL`, `SCHOOL_BRIDGE_TOKEN` | Server | Override the saved bridge settings | none |
 | `SCHOOL_BRIDGE_TOKEN` | Bridge | Shared secret, 16 characters or more | required |
 | `SCHOOL_BRIDGE_CONFIG` | Bridge | Agents file, re-read per request | `~/.config/school/bridge.json` |
-| `SCHOOL_BRIDGE_HOST`, `SCHOOL_BRIDGE_PORT` | Bridge | Listen address | `127.0.0.1:4748` |
+| `SCHOOL_BRIDGE_HOST`, `SCHOOL_BRIDGE_PORT` | Bridge | Listen address; port `0` lets the OS choose, reported in the `bridge.listening` log line | `127.0.0.1:4748` |
 
 [^adr2]: flyingrobots/school, `docs/adr/0002-typescript-on-bun.md` at `a959505`.
 [^adr6]: flyingrobots/school, `docs/adr/0006-separate-framework-lessons-and-learner-state.md` at `a959505`.

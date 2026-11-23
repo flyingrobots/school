@@ -27,7 +27,8 @@ function exit(message: string): never {
   process.exit(2);
 }
 if (token.length < 16) exit("set SCHOOL_BRIDGE_TOKEN to a shared secret of at least 16 characters; the server sends the same one");
-if (!Number.isInteger(port) || port < 1 || port > 65535) exit(`SCHOOL_BRIDGE_PORT ${process.env.SCHOOL_BRIDGE_PORT} is not a port`);
+// Port 0 asks the OS for a free port; the `bridge.listening` line says which one it got.
+if (!Number.isInteger(port) || port < 0 || port > 65535) exit(`SCHOOL_BRIDGE_PORT ${process.env.SCHOOL_BRIDGE_PORT} is not a port`);
 
 /** The configuration file as written (commands as the learner typed them), or null if there is none yet. */
 function rawConfig(): Record<string, unknown> | null {
@@ -109,7 +110,7 @@ const serially = <T>(work: () => Promise<T>): Promise<T> => {
   return next;
 };
 
-Bun.serve({
+const server = Bun.serve({
   hostname: host,
   port,
   idleTimeout: 255,
@@ -209,3 +210,4 @@ Bun.serve({
     return json({ status: "not found" }, 404);
   },
 });
+log("listening", { host, port: server.port });
