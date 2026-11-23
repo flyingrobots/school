@@ -76,7 +76,8 @@ describe.skipIf(URL_ === undefined || URL_ === "")("Bun.SQL on a real Postgres (
   test("two servers starting at once on one database migrate it once", async () => {
     const url = await database();
     const both = await Promise.all([openDatabase({ driver: "postgres", url }), openDatabase({ driver: "postgres", url })]);
-    expect(both.map((o) => o.applied).sort()).toEqual([[], [1, 2]]);
+    // One applies every shipped migration, in order; the other finds nothing left to do.
+    expect(both.map((o) => o.applied).sort()).toEqual([[], readMigrations().map((m) => m.version)]);
     for (const o of both) await o.close();
   }, SLOW);
 
