@@ -8,14 +8,43 @@ Practical notes for anyone — human or agent — changing the framework.
 - Captured `/teach`-style session transcripts (`*command-message*.txt`) are gitignored on
   purpose. Keep them local; never commit them. They were committed once and had to be
   removed from the published history.
-- `server/.dockerignore` admits the manifest, the lockfile and modules at any depth by pattern
-  (`*`, `!package.json`, `!bun.lock`, `!**/*.ts`, `**/*.test.ts`, `contract/**`); the Dockerfile
-  installs production dependencies and copies the filtered context, so a new module ships without
-  any list to update. The old per-file allowlist broke the image twice; `server/docker.test.ts`
-  checks that every relative import is shipped and every package import is a dependency.
+- `server/.dockerignore` admits the manifest, the lockfile, modules at any depth and the SQL
+  migrations by pattern (`*`, `!package.json`, `!bun.lock`, `!**/*.ts`, `!db/**/*.sql`,
+  `**/*.test.ts`, `contract/**`, `testing/**`, `node_modules/**`); the Dockerfile installs production
+  dependencies and copies the filtered context, so a new module or migration ships without any
+  list to update. `node_modules/**` keeps the host's dev dependencies' `.d.ts` files from being
+  copied over the production install. The old per-file allowlist broke the image twice;
+  `server/docker.test.ts` checks that every relative import is shipped, every package import is a
+  dependency, and every migration is shipped.
+- The Postgres record (RFC 3) is built by numbered migrations in `server/db/migrations/`
+  (`NNNN_name.sql`, from 0001, no gaps), applied by `server/db/migrate.ts`, one transaction per
+  file. `0001_init.sql` documents each public function's signature above it. Its tests run on
+  PGlite (`server/db/*.test.ts`). The server does not use it yet; it still runs on SQLite.
+  - **Applied** means applied to any database that holds or will hold learner data. Never edit an
+    applied migration; the runner refuses a changed or missing file, so add a new one. Until the
+    first such database applies a file, it may still be corrected in place, and the pull request
+    says so.
+  - The runner creates the roles `school_owner` and `school_app` and schema `school` if absent,
+    then runs every file as `school_owner`, which may create objects only in `school`. A file
+    may not contain `BEGIN`, `COMMIT`, `ROLLBACK`, `SET ROLE` or similar; the runner owns the
+    transaction and the role. Apply migrations only through the runner, never with `psql -f`.
+  - The runner connects as the database's superuser: it creates roles and switches to them.
+  - Both roles are created `NOLOGIN`. The deployment grants `school_app` `LOGIN` and its password
+    (`ALTER ROLE school_app LOGIN PASSWORD ...`); that is not a migration, so no secret lives in
+    the repository. The roles are cluster-wide: do not pre-create them with other memberships.
 - The server is a hexagon (RFC 3, §4): `server/core/` holds the model (Zod), the ports and the use
   cases, and imports nothing but itself and Zod (`server/core/boundary.test.ts`). Adapters live in
   `server/adapters/`; every `LearningRecord` adapter must pass `server/contract/learning-record.ts`.
+- The Postgres adapter (`server/adapters/postgres.ts`) issues only `SELECT * FROM school.<function>($1, ...)`
+  as `school_app`; its test refuses any other statement. It talks to a driver through the `Sql` port
+  (`server/adapters/sql.ts`); the PGlite driver is a test helper in `server/testing/pglite.ts`, since
+  PGlite is a dev dependency and `testing/` is not shipped. It opens an encounter with the
+  `aid_tracking` its caller passes: the lesson API's `?aid=` capture version, or NULL (aid not
+  observed) when the client sends none. A client may send `?aid=1` only if it records, through
+  `POST /api/exposure`, every exposure it shows; the pages do not yet (flyingrobots/school#51).
+- `LearningRecord.recordsExposures` says whether an adapter stores exposures. The contract's aid
+  cases run only for one that does; one that does not must refuse every exposure as `unsupported`
+  and report every aid as unknown. SQLite does not, and is not getting them (flyingrobots/school#49).
 - Typecheck the server with `bunx tsc -p server` after `bun install` in `server/`.
   A server file that is not TypeScript still needs adding explicitly.
 - `server/compose.yaml` names no course. Its paths come from a gitignored `server/.env`; copy

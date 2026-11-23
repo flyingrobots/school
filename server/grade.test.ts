@@ -115,7 +115,7 @@ test("a malformed bridge reply stores one failed grading and returns the honest-
   const page: Block = { type: "page", id: "l1", title: "One", subtitle: "", children: [
     { type: "explain", id: "e1", prompt: input.prompt, model: input.modelAnswer, sources: [...input.sources] },
   ] };
-  const { encounter } = await school.openLesson("c", page);
+  const { encounter } = await school.openLesson("c", page, null);
   const submissionId = crypto.randomUUID();
   expect((await school.saveExplanation({ submissionId, encounterId: encounter.id, blockId: "e1", text: input.explanation, ms: 9 })).result.status).toBe("stored");
 

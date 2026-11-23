@@ -128,3 +128,5 @@
     @apply font-sans;
     }
 }
+
+@source "../node_modules/streamdown/dist/*.js";

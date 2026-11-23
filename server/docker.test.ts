@@ -4,12 +4,17 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import { MIGRATIONS, readMigrations } from "./db/migrate.ts";
 
 const dir = import.meta.dir;
 const dockerfile = readFileSync(join(dir, "Dockerfile"), "utf8");
 
-/** What the build context keeps, per .dockerignore: the manifest, the lockfile and every non-test module outside contract/ and testing/. */
+/**
+ * What the build context keeps, per .dockerignore: the manifest, the lockfile, every non-test module outside contract/
+ * and testing/, and the SQL migrations under db/.
+ */
 const admitted = (path: string) => path === "package.json" || path === "bun.lock" ||
+  (path.startsWith("db/") && path.endsWith(".sql")) ||
   (path.endsWith(".ts") && !path.endsWith(".test.ts") && !path.startsWith("contract/") && !path.startsWith("testing/") && !path.startsWith("node_modules/"));
 
 function modules(at = dir): string[] {
@@ -21,9 +26,9 @@ function modules(at = dir): string[] {
 }
 const shipped = modules().filter(admitted);
 
-test("the image admits modules at any depth, the manifest and lockfile, and no tests, test helpers or contract suites", () => {
+test("the image admits modules at any depth, the manifest and lockfile, the migrations, and no tests, test helpers, contract suites or host node_modules", () => {
   const rules = readFileSync(join(dir, ".dockerignore"), "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
-  expect(rules).toEqual(["*", "!package.json", "!bun.lock", "!**/*.ts", "**/*.test.ts", "contract/**", "testing/**"]);
+  expect(rules).toEqual(["*", "!package.json", "!bun.lock", "!**/*.ts", "!db/**/*.sql", "**/*.test.ts", "contract/**", "testing/**", "node_modules/**"]);
   expect(dockerfile).toMatch(/^COPY package\.json bun\.lock \.\/$/m);
   expect(dockerfile).toMatch(/^RUN bun install --production --frozen-lockfile$/m);
   expect(dockerfile).toMatch(/^COPY \. \.\/$/m);
@@ -43,4 +48,13 @@ test("the image is Ubuntu LTS with the pinned Bun, run as a non-root user", () =
   expect(dockerfile).toMatch(/^FROM oven\/bun:1\.4\.4 AS bun$/m); // the same Bun as CI
   expect(dockerfile).toMatch(/^FROM ubuntu:\d\d\.04$/m); // an LTS release
   expect(dockerfile).toMatch(/^USER school$/m);
+});
+
+test("every migration the runner reads is shipped, beside the runner that reads it", () => {
+  const files = readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql"));
+  expect(files.length).toBeGreaterThan(0);
+  expect(relative(dir, MIGRATIONS)).toBe(join("db", "migrations")); // the runner finds them relative to itself
+  expect(shipped).toContain(join("db", "migrate.ts"));
+  for (const f of files) expect(admitted(join("db", "migrations", f))).toBe(true);
+  expect(readMigrations(MIGRATIONS).map((m) => m.name)).toEqual(files.sort());
 });
