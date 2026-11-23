@@ -43,7 +43,7 @@ beforeAll(async () => {
 
   server = await startSchool({ ...process.env, SCHOOL_COURSES: `ok=${join(root, "ok")},empty=${join(root, "empty")},broken=${join(root, "broken")},linked=${join(root, "linked")}`,
       // No built app, as on CI: the API and path checks must not depend on web/dist existing.
-      SCHOOL_STATE: join(root, "state"), SCHOOL_WEB: join(root, "no-web"), PORT: String(PORT), HOST: "127.0.0.1" });
+      SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`, SCHOOL_WEB: join(root, "no-web"), PORT: String(PORT), HOST: "127.0.0.1" });
 }, timeout(1));
 afterAll(async () => {
   server?.proc.kill();

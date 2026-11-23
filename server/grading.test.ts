@@ -1,9 +1,10 @@
 // Explanation grading end to end: the real server, the real bridge, and a fake agent CLI (flyingrobots/school#10).
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startBridge, startSchool, timeout, type Started } from "./testing/processes.ts";
+import { ownerQuery, recordBytes } from "./testing/record.ts";
 
 // Every test gets its own server, bridge, state and ports, and sets up what it needs: none
 // depends on another having run first.
@@ -44,7 +45,7 @@ beforeEach(async () => {
     }],
   }));
   bridge = await startBridge({ ...process.env, SCHOOL_BRIDGE_TOKEN: KEY, SCHOOL_BRIDGE_CONFIG: join(root, "bridge.json"), SCHOOL_BRIDGE_PORT: String(BRIDGE_PORT) });
-  server = await startSchool({ ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), PORT: String(PORT), HOST: "127.0.0.1",
+  server = await startSchool({ ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`, PORT: String(PORT), HOST: "127.0.0.1",
     SCHOOL_BRIDGE_URL: `http://127.0.0.1:${BRIDGE_PORT}`, SCHOOL_BRIDGE_TOKEN: KEY });
 }, timeout(2));
 afterEach(async () => {
@@ -118,14 +119,20 @@ test("grading an unknown submission is a 404, and a malformed one a 400", async 
 
 test("the bridge token appears nowhere: not in the database, a page or the server's output", async () => {
   expect((await post("/api/grade", { submissionId: await saved() })).status).toBe(200);
-  const dbBytes = readFileSync(join(root, "state", "progress.db")).toString("latin1") +
-    (() => { try { return readFileSync(join(root, "state", "progress.db-wal")).toString("latin1"); } catch { return ""; } })();
-  expect(dbBytes).not.toContain(KEY);
   expect(JSON.stringify(await lesson())).not.toContain(KEY);
   server!.proc.kill();
   const { stdout, stderr } = await server!.output();
   const out = stdout + stderr;
   expect(out).not.toContain(KEY);
   server = null;
-});
+  // The record, once its server has exited: every byte of the PGlite directory (its tables and
+  // its write-ahead log, as progress.db and its -wal were), and every text value it holds.
+  const record = join(root, "record");
+  expect(recordBytes(record)).toContain("You keep the changes"); // the explanation is in these bytes, unencoded
+  expect(recordBytes(record)).not.toContain(KEY);
+  const tables = ["answers", "encounters", "explanations", "exposures", "gradings", "snapshots", "views"];
+  const values = await ownerQuery<{ v: string }>(record, tables.map((t) => `SELECT to_jsonb(r)::text AS v FROM school.${t} r`).join(" UNION ALL "));
+  expect(values.some(({ v }) => v.includes("Close. Add an example."))).toBe(true); // the grading is among them
+  for (const { v } of values) expect(v).not.toContain(KEY);
+}, timeout(1));
 

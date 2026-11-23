@@ -41,7 +41,7 @@ beforeEach(async () => {
   // A bridge with no configuration file yet: the settings page is how it gets one.
   procs.push(await startBridge({ ...process.env, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: join(root, "bridge", "bridge.json"), SCHOOL_BRIDGE_PORT: String(BRIDGE_PORT) }));
   // A server with no bridge configured at all, as the learner's was.
-  const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), PORT: String(PORT), HOST: "127.0.0.1" };
+  const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`, PORT: String(PORT), HOST: "127.0.0.1" };
   delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_URL;
   delete (env as Record<string, string | undefined>).SCHOOL_BRIDGE_TOKEN;
   serverOut = await startSchool(env);
@@ -232,7 +232,7 @@ async function touchEverything(at: string) {
 /** A second server, with the bridge settings given in its environment. */
 async function serverWith(extra: Record<string, string>) {
   const port = PORT + 2;
-  const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state-env"), PORT: String(port), HOST: "127.0.0.1", ...extra };
+  const env = { ...process.env, SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state-env"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record-env")}`, PORT: String(port), HOST: "127.0.0.1", ...extra };
   for (const k of ["SCHOOL_BRIDGE_URL", "SCHOOL_BRIDGE_TOKEN"]) if (!(k in extra)) delete (env as Record<string, string | undefined>)[k];
   const s = await startSchool(env);
   procs.push(s);

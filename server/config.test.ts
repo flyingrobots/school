@@ -54,6 +54,30 @@ test("the database defaults inside the state directory", () => {
   expect(parseConfig({ SCHOOL_STATE: "/var/school", DB_PATH: "/tmp/other.db" }, FRAMEWORK).dbPath).toBe("/tmp/other.db");
 });
 
+test("the record defaults to PGlite in the state directory; SCHOOL_DATABASE_URL picks the driver", () => {
+  expect(parseConfig({ SCHOOL_STATE: "/var/school" }, FRAMEWORK).database).toEqual({ driver: "pglite", dir: "/var/school/db" });
+  expect(parseConfig({ SCHOOL_STATE: "/var/school", SCHOOL_DATABASE_URL: "" }, FRAMEWORK).database).toEqual({ driver: "pglite", dir: "/var/school/db" });
+  expect(parseConfig({ SCHOOL_DATABASE_URL: "pglite:/srv/record" }, FRAMEWORK).database).toEqual({ driver: "pglite", dir: "/srv/record" });
+  expect(parseConfig({ SCHOOL_DATABASE_URL: "pglite:record" }, FRAMEWORK).database).toEqual({ driver: "pglite", dir: join(process.cwd(), "record") });
+  for (const url of ["postgres://school:pw@db:5432/school", "postgresql://db/school"]) {
+    expect(parseConfig({ SCHOOL_DATABASE_URL: url }, FRAMEWORK).database).toEqual({ driver: "postgres", url });
+  }
+});
+
+test("a SCHOOL_DATABASE_URL School cannot use is refused, without echoing what may be a password", () => {
+  for (const url of ["mysql://u:hunter2@db/school", "sqlite:/var/school/progress.db", "pglite:", "pglite://x", "postgres://u:hunter2@[bad"]) {
+    let message = "";
+    try { parseConfig({ SCHOOL_DATABASE_URL: url }, FRAMEWORK); } catch (e) { expect(e).toBeInstanceOf(ConfigError); message = (e as Error).message; }
+    expect(message).toContain("SCHOOL_DATABASE_URL");
+    expect(message).not.toContain("hunter2");
+  }
+});
+
+test("a PGlite record inside a course is refused", () => {
+  expect(() => parseConfig({ SCHOOL_COURSES: "aion=/courses/aion", SCHOOL_STATE: "/var/school", SCHOOL_DATABASE_URL: "pglite:/courses/aion/db" }, FRAMEWORK))
+    .toThrow(/SCHOOL_DATABASE_URL.*must live outside the course/);
+});
+
 test("named mounts are parsed, and several courses can cite different sources", () => {
   const m = parseMounts("aion=/repos/aion, papers=/repos/papers", "/cwd");
   expect(m).toEqual({ aion: "/repos/aion", papers: "/repos/papers" });

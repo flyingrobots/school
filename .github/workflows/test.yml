@@ -6,6 +6,22 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # A real Postgres for the Bun.SQL driver's tests (server/adapters/bunsql.test.ts); the rest of
+    # the suite runs on PGlite. The same image compose runs.
+    services:
+      postgres:
+        image: postgres:18.7@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
+        env:
+          POSTGRES_PASSWORD: ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username=postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      SCHOOL_TEST_POSTGRES_URL: postgres://postgres:ci-only@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
