@@ -36,17 +36,19 @@ Practical notes for anyone — human or agent — changing the framework.
     SCRAM-SHA-256 verifier of `SCHOOL_APP_PASSWORD` computed in the job, so the password itself never
     reaches Postgres or a log, and revokes `CREATE` and `TEMPORARY` on the database from `PUBLIC`.
     No secret lives in the repository or in a migration (flyingrobots/school#91).
-  - Both roles are created `NOLOGIN`; the migrate job gives `school_app` `LOGIN`. On Postgres the
-    server's `SCHOOL_DATABASE_URL` is `school_app`'s own login, and before serving it refuses to
-    start (exit 2, `Refused`) if that login is not `school_app`, is a superuser or has `CREATEROLE`,
-    `CREATEDB`, `REPLICATION` or `BYPASSRLS`, is a member of any role, owns schema `school` or any
-    object, has any privilege on a table, view or sequence, may create in any schema, create schemas
-    or create temporary tables, or is not denied a probe that creates a table, writes one, truncates
-    one and runs `COPY ... TO PROGRAM` (`loginRefusals` in `server/adapters/database.ts`). It still
+  - Both roles are created `NOLOGIN`; the migrate job gives `school_app` `LOGIN` and clears its role
+    settings. On Postgres the server's `SCHOOL_DATABASE_URL` is `school_app`'s own login, and before
+    serving it runs the login check (`loginRefusals` in `server/adapters/database.ts`) and refuses to
+    start (exit 2, `Refused`) on any failure. The exact checks, what they cannot detect and what
+    `school_app` can still do are in docs/topics/architecture/README.md, "The login check". It still
     runs each statement with `SET LOCAL ROLE school_app` and only function calls, as defence in
     depth. PGlite (development and tests) keeps its single-process path: its one session is the
     superuser, migrates, then `SET ROLE school_app`; it has no login to check. The roles are
-    cluster-wide: do not pre-create them with other memberships.
+    cluster-wide: do not pre-create them with other memberships, and never grant `school_app`
+    anything by hand.
+  - A migration that grants `school_app` a new function also adds it to `GRANTED_FUNCTIONS` in
+    `server/adapters/database.ts`; otherwise the server refuses to start, and
+    `server/adapters/app-login.test.ts` fails.
   - The Bun.SQL tests do the same: `fresh()` in `server/testing/postgres.ts` runs the migrate job
     with the scratch server's superuser URL and opens the record with `school_app`'s URL. The test
     password is derived from `SCHOOL_TEST_POSTGRES_URL`, so none is kept in the repository.

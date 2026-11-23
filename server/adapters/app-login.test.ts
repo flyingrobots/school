@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NotStarted, startSchool, timeout } from "../testing/processes.ts";
 import { appUrl, scratchPostgres, TEST_APP_PASSWORD, TEST_POSTGRES_URL as URL_ } from "../testing/postgres.ts";
-import { APP, migrateRecord, openDatabase, Refused } from "./database.ts";
+import { APP, GRANTED_FUNCTIONS, migrateRecord, openDatabase, Refused, RESTRICTED_FUNCTIONS, RESTRICTED_RELATIONS } from "./database.ts";
 import { postgresRecord } from "./postgres.ts";
 import { OWNER, readMigrations } from "../db/migrate.ts";
 
@@ -236,6 +236,113 @@ describe.skipIf(URL_ === undefined)("Bun.SQL on a real Postgres, logged in as sc
     // Every grant undone, it opens again.
     await (await openDatabase({ driver: "postgres", url: app })).close();
   }, SLOW);
+
+  // flyingrobots/school#112 review, F-1: each kind of privilege a hand grant could give school_app
+  // beyond the migrations' grants. Each case is undone in `finally`; several are cluster-wide.
+  test("the server refuses school_app once it has a column, MAINTAIN, sequence, function, parameter, default-privilege, catalog or database grant", async () => {
+    const { url, appUrl: app } = await fresh();
+    const su = track(new Bun.SQL(url));
+    const owned = `school_test_owned_${process.pid}`;
+    const cases: [grant: string, revoke: string, refusal: RegExp][] = [
+      [`GRANT SELECT (correct) ON school.answers TO ${APP}`, `REVOKE SELECT (correct) ON school.answers FROM ${APP}`, /column privileges on school\.answers/],
+      [`GRANT MAINTAIN ON school.views TO ${APP}`, `REVOKE MAINTAIN ON school.views FROM ${APP}`, /privileges on school\.views/],
+      [`GRANT USAGE ON SEQUENCE school.record_seq TO ${APP}`, `REVOKE USAGE ON SEQUENCE school.record_seq FROM ${APP}`, /privileges on school\.record_seq/],
+      [`GRANT EXECUTE ON FUNCTION lo_export(oid, text) TO ${APP}`, `REVOKE EXECUTE ON FUNCTION lo_export(oid, text) FROM ${APP}`, /may execute lo_export/],
+      ["GRANT EXECUTE ON FUNCTION lo_import(text) TO PUBLIC", "REVOKE EXECUTE ON FUNCTION lo_import(text) FROM PUBLIC", /may execute lo_import/],
+      [`GRANT EXECUTE ON FUNCTION pg_read_file(text) TO ${APP}`, `REVOKE EXECUTE ON FUNCTION pg_read_file(text) FROM ${APP}`, /may execute pg_read_file/],
+      [`GRANT EXECUTE ON FUNCTION school.evidence_course(bigint) TO ${APP}`, `REVOKE EXECUTE ON FUNCTION school.evidence_course(bigint) FROM ${APP}`, /may execute school\.evidence_course\(bigint\)/],
+      ["CREATE FUNCTION public.school_test_probe() RETURNS int LANGUAGE sql AS 'SELECT 1'", "DROP FUNCTION public.school_test_probe()", /may execute public\.school_test_probe\(\)/],
+      [`GRANT SET ON PARAMETER log_statement TO ${APP}`, `REVOKE SET ON PARAMETER log_statement FROM ${APP}`, /parameter log_statement/],
+      [`ALTER DEFAULT PRIVILEGES FOR ROLE postgres GRANT SELECT ON TABLES TO ${APP}`, `ALTER DEFAULT PRIVILEGES FOR ROLE postgres REVOKE SELECT ON TABLES FROM ${APP}`, /default privileges/],
+      [`CREATE DATABASE ${owned} OWNER ${APP}`, `DROP DATABASE ${owned}`, new RegExp(`owns database ${owned}`)],
+      [`GRANT SELECT ON pg_catalog.pg_authid TO ${APP}`, `REVOKE SELECT ON pg_catalog.pg_authid FROM ${APP}`, /pg_authid/],
+      ["GRANT SELECT ON pg_catalog.pg_statistic TO PUBLIC", "REVOKE SELECT ON pg_catalog.pg_statistic FROM PUBLIC", /pg_statistic/],
+      [`CREATE SCHEMA school_test_other; GRANT USAGE ON SCHEMA school_test_other TO ${APP}`, "DROP SCHEMA school_test_other", /schema school_test_other/],
+    ];
+    for (const [grant, revoke, refusal] of cases) {
+      await su.unsafe(grant);
+      try {
+        const e = await openDatabase({ driver: "postgres", url: app }).then(async (o) => { await o.close(); return null; }, (x: unknown) => x);
+        expect({ grant, refused: e instanceof Refused }).toEqual({ grant, refused: true });
+        expect((e as Error).message).toMatch(refusal);
+      } finally {
+        await su.unsafe(revoke);
+      }
+    }
+    await (await openDatabase({ driver: "postgres", url: app })).close(); // every grant undone, it opens again
+  }, 120_000);
+
+  test("the server process exits 2 when school_app may execute lo_export, naming it", async () => {
+    const { url, appUrl: app } = await fresh();
+    const su = track(new Bun.SQL(url));
+    const root = mkdtempSync(join(tmpdir(), "school-login-"));
+    await su.unsafe(`GRANT EXECUTE ON FUNCTION lo_export(oid, text) TO ${APP}`);
+    try {
+      mkdirSync(join(root, "course", "lessons"), { recursive: true });
+      const e = await startSchool({ ...process.env, HOST: "127.0.0.1", SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: app })
+        .then((s) => { s.proc.kill(); return null; }, (x: unknown) => x);
+      expect(e).toBeInstanceOf(NotStarted);
+      expect((e as NotStarted).exitCode).toBe(2);
+      expect((e as NotStarted).stderr).toContain("may execute lo_export");
+      expect((e as NotStarted).stderr).not.toContain(TEST_APP_PASSWORD);
+    } finally {
+      await su.unsafe(`REVOKE EXECUTE ON FUNCTION lo_export(oid, text) FROM ${APP}`);
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, timeout(1));
+
+  test("the functions school_app may run in schema school are exactly GRANTED_FUNCTIONS, as the migrations grant them", async () => {
+    const { url } = await fresh();
+    const su = track(new Bun.SQL(url));
+    const rows = await su.unsafe(`SELECT p.oid::regprocedure::text AS f FROM pg_proc p
+      WHERE p.pronamespace = 'school'::regnamespace AND has_function_privilege('${APP}', p.oid, 'EXECUTE') ORDER BY 1`);
+    expect([...rows].map((r: { f: string }) => r.f)).toEqual([...GRANTED_FUNCTIONS].sort());
+  }, SLOW);
+
+  test("RESTRICTED_FUNCTIONS and RESTRICTED_RELATIONS are what this Postgres withholds from an ordinary role", async () => {
+    const url = await database();
+    const su = track(new Bun.SQL(url));
+    const role = `school_test_plain_${process.pid}`;
+    await su.unsafe(`CREATE ROLE ${role} NOLOGIN`);
+    try {
+      const fns = await su.unsafe(`SELECT DISTINCT p.proname::text AS n FROM pg_proc p
+        WHERE p.pronamespace IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace) AND NOT has_function_privilege('${role}', p.oid, 'EXECUTE') ORDER BY 1`);
+      expect([...fns].map((r: { n: string }) => r.n)).toEqual([...RESTRICTED_FUNCTIONS].sort());
+      const rels = await su.unsafe(`SELECT c.relname::text AS n FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname IN ('pg_catalog', 'information_schema') AND c.relkind IN ('r', 'v', 'm', 'S', 'f', 'p')
+          AND NOT has_table_privilege('${role}', c.oid, 'SELECT') ORDER BY 1`);
+      expect([...rels].map((r: { n: string }) => r.n)).toEqual([...RESTRICTED_RELATIONS].sort());
+      // And the one system relation an ordinary role may write: pg_settings, by UPDATE, which is SET.
+      const writes = await su.unsafe(`SELECT c.oid::regclass::text AS n FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname IN ('pg_catalog', 'information_schema') AND c.relkind IN ('r', 'v', 'm', 'S', 'f', 'p')
+          AND has_table_privilege('${role}', c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN')`);
+      expect([...writes].map((r: { n: string }) => r.n)).toEqual(["pg_settings"]);
+      expect([...await su.unsafe(`SELECT has_table_privilege('${role}', 'pg_settings', 'UPDATE') AND NOT has_table_privilege('${role}', 'pg_settings', 'INSERT, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN') AS only`)][0].only).toBe(true);
+    } finally {
+      await su.unsafe(`DROP ROLE ${role}`);
+    }
+  }, SLOW);
+
+  // F-2: a compromised server can ALTER ROLE school_app SET ...; the next migrate job clears it.
+  test("the migrate job clears school_app's role settings, database-wide and per database", async () => {
+    const { url, appUrl: app } = await fresh();
+    const db = new URL(url).pathname.slice(1);
+    const own = track(new Bun.SQL(app));
+    await own.unsafe(`ALTER ROLE ${APP} SET search_path = public`);
+    await own.unsafe(`ALTER ROLE ${APP} IN DATABASE ${db} SET statement_timeout = '1ms'`);
+    const su = track(new Bun.SQL(url));
+    const settings = async () => [...await su.unsafe(`SELECT count(*)::int AS n FROM pg_db_role_setting WHERE setrole = '${APP}'::regrole`)][0].n;
+    expect(await settings()).toBe(2);
+    await migrateRecord(url, TEST_APP_PASSWORD);
+    expect(await settings()).toBe(0);
+  }, SLOW);
+
+  // F-4: the role is cluster-wide, so jobs on different databases contend for its catalog row.
+  test("six migrate jobs on six databases of one cluster at once all succeed", async () => {
+    const urls = await Promise.all(Array.from({ length: 6 }, () => database()));
+    const done = await Promise.allSettled(urls.map((u) => migrateRecord(u, TEST_APP_PASSWORD)));
+    expect(done.map((d) => d.status)).toEqual(urls.map(() => "fulfilled"));
+  }, 120_000);
 
   test("a refusal names the login's problems and the host, never its password", async () => {
     const url = await database();

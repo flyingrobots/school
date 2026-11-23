@@ -50,8 +50,8 @@ let database;
 try {
   database = await openDatabase(config.database);
 } catch (e) {
-  // A record held by another server, or a login that may do more than school_app may, is a
-  // refusal to start, like a bad configuration: exit 2.
+  // A record held by another server, or a login that fails the login check (loginRefusals in
+  // server/adapters/database.ts), is a refusal to start, like a bad configuration: exit 2.
   if (e instanceof InUse || e instanceof Refused) {
     console.error(`school: ${e.message}`);
     process.exit(2);
