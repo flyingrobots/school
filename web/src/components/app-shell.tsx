@@ -1,5 +1,11 @@
 import * as React from "react"
-import { MonitorIcon, MoonIcon, PanelLeftIcon, SunIcon, type LucideIcon } from "lucide-react"
+import {
+  MonitorIcon,
+  MoonIcon,
+  PanelLeftIcon,
+  SunIcon,
+  type LucideIcon,
+} from "lucide-react"
 
 import { useTheme } from "@/components/theme-provider"
 import { ThemeSwitch } from "@/components/theme-switch"
@@ -16,7 +22,13 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from "@/components/ui/command"
-import { Item, ItemActions, ItemContent, ItemGroup, ItemTitle } from "@/components/ui/item"
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemGroup,
+  ItemTitle,
+} from "@/components/ui/item"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { Separator } from "@/components/ui/separator"
 import {
@@ -36,8 +48,18 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { appKeys, modAria, useAppKeys, type LeaderKey } from "@/lib/app-shell-keys"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import {
+  appKeys,
+  modAria,
+  useAppKeys,
+  type LeaderKey,
+} from "@/lib/app-shell-keys"
 
 export type AppShellPage = {
   href: string
@@ -87,21 +109,40 @@ export function AppShell(props: AppShellProps) {
   )
 }
 
-function Shell({ title, pages, pathname, navigate, renderLink = (p) => <a {...p} />, sidebar, contained, children }: AppShellProps) {
+function Shell({
+  title,
+  pages,
+  pathname,
+  navigate,
+  renderLink = (p) => <a {...p} />,
+  sidebar,
+  contained,
+  children,
+}: AppShellProps) {
   const [palette, setPalette] = React.useState(false)
   const [themeMenu, setThemeMenu] = React.useState(false)
   const root = React.useRef<HTMLDivElement>(null)
 
   const leaders: LeaderKey[] = [
-    ...pages.flatMap((p) => (p.leader ? [{ key: p.leader, run: () => navigate(p.href), description: p.label }] : [])),
+    ...pages.flatMap((p) =>
+      p.leader
+        ? [{ key: p.leader, run: () => navigate(p.href), description: p.label }]
+        : []
+    ),
     { key: THEME_LEADER, run: () => setThemeMenu(true), description: "Theme" },
   ]
-  const { leader } = useAppKeys({ openPalette: () => setPalette(true), leaders, root: contained ? root : undefined })
+  const { leader } = useAppKeys({
+    openPalette: () => setPalette(true),
+    leaders,
+    root: contained ? root : undefined,
+  })
   const leaderHint = (key: string) => ["Space", key] as const
   const keyList: { label: string; hints: (readonly string[])[] }[] = [
     { label: "Commands", hints: [appKeys.palette, appKeys.paletteLeader] },
     { label: "Move focus", hints: [appKeys.move, appKeys.arrows] },
-    ...pages.flatMap((p) => (p.leader ? [{ label: p.label, hints: [leaderHint(p.leader)] }] : [])),
+    ...pages.flatMap((p) =>
+      p.leader ? [{ label: p.label, hints: [leaderHint(p.leader)] }] : []
+    ),
     { label: "Theme", hints: [leaderHint(THEME_LEADER)] },
     { label: "Sidebar", hints: [appKeys.sidebar] },
     { label: "Close", hints: [appKeys.close] },
@@ -120,11 +161,18 @@ function Shell({ title, pages, pathname, navigate, renderLink = (p) => <a {...p}
               <SidebarMenu>
                 {pages.map((page) => (
                   <SidebarMenuItem key={page.href}>
-                    <SidebarMenuButton asChild size="lg" isActive={pathname === page.href} className="text-base">
+                    <SidebarMenuButton
+                      asChild
+                      size="lg"
+                      isActive={pathname === page.href}
+                      className="text-base"
+                    >
                       {renderLink({
                         href: page.href,
                         "data-nav": "",
-                        "aria-keyshortcuts": page.leader ? `Space ${page.leader.toUpperCase()}` : undefined,
+                        "aria-keyshortcuts": page.leader
+                          ? `Space ${page.leader.toUpperCase()}`
+                          : undefined,
                         children: (
                           <>
                             <page.icon />
@@ -168,7 +216,11 @@ function Shell({ title, pages, pathname, navigate, renderLink = (p) => <a {...p}
         <header className="flex h-16 items-center gap-3 px-4 md:px-6">
           <Tooltip>
             <TooltipTrigger asChild>
-              <SidebarTrigger data-nav size="icon-lg" aria-keyshortcuts={`${modAria}+B`} />
+              <SidebarTrigger
+                data-nav
+                size="icon-lg"
+                aria-keyshortcuts={`${modAria}+B`}
+              />
             </TooltipTrigger>
             <TooltipContent>
               Sidebar <KeyHint keys={appKeys.sidebar} />
@@ -176,22 +228,42 @@ function Shell({ title, pages, pathname, navigate, renderLink = (p) => <a {...p}
           </Tooltip>
           {leader && (
             <Badge variant="secondary" aria-live="polite">
-              <KeyHint keys={["Space"]} /> then {[...leaders.map((l) => l.key), "Space"].join(", ")}
+              <KeyHint keys={["Space"]} /> then{" "}
+              {[...leaders.map((l) => l.key), "Space"].join(", ")}
             </Badge>
           )}
           <div className="ms-auto flex items-center gap-2">
-            <Button variant="outline" size="lg" data-nav aria-keyshortcuts={`${modAria}+K Space`} onClick={() => setPalette(true)}>
+            <Button
+              variant="outline"
+              size="lg"
+              data-nav
+              aria-keyshortcuts={`${modAria}+K Space`}
+              onClick={() => setPalette(true)}
+            >
               Commands
               <KeyHint keys={appKeys.palette} />
             </Button>
-            <ThemeSwitch open={themeMenu} onOpenChange={setThemeMenu} keys={leaderHint(THEME_LEADER)} data-nav aria-keyshortcuts="Space T" />
+            <ThemeSwitch
+              open={themeMenu}
+              onOpenChange={setThemeMenu}
+              keys={leaderHint(THEME_LEADER)}
+              data-nav
+              aria-keyshortcuts="Space T"
+            />
           </div>
         </header>
         <Separator />
-        <div className="flex flex-1 flex-col px-4 py-8 md:px-8 2xl:px-12">{children}</div>
+        <div className="flex flex-1 flex-col px-4 py-8 md:px-8 2xl:px-12">
+          {children}
+        </div>
       </SidebarInset>
 
-      <Palette open={palette} onOpenChange={setPalette} pages={pages} navigate={navigate} />
+      <Palette
+        open={palette}
+        onOpenChange={setPalette}
+        pages={pages}
+        navigate={navigate}
+      />
     </div>
   )
 }
@@ -220,14 +292,22 @@ function Palette({
   ] as const
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange} title="Commands" description="Search for a page or a command to run.">
+    <CommandDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Commands"
+      description="Search for a page or a command to run."
+    >
       <Command>
         <CommandInput placeholder="Type a command or a page…" />
         <CommandList>
           <CommandEmpty>No matching command.</CommandEmpty>
           <CommandGroup heading="Go to">
             {pages.map((page) => (
-              <CommandItem key={page.href} onSelect={run(() => navigate(page.href))}>
+              <CommandItem
+                key={page.href}
+                onSelect={run(() => navigate(page.href))}
+              >
                 <page.icon />
                 {page.label}
                 {page.leader && (
@@ -241,7 +321,10 @@ function Palette({
           <CommandSeparator />
           <CommandGroup heading="Theme">
             {themes.map((t) => (
-              <CommandItem key={t.value} onSelect={run(() => setTheme(t.value))}>
+              <CommandItem
+                key={t.value}
+                onSelect={run(() => setTheme(t.value))}
+              >
                 <t.icon />
                 {t.label}
               </CommandItem>

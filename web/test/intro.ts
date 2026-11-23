@@ -6,7 +6,11 @@
 import type { BrowserContext, Page } from "playwright-core"
 
 /** Opens `url` with the page's clock paused; `ready` waits for what the intro brings in. */
-export async function heldIntro(c: BrowserContext, url: string, ready: (p: Page) => Promise<unknown>): Promise<Page> {
+export async function heldIntro(
+  c: BrowserContext,
+  url: string,
+  ready: (p: Page) => Promise<unknown>
+): Promise<Page> {
   const p = await c.newPage()
   p.setDefaultTimeout(8_000)
   await p.clock.install()
@@ -20,9 +24,17 @@ export async function heldIntro(c: BrowserContext, url: string, ready: (p: Page)
 
 /** The main region's focus stops, in order, each named by its link, or else its label, id or text. */
 export const stops = (p: Page) =>
-  p.locator("[data-nav-region=main] [data-nav]").evaluateAll((els) =>
-    els.map((e) => e.getAttribute("href") ?? e.getAttribute("aria-label") ?? (e.id || e.textContent?.trim()) ?? "")
-  )
+  p
+    .locator("[data-nav-region=main] [data-nav]")
+    .evaluateAll((els) =>
+      els.map(
+        (e) =>
+          e.getAttribute("href") ??
+          e.getAttribute("aria-label") ??
+          (e.id || e.textContent?.trim()) ??
+          ""
+      )
+    )
 
 /** Presses j `n` times, returning the focus stop reached after each press, named as `stops` names it. */
 export async function pressJ(p: Page, n: number): Promise<string[]> {
@@ -32,8 +44,14 @@ export async function pressJ(p: Page, n: number): Promise<string[]> {
     reached.push(
       await p.evaluate(() => {
         const e = document.activeElement
-        if (!e?.matches("[data-nav-region=main] [data-nav]")) return `not a focus stop in the main region: ${e?.tagName}`
-        return e.getAttribute("href") ?? e.getAttribute("aria-label") ?? (e.id || e.textContent?.trim()) ?? ""
+        if (!e?.matches("[data-nav-region=main] [data-nav]"))
+          return `not a focus stop in the main region: ${e?.tagName}`
+        return (
+          e.getAttribute("href") ??
+          e.getAttribute("aria-label") ??
+          (e.id || e.textContent?.trim()) ??
+          ""
+        )
       })
     )
   }
@@ -42,4 +60,6 @@ export async function pressJ(p: Page, n: number): Promise<string[]> {
 
 /** The computed opacity of each element `selector` matches. */
 export const opacities = (p: Page, selector: string) =>
-  p.locator(selector).evaluateAll((els) => els.map((e) => getComputedStyle(e).opacity))
+  p
+    .locator(selector)
+    .evaluateAll((els) => els.map((e) => getComputedStyle(e).opacity))

@@ -9,13 +9,21 @@ type Variants = {
   onTitle: (title: string | undefined) => void
 }
 
-const VariantContext = React.createContext<Variants>({ index: 0, onCount: () => {}, onTitle: () => {} })
+const VariantContext = React.createContext<Variants>({
+  index: 0,
+  onCount: () => {},
+  onTitle: () => {},
+})
 
 function ExampleWrapper({ children }: React.ComponentProps<"div">) {
   const { index, onCount } = React.useContext(VariantContext)
   const items = React.Children.toArray(children)
   React.useLayoutEffect(() => onCount(items.length), [items.length, onCount])
-  return <div data-slot="example-wrapper" className="flex w-full justify-center">{items[Math.min(index, items.length - 1)]}</div>
+  return (
+    <div data-slot="example-wrapper" className="flex w-full justify-center">
+      {items[Math.min(index, items.length - 1)]}
+    </div>
+  )
 }
 
 function Example({
@@ -24,11 +32,21 @@ function Example({
   className,
   containerClassName,
   ...props
-}: React.ComponentProps<"div"> & { title?: string; containerClassName?: string }) {
+}: React.ComponentProps<"div"> & {
+  title?: string
+  containerClassName?: string
+}) {
   const { onTitle } = React.useContext(VariantContext)
   React.useLayoutEffect(() => onTitle(title), [title, onTitle])
   return (
-    <div data-slot="example" className={cn("flex w-full max-w-3xl min-w-0 flex-col", containerClassName)} {...props}>
+    <div
+      data-slot="example"
+      className={cn(
+        "flex w-full max-w-3xl min-w-0 flex-col",
+        containerClassName
+      )}
+      {...props}
+    >
       <div
         data-slot="example-content"
         className={cn(

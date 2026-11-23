@@ -34,11 +34,16 @@ export type Slide = {
 /** Whether focus is inside `root`, or on nothing at all (the page itself). */
 function focusIn(root: HTMLElement | null) {
   const active = document.activeElement
-  return active === null || active === document.body || (root?.contains(active) ?? false)
+  return (
+    active === null ||
+    active === document.body ||
+    (root?.contains(active) ?? false)
+  )
 }
 
 /** Where a slides view stands: "Slide 3 of 12". */
-export const slidePosition = (index: number, total: number) => `Slide ${index + 1} of ${total}`
+export const slidePosition = (index: number, total: number) =>
+  `Slide ${index + 1} of ${total}`
 
 export function Slides({
   title,
@@ -60,7 +65,9 @@ export function Slides({
 }) {
   const total = slides.length
   const last = Math.max(total - 1, 0)
-  const [at, setAt] = React.useState(() => Math.min(Math.max(defaultIndex, 0), last))
+  const [at, setAt] = React.useState(() =>
+    Math.min(Math.max(defaultIndex, 0), last)
+  )
   const from = React.useRef(0)
   const root = React.useRef<HTMLDivElement>(null)
   const index = Math.min(at, last)
@@ -91,7 +98,10 @@ export function Slides({
   useShortcut("pagedown", on, { ...nav, description: "Next slide" })
   useShortcut("home", () => go(0), { when: here, description: "First slide" })
   useShortcut("end", () => go(last), { when: here, description: "Last slide" })
-  useShortcut(exit ? "escape" : null, () => exit?.onExit(), { when: here, description: exit?.label })
+  useShortcut(exit ? "escape" : null, () => exit?.onExit(), {
+    when: here,
+    description: exit?.label,
+  })
 
   // The slides take focus when they open, so their keys work at once.
   React.useEffect(() => {
@@ -103,8 +113,16 @@ export function Slides({
       gsap.matchMedia().add("(prefers-reduced-motion: no-preference)", () => {
         gsap
           .timeline({ defaults: { ease: "power2.out" } })
-          .from("[data-slides=slide]", { x: 48 * from.current, opacity: 0, duration: 0.35 })
-          .from("[data-slides=slide] [data-animate]", { y: 16, opacity: 0, duration: 0.3, stagger: 0.05 }, "-=0.2")
+          .from("[data-slides=slide]", {
+            x: 48 * from.current,
+            opacity: 0,
+            duration: 0.35,
+          })
+          .from(
+            "[data-slides=slide] [data-animate]",
+            { y: 16, opacity: 0, duration: 0.3, stagger: 0.05 },
+            "-=0.2"
+          )
       })
     },
     { scope: root, dependencies: [index], revertOnUpdate: true }
@@ -122,13 +140,23 @@ export function Slides({
       data-index={index}
       className="flex min-h-[calc(100svh-8rem)] w-full flex-col gap-8 outline-none"
     >
-      <div data-slides="bar" className="flex flex-wrap items-start justify-between gap-4">
+      <div
+        data-slides="bar"
+        className="flex flex-wrap items-start justify-between gap-4"
+      >
         <div className="flex min-w-0 flex-col gap-3">
           {header}
-          <h1 className="font-heading text-4xl font-semibold tracking-tight sm:text-5xl 2xl:text-6xl">{title}</h1>
+          <h1 className="font-heading text-4xl font-semibold tracking-tight sm:text-5xl 2xl:text-6xl">
+            {title}
+          </h1>
         </div>
         {exit && (
-          <ButtonBehavior data-slides="exit" render={<Button variant="outline" size="lg" />} aria-keyshortcuts="Escape" onClick={exit.onExit}>
+          <ButtonBehavior
+            data-slides="exit"
+            render={<Button variant="outline" size="lg" />}
+            aria-keyshortcuts="Escape"
+            onClick={exit.onExit}
+          >
             {exit.label}
             <Kbd data-icon="inline-end">Esc</Kbd>
           </ButtonBehavior>
@@ -150,11 +178,21 @@ export function Slides({
 
       <div data-slides="controls" className="flex flex-col gap-4">
         {/* Stock Progress passes no value to its root, so the bar is for the eye; the words say it. */}
-        <Progress value={total === 0 ? 0 : ((index + 1) / total) * 100} aria-hidden className="h-2" />
+        <Progress
+          value={total === 0 ? 0 : ((index + 1) / total) * 100}
+          aria-hidden
+          className="h-2"
+        />
         <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4">
           <ButtonBehavior
             data-slides="previous"
-            render={<Button variant="outline" size="lg" className="justify-self-start" />}
+            render={
+              <Button
+                variant="outline"
+                size="lg"
+                className="justify-self-start"
+              />
+            }
             disabled={index === 0}
             focusableWhenDisabled
             aria-keyshortcuts="ArrowLeft h ArrowUp k PageUp"
@@ -167,7 +205,11 @@ export function Slides({
               <Kbd>h</Kbd>
             </KbdGroup>
           </ButtonBehavior>
-          <p data-slides="position" aria-live="polite" className="text-center text-xl font-medium 2xl:text-2xl">
+          <p
+            data-slides="position"
+            aria-live="polite"
+            className="text-center text-xl font-medium 2xl:text-2xl"
+          >
             {position}
           </p>
           <ButtonBehavior
@@ -186,7 +228,10 @@ export function Slides({
             <ArrowRightIcon data-icon="inline-end" />
           </ButtonBehavior>
         </div>
-        <p data-slides="keys" className="flex flex-wrap items-center gap-x-6 gap-y-2 text-base text-muted-foreground">
+        <p
+          data-slides="keys"
+          className="flex flex-wrap items-center gap-x-6 gap-y-2 text-base text-muted-foreground"
+        >
           <span className="inline-flex items-center gap-2">
             <KbdGroup>
               <Kbd>←</Kbd>

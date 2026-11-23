@@ -19,7 +19,15 @@ gsap.registerPlugin(useGSAP)
 
 export type Crumb = { label: string; to: string }
 
-export function Placeholder({ title, crumbs = [], children }: { title: string; crumbs?: Crumb[]; children?: React.ReactNode }) {
+export function Placeholder({
+  title,
+  crumbs = [],
+  children,
+}: {
+  title: string
+  crumbs?: Crumb[]
+  children?: React.ReactNode
+}) {
   const scope = React.useRef<HTMLDivElement>(null)
 
   useGSAP(
@@ -30,7 +38,11 @@ export function Placeholder({ title, crumbs = [], children }: { title: string; c
         gsap
           .timeline({ defaults: { ease: "power2.out" } })
           .from("[data-animate=heading]", { y: 24, opacity: 0, duration: 0.4 })
-          .from("[data-slot=skeleton]", { y: 16, opacity: 0, duration: 0.3, stagger: 0.04 }, "-=0.2")
+          .from(
+            "[data-slot=skeleton]",
+            { y: 16, opacity: 0, duration: 0.3, stagger: 0.04 },
+            "-=0.2"
+          )
       })
     },
     { scope, dependencies: [title], revertOnUpdate: true }
@@ -58,7 +70,9 @@ export function Placeholder({ title, crumbs = [], children }: { title: string; c
             </BreadcrumbItem>
           </BreadcrumbList>
         </Breadcrumb>
-        <h1 className="font-heading text-4xl font-semibold tracking-tight sm:text-5xl 2xl:text-6xl">{title}</h1>
+        <h1 className="font-heading text-4xl font-semibold tracking-tight sm:text-5xl 2xl:text-6xl">
+          {title}
+        </h1>
         {children}
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">

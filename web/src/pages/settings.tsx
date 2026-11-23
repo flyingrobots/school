@@ -5,7 +5,13 @@
 import * as React from "react"
 import { useGSAP } from "@gsap/react"
 import gsap from "gsap"
-import { BotIcon, InfoIcon, KeyRoundIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react"
+import {
+  BotIcon,
+  InfoIcon,
+  KeyRoundIcon,
+  RefreshCwIcon,
+  TriangleAlertIcon,
+} from "lucide-react"
 import { Link } from "react-router"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -19,20 +25,61 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { ItemActions, ItemContent, ItemDescription, ItemGroup, Item, ItemTitle } from "@/components/ui/item"
+import {
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  Item,
+  ItemTitle,
+} from "@/components/ui/item"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { useDocumentTitle } from "@/lib/document-title"
-import { readSettings, saveAgents as postAgents, saveBridge, testAgent, type Agent, type Attempt, type Bridge, type Connection, type Status } from "@/lib/settings-api"
-import { SortableList, SortableListHandle, SortableListItem, SortableListItems, SortableListKeys } from "@/components/sortable-list"
+import {
+  readSettings,
+  saveAgents as postAgents,
+  saveBridge,
+  testAgent,
+  type Agent,
+  type Attempt,
+  type Bridge,
+  type Connection,
+  type Status,
+} from "@/lib/settings-api"
+import {
+  SortableList,
+  SortableListHandle,
+  SortableListItem,
+  SortableListItems,
+  SortableListKeys,
+} from "@/components/sortable-list"
 
 gsap.registerPlugin(useGSAP)
 
-type TestResult = { agent: string; status: "succeeded" | "failed"; error?: string; attempts: Attempt[] }
+type TestResult = {
+  agent: string
+  status: "succeeded" | "failed"
+  error?: string
+  attempts: Attempt[]
+}
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -58,11 +105,14 @@ function connectionText(s: Status, url: string | null): string {
     case "misconfigured":
       return `The bridge's file ${s.config ?? ""} has a problem: ${s.error ?? "unknown"}.`
     case "ok":
-      return s.agents.length === 0 ? "Connected. The bridge declares no agents." : "Connected. Agents are tried from the top; the first that answers grades."
+      return s.agents.length === 0
+        ? "Connected. The bridge declares no agents."
+        : "Connected. Agents are tried from the top; the first that answers grades."
   }
 }
 
-const envLock = (name: string) => `Set by ${name} in the server's environment, which overrides this page. Change it there.`
+const envLock = (name: string) =>
+  `Set by ${name} in the server's environment, which overrides this page. Change it there.`
 
 export function SettingsPage() {
   useDocumentTitle("Settings")
@@ -82,16 +132,19 @@ export function SettingsPage() {
   const [bridgeError, setBridgeError] = React.useState<string | null>(null)
   const [statusError, setStatusError] = React.useState<string | null>(null)
 
-  const apply = React.useCallback(({ bridge: b, status: st }: Awaited<ReturnType<typeof readSettings>>) => {
-    if (b.ok) {
-      setBridge(b.value)
-      setAddress(b.value.url ?? "")
-    }
-    setBridgeError(b.ok ? null : b.error)
-    setStatus(st.ok ? st.value : null)
-    setStatusError(st.ok ? null : st.error)
-    setChecking(false)
-  }, [])
+  const apply = React.useCallback(
+    ({ bridge: b, status: st }: Awaited<ReturnType<typeof readSettings>>) => {
+      if (b.ok) {
+        setBridge(b.value)
+        setAddress(b.value.url ?? "")
+      }
+      setBridgeError(b.ok ? null : b.error)
+      setStatus(st.ok ? st.value : null)
+      setStatusError(st.ok ? null : st.error)
+      setChecking(false)
+    },
+    []
+  )
 
   const refresh = React.useCallback(async () => {
     setChecking(true)
@@ -114,16 +167,25 @@ export function SettingsPage() {
         gsap
           .timeline({ defaults: { ease: "power2.out" } })
           .from("[data-animate=heading]", { y: 24, opacity: 0, duration: 0.4 })
-          .from("[data-animate=card]", { y: 16, opacity: 0, duration: 0.3, stagger: 0.06 }, "-=0.2")
+          .from(
+            "[data-animate=card]",
+            { y: 16, opacity: 0, duration: 0.3, stagger: 0.06 },
+            "-=0.2"
+          )
       })
     },
     { scope }
   )
 
-  const urlLocked = bridge?.urlFrom === "environment" || bridge?.tokenFrom === "environment"
+  const urlLocked =
+    bridge?.urlFrom === "environment" || bridge?.tokenFrom === "environment"
   const tokenLocked = bridge?.tokenFrom === "environment"
   const savedUrl = bridge?.url ?? ""
-  const moving = !urlLocked && address.replace(/\/+$/, "") !== savedUrl && bridge?.tokenFrom === "settings" && token === ""
+  const moving =
+    !urlLocked &&
+    address.replace(/\/+$/, "") !== savedUrl &&
+    bridge?.tokenFrom === "settings" &&
+    token === ""
 
   async function save(body: Parameters<typeof saveBridge>[0]) {
     setSaving(true)
@@ -132,7 +194,12 @@ export function SettingsPage() {
     try {
       const saved = await saveBridge(body)
       setToken("")
-      setTokenCleared(Boolean(before?.tokenSet) && !saved.tokenSet && body.url !== undefined && body.url.replace(/\/+$/, "") !== (before?.url ?? ""))
+      setTokenCleared(
+        Boolean(before?.tokenSet) &&
+          !saved.tokenSet &&
+          body.url !== undefined &&
+          body.url.replace(/\/+$/, "") !== (before?.url ?? "")
+      )
       if (saved.generated !== undefined) setGenerated(saved.generated)
     } catch (e) {
       setSaveError(messageOf(e))
@@ -171,9 +238,23 @@ export function SettingsPage() {
     setResult(null)
     try {
       const r = await testAgent(name)
-      setResult(r.status === "succeeded" ? { agent: name, status: "succeeded", attempts: r.attempts } : { agent: name, status: "failed", error: r.error, attempts: r.attempts })
+      setResult(
+        r.status === "succeeded"
+          ? { agent: name, status: "succeeded", attempts: r.attempts }
+          : {
+              agent: name,
+              status: "failed",
+              error: r.error,
+              attempts: r.attempts,
+            }
+      )
     } catch (e) {
-      setResult({ agent: name, status: "failed", error: messageOf(e), attempts: [] })
+      setResult({
+        agent: name,
+        status: "failed",
+        error: messageOf(e),
+        attempts: [],
+      })
     } finally {
       setTesting(null)
     }
@@ -199,32 +280,47 @@ export function SettingsPage() {
             </BreadcrumbItem>
           </BreadcrumbList>
         </Breadcrumb>
-        <h1 className="font-heading text-4xl font-semibold tracking-tight sm:text-5xl 2xl:text-6xl">Settings</h1>
+        <h1 className="font-heading text-4xl font-semibold tracking-tight sm:text-5xl 2xl:text-6xl">
+          Settings
+        </h1>
         <p className="max-w-none text-lg text-muted-foreground">
-          The bridge runs the agents that grade your explanations, on your own computer. Connect it here, then choose the order its agents are tried in.
+          The bridge runs the agents that grade your explanations, on your own
+          computer. Connect it here, then choose the order its agents are tried
+          in.
         </p>
       </div>
 
       <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-2 2xl:grid-cols-4">
-        <Card data-animate="card" data-settings="bridge" className="min-w-0 text-base">
+        <Card
+          data-animate="card"
+          data-settings="bridge"
+          className="min-w-0 text-base"
+        >
           <CardHeader>
             <CardTitle className="text-2xl">Bridge</CardTitle>
-            <CardDescription className="text-base">Where School finds the bridge, and the token it proves itself with.</CardDescription>
+            <CardDescription className="text-base">
+              Where School finds the bridge, and the token it proves itself
+              with.
+            </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-6">
             {bridgeError && (
               <Alert data-settings="error" variant="destructive">
                 <TriangleAlertIcon />
-                <AlertTitle className="text-base">School's answer could not be read</AlertTitle>
-                <AlertDescription className="text-base wrap-anywhere">{bridgeError}</AlertDescription>
+                <AlertTitle className="text-base">
+                  School's answer could not be read
+                </AlertTitle>
+                <AlertDescription className="text-base wrap-anywhere">
+                  {bridgeError}
+                </AlertDescription>
               </Alert>
             )}
             {bridge === null ? (
               bridgeError ? null : (
-              <div className="flex flex-col gap-4">
-                <Skeleton className="h-10 w-full" />
-                <Skeleton className="h-10 w-full" />
-              </div>
+                <div className="flex flex-col gap-4">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                </div>
               )
             ) : (
               <form onSubmit={onSubmit} className="flex flex-col gap-6">
@@ -244,13 +340,20 @@ export function SettingsPage() {
                       onChange={(e) => setAddress(e.target.value)}
                     />
                     {bridge.urlFrom === "environment" ? (
-                      <FieldDescription className="text-base">{envLock("SCHOOL_BRIDGE_URL")}</FieldDescription>
+                      <FieldDescription className="text-base">
+                        {envLock("SCHOOL_BRIDGE_URL")}
+                      </FieldDescription>
                     ) : bridge.tokenFrom === "environment" ? (
                       <FieldDescription className="text-base">
-                        SCHOOL_BRIDGE_TOKEN is set in the server's environment, so the address can only be changed there too: set SCHOOL_BRIDGE_URL beside it.
+                        SCHOOL_BRIDGE_TOKEN is set in the server's environment,
+                        so the address can only be changed there too: set
+                        SCHOOL_BRIDGE_URL beside it.
                       </FieldDescription>
                     ) : moving ? (
-                      <FieldDescription className="text-base">Saving a new address clears the saved token, so enter the token again with it.</FieldDescription>
+                      <FieldDescription className="text-base">
+                        Saving a new address clears the saved token, so enter
+                        the token again with it.
+                      </FieldDescription>
                     ) : null}
                   </Field>
                   <Field data-disabled={tokenLocked}>
@@ -263,23 +366,43 @@ export function SettingsPage() {
                       type="password"
                       autoComplete="off"
                       className="h-11 text-base md:text-base"
-                      placeholder={bridge.tokenSet ? "A token is saved. Type a new one to replace it." : "At least 16 characters"}
+                      placeholder={
+                        bridge.tokenSet
+                          ? "A token is saved. Type a new one to replace it."
+                          : "At least 16 characters"
+                      }
                       value={token}
                       disabled={tokenLocked}
                       onChange={(e) => setToken(e.target.value)}
                     />
                     <FieldDescription className="text-base">
-                      {tokenLocked ? envLock("SCHOOL_BRIDGE_TOKEN") : "The token the bridge was started with. Once saved it is never shown again."}
+                      {tokenLocked
+                        ? envLock("SCHOOL_BRIDGE_TOKEN")
+                        : "The token the bridge was started with. Once saved it is never shown again."}
                     </FieldDescription>
                   </Field>
                 </FieldGroup>
-                {saveError && <FieldError className="text-base">{saveError}</FieldError>}
+                {saveError && (
+                  <FieldError className="text-base">{saveError}</FieldError>
+                )}
                 <div className="flex flex-wrap gap-3">
-                  <Button type="submit" size="lg" data-nav disabled={saving || (urlLocked && tokenLocked)}>
+                  <Button
+                    type="submit"
+                    size="lg"
+                    data-nav
+                    disabled={saving || (urlLocked && tokenLocked)}
+                  >
                     {saving && <Spinner />}
                     Save
                   </Button>
-                  <Button type="button" size="lg" variant="outline" data-nav disabled={saving || tokenLocked} onClick={() => void save({ generate: true })}>
+                  <Button
+                    type="button"
+                    size="lg"
+                    variant="outline"
+                    data-nav
+                    disabled={saving || tokenLocked}
+                    onClick={() => void save({ generate: true })}
+                  >
                     <KeyRoundIcon />
                     Generate a token
                   </Button>
@@ -289,20 +412,40 @@ export function SettingsPage() {
             {tokenCleared && (
               <Alert data-settings="token-cleared">
                 <TriangleAlertIcon />
-                <AlertTitle className="text-base">The saved token was cleared</AlertTitle>
+                <AlertTitle className="text-base">
+                  The saved token was cleared
+                </AlertTitle>
                 <AlertDescription className="text-base">
-                  The bridge's address changed, and a token is only ever sent to the address it was saved with. Enter the token again.
+                  The bridge's address changed, and a token is only ever sent to
+                  the address it was saved with. Enter the token again.
                 </AlertDescription>
               </Alert>
             )}
             {generated && (
               <Alert data-settings="generated">
                 <KeyRoundIcon />
-                <AlertTitle className="text-base">Your new token, shown only now</AlertTitle>
+                <AlertTitle className="text-base">
+                  Your new token, shown only now
+                </AlertTitle>
                 <AlertDescription className="flex flex-col gap-3 text-base">
-                  <p>Start the bridge with SCHOOL_BRIDGE_TOKEN set to this token. School keeps it, but it will not show it again.</p>
-                  <Input readOnly aria-label="New token" className="h-11 font-mono text-base md:text-base" value={generated} onFocus={(e) => e.target.select()} />
-                  <Button type="button" variant="outline" className="self-start" data-nav onClick={() => setGenerated(null)}>
+                  <p>
+                    Start the bridge with SCHOOL_BRIDGE_TOKEN set to this token.
+                    School keeps it, but it will not show it again.
+                  </p>
+                  <Input
+                    readOnly
+                    aria-label="New token"
+                    className="h-11 font-mono text-base md:text-base"
+                    value={generated}
+                    onFocus={(e) => e.target.select()}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="self-start"
+                    data-nav
+                    onClick={() => setGenerated(null)}
+                  >
                     I have stored it
                   </Button>
                 </AlertDescription>
@@ -311,12 +454,23 @@ export function SettingsPage() {
           </CardContent>
         </Card>
 
-        <Card data-animate="card" data-settings="status" className="min-w-0 text-base 2xl:col-span-2">
+        <Card
+          data-animate="card"
+          data-settings="status"
+          className="min-w-0 text-base 2xl:col-span-2"
+        >
           <CardHeader>
             <CardTitle className="text-2xl">Connection and agents</CardTitle>
-            <CardDescription className="text-base">What the bridge reports, and the order its agents are tried in.</CardDescription>
+            <CardDescription className="text-base">
+              What the bridge reports, and the order its agents are tried in.
+            </CardDescription>
             <CardAction>
-              <Button variant="outline" data-nav disabled={checking} onClick={() => void refresh()}>
+              <Button
+                variant="outline"
+                data-nav
+                disabled={checking}
+                onClick={() => void refresh()}
+              >
                 {checking ? <Spinner /> : <RefreshCwIcon />}
                 Check again
               </Button>
@@ -326,30 +480,47 @@ export function SettingsPage() {
             {statusError && (
               <Alert data-settings="error" variant="destructive">
                 <TriangleAlertIcon />
-                <AlertTitle className="text-base">School's answer could not be read</AlertTitle>
-                <AlertDescription className="text-base wrap-anywhere">{statusError}</AlertDescription>
+                <AlertTitle className="text-base">
+                  School's answer could not be read
+                </AlertTitle>
+                <AlertDescription className="text-base wrap-anywhere">
+                  {statusError}
+                </AlertDescription>
               </Alert>
             )}
             {status === null ? (
               statusError ? null : (
-              <div className="flex flex-col gap-3">
-                <Skeleton className="h-6 w-40" />
-                <Skeleton className="h-16 w-full" />
-                <Skeleton className="h-16 w-full" />
-              </div>
+                <div className="flex flex-col gap-3">
+                  <Skeleton className="h-6 w-40" />
+                  <Skeleton className="h-16 w-full" />
+                  <Skeleton className="h-16 w-full" />
+                </div>
               )
             ) : (
               <>
                 <div className="flex flex-col gap-2">
-                  <Badge variant={status.connection === "ok" ? "default" : status.connection === "none" ? "secondary" : "destructive"} className="h-7 px-3 text-sm">
+                  <Badge
+                    variant={
+                      status.connection === "ok"
+                        ? "default"
+                        : status.connection === "none"
+                          ? "secondary"
+                          : "destructive"
+                    }
+                    className="h-7 px-3 text-sm"
+                  >
                     {connectionLabel[status.connection]}
                   </Badge>
-                  <p className="text-lg">{connectionText(status, bridge?.url ?? null)}</p>
+                  <p className="text-lg">
+                    {connectionText(status, bridge?.url ?? null)}
+                  </p>
                 </div>
                 {agents.length > 0 && (
                   <SortableList
                     value={agents.map((a) => a.name)}
-                    onValueChange={(order) => void saveAgents(order.map((name) => byName.get(name)!))}
+                    onValueChange={(order) =>
+                      void saveAgents(order.map((name) => byName.get(name)!))
+                    }
                   >
                     <SortableListItems aria-label="Agents">
                       {({ order }) =>
@@ -357,23 +528,53 @@ export function SettingsPage() {
                           const a = byName.get(name)
                           if (!a) return null
                           return (
-                            <SortableListItem key={name} value={name} className="text-base">
-                              <SortableListHandle value={name} aria-label={`Move ${name}`} data-nav />
+                            <SortableListItem
+                              key={name}
+                              value={name}
+                              className="text-base"
+                            >
+                              <SortableListHandle
+                                value={name}
+                                aria-label={`Move ${name}`}
+                                data-nav
+                              />
                               <ItemContent>
-                                <ItemTitle className="text-lg">{name}</ItemTitle>
+                                <ItemTitle className="text-lg">
+                                  {name}
+                                </ItemTitle>
                                 <ItemDescription className="line-clamp-none text-base">
-                                  {a.found ? "Its program was found on the bridge's computer." : "Its program was not found on the bridge's computer."}
+                                  {a.found
+                                    ? "Its program was found on the bridge's computer."
+                                    : "Its program was not found on the bridge's computer."}
                                 </ItemDescription>
                               </ItemContent>
                               <ItemActions className="flex-wrap">
-                                <Badge variant={a.found ? "secondary" : "destructive"}>{a.found ? "Found" : "Not found"}</Badge>
+                                <Badge
+                                  variant={
+                                    a.found ? "secondary" : "destructive"
+                                  }
+                                >
+                                  {a.found ? "Found" : "Not found"}
+                                </Badge>
                                 <Switch
                                   aria-label={`Use ${name}`}
                                   data-nav
                                   checked={a.enabled}
-                                  onCheckedChange={(enabled) => void saveAgents(agents.map((x) => (x.name === name ? { ...x, enabled } : x)))}
+                                  onCheckedChange={(enabled) =>
+                                    void saveAgents(
+                                      agents.map((x) =>
+                                        x.name === name ? { ...x, enabled } : x
+                                      )
+                                    )
+                                  }
                                 />
-                                <Button variant="outline" aria-label={`Test ${name}`} data-nav disabled={testing !== null} onClick={() => void test(name)}>
+                                <Button
+                                  variant="outline"
+                                  aria-label={`Test ${name}`}
+                                  data-nav
+                                  disabled={testing !== null}
+                                  onClick={() => void test(name)}
+                                >
                                   {testing === name ? <Spinner /> : <BotIcon />}
                                   Test
                                 </Button>
@@ -386,28 +587,44 @@ export function SettingsPage() {
                     <SortableListKeys />
                   </SortableList>
                 )}
-                {agentError && <FieldError className="text-base">{agentError}</FieldError>}
-                {config && (status.connection === "ok" || status.connection === "unconfigured" || status.connection === "misconfigured") && (
-                  <Alert data-settings="commands">
-                    <InfoIcon />
-                    <AlertTitle className="text-base">Commands are edited on the bridge's computer</AlertTitle>
-                    <AlertDescription className="text-base wrap-anywhere">
-                      Each agent's command is written only in the bridge's file, {config}, on its computer. From here agents can be reordered, switched on or off, and tested.
-                    </AlertDescription>
-                  </Alert>
+                {agentError && (
+                  <FieldError className="text-base">{agentError}</FieldError>
                 )}
+                {config &&
+                  (status.connection === "ok" ||
+                    status.connection === "unconfigured" ||
+                    status.connection === "misconfigured") && (
+                    <Alert data-settings="commands">
+                      <InfoIcon />
+                      <AlertTitle className="text-base">
+                        Commands are edited on the bridge's computer
+                      </AlertTitle>
+                      <AlertDescription className="text-base wrap-anywhere">
+                        Each agent's command is written only in the bridge's
+                        file, {config}, on its computer. From here agents can be
+                        reordered, switched on or off, and tested.
+                      </AlertDescription>
+                    </Alert>
+                  )}
               </>
             )}
           </CardContent>
         </Card>
 
-        <Card data-animate="card" data-settings="test-result" className="min-w-0 text-base xl:col-span-2 2xl:col-span-1">
+        <Card
+          data-animate="card"
+          data-settings="test-result"
+          className="min-w-0 text-base xl:col-span-2 2xl:col-span-1"
+        >
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-2xl">
               <BotIcon aria-hidden="true" />
               Agent test
             </CardTitle>
-            <CardDescription className="text-base">Testing an agent asks it, through the bridge, for one fixed answer, and shows each attempt.</CardDescription>
+            <CardDescription className="text-base">
+              Testing an agent asks it, through the bridge, for one fixed
+              answer, and shows each attempt.
+            </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             {testing ? (
@@ -416,27 +633,59 @@ export function SettingsPage() {
                 Testing {testing}…
               </p>
             ) : result === null ? (
-              <p className="text-lg text-muted-foreground">Test an agent to see its attempts here.</p>
+              <p className="text-lg text-muted-foreground">
+                Test an agent to see its attempts here.
+              </p>
             ) : (
               <>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-lg font-medium">{result.agent}</span>
-                  <Badge variant={result.status === "succeeded" ? "default" : "destructive"} className="h-7 px-3 text-sm">
+                  <Badge
+                    variant={
+                      result.status === "succeeded" ? "default" : "destructive"
+                    }
+                    className="h-7 px-3 text-sm"
+                  >
                     {result.status === "succeeded" ? "Succeeded" : "Failed"}
                   </Badge>
                 </div>
-                {result.error && <p className="text-base text-muted-foreground">{result.error}</p>}
+                {result.error && (
+                  <p className="text-base text-muted-foreground">
+                    {result.error}
+                  </p>
+                )}
                 <ItemGroup aria-label="Attempts">
                   {result.attempts.map((a, i) => (
-                    <Item key={`${a.agent}-${i}`} variant="outline" role="listitem" className="text-base">
+                    <Item
+                      key={`${a.agent}-${i}`}
+                      variant="outline"
+                      role="listitem"
+                      className="text-base"
+                    >
                       <ItemContent>
                         <ItemTitle className="text-lg">{a.agent}</ItemTitle>
-                        {a.error && <ItemDescription className="line-clamp-none font-mono text-sm wrap-anywhere">{a.error}</ItemDescription>}
+                        {a.error && (
+                          <ItemDescription className="line-clamp-none font-mono text-sm wrap-anywhere">
+                            {a.error}
+                          </ItemDescription>
+                        )}
                       </ItemContent>
                       <ItemActions className="flex-wrap">
-                        <Badge variant={a.status === "succeeded" ? "default" : a.status === "skipped" ? "secondary" : "destructive"}>{a.status}</Badge>
+                        <Badge
+                          variant={
+                            a.status === "succeeded"
+                              ? "default"
+                              : a.status === "skipped"
+                                ? "secondary"
+                                : "destructive"
+                          }
+                        >
+                          {a.status}
+                        </Badge>
                         <Badge variant="outline">{a.ms} ms</Badge>
-                        {a.exitCode !== undefined && a.exitCode !== null && <Badge variant="outline">exit {a.exitCode}</Badge>}
+                        {a.exitCode !== undefined && a.exitCode !== null && (
+                          <Badge variant="outline">exit {a.exitCode}</Badge>
+                        )}
                       </ItemActions>
                     </Item>
                   ))}

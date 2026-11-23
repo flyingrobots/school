@@ -45,6 +45,10 @@ jobs:
         working-directory: web
       - run: npx tsc -b
         working-directory: web
+      - run: npm run lint
+        working-directory: web
+      - run: npx prettier --check "**/*.{ts,tsx}"
+        working-directory: web
       # The JUnit report feeds the gate below; the console output is unchanged.
       - run: bun test --reporter=junit --reporter-outfile=${{ runner.temp }}/junit.xml
       # Those tests skip without SCHOOL_TEST_POSTGRES_URL, and a skip passes. This fails the build

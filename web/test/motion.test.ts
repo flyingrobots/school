@@ -9,7 +9,13 @@ import { join } from "node:path"
 const src = join(import.meta.dir, "..", "src")
 
 test("no source file animates autoAlpha", () => {
-  const files = readdirSync(src, { recursive: true, encoding: "utf8" }).filter((f) => /\.(ts|tsx)$/.test(f))
+  const files = readdirSync(src, { recursive: true, encoding: "utf8" }).filter(
+    (f) => /\.(ts|tsx)$/.test(f)
+  )
   expect(files.length).toBeGreaterThan(10)
-  expect(files.filter((f) => /\bautoAlpha\s*:\s*[\d.]/.test(readFileSync(join(src, f), "utf8")))).toEqual([])
+  expect(
+    files.filter((f) =>
+      /\bautoAlpha\s*:\s*[\d.]/.test(readFileSync(join(src, f), "utf8"))
+    )
+  ).toEqual([])
 })
