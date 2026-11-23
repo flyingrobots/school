@@ -13,6 +13,8 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { createServer, type ViteDevServer } from "vite"
 
 import { startSchool, timeout, type Started } from "../../server/testing/processes.ts"
+import { close } from "./routes.ts"
+import { warm } from "./vite.ts"
 
 setDefaultTimeout(30_000)
 
@@ -42,7 +44,8 @@ beforeAll(async () => {
   await vite.listen()
   base = vite.resolvedUrls!.local[0]!.replace(/\/$/, "")
   browser = await chromium.launch({ channel: "chrome" })
-}, timeout(1) + 20_000)
+  await warm(browser, base)
+}, timeout(1) + 50_000)
 
 afterAll(async () => {
   await browser?.close()
@@ -91,7 +94,7 @@ describe("loaded", () => {
       expect(await hrefs(p)).toEqual(expected.map((n) => `/courses/${n}`))
       expect(await skeletons(p).count()).toBe(0)
       expect(await sidebar(p).getByRole("alert").count()).toBe(0)
-      await p.context().close()
+      await close(p.context())
     }
   )
 
@@ -101,7 +104,7 @@ describe("loaded", () => {
       await links(p).first().waitFor()
       expect({ path, active: await active(p) }).toEqual({ path, active: [...current] })
       expect(await sidebar(p).locator("a[data-course][aria-current=page]").evaluateAll((els) => els.map((e) => e.getAttribute("data-course")))).toEqual([...current])
-      await p.context().close()
+      await close(p.context())
     }
   })
 
@@ -114,7 +117,7 @@ describe("loaded", () => {
     expect(p.url()).toBe(base + "/courses/zoo")
     expect(await p.evaluate(() => (window as unknown as { marker?: number }).marker)).toBe(1)
     expect(await active(p)).toEqual(["zoo"])
-    await p.context().close()
+    await close(p.context())
   })
 
   test("the course links are focus stops for j and k", async () => {
@@ -122,7 +125,7 @@ describe("loaded", () => {
     await links(p).first().waitFor()
     const stops = await sidebar(p).locator("[data-nav]").evaluateAll((els) => els.map((e) => e.getAttribute("href")))
     expect(stops).toEqual(expect.arrayContaining(["/courses/aion", "/courses/bio", "/courses/zoo"]))
-    await p.context().close()
+    await close(p.context())
   })
 })
 
@@ -144,7 +147,7 @@ describe("loaded once", () => {
     await p.getByRole("heading", { level: 1, name: "bio" }).waitFor()
     expect(listed()).toBe(2)
     expect(await skeletons(p).count()).toBe(0)
-    await c.close()
+    await close(c)
   })
 })
 
@@ -165,7 +168,7 @@ describe("states", () => {
     await links(p).first().waitFor()
     expect(await links(p).count()).toBe(3)
     expect(await skeletons(p).count()).toBe(0)
-    await c.close()
+    await close(c)
   })
 
   test("a list that cannot be loaded is reported with Try again, which recovers", async () => {
@@ -183,7 +186,7 @@ describe("states", () => {
     await links(p).first().waitFor()
     expect(await hrefs(p)).toEqual(["/courses/aion", "/courses/bio", "/courses/zoo"])
     expect(await sidebar(p).getByRole("alert").count()).toBe(0)
-    await c.close()
+    await close(c)
   })
 
   test("a reply of the wrong shape is a failure, not a list", async () => {
@@ -192,7 +195,7 @@ describe("states", () => {
     const p = await open("/settings", c)
     await sidebar(p).getByRole("alert").waitFor()
     expect(await links(p).count()).toBe(0)
-    await c.close()
+    await close(c)
   })
 
   test("the server's own reason is shown", async () => {
@@ -202,7 +205,7 @@ describe("states", () => {
     const alert = sidebar(p).getByRole("alert")
     await alert.waitFor()
     expect(await alert.textContent()).toContain("the courses folder is unreadable")
-    await c.close()
+    await close(c)
   })
 
   test("on the home page the sidebar and the page share one request, and one Try again recovers both", async () => {
@@ -220,6 +223,6 @@ describe("states", () => {
     await main.locator("[data-course]").first().waitFor()
     expect(await main.locator("[data-course]").count()).toBe(3)
     expect(asked).toBe(2) // the failed attempt and the retry; the page did not make its own
-    await c.close()
+    await close(c)
   })
 })
