@@ -77,7 +77,8 @@ Practical notes for anyone — human or agent — changing the framework.
   `SCHOOL_TEST_POSTGRES_URL=postgres://postgres:pw@127.0.0.1:5432/postgres bun test`. To check
   the gate as CI does, add `CI=true`, `--reporter=junit --reporter-outfile=junit.xml`, then
   `bun run server/testing/postgres-gate.ts junit.xml`. Every `DROP DATABASE` waits for a checkpoint,
-  which is slow under Docker on macOS; the teardown drops a file's databases together for that reason.
+  about three seconds under Docker on macOS on a loaded machine, so each test's database is
+  dropped in the background while the next test runs, and the file's teardown waits for them.
 - Typecheck the server with `bunx tsc -p server` after `bun install` in `server/`.
   A server file that is not TypeScript still needs adding explicitly.
 - `server/compose.yaml` names no course. Its paths come from a gitignored `server/.env`; copy
