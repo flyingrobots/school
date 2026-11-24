@@ -49,17 +49,18 @@ const listed = (words: string[]) => words.length <= 1 ? words.join("") : `${word
 export function reviewReason(item: DueItem): string {
   const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long" }).format(new Date(item.answeredAt));
   const help = listed(item.shown.map((k) => helpWords[k]));
-  const were = item.shown.length > 1 ? "were" : "was";
+  // School's voice: say what helped, never what was wrong (docs/topics/voice/README.md).
+  const back = "It's back so you can answer it from memory.";
   switch (item.rule) {
     case "due-review/wrong-first-try":
-      if (!item.corrected) return `Back because your first answer on ${day} was wrong, and it was not put right then.`;
+      if (!item.corrected) return `On ${day}, this one hadn't settled yet. It's back for a fresh look.`;
       return item.shown.length > 0
-        ? `Back because your first answer on ${day} was wrong, and the right one came after ${help} ${were} shown.`
-        : `Back because your first answer on ${day} was wrong; you put it right on a later try.`;
+        ? `On ${day}, ${help} helped you find this one. ${back}`
+        : `On ${day}, you found this one on a second go. ${back}`;
     case "due-review/aided-first-try":
-      return `Back because on ${day} you answered it right only after ${help} ${were} shown.`;
+      return `On ${day}, ${help} helped you find this one. ${back}`;
     case "due-review/unknown-aid":
-      return `Back because on ${day} you answered it right while School was not recording the help it showed, so it cannot say whether you had any.`;
+      return `On ${day}, you found this one while School wasn't noting the help it showed. ${back}`;
   }
 }
 

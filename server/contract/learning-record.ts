@@ -356,7 +356,7 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
 
   const note = (o: Partial<DecisionNoteInput> & Pick<DecisionNoteInput, "evidence">): DecisionNoteInput => ({
     noteId: uuid(), choice: { course: "c", lesson: "l1", blockId: "q1" }, encounterId: null,
-    rule: "due-review/wrong-first-try", reason: "The first answer was wrong, and the correction followed a model-answer reveal.", ...o,
+    rule: "due-review/wrong-first-try", reason: "The model answer helped you find this one. It's back so you can answer it from memory.", ...o,
   });
   const seqs = async (r: LearningRecord, encounterId: string, kind: string) =>
     (await r.encounterEvidence(encounterId)).filter((x) => x.kind === kind).map((x) => x.seq);
@@ -645,7 +645,7 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     const [item] = await due(r, ["q1"], at(2 + DELAY));
     const l2 = lesson("l2", [quiz("q9")]);
     const shown = withReview(l2, [quiz("q1")]);
-    const reason = "Back because your first answer was wrong.";
+    const reason = "It's back so you can answer it from memory.";
     const opened = await r.openLessonEncounter({
       course: "c", lesson: "l2", lessonPage: l2, page: shown, now: at(2 + DELAY), aidTracking: 1,
       notes: [{ blockId: "q1", rule: item!.rule, reason, evidence: item!.evidence }],

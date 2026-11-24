@@ -59,3 +59,6 @@ The file is read only at start, so a changed title shows after a restart. Unknow
 rather than ignored, so a misspelt `tilte` is caught instead of silently showing the slug.
 
 The cases are in the [test plan](test-plan.md).
+
+Lessons are written in [School's voice](../voice/README.md): an explain block's prompt is a
+question, never a command.

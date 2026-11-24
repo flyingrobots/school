@@ -62,7 +62,7 @@ test("the next lesson opens with the item due in a Review section at its top, it
   expect(opened.lesson).toEqual({ ...l2, children: [{ type: "section", id: "school:review", title: "Review", children: [quiz("q1")] }, quiz("q3")] });
   expect(opened.review).toEqual([{
     blockId: "q1", rule: "due-review/wrong-first-try",
-    reason: `Back because your first answer on ${day} was wrong; you put it right on a later try.`,
+    reason: `On ${day}, you found this one on a second go. It's back so you can answer it from memory.`,
     // The lesson that holds the quiz (flyingrobots/school#159).
     from: { id: "l1", title: "Orbits" },
   }]);

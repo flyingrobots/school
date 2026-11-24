@@ -19,6 +19,7 @@ Start here. Each page has one job; this page routes to all of them.
 | [The migrate job's output](topics/migrate-job/README.md) | Reference: what `server/migrate.ts` prints, its message types and schemas, `--help`, `--schema` and `--human`, and what the contract cannot cover; with its [test plan](topics/migrate-job/test-plan.md). |
 | [The programs' output](topics/program-output/README.md) | Reference: what the backup job, the Postgres gate and the bridge print, their message types and schemas, `--help`, `--schema` and `--human`, and what the contract cannot cover; with its [test plan](topics/program-output/test-plan.md). |
 | [Due review](topics/due-review/README.md) | Reference: which quizzes come back for delayed review, why, and where they are shown; with its [test plan](topics/due-review/test-plan.md). |
+| [School's voice](topics/voice/README.md) | Reference: how School speaks to the learner, in the app and in course prompts: encouraging or neutral, inviting rather than commanding. |
 | [Working notes](working-notes.md) | How-to notes for anyone changing the framework. |
 | [RFC 1: School](rfc/0001-school.md) | The original design and the learning record contract. Draft. |
 | [RFC 2: Lessons written for each learner](rfc/0002-lessons-written-for-each-learner.md) | Proposal: courses as curricula, lessons and quizzes prepared per learner, exams, completion. Draft. |

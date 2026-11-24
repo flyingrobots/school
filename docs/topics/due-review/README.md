@@ -64,11 +64,14 @@ answer's, in the server's time zone (`TZ`):
 
 | Facts | Reason |
 | --- | --- |
-| Wrong, then right after help | Back because your first answer on 21 November was wrong, and the right one came after the explanation was shown. |
-| Wrong, then right on a later try | Back because your first answer on 21 November was wrong; you put it right on a later try. |
-| Wrong, never put right | Back because your first answer on 21 November was wrong, and it was not put right then. |
-| Aided | Back because on 21 November you answered it right only after a hint was shown. |
-| Unknown aid | Back because on 21 November you answered it right while School was not recording the help it showed, so it cannot say whether you had any. |
+| Wrong, then right after help | On 21 November, the explanation helped you find this one. It's back so you can answer it from memory. |
+| Wrong, then right on a later try | On 21 November, you found this one on a second go. It's back so you can answer it from memory. |
+| Wrong, never put right | On 21 November, this one hadn't settled yet. It's back for a fresh look. |
+| Aided | On 21 November, a hint helped you find this one. It's back so you can answer it from memory. |
+| Unknown aid | On 21 November, you found this one while School wasn't noting the help it showed. It's back so you can answer it from memory. |
+
+The reasons are written in [School's voice](../voice/README.md): they say what helped, never what
+was wrong.
 
 Help is named as the page shows it: `feedback` is "the explanation", `model-answer` is "the model
 answer", `hint` is "a hint" and `reference` is "a reference". Reasons are words, never scores.

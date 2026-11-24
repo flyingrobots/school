@@ -250,7 +250,9 @@ function BlockView({
           {reason !== undefined && (
             <Alert className="mb-4 text-base">
               <HistoryIcon />
-              <AlertTitle className="text-lg">Back for review</AlertTitle>
+              <AlertTitle className="text-lg">
+                Ready for another look
+              </AlertTitle>
               <AlertDescription className="text-base">
                 <p>
                   {reason.reason}
