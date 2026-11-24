@@ -108,8 +108,12 @@ refuse; see the table below.
 ## 4. Start it
 
 ```sh
+(cd web && npm run build)
 ./school up
 ```
+
+Compose mounts the built web app, `web/dist`, read-only into the `school` container. Build it first
+and again after each pull, or every page answers 503 with `the web app is not built`.
 
 If you started the bridge with `SCHOOL_BRIDGE_TOKEN` in its environment, restart it now with plain
 `bun bridge/bridge.ts`, and from now on start it that way: it reads the token from the Keychain.
@@ -154,6 +158,7 @@ that applies migrations also prints an `applied` line for each as it commits. Ev
 | `./school up` exits 2: `server/.env still holds ...` | Step 3 was skipped | Do step 3, then step 4 |
 | `./school up` exits 2: `SCHOOL_POSTGRES_PASSWORD ... there is no terminal to ask at` | It was run without a terminal, and the Keychain has no superuser password | Do step 3, or run `./school up` once at a terminal |
 | `migrate` is `Exited (1)` with `password authentication failed for user "postgres"` | The Keychain's superuser password is not the one the database was created with, for example one generated at the prompt | Store the right one: `security delete-generic-password -a school -s SCHOOL_POSTGRES_PASSWORD`, then `./school up` at a terminal and type it |
+| Every page answers 503 with `the web app is not built`, while `/api/courses` answers | `web/dist` was not built before `./school up` | `(cd web && npm run build)`; the mount is live, so no restart is needed |
 | `environment variable "SCHOOL_POSTGRES_PASSWORD" required by secret ... is not set` | `docker compose up` was run directly | Run `./school up` |
 | `migrate` is `Exited (2)`, with an `"error":"settings"` line in `./school compose logs migrate` | A setting is missing or invalid, for example `SCHOOL_APP_PASSWORD` too short or with other characters than letters and digits. The line says which | Fix it in the Keychain (delete the item and let `./school up` generate it), then step 4 |
 | `migrate` is `Exited (1)`, with an `"error":"failed"` line | The database refused, for example a migration failed (the line names the file, which was rolled back) or the superuser password is wrong | Read the message. Compose does not start the new server while the job fails; whether a server container already running keeps serving was not drilled |

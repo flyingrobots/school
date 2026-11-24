@@ -77,7 +77,7 @@ test("no module but the startup refusal and its test reads SQLite", () => {
 
 // flyingrobots/school#91: under compose the server holds only school_app's credentials. The one-shot
 // `migrate` service holds the superuser's, runs the migrations and exits; the server waits for it.
-type Service = { build?: string; pull_policy?: string; command?: string[]; restart?: string; depends_on?: Record<string, { condition: string }>; environment?: Record<string, string>; secrets?: unknown[] };
+type Service = { build?: string; pull_policy?: string; command?: string[]; restart?: string; depends_on?: Record<string, { condition: string }>; environment?: Record<string, string>; secrets?: unknown[]; volumes?: string[] };
 const compose = Bun.YAML.parse(readFileSync(join(dir, "compose.yaml"), "utf8")) as { services: Record<string, Service> };
 
 test("compose runs the migrate job once, as the superuser, before the server, and the server logs in as school_app only", () => {
@@ -108,6 +108,14 @@ test("compose runs the migrate job once, as the superuser, before the server, an
   }
   expect(JSON.stringify(school?.secrets ?? [])).not.toContain("postgres_password");
   expect(Object.keys(school?.environment ?? {})).not.toContain("SCHOOL_MIGRATE_URL");
+});
+
+test("compose mounts the built web app, read-only, where the server looks for it (flyingrobots/school#152)", () => {
+  const root = dockerfile.match(/SCHOOL_ROOT=(\S+)/)?.[1];
+  expect(root).toBe("/framework");
+  // config.ts: the web app is $SCHOOL_ROOT/web/dist unless SCHOOL_WEB says otherwise.
+  expect(compose.services.school?.environment?.SCHOOL_WEB).toBeUndefined();
+  expect(compose.services.school?.volumes).toContain(`../web/dist:${root}/web/dist:ro`);
 });
 
 test("the image ships the migrate command", () => {
