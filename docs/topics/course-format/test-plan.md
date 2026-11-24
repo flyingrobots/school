@@ -1,6 +1,6 @@
 # Course format test plan
 
-The contract ledger for [a course's folder](README.md): the course title (flyingrobots/school#143).
+The contract ledger for [a course's folder](README.md): the course title (flyingrobots/school#143) and a lesson's hook (flyingrobots/school#164).
 Every case runs in `bun test`. The server cases call the loader and start the real School process
 on PGlite over course folders the test writes; the browser cases drive Chrome through
 playwright-core against the Vite dev server, with `/api` answered by that real server.
@@ -31,3 +31,12 @@ playwright-core against the Vite dev server, with `/api` answered by that real s
 | FORMAT-15 | Lesson breadcrumb | Home / <title> / <lesson>, the course crumb linking by slug | implemented | `breadcrumbs below a course > the lesson page's breadcrumb names the course by its title and links by slug` |
 | FORMAT-16 | Slides breadcrumb | Home / <title> / <lesson> in the slides view | implemented | `breadcrumbs below a course > the slides view's breadcrumb names the course by its title` |
 | FORMAT-17 | Lesson fallback | Home / <slug> / <lesson> for a course with no title, once the course list has answered | implemented | `breadcrumbs below a course > a lesson in a course that declares no title has its slug in the breadcrumb` |
+
+## A lesson's hook (flyingrobots/school#164)
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| FORMAT-18 | Hook loads | A page's `hook`, with or without `figure`, loads with the page; a page without one has no `hook` | implemented | `server/blocks.test.ts`: `a lesson may declare a hook, and it loads with the page` |
+| FORMAT-19 | Hook malformed | A hook missing `question` or `teaser`, with a non-string `figure`, or not an object, is rejected naming the lesson | implemented | `server/blocks.test.ts`: `a hook without its question or teaser, or with a figure that isn't text, is rejected, naming the lesson` |
+| FORMAT-20 | What's ahead | `GET /api/showcase` lists lessons with a quiz not yet answered correctly, in course order; a reading lesson and an unreadable course are left out; without a hook, the title and subtitle stand in | implemented | `server/showcase.test.ts`: `on a fresh record every lesson with a quiz is ahead, in course order; without a hook, its title and subtitle stand in` |
+| FORMAT-21 | Started and finished | A wrong answer starts nothing; a right one marks the course started; a lesson with every quiz right is no longer listed | implemented | `server/showcase.test.ts`: `a wrong answer starts nothing; a right one starts the course; a lesson with every quiz right is no longer ahead` |

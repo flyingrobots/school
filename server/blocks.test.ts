@@ -110,3 +110,22 @@ test("with no earlier valid set, a broken lesson set yields no library and the e
   expect(result.library).toBeNull();
   expect(result.error).toBeInstanceOf(BlockError);
 });
+
+// A lesson's hook: the question it answers, a teaser and an optional figure (flyingrobots/school#164).
+test("a lesson may declare a hook, and it loads with the page", () => {
+  const hook = { question: "Why do bells ring patterns?", teaser: "Physics decides.", figure: "<svg></svg>" };
+  const lib = loadLibrary(lessons({ "0001.json": { ...page("l", [quiz("q")]), hook } }));
+  expect(lib.pages[0]).toMatchObject({ type: "page", id: "l", hook });
+  const plain = loadLibrary(lessons({ "0001.json": { ...page("l", [quiz("q")]), hook: { question: "Q?", teaser: "T." } } }));
+  expect(plain.pages[0]).toMatchObject({ hook: { question: "Q?", teaser: "T." } });
+  expect("figure" in (plain.pages[0] as { hook: object }).hook).toBe(false);
+  expect("hook" in loadLibrary(lessons({ "0001.json": page("l", [quiz("q")]) })).pages[0]!).toBe(false);
+});
+
+test("a hook without its question or teaser, or with a figure that isn't text, is rejected, naming the lesson", () => {
+  expect(loadError(lessons({ "0001.json": { ...page("l", []), hook: { teaser: "T." } } }))).toContain('"question"');
+  expect(loadError(lessons({ "0001.json": { ...page("l", []), hook: { question: "Q?" } } }))).toContain('"teaser"');
+  expect(loadError(lessons({ "0001.json": { ...page("l", []), hook: { question: "Q?", teaser: "T.", figure: 3 } } }))).toContain('"figure"');
+  expect(loadError(lessons({ "0001.json": { ...page("l", []), hook: "Q?" } }))).toContain("hook");
+  expect(loadError(lessons({ "0001.json": { ...page("l", []), hook: { teaser: "T." } } }))).toContain("l");
+});
