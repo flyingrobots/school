@@ -13,7 +13,7 @@ others, and checks every reply with Zod (`web/src/lib/home-api.ts`) before showi
 
    | When | The hero | Label | Button |
    | --- | --- | --- | --- |
-   | A served course is not started yet (none of its quizzes answered correctly) | The first lesson still ahead in the first such course | "New for you", or "Start here" when no course is started | Start lesson N |
+   | A served course is not started yet (none of its quizzes answered correctly) | The first lesson still ahead in the first such course | "New for you", or "Start here" before the learner has studied anything | Start lesson N |
    | Every course is started, and `GET /api/resume` says `continue` | The lesson to continue | "Pick up where you left off" | Continue |
    | Every course is started, and resume says `next` or `start` | That lesson | "Up next" | Start |
    | Otherwise | The first lesson still ahead | "Up next" | Start |
