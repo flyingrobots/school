@@ -112,7 +112,9 @@ function Rhythm() {
                       cx={x(day(d))}
                       cy={y + 4}
                       r={6}
-                      className="fill-primary"
+                      tabIndex={0}
+                      aria-label={`Studied ${fmt(day(d))}`}
+                      className="fill-primary outline-none focus-visible:stroke-ring focus-visible:stroke-2"
                     />
                   </TooltipTrigger>
                   <TooltipContent>Studied {fmt(day(d))}</TooltipContent>
@@ -125,7 +127,9 @@ function Rhythm() {
                       cx={x(day(r.day))}
                       cy={y + 4}
                       r={5 + r.items * 2}
-                      className="fill-background stroke-chart-2"
+                      tabIndex={0}
+                      aria-label={`${r.items} question${r.items > 1 ? "s come" : " comes"} back ${fmt(day(r.day))}`}
+                      className="fill-background stroke-chart-2 outline-none focus-visible:stroke-ring"
                       strokeWidth={2}
                     />
                   </TooltipTrigger>
