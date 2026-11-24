@@ -123,7 +123,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"   # the bridge runs on the host, outside Docker
     volumes:
-      - ../assets:/framework/assets:ro   # the framework supplies assets and nothing else
+      - ../assets:/framework/assets:ro   # the framework supplies its assets and its built web app
+      - ../web/dist:/framework/web/dist:ro   # build it first: `npm run build` in web/
       - ${SCHOOL_COURSE_DIR:?set SCHOOL_COURSE_DIR to the course repository}:/course:ro
       - ${SCHOOL_STATE_DIR:?set SCHOOL_STATE_DIR to the private learner-state directory}:/state
       - ${SCHOOL_SOURCES_DIR:?set SCHOOL_SOURCES_DIR to the course's source material, or to an empty directory}:/sources:ro
