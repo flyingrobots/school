@@ -23,8 +23,8 @@ playwright-core against the Vite dev server, with `/api` answered by that real s
 | ID | Case | Oracle | Status | Test |
 | --- | --- | --- | --- | --- |
 | FORMAT-9 | Sidebar | A course link's text is its title, or its slug when it declares none; its `href` is `/courses/<slug>` | implemented | `web/test/course-title.test.ts`: `the sidebar > names each course by its title, and by its slug when it declares none, linking by slug` |
-| FORMAT-10 | Home's list | Each course item's title is the course's title, or its slug | implemented | `Home > names each course in the list by its title, falling back to the slug` |
-| FORMAT-11 | Home's resume | "Lesson 1 of 1 in <title>" and "All lessons in <title>", linking by slug | implemented | `Home > names the course of the lesson to study now by its title` |
+| FORMAT-10 | Home's hero | The hero names its course by its title and links to it by slug | implemented | `Home > the hero names its course by its title` |
+| FORMAT-11 | Home's carousel | A course that declares no title is named by its slug in what's ahead | implemented | `Home > what's ahead names a course that declares no title by its slug` |
 | FORMAT-12 | Course page | The heading and breadcrumb are the title | implemented | `the course page > its heading and breadcrumb name the course by its title` |
 | FORMAT-13 | Course page fallback | The heading and breadcrumb are the slug for a course with no title | implemented | `the course page > a course that declares no title is named by its slug` |
 | FORMAT-14 | Reference breadcrumb | Home / <title> / Reference, the course crumb linking by slug | implemented | `breadcrumbs below a course > the reference page's breadcrumb names the course by its title and links by slug` |

@@ -360,7 +360,29 @@ describe("key hints on touch screens (flyingrobots/school#154)", () => {
         : {}
     )
     const p = await context.newPage()
-    // A course list, so Home shows its "j k move between courses" line; no School runs behind this dev server.
+    // A lesson ahead, so Home's hero shows its ↵ hint, and a course list for the sidebar; no School
+    // runs behind this dev server.
+    await p.route("**/api/showcase", (r) =>
+      r.fulfill({
+        json: [
+          {
+            course: "aion",
+            courseTitle: "Orbits",
+            started: false,
+            lesson: {
+              id: "l1",
+              title: "One",
+              subtitle: "",
+              position: 1,
+              of: 2,
+            },
+            question: "Why do planets keep going?",
+            teaser: "Nothing stops them.",
+            figure: null,
+          },
+        ],
+      })
+    )
     await p.route("**/api/courses", (r) =>
       r.fulfill({
         json: [

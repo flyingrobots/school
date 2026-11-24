@@ -27,6 +27,7 @@ import {
   timeout,
   type Started,
 } from "../../server/testing/processes.ts"
+import { close } from "./routes.ts"
 
 setDefaultTimeout(30_000)
 
@@ -62,7 +63,7 @@ const lesson = (title: string) =>
 beforeAll(
   async () => {
     root = mkdtempSync(join(tmpdir(), "school-course-title-"))
-    // aion declares a title; plain declares none. aion comes first by name, so Home starts there.
+    // aion declares a title; plain declares none. aion comes first by name, so Home's hero starts there.
     for (const [name, title] of [
       ["aion", "Orbits"],
       ["plain", "Cells"],
@@ -150,41 +151,35 @@ describe("the sidebar", () => {
     expect(await sidebarLink(p, "plain").getAttribute("href")).toBe(
       "/courses/plain"
     )
-    await p.context().close()
+    await close(p.context())
   })
 })
 
 describe("Home", () => {
-  test("names each course in the list by its title, falling back to the slug", async () => {
+  test("the hero names its course by its title", async () => {
     const p = await open("/")
-    const item = (c: string) => main(p).locator(`a[data-course=${c}]`)
-    await item("aion").waitFor()
+    const hero = main(p).locator("[data-hero]")
+    await hero.waitFor()
+    // A fresh record, so the hero starts the first course, aion, by name.
+    expect(await hero.textContent()).toContain(
+      `${TITLE} · Lesson 1 of 1: Orbits`
+    )
+    expect(await hero.textContent()).not.toContain("aion ·")
     expect(
-      await item("aion").locator("[data-slot=item-title]").textContent()
-    ).toBe(TITLE)
-    expect(await item("aion").getAttribute("href")).toBe("/courses/aion")
-    expect(
-      await item("plain").locator("[data-slot=item-title]").textContent()
-    ).toBe("plain")
-    await p.context().close()
+      await hero
+        .getByRole("link", { name: "See all 1 lessons" })
+        .getAttribute("href")
+    ).toBe("/courses/aion")
+    await close(p.context())
   })
 
-  test("names the course of the lesson to study now by its title", async () => {
+  test("what's ahead names a course that declares no title by its slug", async () => {
     const p = await open("/")
-    const resume = main(p).locator("[data-resume]")
-    await resume.waitFor()
-    // The title comes from the course list, which may answer after the resume card.
-    await p.waitForFunction(
-      (t) =>
-        document
-          .querySelector("[data-resume]")
-          ?.textContent?.includes(`Lesson 1 of 1 in ${t}`),
-      TITLE
-    )
-    const all = resume.getByRole("link", { name: `All lessons in ${TITLE}` })
-    expect(await all.getAttribute("href")).toBe("/courses/aion")
-    expect(await resume.textContent()).not.toContain("in aion")
-    await p.context().close()
+    const card = main(p).locator("[data-ahead='plain:l1']")
+    await card.waitFor()
+    expect(await card.textContent()).toContain("plain")
+    expect(await card.getAttribute("href")).toBe("/courses/plain/lessons/l1")
+    await close(p.context())
   })
 })
 
@@ -194,7 +189,7 @@ describe("the course page", () => {
     await main(p).locator("[data-lesson]").first().waitFor()
     expect(await p.getByRole("heading", { level: 1 }).textContent()).toBe(TITLE)
     expect(await crumbs(p)).toBe(`Home / ${TITLE}`)
-    await p.context().close()
+    await close(p.context())
   })
 
   test("a course that declares no title is named by its slug", async () => {
@@ -204,7 +199,7 @@ describe("the course page", () => {
       "plain"
     )
     expect(await crumbs(p)).toBe("Home / plain")
-    await p.context().close()
+    await close(p.context())
   })
 })
 
@@ -219,7 +214,7 @@ describe("breadcrumbs below a course", () => {
         .getByRole("link", { name: TITLE })
         .getAttribute("href")
     ).toBe("/courses/aion")
-    await p.context().close()
+    await close(p.context())
   })
 
   test("the lesson page's breadcrumb names the course by its title and links by slug", async () => {
@@ -241,7 +236,7 @@ describe("breadcrumbs below a course", () => {
         .getByRole("link", { name: TITLE })
         .getAttribute("href")
     ).toBe("/courses/aion")
-    await p.context().close()
+    await close(p.context())
   })
 
   test("the slides view's breadcrumb names the course by its title", async () => {
@@ -257,7 +252,7 @@ describe("breadcrumbs below a course", () => {
       TITLE
     )
     expect(await crumbs(p)).toBe(`Home / ${TITLE} / Orbits`)
-    await p.context().close()
+    await close(p.context())
   })
 
   test("a lesson in a course that declares no title has its slug in the breadcrumb", async () => {
@@ -270,6 +265,6 @@ describe("breadcrumbs below a course", () => {
     // Wait for the course list too, so the slug is the fallback, not a list still loading.
     await sidebarLink(p, "plain").waitFor()
     expect(await crumbs(p)).toBe("Home / plain / Cells")
-    await p.context().close()
+    await close(p.context())
   })
 })

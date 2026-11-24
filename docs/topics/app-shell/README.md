@@ -92,10 +92,9 @@ lessons); on Home, Settings and Not found none is. The links are focus stops for
 | Failed (unreachable, an error, or a reply that is not a course list) | A destructive Alert, "Courses could not be loaded", with the server's reason when it gave one, and **Try again** |
 
 The list is asked for once per visit and shared: `web/src/lib/courses.ts` holds the one answer the
-sidebar and the [home page](../home-page/README.md) both read, and moving between pages does not
-ask again. The reply is parsed with Zod in `web/src/lib/school-api.ts` (`listCourses`). The home
-page also asks again in the background each time it opens, because it shows progress that studying
-changes; the sidebar keeps showing the list meanwhile, and keeps it if that request fails. A
+sidebar and the course pages read, and moving between pages does not ask again. The reply is
+parsed with Zod in `web/src/lib/school-api.ts` (`listCourses`). The [home page](../home-page/README.md)
+does not ask for the list; a failure there is the sidebar's alone. A
 **Try again** in either place retries the shared request, so it recovers both.
 
 The group is composed from stock shadcn sidebar parts in `web/src/App.tsx` and passed through the

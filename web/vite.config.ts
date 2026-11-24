@@ -10,15 +10,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(import.meta.dirname, "index.html"),
-        "home-a": resolve(import.meta.dirname, "mockups/home-a.html"),
-        "home-b": resolve(import.meta.dirname, "mockups/home-b.html"),
-        "home-c": resolve(import.meta.dirname, "mockups/home-c.html"),
-        "home-d": resolve(import.meta.dirname, "mockups/home-d.html"),
-        "home-e": resolve(import.meta.dirname, "mockups/home-e.html"),
-        "home-f": resolve(import.meta.dirname, "mockups/home-f.html"),
-        "home-g": resolve(import.meta.dirname, "mockups/home-g.html"),
-        "home-h": resolve(import.meta.dirname, "mockups/home-h.html"),
-        "home-i": resolve(import.meta.dirname, "mockups/home-i.html"),
       },
     },
   },
