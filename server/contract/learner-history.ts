@@ -232,8 +232,8 @@ export async function replayLearnerHistory(r: LearningRecord): Promise<void> {
   expect(reviewed.encounter.resumed).toBe(false);
   expect(reviewed.page).toEqual({ ...(planets as Extract<Block, { type: "page" }>), children: [{ type: "section", id: "school:review", title: "Review", children: [closest, moons] }, rings] });
   expect(reviewed.review).toEqual([
-    { blockId: "closest", rule: "due-review/wrong-first-try", reason: "Back because your first answer on 21 November was wrong, and the right one came after the explanation was shown." },
-    { blockId: "moons", rule: "due-review/wrong-first-try", reason: "Back because your first answer on 21 November was wrong; you put it right on a later try." },
+    { blockId: "closest", rule: "due-review/wrong-first-try", reason: "On 21 November, the explanation helped you find this one. It's back so you can answer it from memory." },
+    { blockId: "moons", rule: "due-review/wrong-first-try", reason: "On 21 November, you found this one on a second go. It's back so you can answer it from memory." },
   ]);
   // One note per item, for this encounter, citing exactly the rows the selector named.
   expect((await r.encounterDecisionNotes(reviewed.encounter.id)).map((n) => [n.choice, n.rule, n.evidence])).toEqual([

@@ -39,8 +39,8 @@ A lesson can open with quizzes from elsewhere in the course brought back for del
 ([due review](../due-review/README.md)). They arrive inside the lesson the API returns, in a section
 titled "Review" at its top (id `school:review`), and the reply's `review` lists each one's reason.
 The page renders that section like any other. Above each review quiz it shows a stock `Alert`
-titled "Back for review", with the reason in words, for example "Back because your first answer on
-21 November was wrong; you put it right on a later try.", then the lesson it is from as a link to
+titled "Ready for another look", with the reason in words, for example "On 21 November, you found
+this one on a second go. It's back so you can answer it from memory.", then the lesson it is from as a link to
 that lesson: "It's from Orbits." A review quiz is answered and recorded
 like the lesson's own. The review is part of the encounter's snapshot, so a reload shows the same
 items with the same reasons.

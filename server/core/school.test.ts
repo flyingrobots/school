@@ -130,17 +130,24 @@ describe("due review on opening a lesson (RFC 2 §5; flyingrobots/school#32)", (
     expect(calls.opened[0]).toMatchObject({ page: lessonPage, notes: [] });
   });
 
-  test("each reason says in words why the item came back, with the day of the answer that decided it", () => {
+  test("each reason says in words why the item came back, with the day of the answer that decided it, encouragingly (flyingrobots/school#161)", () => {
+    const back = "It's back so you can answer it from memory.";
     expect(reviewReason(item("q", { shown: ["feedback"] })))
-      .toBe("Back because your first answer on 20 November was wrong, and the right one came after the explanation was shown.");
+      .toBe(`On 20 November, the explanation helped you find this one. ${back}`);
     expect(reviewReason(item("q", { shown: ["model-answer", "hint"] })))
-      .toBe("Back because your first answer on 20 November was wrong, and the right one came after the model answer and a hint were shown.");
-    expect(reviewReason(item("q"))).toBe("Back because your first answer on 20 November was wrong; you put it right on a later try.");
-    expect(reviewReason(item("q", { corrected: false }))).toBe("Back because your first answer on 20 November was wrong, and it was not put right then.");
+      .toBe(`On 20 November, the model answer and a hint helped you find this one. ${back}`);
+    expect(reviewReason(item("q"))).toBe(`On 20 November, you found this one on a second go. ${back}`);
+    expect(reviewReason(item("q", { corrected: false }))).toBe("On 20 November, this one hadn't settled yet. It's back for a fresh look.");
     expect(reviewReason(item("q", { rule: "due-review/aided-first-try", corrected: false, shown: ["hint"] })))
-      .toBe("Back because on 20 November you answered it right only after a hint was shown.");
+      .toBe(`On 20 November, a hint helped you find this one. ${back}`);
     expect(reviewReason(item("q", { rule: "due-review/unknown-aid", corrected: false })))
-      .toBe("Back because on 20 November you answered it right while School was not recording the help it showed, so it cannot say whether you had any.");
+      .toBe(`On 20 November, you found this one while School wasn't noting the help it showed. ${back}`);
+    // School's voice: never "wrong", "failed" or "mistake" (docs/topics/voice/README.md).
+    const all = [
+      item("q", { shown: ["feedback"] }), item("q"), item("q", { corrected: false }),
+      item("q", { rule: "due-review/aided-first-try", shown: ["hint"] }), item("q", { rule: "due-review/unknown-aid" }),
+    ].map(reviewReason);
+    for (const reason of all) expect(reason).not.toMatch(/wrong|fail|mistake|incorrect/i);
     for (const reason of [reviewReason(item("q")), reviewReason(item("q", { rule: "due-review/unknown-aid" }))]) {
       expect(reason).not.toMatch(/[0-9]+ ?%|score|points?\b/i); // results in words, never scores
     }
