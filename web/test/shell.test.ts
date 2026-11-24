@@ -292,28 +292,48 @@ describe("sidebar toggle (flyingrobots/school#148)", () => {
     await p.context().close()
   })
 
-  test("covers neither the sidebar's title nor the main header's first item", async () => {
+  const header = (p: Page) => p.locator("[data-nav-region=main] header")
+  const title = (p: Page) => header(p).getByText("School", { exact: true })
+
+  test("the header spans the width, and its toggle and title stay put (flyingrobots/school#150)", async () => {
     const p = await open()
     await settled(p, "expanded")
-    const title = await p
-      .locator("[data-slot=sidebar-header]")
-      .getByText("School")
-      .boundingBox()
-    expect(overlaps((await toggle(p).boundingBox())!, title!)).toBe(false)
+    const box = (await header(p).boundingBox())!
+    expect(box.x).toBe(0)
+    expect(box.width).toBe(p.viewportSize()!.width)
+    const boxes = async () => ({
+      toggle: await toggle(p).boundingBox(),
+      title: await title(p).boundingBox(),
+    })
+    const open1 = await boxes()
+    expect(open1.title).not.toBeNull()
+    expect(overlaps(open1.toggle!, open1.title!)).toBe(false)
     await p.keyboard.press("ControlOrMeta+b")
     await settled(p, "collapsed")
-    // The header's first item after the toggle: the Commands button when no leader badge shows.
-    const commands = p.getByRole("button", { name: /Commands/ })
-    const header = await p
-      .locator("[data-nav-region=main] header")
-      .boundingBox()
-    const t = (await toggle(p).boundingBox())!
-    expect(overlaps(t, (await commands.boundingBox())!)).toBe(false)
-    // Nothing in the header's flow starts under the toggle: its start padding clears it.
-    const padStart = await p
-      .locator("[data-nav-region=main] header")
-      .evaluate((el) => parseFloat(getComputedStyle(el).paddingInlineStart))
-    expect(header!.x + padStart).toBeGreaterThanOrEqual(t.x + t.width)
+    expect(await title(p).isVisible()).toBe(true)
+    expect(await boxes()).toEqual(open1)
+    await p.keyboard.press("ControlOrMeta+b")
+    await settled(p, "expanded")
+    expect(await boxes()).toEqual(open1)
+    await p.context().close()
+  })
+
+  test("the sidebar starts below the header, and the page's heading is not under it", async () => {
+    const p = await open()
+    await settled(p, "expanded")
+    const bottom = (b: { y: number; height: number }) => b.y + b.height
+    const h = (await header(p).boundingBox())!
+    const sidebar = (await p
+      .locator("[data-slot=sidebar-container]")
+      .boundingBox())!
+    expect(sidebar.y).toBe(bottom(h))
+    const h1 = (await p.getByRole("heading", { level: 1 }).boundingBox())!
+    expect(h1.y).toBeGreaterThanOrEqual(bottom(h))
+    // The header's items do not overlap one another.
+    const commands = (await p
+      .getByRole("button", { name: /Commands/ })
+      .boundingBox())!
+    expect(overlaps((await toggle(p).boundingBox())!, commands)).toBe(false)
     await p.context().close()
   })
 })
