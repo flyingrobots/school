@@ -130,6 +130,7 @@ export const GRANTED_FUNCTIONS: readonly string[] = [
   "school.encounter_explanations(uuid)",
   "school.explanation(uuid)",
   "school.last_studied()",
+  "school.latest_feedback()",
   "school.lesson_progress(text)",
   "school.open_encounter(text,text,text,timestamp with time zone,integer)",
   "school.open_lesson_encounter(text,text,text,text,timestamp with time zone,integer,jsonb)",
@@ -138,6 +139,7 @@ export const GRANTED_FUNCTIONS: readonly string[] = [
   "school.record_grading(uuid,text,text,text,text,text,jsonb,text,jsonb,text,timestamp with time zone)",
   "school.record_view(text,text,timestamp with time zone)",
   "school.save_explanation(uuid,uuid,text,text,bigint,timestamp with time zone)",
+  "school.study_days(timestamp with time zone,timestamp with time zone,text)",
   "school.submission_aid(uuid)",
   "school.submit(uuid,uuid,text,text,bigint,timestamp with time zone)",
 ];

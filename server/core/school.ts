@@ -1,6 +1,6 @@
 // School's use cases (RFC 3, §4). Each takes values already parsed at the edge, talks only to
 // ports, and returns plain data for the driving adapter to serialise.
-import type { Aid, AidTracking, Block, Contradiction, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, ExposureKind, ReviewNote, ReviewReason, EvidenceRow, Exposure, ExposureResult, ExplanationState, ExplanationSubmission, Grading, GradingRecord, LastStudied, LessonProgress, Recorded, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
+import type { Aid, AidTracking, Block, Contradiction, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, ExposureKind, ReviewNote, ReviewReason, EvidenceRow, Exposure, ExposureResult, ExplanationState, ExplanationSubmission, Grading, GradingRecord, LastStudied, LatestFeedback, LessonProgress, Recorded, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
 import type { Clock, Grader, LearningRecord } from "./ports.ts";
 
 const squash = (s: string) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim().toLowerCase();
@@ -97,6 +97,16 @@ export interface School {
   recordDecisionNote(n: DecisionNoteInput): Promise<DecisionNoteResult>;
   decisionNotes(choice: DecisionChoice): Promise<DecisionNote[]>;
   encounterDecisionNotes(encounterId: string): Promise<DecisionNote[]>;
+  /** The newest succeeded grading, with the prompt its explanation answered; null before any (flyingrobots/school#165). */
+  latestFeedback(): Promise<(LatestFeedback & { prompt: string | null }) | null>;
+  /** The quizzes among `blocks` due for review now, each with its reason in words. */
+  dueNow(course: string, blocks: readonly string[]): Promise<{ item: DueItem; reason: string }[]>;
+  /**
+   * For each course, the local days in time zone `tz` it was studied in the last `days` days, and,
+   * for each of the next `days` days, how many of its quizzes become due for review that day.
+   */
+  activity(courses: readonly { name: string; blocks: readonly string[] }[], days: number, tz: string):
+    Promise<{ today: string; courses: { course: string; studied: string[]; due: { day: string; items: number }[] }[] }>;
 }
 
 export function createSchool(ports: { record: LearningRecord; grader: Grader; clock: Clock }): School {
@@ -151,6 +161,40 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
     },
     lessonProgress: (course) => record.lessonProgress(course),
     lastStudied: () => record.lastStudied(),
+    async latestFeedback() {
+      const f = await record.latestFeedback();
+      if (f === null) return null;
+      const saved = await record.explanation(f.submissionId);
+      return { ...f, prompt: saved?.block.type === "explain" ? saved.block.prompt : null };
+    },
+    async dueNow(course, blocks) {
+      if (blocks.length === 0) return [];
+      const due = await record.dueReview({ course, blocks: [...blocks], now: clock.now(), delayMs: REVIEW_DELAY_MS, limit: REVIEW_LIMIT });
+      return due.map((item) => ({ item, reason: reviewReason(item) }));
+    },
+    async activity(courses, days, tz) {
+      const now = Date.parse(clock.now());
+      const DAY = 24 * 60 * 60 * 1000;
+      const local = (ms: number) => new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(ms);
+      const studied = await record.studyDays({ from: new Date(now - days * DAY).toISOString(), to: new Date(now + 1).toISOString(), tz });
+      // Every quiz that will be due, not only the few one lesson shows.
+      const dueBy = async (course: string, blocks: readonly string[], at: number) => blocks.length === 0 ? new Set<string>() : new Set(
+        (await record.dueReview({ course, blocks: [...blocks], now: new Date(at).toISOString(), delayMs: REVIEW_DELAY_MS, limit: 10_000 })).map((d) => d.blockId));
+      return {
+        today: local(now),
+        courses: await Promise.all(courses.map(async (c) => {
+          const seen = await dueBy(c.name, c.blocks, now);
+          const due: { day: string; items: number }[] = [];
+          for (let k = 1; k <= days; k++) {
+            const by = await dueBy(c.name, c.blocks, now + k * DAY);
+            const fresh = [...by].filter((id) => !seen.has(id));
+            for (const id of fresh) seen.add(id);
+            if (fresh.length > 0) due.push({ day: local(now + k * DAY), items: fresh.length });
+          }
+          return { course: c.name, studied: studied.filter((d) => d.course === c.name).map((d) => d.day), due };
+        })),
+      };
+    },
     recordView: (v) => record.recordView(v, clock.now()),
     recordExposure: (e) => record.recordExposure(e, clock.now()),
     submissionAid: (id) => record.aid(id),
