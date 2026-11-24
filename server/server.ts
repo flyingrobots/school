@@ -267,7 +267,6 @@ async function coursesJson(): Promise<Response> {
   })));
 }
 
-=======
 // ---- Since the learner was last here (flyingrobots/school#165) -------------------------------
 
 /** The server's time zone, the one review reasons name their days in. */
@@ -556,7 +555,6 @@ const http = Bun.serve({
     }
     if (pathname === "/api/courses") return coursesJson();
     if (pathname === "/api/resume") return resumeJson();
-=======
     if (pathname === "/api/feedback") return feedbackJson();
     if (pathname === "/api/review") return reviewJson();
     if (pathname === "/api/activity") return activityJson(url.searchParams);

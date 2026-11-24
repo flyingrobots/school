@@ -80,7 +80,6 @@ JSON API.
 | --- | --- | --- |
 | GET | `/api/courses` | Lists installed courses, each with its `name` (the slug in addresses) and `title` ([a course's folder](../course-format/README.md)), with lesson and reference counts, and each course's `quizzes` and `answeredCorrectly`; the counts are `null` for a course whose lessons cannot be read |
 | GET | `/api/resume` | What to study now, from where the learner left off: `continue`, `next`, `start`, `finished` or `nothing` ([the home page](../home-page/README.md)) |
-=======
 | GET | `/api/feedback` | The newest succeeded grading: its course, lesson, the prompt it answered and the findings; `null` before any |
 | GET | `/api/review` | The questions due for review now, across courses, each with its lesson, question and reason ([due review](../due-review/README.md)) |
 | GET | `/api/activity?days=14` | Each course's study days in the last `days` (1 to 60), and how many questions come back on each day ahead |
