@@ -338,6 +338,74 @@ describe("sidebar toggle (flyingrobots/school#148)", () => {
   })
 })
 
+describe("key hints on touch screens (flyingrobots/school#154)", () => {
+  const hints =
+    "[data-slot=kbd], [data-slot=kbd-group], [data-keys], [data-key-hint]"
+  const visibleHints = (p: Page) =>
+    p.evaluate(
+      (sel) =>
+        [...document.querySelectorAll(sel)].filter(
+          (el) => el.getClientRects().length > 0
+        ).length,
+      hints
+    )
+  async function home(touch: boolean) {
+    const context = await browser.newContext(
+      touch
+        ? {
+            viewport: { width: 393, height: 852 },
+            hasTouch: true,
+            isMobile: true,
+          }
+        : {}
+    )
+    const p = await context.newPage()
+    // A course list, so Home shows its "j k move between courses" line; no School runs behind this dev server.
+    await p.route("**/api/courses", (r) =>
+      r.fulfill({
+        json: [
+          {
+            name: "aion",
+            title: "Orbits",
+            lessons: 2,
+            reference: 1,
+            quizzes: 4,
+            answeredCorrectly: 0,
+          },
+        ],
+      })
+    )
+    p.setDefaultTimeout(5_000)
+    // Not open(): on a phone the sidebar is a sheet, mounted only once it opens.
+    await p.goto(base + "/")
+    await p.getByRole("heading", { level: 1 }).waitFor()
+    await p.locator("[data-key-hint]").first().waitFor({ state: "attached" })
+    return p
+  }
+
+  test("a touch screen shows none, though its keys still work", async () => {
+    const p = await home(true)
+    expect(
+      await p.evaluate(() => matchMedia("(pointer: coarse)").matches)
+    ).toBe(true)
+    expect(await visibleHints(p)).toBe(0)
+    await p.keyboard.press("ControlOrMeta+k")
+    await palette(p).waitFor()
+    expect(await visibleHints(p)).toBe(0)
+    await p.context().close()
+  })
+
+  test("a mouse or trackpad still shows them", async () => {
+    const p = await home(false)
+    expect(await p.evaluate(() => matchMedia("(pointer: fine)").matches)).toBe(
+      true
+    )
+    expect(await visibleHints(p)).toBeGreaterThan(0)
+    expect(await p.locator("[data-key-hint]").first().isVisible()).toBe(true)
+    await p.context().close()
+  })
+})
+
 describe("focus movement", () => {
   test.each([
     ["hjkl", { down: "j", up: "k", left: "h", right: "l" }],
