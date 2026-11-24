@@ -116,3 +116,97 @@ export const verdictWord: Record<Verdict, string> = {
   partly: "Partly",
   misses: "Not yet",
 }
+
+// Mockup H: what each mark on the timeline opens. Illustrative.
+export const STUDY_DAYS: Record<string, string[]> = {
+  "AIΩN Foundations": [
+    "Read The Inversion and answered its 4 questions, 3 right on the first try.",
+    "Opened the reference 'Why replay, not state' for 6 minutes.",
+  ],
+  "The Mathematics of Bells": [
+    "Read Writing changes down and answered its 4 questions, all right on the first try.",
+    "Wrote an explanation of why bells play patterns, not tunes.",
+  ],
+}
+
+export const COMING_BACK: Record<
+  string,
+  { question: string; reason: string }[]
+> = {
+  "AIΩN Foundations": [
+    {
+      question: "What does AIΩN keep, and what does it compute from it?",
+      reason:
+        "Your first answer was wrong; you got it right after reading the reference.",
+    },
+    {
+      question:
+        "Which way can you rebuild: history from state, or state from history?",
+      reason:
+        "Right first try a week earlier, with no help. Checking it stuck.",
+    },
+  ],
+  "The Mathematics of Bells": [
+    {
+      question: "How many changes does the plain hunt on four bells take?",
+      reason: "You answered after opening the model answer.",
+    },
+    {
+      question: "Why can't a ringer play a tune on a heavy bell?",
+      reason:
+        "Right first try four days earlier, with no help. Checking it stuck.",
+    },
+    {
+      question: "What makes a change legal?",
+      reason: "Right first try two weeks earlier. The second check.",
+    },
+  ],
+}
+
+// Mockup I: every explanation written, each attempt with its three judgments. Illustrative
+// except today's attempt at the inversion, which is the real grading.
+export type Attempt = { day: number; verdicts: [Verdict, Verdict, Verdict] }
+export const CRITERIA = ["Fidelity", "Completeness", "Accessibility"] as const
+export const EXPLANATIONS: {
+  course: string
+  lesson: string
+  prompt: string
+  attempts: Attempt[]
+}[] = [
+  {
+    course: "AIΩN Foundations",
+    lesson: "Graphs of Graphs",
+    prompt:
+      "Explain a WARP to an imaginary engineer in under 45 seconds, without the words “category”, “algebra” or “recursive”.",
+    attempts: [
+      { day: -12, verdicts: ["partly", "misses", "misses"] },
+      { day: -9, verdicts: ["meets", "partly", "meets"] },
+      { day: -5, verdicts: ["meets", "meets", "meets"] },
+    ],
+  },
+  {
+    course: "AIΩN Foundations",
+    lesson: "The Inversion",
+    prompt:
+      "Explain the inversion to an imaginary engineer in under 30 seconds. Use one example that isn't the bank account.",
+    attempts: [
+      { day: -8, verdicts: ["misses", "misses", "partly"] },
+      // The real grading in the record.
+      { day: 0, verdicts: ["partly", "misses", "meets"] },
+    ],
+  },
+  {
+    course: "The Mathematics of Bells",
+    lesson: "Bells that can't hurry",
+    prompt:
+      "Explain to a friend who has never heard change ringing why church bells in England play patterns instead of tunes.",
+    attempts: [{ day: -3, verdicts: ["meets", "partly", "meets"] }],
+  },
+  {
+    course: "The Mathematics of Bells",
+    lesson: "The plain hunt",
+    prompt:
+      "Describe the plain hunt so someone could ring it with you: the two changes, the path one bell follows, and when it ends.",
+    attempts: [],
+  },
+]

@@ -80,7 +80,11 @@ function Why({ rationale }: { rationale: Rationale }) {
   )
 }
 
-export function mount(rationale: Rationale, page: ReactNode) {
+export function mount(
+  rationale: Rationale,
+  page: ReactNode,
+  width = "max-w-3xl"
+) {
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
       <ThemeProvider>
@@ -96,7 +100,9 @@ export function mount(rationale: Rationale, page: ReactNode) {
             </div>
           </header>
           <Separator />
-          <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-10">
+          <main
+            className={`mx-auto flex w-full ${width} flex-col gap-6 px-4 py-10`}
+          >
             {page}
           </main>
         </div>

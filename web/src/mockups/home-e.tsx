@@ -130,7 +130,7 @@ function Rhythm() {
                     />
                   </TooltipTrigger>
                   <TooltipContent>
-                    {r.items} question{r.items > 1 ? "s" : ""} come back{" "}
+                    {r.items} question{r.items > 1 ? "s come" : " comes"} back{" "}
                     {fmt(day(r.day))}
                   </TooltipContent>
                 </Tooltip>
