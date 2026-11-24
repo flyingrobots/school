@@ -1665,7 +1665,9 @@ describe("delayed review (flyingrobots/school#32)", () => {
               els.map((el) => el.getAttribute("data-quiz-id"))
             )
         expect(await order()).toEqual(["closest", "moons-none"])
-        const why = p.getByRole("alert").filter({ hasText: "Ready for another look" })
+        const why = p
+          .getByRole("alert")
+          .filter({ hasText: "Ready for another look" })
         expect(await why.count()).toBe(1)
         expect(await why.textContent()).toMatch(
           /On \d{1,2} [A-Z][a-z]+, you found this one on a second go\. It's back so you can answer it from memory\./
