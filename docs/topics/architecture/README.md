@@ -514,8 +514,8 @@ command and the book's SHA-256, and the colors pass theme-book's WCAG AAA and AP
 and dark. A test enforces that its stylesheet holds only stock shadcn tokens, and
 another that every component in `web/src/components/ui/` hashes to a fresh `shadcn add`
 (`web/test/fixtures/README.md` says how to regenerate the hashes). What
-exists: the theme, a light, dark and system toggle, a component sandbox at `/demo`, and three
-homepage mockups, and School's pages as far as
+exists: the theme, a light, dark and system toggle, a component sandbox at `/demo`, and
+School's pages as far as
 [flyingrobots/school#15](https://github.com/flyingrobots/school/issues/15) has built them, among
 them the lesson page. The lesson page sends every answer,
 explanation and exposure through an outbox in IndexedDB (`web/src/lib/outbox.ts`,

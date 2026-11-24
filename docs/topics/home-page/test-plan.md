@@ -24,17 +24,21 @@ requests answered by a real School server whose progress the test records throug
 
 ## The page (browser)
 
+Every case is in `web/test/home.test.ts`, over two records the test writes: one where Astronomy is
+started and Biology is not, and one where both are.
+
 | ID | Case | Oracle | Status | Test |
 | --- | --- | --- | --- | --- |
-| HOME-1 | Every course | Every course from `GET /api/courses`, in order, with its progress in words computed from that response | implemented | `web/test/home.test.ts`: `a learner who has studied > lists every course, in order, with its progress in words, matching the API` |
-| HOME-2 | No scores | No `%`, "score", "grade", `N/M` or progress bar on the page | implemented | `a learner who has studied > shows no percentage, letter or score` |
-| HOME-3 | Continue | The lesson from `GET /api/resume`: its title, progress in words and next question, linking to the lesson | implemented | `a learner who has studied > comes first with the lesson to continue: its progress and the next question, linking to it` |
-| HOME-4 | One key | On load, `↵` opens the lesson to continue | implemented | `a learner who has studied > Enter, straight after the page loads, continues the lesson` |
-| HOME-5 | First visit | A fresh record shows "Start here" with the first lesson | implemented | `a fresh record > starts at the first lesson of the first course` |
-| HOME-6 | Loading | Skeletons and a Spinner while the requests are held, gone once they answer | implemented | `states > while the requests are in flight, it shows Skeletons and a Spinner, then the page` |
-| HOME-7 | Courses fail | A failure of `GET /api/courses` is shown with Try again, which recovers | implemented | `states > a course list that cannot be loaded is reported, and Try again recovers` |
-| HOME-8 | Resume fails | A failure of `GET /api/resume` is shown, and the courses are still listed | implemented | `states > where the learner left off failing is reported, and the courses are still listed` |
-| HOME-9 | No courses | An empty course list shows an Empty state | implemented | `states > no courses at all says so` |
-| HOME-10 | Width | One column at 390 px; the lesson and the courses side by side at 1280 px | implemented | `a learner who has studied > uses the width: one column on a phone, the lesson and the courses side by side on a laptop` |
-| HOME-11 | Keys | `j` reaches every course in order and `↵` opens the focused one | implemented | `a learner who has studied > j reaches every course in order, and Enter opens the focused one` |
-| HOME-12 | Browser title | The tab reads `School` | implemented | `a learner who has studied > the browser title is School` |
+| HOME-1 | Hero, new course | The question of a course not started yet is the `h1`, with "New for you", the course title and place, the teaser and the figure; nothing in the figure runs; `↵` on load opens the lesson | implemented | `the hero > asks the question of a course not started yet, with its teaser and figure, and Enter starts it` |
+| HOME-2 | Hero, all started | The lesson to continue, "Pick up where you left off" and Continue; a lesson without a hook shows its title | implemented | `the hero > when every course is started, it is the lesson to study now, with Continue` |
+| HOME-3 | Still ahead | The other unfinished lessons, the one partway through first and marked, each linking to its lesson | implemented | `still ahead > lists the other unfinished lessons, the one partway through first and marked, each linking to its lesson` |
+| HOME-4 | Feedback | Lesson, course, prompt, summary, each criterion as Meets / Partly / Not yet, graded-by badge, Write a new draft linking to the explanation | implemented | `since you were last here > the newest feedback names its lesson and course, each criterion in words, and links to a new draft` |
+| HOME-5 | Review | Course and lesson, question, Answer opening another lesson in the course, and the why popover with the reason in School's voice | implemented | `since you were last here > a question ready for another look names its course and lesson, and says why it's back` |
+| HOME-6 | Timeline | Days studied counted in words; a past mark opens its day in the letter's place; `t` returns to today and `[` steps back | implemented | `since you were last here > the timeline shows the days studied, and a mark opens its day in the letter's place; t comes back to today` |
+| HOME-7 | No scores | No `%`, "score", "points" or letter grade on the page | implemented | `words, not scores > shows no percentage, letter grade or score anywhere` |
+| HOME-8 | Loading | A Spinner and a Skeleton while what's ahead loads, then the hero | implemented | `states > while what's ahead loads, it shows a Spinner and a Skeleton, then the hero` |
+| HOME-9 | What's ahead fails | The Alert with the server's reason; feedback still shows; Try again recovers the hero | implemented | `states > what's ahead failing is reported with Try again, and the rest of the page still loads` |
+| HOME-10 | Parts fail alone | Feedback, review and the timeline each fail with their own Alert, and the hero still shows | implemented | `states > feedback, review and the timeline each fail on their own` |
+| HOME-11 | Quiet day | No feedback and nothing to review says "Nothing new since you were last here" | implemented | `states > a quiet day says nothing is new` |
+| HOME-12 | Nothing ahead | An empty showcase says "Nothing ahead right now" | implemented | `states > nothing ahead says so` |
+| HOME-13 | Width | No sideways scroll at 390, 768, 1024 and 1440 px | implemented | `layout > never scrolls sideways, from a phone to a wide screen` |

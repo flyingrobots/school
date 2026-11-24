@@ -313,7 +313,7 @@ describe("states", () => {
     await close(c)
   })
 
-  test("on the home page the sidebar and the page share one request, and one Try again recovers both", async () => {
+  test("on the home page the course list is the sidebar's alone: it fails there, one Try again recovers it, and the page never asks for it", async () => {
     const { c } = await context()
     let refuse = true
     let asked = 0
@@ -327,16 +327,20 @@ describe("states", () => {
     const p = await open("/", c)
     const main = p.locator("[data-nav-region=main]")
     await sidebar(p).getByRole("alert").waitFor()
+    // Home (flyingrobots/school#166) shows what's ahead, not the course list, so it reports nothing.
     await main
-      .getByRole("alert")
-      .filter({ hasText: "Your courses could not be loaded" })
+      .getByRole("heading", { name: "Since you were last here" })
       .waitFor()
+    expect(
+      await main
+        .getByRole("alert")
+        .filter({ hasText: "courses could not be loaded" })
+        .count()
+    ).toBe(0)
     refuse = false
     await sidebar(p).getByRole("button", { name: "Try again" }).click()
     await links(p).first().waitFor()
-    await main.locator("[data-course]").first().waitFor()
-    expect(await main.locator("[data-course]").count()).toBe(3)
-    expect(asked).toBe(2) // the failed attempt and the retry; the page did not make its own
+    expect(asked).toBe(2) // the failed attempt and the retry; the page made none of its own
     await close(c)
   })
 })

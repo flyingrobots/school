@@ -20,4 +20,4 @@ by `web/test/shell.test.ts`.
 | SIDEBAR-7 | Failure | An unreachable server is shown as an alert with Try again, no Skeleton; Try again lists the courses | implemented | `states > a list that cannot be loaded is reported with Try again, which recovers` |
 | SIDEBAR-8 | Wrong shape | A reply that is not a course list is a failure, not a list | implemented | `states > a reply of the wrong shape is a failure, not a list` |
 | SIDEBAR-9 | Server's reason | A failure with School's `error` shows that reason | implemented | `states > the server's own reason is shown` |
-| SIDEBAR-10 | Shared with Home | On `/` the sidebar and the page's course list come from one request, and the sidebar's Try again recovers both | implemented | `states > on the home page the sidebar and the page share one request, and one Try again recovers both` |
+| SIDEBAR-10 | Home doesn't ask | On `/` the course list fails in the sidebar alone, its Try again recovers it, and the page makes no request of its own | implemented | `states > on the home page the course list is the sidebar's alone: it fails there, one Try again recovers it, and the page never asks for it` |

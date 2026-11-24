@@ -1,25 +1,34 @@
-// The home page (flyingrobots/school#39). It answers "what do I study now?" first: the lesson to
-// continue, with its next question written out, from GET /api/resume. Then every course with its
-// progress in words, from GET /api/courses (web/src/lib/courses.ts, shared with the sidebar).
-// Progress is never a percentage, a letter or a score (RFC 2 §4.3). Composed only of stock shadcn
-// components; the layout is Tailwind token classes.
+// The home page (flyingrobots/school#166). It leads with something to look forward to: a
+// question a course is about to answer, then the questions still ahead in the learner's unfinished
+// courses, each with the lesson's own picture. Below, what happened since the learner was last here:
+// the newest feedback and the questions ready for another look, beside a timeline of the days they
+// studied and the days questions come back. Each part loads, fails and retries on its own.
+// Results are words, never scores (RFC 2 §4.3), in School's voice (docs/topics/voice/README.md).
 import * as React from "react"
 import { useGSAP } from "@gsap/react"
 import gsap from "gsap"
+import { useShortcut } from "@ui-sdk/react/shortcuts"
 import {
   ArrowRightIcon,
   BookOpenIcon,
-  CheckIcon,
-  FlagIcon,
-  LibraryBigIcon,
-  MessageCircleQuestionIcon,
+  CalendarClockIcon,
+  PartyPopperIcon,
   PlayIcon,
   SparklesIcon,
   TriangleAlertIcon,
 } from "lucide-react"
 import { Link } from "react-router"
-import { z } from "zod"
+import type { z } from "zod"
 
+import { FeedbackCard, ReviewList } from "@/components/home-letter"
+import {
+  Timeline,
+  TimelineLegend,
+  dayWords,
+  markKey,
+  marksOf,
+  type Mark,
+} from "@/components/home-timeline"
 import {
   Alert,
   AlertAction,
@@ -37,313 +46,122 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import {
+  Carousel,
+  CarouselContent,
+  CarouselItem,
+  CarouselNext,
+  CarouselPrevious,
+} from "@/components/ui/carousel"
+import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
-import {
-  Item,
-  ItemContent,
-  ItemDescription,
-  ItemFooter,
-  ItemGroup,
-  ItemMedia,
-  ItemTitle,
-} from "@/components/ui/item"
-import { Kbd } from "@/components/ui/kbd"
+import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { useDocumentTitle } from "@/lib/document-title"
-import { useCourses, useCourseTitle, type CoursesLoad } from "@/lib/courses"
-import type { CourseSummary } from "@/lib/school-api"
+import { safeFigure } from "@/lib/figure"
+import {
+  ActivityJson,
+  FeedbackJson,
+  ResumeJson,
+  ReviewJson,
+  ShowcaseJson,
+  lessonHref,
+  type Ahead,
+  type Resume,
+  type ReviewItem,
+} from "@/lib/home-api"
+import { useJson, type Load } from "@/lib/use-json"
 
 gsap.registerPlugin(useGSAP)
 
-type Course = CourseSummary
-
-// GET /api/resume (server/core/school.ts, Resume).
-const ResumeLesson = z.object({
-  id: z.string(),
-  title: z.string(),
-  subtitle: z.string(),
-  position: z.number().int().positive(),
-  of: z.number().int().positive(),
-  quizzes: z.number().int().nonnegative(),
-  answeredCorrectly: z.number().int().nonnegative(),
-})
-const ResumeJson = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.enum(["continue", "next", "start"]),
-    course: z.string(),
-    lesson: ResumeLesson,
-    question: z.string().nullable(),
-    lastStudied: z.string().nullable(),
-  }),
-  z.object({
-    kind: z.literal("finished"),
-    course: z.string(),
-    lastStudied: z.string(),
-  }),
-  z.object({ kind: z.literal("nothing") }),
-])
-type Resume = z.infer<typeof ResumeJson>
-type Step = Extract<Resume, { lesson: unknown }>
-
-type Load<T> =
-  | { kind: "loading" }
-  | { kind: "ready"; data: T }
-  // No usable answer: unreachable, or the wrong shape. `reason` is the server's, when it gave one.
-  | { kind: "failed"; reason: string | null }
-
-function useJson<T>(url: string, schema: z.ZodType<T>): [Load<T>, () => void] {
-  const [attempt, setAttempt] = React.useState(0)
-  const [answer, setAnswer] = React.useState<{
-    attempt: number
-    load: Load<T>
-  } | null>(null)
-
-  React.useEffect(() => {
-    const abort = new AbortController()
-    const settle = (load: Load<T>) =>
-      abort.signal.aborted || setAnswer({ attempt, load })
-    ;(async (): Promise<Load<T>> => {
-      const res = await fetch(url, { signal: abort.signal })
-      const body: unknown = await res.json()
-      if (!res.ok) {
-        const reason = z.object({ error: z.string() }).safeParse(body)
-        return {
-          kind: "failed",
-          reason: reason.success ? reason.data.error : null,
-        }
-      }
-      const parsed = schema.safeParse(body)
-      return parsed.success
-        ? { kind: "ready", data: parsed.data }
-        : { kind: "failed", reason: null }
-    })().then(settle, () => settle({ kind: "failed", reason: null }))
-    return () => abort.abort()
-  }, [url, schema, attempt])
-
-  return [
-    answer?.attempt === attempt ? answer.load : { kind: "loading" },
-    () => setAttempt((n) => n + 1),
-  ]
-}
-
-const plural = (n: number, one: string, many: string) =>
-  `${n} ${n === 1 ? one : many}`
-
-/** Correct answers in words: "2 of 5 quizzes answered correctly". */
-function answeredWords(quizzes: number, answeredCorrectly: number): string {
-  if (quizzes === 0) return "No quizzes"
-  return `${answeredCorrectly} of ${quizzes} ${quizzes === 1 ? "quiz" : "quizzes"} answered correctly`
-}
-
-/** "5 minutes ago", "yesterday": when the learner last studied, in words. */
-function ago(iso: string, now = Date.now()): string {
-  const seconds = Math.round((Date.parse(iso) - now) / 1000)
-  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" })
-  const units: [Intl.RelativeTimeFormatUnit, number][] = [
-    ["year", 31_536_000],
-    ["month", 2_592_000],
-    ["week", 604_800],
-    ["day", 86_400],
-    ["hour", 3_600],
-    ["minute", 60],
-  ]
-  for (const [unit, size] of units)
-    if (Math.abs(seconds) >= size)
-      return rtf.format(Math.round(seconds / size), unit)
-  return "just now"
-}
-
 const heading = "font-heading font-semibold tracking-tight"
 
-export function HomePage() {
-  useDocumentTitle()
-  // Shared with the sidebar, and asked again on each visit here so the progress is current.
-  const [courses, retryCourses] = useCourses({ fresh: true })
-  const [resume, retryResume] = useJson("/api/resume", ResumeJson)
-  const scope = React.useRef<HTMLDivElement>(null)
-
-  useGSAP(
-    () => {
-      // Opacity only, never visibility: the Continue button takes focus while it comes in.
-      gsap.matchMedia().add("(prefers-reduced-motion: no-preference)", () => {
-        const tl = gsap.timeline({ defaults: { ease: "power3.out" } })
-        tl.from("[data-animate=heading]", { y: 20, opacity: 0, duration: 0.45 })
-          .from(
-            "[data-animate=resume]",
-            { y: 28, opacity: 0, duration: 0.55 },
-            "-=0.25"
-          )
-          .from(
-            "[data-animate=resume-part]",
-            { y: 12, opacity: 0, duration: 0.35, stagger: 0.06 },
-            "-=0.35"
-          )
-          .from(
-            "[data-animate=course]",
-            { x: 16, opacity: 0, duration: 0.35, stagger: 0.05 },
-            "<"
-          )
-      })
-    },
-    { scope, dependencies: [courses.kind, resume.kind], revertOnUpdate: true }
-  )
-
-  const noCourses = courses.kind === "ready" && courses.data.length === 0
-
-  return (
-    <div ref={scope} className="flex w-full flex-col gap-8 2xl:gap-12">
-      <div data-animate="heading" className="flex flex-col gap-2">
-        <h1 className={`${heading} text-4xl sm:text-5xl 2xl:text-6xl`}>Home</h1>
-        <Since resume={resume} />
-      </div>
-      {noCourses ? (
-        <Empty className="border py-16">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <LibraryBigIcon />
-            </EmptyMedia>
-            <EmptyTitle className="text-2xl">No courses yet</EmptyTitle>
-            <EmptyDescription className="text-lg">
-              Courses show up here once School's server is started with them
-              (SCHOOL_COURSES).
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : (
-        <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-12 2xl:gap-12">
-          <section aria-label="What to study now" className="lg:col-span-7">
-            <ResumeArea resume={resume} retry={retryResume} />
-          </section>
-          <section
-            aria-labelledby="home-courses"
-            className="flex flex-col gap-4 lg:col-span-5"
-          >
-            <h2
-              id="home-courses"
-              className={`${heading} text-2xl 2xl:text-3xl`}
-            >
-              Your courses
-            </h2>
-            <CourseList courses={courses} retry={retryCourses} />
-          </section>
-        </div>
-      )}
-    </div>
-  )
+/** What the hero shows: a course not started yet, or else the lesson to study now. */
+type Hero = {
+  item: Ahead
+  label: string
+  go: string
+  icon: React.ReactNode
 }
 
-/** The line under the heading: when the learner last studied, or that it is loading. */
-function Since({ resume }: { resume: Load<Resume> }) {
-  const line =
-    "flex items-center gap-2 text-lg text-muted-foreground 2xl:text-xl"
-  if (resume.kind === "loading")
-    return (
-      <p className={line}>
-        <Spinner className="size-5" />
-        Finding where you left off
-      </p>
+function heroOf(ahead: Ahead[], resume: Resume | null): Hero | null {
+  const anyStarted = ahead.some((a) => a.started)
+  const fresh = ahead.find((a) => !a.started)
+  if (fresh)
+    return {
+      item: fresh,
+      label: anyStarted ? "New for you" : "Start here",
+      go: `Start lesson ${fresh.lesson.position}`,
+      icon: <SparklesIcon />,
+    }
+  if (resume && resume.kind !== "finished" && resume.kind !== "nothing") {
+    const item = ahead.find(
+      (a) => a.course === resume.course && a.lesson.id === resume.lesson.id
     )
-  if (resume.kind !== "ready" || resume.data.kind === "nothing") return null
-  const last = resume.data.lastStudied
+    if (item)
+      return resume.kind === "continue"
+        ? {
+            item,
+            label: "Pick up where you left off",
+            go: "Continue",
+            icon: <PlayIcon />,
+          }
+        : { item, label: "Up next", go: "Start", icon: <ArrowRightIcon /> }
+  }
+  const next = ahead[0]
+  return next
+    ? { item: next, label: "Up next", go: "Start", icon: <ArrowRightIcon /> }
+    : null
+}
+
+/** A course's SVG figure, kept to drawing (lib/figure.ts), sized by its box. */
+function Figure({ svg, className }: { svg: string; className?: string }) {
+  const safe = React.useMemo(() => safeFigure(svg), [svg])
+  if (safe === null) return null
   return (
-    <p className={line}>
-      {last === null
-        ? "Welcome. Your first lesson is ready."
-        : `You last studied ${ago(last)}.`}
-    </p>
+    <div
+      data-figure
+      className={`flex items-center justify-center [&_svg]:h-full [&_svg]:w-auto [&_svg]:max-w-full ${className ?? ""}`}
+      dangerouslySetInnerHTML={{ __html: safe }}
+    />
   )
 }
 
-function ResumeArea({
-  resume,
+function Failed({
+  title,
+  reason,
   retry,
 }: {
-  resume: Load<Resume>
+  title: string
+  reason: string | null
   retry: () => void
 }) {
-  switch (resume.kind) {
-    case "loading":
-      return <Skeleton className="h-96 w-full rounded-xl 2xl:h-[28rem]" />
-    case "failed":
-      return (
-        <Alert variant="destructive" className="text-base">
-          <TriangleAlertIcon />
-          <AlertTitle className="text-lg">
-            Where you left off could not be loaded
-          </AlertTitle>
-          <AlertDescription className="text-base">
-            {resume.reason ??
-              "School's server did not answer as expected. Check that it is running, then try again."}
-          </AlertDescription>
-          <AlertAction>
-            <Button size="sm" variant="outline" onClick={retry} data-nav>
-              Try again
-            </Button>
-          </AlertAction>
-        </Alert>
-      )
-    case "ready": {
-      const r = resume.data
-      if (r.kind === "nothing")
-        return (
-          <Empty className="border py-16">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <BookOpenIcon />
-              </EmptyMedia>
-              <EmptyTitle className="text-2xl">Nothing to study yet</EmptyTitle>
-              <EmptyDescription className="text-lg">
-                Lessons show up once they are added to a course's lessons
-                folder.
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        )
-      if (r.kind === "finished") return <Finished course={r.course} />
-      return <Continue step={r} />
-    }
-  }
+  return (
+    <Alert variant="destructive" className="text-base">
+      <TriangleAlertIcon />
+      <AlertTitle className="text-lg">{title}</AlertTitle>
+      <AlertDescription className="text-base">
+        {reason ??
+          "School's server did not answer as expected. Check that it is running, then try again."}
+      </AlertDescription>
+      <AlertAction>
+        <Button size="sm" variant="outline" onClick={retry} data-nav>
+          Try again
+        </Button>
+      </AlertAction>
+    </Alert>
+  )
 }
 
-const card =
-  "gap-6 [--card-spacing:--spacing(6)] sm:[--card-spacing:--spacing(8)] 2xl:[--card-spacing:--spacing(10)]"
-const bigButton = "h-12 gap-2 px-5 text-base 2xl:h-14 2xl:px-6 2xl:text-lg"
-
-const label: Record<
-  Step["kind"],
-  { text: string; icon: React.ReactNode; go: string }
-> = {
-  continue: {
-    text: "Pick up where you left off",
-    icon: <PlayIcon data-icon="inline-start" />,
-    go: "Continue",
-  },
-  next: {
-    text: "Up next",
-    icon: <ArrowRightIcon data-icon="inline-start" />,
-    go: "Start",
-  },
-  start: {
-    text: "Start here",
-    icon: <SparklesIcon data-icon="inline-start" />,
-    go: "Start",
-  },
-}
-
-/** The lesson to study now: the first thing on the page, and the first focus stop. */
-function Continue({ step }: { step: Step }) {
-  const { kind, course, lesson, question } = step
-  const title = useCourseTitle(course)
+function HeroCard({ hero }: { hero: Hero }) {
+  const { item } = hero
   const go = React.useRef<HTMLAnchorElement>(null)
-  const href = `/courses/${course}/lessons/${lesson.id}`
-  const done = lesson.quizzes > 0 && lesson.answeredCorrectly === lesson.quizzes
-
+  const href = lessonHref(item.course, item.lesson.id)
   // One key from opening School to studying: focus starts on the button, unless it is already elsewhere.
   React.useEffect(() => {
     if (
@@ -352,248 +170,449 @@ function Continue({ step }: { step: Step }) {
     )
       go.current?.focus({ preventScroll: true })
   }, [href])
-
   return (
-    <Card data-animate="resume" data-resume={kind} className={card}>
-      <CardHeader className="gap-4">
-        <div
-          data-animate="resume-part"
-          className="flex flex-wrap items-center gap-x-3 gap-y-2"
-        >
-          <Badge className="h-auto px-3 py-1 text-sm 2xl:text-base">
-            {label[kind].icon}
-            {label[kind].text}
-          </Badge>
-          <span className="text-base text-muted-foreground 2xl:text-lg">
-            Lesson {lesson.position} of {lesson.of} in {title}
-          </span>
-        </div>
-        <CardTitle
-          data-animate="resume-part"
-          role="heading"
-          aria-level={2}
-          className={`${heading} text-4xl leading-tight sm:text-5xl 2xl:text-7xl`}
-        >
-          {lesson.title}
-        </CardTitle>
-        {lesson.subtitle && (
-          <CardDescription
-            data-animate="resume-part"
-            className="text-xl 2xl:text-2xl"
-          >
-            {lesson.subtitle}
-          </CardDescription>
-        )}
-      </CardHeader>
-      <CardContent className="flex flex-col gap-5">
-        <div data-animate="resume-part">
-          <Badge
-            variant={
-              done ? "default" : lesson.quizzes === 0 ? "outline" : "secondary"
-            }
-            className="h-auto px-3 py-1 text-sm 2xl:text-base"
-          >
-            {done && <CheckIcon data-icon="inline-start" />}
-            {answeredWords(lesson.quizzes, lesson.answeredCorrectly)}
-          </Badge>
-        </div>
-        {question !== null && (
-          <Item
-            data-animate="resume-part"
-            variant="muted"
-            className="items-start gap-4 p-5 2xl:p-6"
-          >
-            <ItemMedia variant="icon" className="size-10 2xl:size-12">
-              <MessageCircleQuestionIcon className="size-5 2xl:size-6" />
-            </ItemMedia>
-            <ItemContent className="gap-1.5">
-              <ItemDescription className="text-base 2xl:text-lg">
-                Your next question
-              </ItemDescription>
-              <ItemTitle className="text-xl leading-snug font-medium sm:text-2xl 2xl:text-3xl">
-                {question}
-              </ItemTitle>
-            </ItemContent>
-          </Item>
-        )}
-      </CardContent>
-      <CardFooter
-        data-animate="resume-part"
-        className="flex-col items-stretch gap-3 sm:flex-row sm:items-center"
-      >
-        <Button asChild size="lg" className={bigButton}>
-          <Link ref={go} to={href} data-nav aria-keyshortcuts="Enter">
-            {label[kind].go}
-            <span className="sr-only">: {lesson.title}</span>
-            <Kbd className="ml-1 bg-primary-foreground/15 text-primary-foreground">
-              ↵
-            </Kbd>
-          </Link>
-        </Button>
-        <Button asChild size="lg" variant="ghost" className={bigButton}>
-          <Link to={`/courses/${course}`} data-nav>
-            All lessons in {title}
-          </Link>
-        </Button>
-      </CardFooter>
-    </Card>
-  )
-}
-
-function Finished({ course }: { course: string }) {
-  const title = useCourseTitle(course)
-  return (
-    <Card data-animate="resume" data-resume="finished" className={card}>
-      <CardHeader className="gap-4">
-        <div data-animate="resume-part">
-          <Badge className="h-auto px-3 py-1 text-sm 2xl:text-base">
-            <FlagIcon data-icon="inline-start" />
-            Course finished
-          </Badge>
-        </div>
-        <CardTitle
-          data-animate="resume-part"
-          role="heading"
-          aria-level={2}
-          className={`${heading} text-4xl leading-tight sm:text-5xl 2xl:text-6xl`}
-        >
-          Every quiz in {title} is answered correctly
-        </CardTitle>
-        <CardDescription
-          data-animate="resume-part"
-          className="text-xl 2xl:text-2xl"
-        >
-          Go back over any lesson, or pick another course.
-        </CardDescription>
-      </CardHeader>
-      <CardFooter data-animate="resume-part">
-        <Button asChild size="lg" className={bigButton}>
-          <Link to={`/courses/${course}`} data-nav>
-            Open {title}
-          </Link>
-        </Button>
-      </CardFooter>
-    </Card>
-  )
-}
-
-function CourseList({
-  courses,
-  retry,
-}: {
-  courses: CoursesLoad
-  retry: () => void
-}) {
-  switch (courses.kind) {
-    case "loading":
-      return (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:max-[2199px]:grid-cols-1">
-          {Array.from({ length: 4 }, (_, i) => (
-            <Skeleton key={i} className="h-28 w-full rounded-xl" />
-          ))}
-        </div>
-      )
-    case "failed":
-      return (
-        <Alert variant="destructive" className="text-base">
-          <TriangleAlertIcon />
-          <AlertTitle className="text-lg">
-            Your courses could not be loaded
-          </AlertTitle>
-          <AlertDescription className="text-base">
-            {courses.reason ??
-              "School's server did not answer as expected. Check that it is running, then try again."}
-          </AlertDescription>
-          <AlertAction>
-            <Button size="sm" variant="outline" onClick={retry} data-nav>
-              Try again
-            </Button>
-          </AlertAction>
-        </Alert>
-      )
-    case "ready":
-      return (
-        <>
-          {/* Each course is a link, so the group is not announced as a list of non-items. */}
-          <ItemGroup
-            role={undefined}
-            className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:max-[2199px]:grid-cols-1"
-          >
-            {courses.data.map((c) => (
-              <CourseItem key={c.name} course={c} />
-            ))}
-          </ItemGroup>
-          <p
-            data-key-hint
-            className="flex flex-wrap items-center gap-2 text-base text-muted-foreground"
-          >
-            <Kbd>j</Kbd>
-            <Kbd>k</Kbd>
-            move between courses,
-            <Kbd>↵</Kbd>
-            opens one
-          </p>
-        </>
-      )
-  }
-}
-
-function CourseItem({ course: c }: { course: Course }) {
-  const reference =
-    c.reference === 0
-      ? ""
-      : ` and ${c.reference === 1 ? "a reference document" : plural(c.reference, "reference document", "reference documents")}`
-  const done = (c.quizzes ?? 0) > 0 && c.answeredCorrectly === c.quizzes
-  const [description, badge] =
-    c.lessons === null
-      ? [
-          "Open it to see what went wrong.",
-          <Badge variant="destructive" className="h-auto text-sm 2xl:text-base">
-            Its lessons could not be read
-          </Badge>,
-        ]
-      : c.lessons === 0
-        ? [
-            "Lessons show up once they are added.",
-            <Badge variant="outline" className="h-auto text-sm 2xl:text-base">
-              No lessons yet
-            </Badge>,
-          ]
-        : [
-            plural(c.lessons, "lesson", "lessons") + reference,
-            <Badge
-              variant={
-                done ? "default" : c.quizzes === 0 ? "outline" : "secondary"
-              }
-              className="h-auto text-sm 2xl:text-base"
-            >
-              {done && <CheckIcon data-icon="inline-start" />}
-              {answeredWords(c.quizzes ?? 0, c.answeredCorrectly ?? 0)}
-            </Badge>,
-          ]
-  return (
-    <Item
-      asChild
-      variant="outline"
-      className="items-start gap-4 p-5"
-      data-animate="course"
+    <Card
+      data-hero={item.started ? "started" : "new"}
+      className="overflow-hidden py-0"
     >
-      <Link to={`/courses/${c.name}`} data-nav data-course={c.name}>
-        <ItemMedia variant="icon" className="size-10">
-          {c.lessons === null ? (
-            <TriangleAlertIcon className="size-5" />
+      <div className="grid items-stretch md:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
+        <CardHeader className="gap-4 py-8">
+          <CardDescription className="flex flex-wrap items-center gap-2 text-base">
+            <Badge variant="secondary">
+              {hero.icon} {hero.label}
+            </Badge>
+            {item.courseTitle} · Lesson {item.lesson.position} of{" "}
+            {item.lesson.of}: {item.lesson.title}
+          </CardDescription>
+          <CardTitle>
+            <h1
+              className={`${heading} text-4xl leading-tight text-balance md:text-5xl 2xl:text-6xl`}
+            >
+              {item.question}
+            </h1>
+          </CardTitle>
+          <p className="text-lg text-balance text-muted-foreground 2xl:text-xl">
+            {item.teaser}
+          </p>
+          <div className="flex flex-wrap items-center gap-2 pt-2">
+            <Button asChild size="lg" data-nav>
+              <Link ref={go} to={href}>
+                {hero.go}
+                <Kbd data-key-hint>↵</Kbd>
+              </Link>
+            </Button>
+            <Button asChild size="lg" variant="ghost" data-nav>
+              <Link to={`/courses/${item.course}`}>
+                See all {item.lesson.of} lessons
+              </Link>
+            </Button>
+          </div>
+        </CardHeader>
+        {item.figure && (
+          <Figure
+            svg={item.figure}
+            className="h-72 border-t bg-background px-6 py-6 md:h-[26rem] md:border-t-0 md:border-l"
+          />
+        )}
+      </div>
+    </Card>
+  )
+}
+
+function AheadCarousel({
+  items,
+  partway,
+}: {
+  items: Ahead[]
+  partway: string | null
+}) {
+  return (
+    <section
+      aria-labelledby="home-ahead"
+      // The carousel's track holds every card; this keeps it from widening the page.
+      className="flex min-w-0 flex-col gap-4 contain-inline-size"
+    >
+      <div>
+        <h2 id="home-ahead" className={`${heading} text-2xl 2xl:text-3xl`}>
+          Still ahead in your courses
+        </h2>
+        <p className="text-muted-foreground">
+          Questions your next lessons answer.
+        </p>
+      </div>
+      <Carousel opts={{ align: "start" }} className="md:px-12">
+        <CarouselContent>
+          {items.map((a) => {
+            const here = partway === `${a.course}:${a.lesson.id}`
+            return (
+              <CarouselItem
+                key={`${a.course}:${a.lesson.id}`}
+                className="basis-[85%] sm:basis-1/2 lg:basis-1/3"
+              >
+                <Link
+                  to={lessonHref(a.course, a.lesson.id)}
+                  data-ahead={`${a.course}:${a.lesson.id}`}
+                  data-nav
+                  className="block h-full rounded-xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                >
+                  <Card className="h-full overflow-hidden pt-0 transition-colors hover:bg-muted/40">
+                    <div className="flex h-40 items-center justify-center border-b bg-background p-4">
+                      {a.figure ? (
+                        <Figure svg={a.figure} className="h-full" />
+                      ) : (
+                        <BookOpenIcon
+                          className="size-10 text-muted-foreground"
+                          aria-hidden
+                        />
+                      )}
+                    </div>
+                    <CardHeader>
+                      <CardDescription className="flex flex-wrap items-center gap-2">
+                        {here && <Badge>You're partway</Badge>}
+                        {a.courseTitle}
+                      </CardDescription>
+                      <CardTitle className="text-lg leading-snug text-balance">
+                        {a.question}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="flex-1 text-sm text-muted-foreground">
+                      {a.teaser}
+                    </CardContent>
+                    <CardFooter className="justify-between text-sm">
+                      <span className="text-muted-foreground">
+                        Lesson {a.lesson.position} of {a.lesson.of}:{" "}
+                        {a.lesson.title}
+                      </span>
+                      <ArrowRightIcon className="size-4" />
+                    </CardFooter>
+                  </Card>
+                </Link>
+              </CarouselItem>
+            )
+          })}
+        </CarouselContent>
+        <CarouselPrevious className="left-0 hidden md:inline-flex" />
+        <CarouselNext className="right-0 hidden md:inline-flex" />
+      </Carousel>
+    </section>
+  )
+}
+
+function Today({
+  feedback,
+  review,
+  retryFeedback,
+  retryReview,
+  answerAt,
+}: {
+  feedback: Load<z.infer<typeof FeedbackJson>>
+  review: Load<ReviewItem[]>
+  retryFeedback: () => void
+  retryReview: () => void
+  answerAt: (item: ReviewItem) => string
+}) {
+  const quiet =
+    feedback.kind === "ready" &&
+    feedback.data === null &&
+    review.kind === "ready" &&
+    review.data.length === 0
+  if (quiet)
+    return (
+      <Empty className="border py-12" data-quiet>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <PartyPopperIcon />
+          </EmptyMedia>
+          <EmptyTitle className="text-xl">
+            Nothing new since you were last here
+          </EmptyTitle>
+          <EmptyDescription className="text-base">
+            Feedback on your explanations and questions ready for another look
+            will show up here.
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    )
+  return (
+    <div className="flex flex-col gap-6">
+      {feedback.kind === "loading" && (
+        <Skeleton className="h-80 w-full rounded-xl" />
+      )}
+      {feedback.kind === "failed" && (
+        <Failed
+          title="Your feedback could not be loaded"
+          reason={feedback.reason}
+          retry={retryFeedback}
+        />
+      )}
+      {feedback.kind === "ready" && feedback.data && (
+        <FeedbackCard feedback={feedback.data} />
+      )}
+      {review.kind === "loading" && (
+        <Skeleton className="h-32 w-full rounded-xl" />
+      )}
+      {review.kind === "failed" && (
+        <Failed
+          title="Questions to review could not be loaded"
+          reason={review.reason}
+          retry={retryReview}
+        />
+      )}
+      {review.kind === "ready" && review.data.length > 0 && (
+        <div className="flex flex-col gap-3">
+          <h3 className={`${heading} text-xl`}>Ready for another look</h3>
+          <ReviewList items={review.data} answerAt={answerAt} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Day({ mark }: { mark: Exclude<Mark, { kind: "today" }> }) {
+  return (
+    <Card data-day={markKey(mark)}>
+      <CardHeader>
+        <CardDescription className="flex items-center gap-2">
+          {mark.kind === "due" ? (
+            <CalendarClockIcon className="size-4" />
           ) : (
-            <BookOpenIcon className="size-5" />
+            <BookOpenIcon className="size-4" />
           )}
-        </ItemMedia>
-        <ItemContent className="gap-1">
-          <ItemTitle className="text-xl 2xl:text-2xl">{c.title}</ItemTitle>
-          <ItemDescription className="text-base 2xl:text-lg">
-            {description}
-          </ItemDescription>
-        </ItemContent>
-        <ItemFooter className="pl-14">{badge}</ItemFooter>
-      </Link>
-    </Item>
+          {mark.title}
+        </CardDescription>
+        <CardTitle className="font-heading text-2xl">
+          {mark.kind === "studied"
+            ? `You studied on ${dayWords(mark.day)}`
+            : `${mark.items} ${mark.items === 1 ? "question comes" : "questions come"} back on ${dayWords(mark.day)}`}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="text-muted-foreground">
+        {mark.kind === "studied"
+          ? `A day of ${mark.title}.`
+          : "Questions you've met before that took a second go or a little help come back after a day, so the answer comes from memory."}
+      </CardContent>
+      <CardFooter>
+        <Button asChild variant="outline" data-nav>
+          <Link to={`/courses/${mark.course}`}>Open {mark.title}</Link>
+        </Button>
+      </CardFooter>
+    </Card>
+  )
+}
+
+function SinceLastTime({
+  answerAt,
+}: {
+  answerAt: (item: ReviewItem) => string
+}) {
+  const [feedback, retryFeedback] = useJson("/api/feedback", FeedbackJson)
+  const [review, retryReview] = useJson("/api/review", ReviewJson)
+  const [activity, retryActivity] = useJson(
+    "/api/activity?days=14",
+    ActivityJson
+  )
+  const [sel, setSel] = React.useState<Mark>({ kind: "today" })
+  const marks = activity.kind === "ready" ? marksOf(activity.data) : []
+  const step = (by: number) => () => {
+    const i = marks.findIndex((m) => markKey(m) === markKey(sel))
+    const next = marks[i + by]
+    if (next) setSel(next)
+  }
+  useShortcut("[", step(-1), { description: "Timeline: earlier" })
+  useShortcut("]", step(1), { description: "Timeline: later" })
+  useShortcut("t", () => setSel({ kind: "today" }), {
+    description: "Timeline: today",
+  })
+  const studiedDays =
+    activity.kind === "ready"
+      ? new Set(activity.data.courses.flatMap((c) => c.studied)).size
+      : null
+  return (
+    <section aria-labelledby="home-since" className="flex flex-col gap-4">
+      <h2 id="home-since" className={`${heading} text-2xl 2xl:text-3xl`}>
+        Since you were last here
+      </h2>
+      <div className="grid items-start gap-6 lg:grid-cols-12">
+        <div className="lg:col-span-7" data-since>
+          {sel.kind === "today" ? (
+            <Today
+              feedback={feedback}
+              review={review}
+              retryFeedback={retryFeedback}
+              retryReview={retryReview}
+              answerAt={answerAt}
+            />
+          ) : (
+            <Day mark={sel} />
+          )}
+        </div>
+        <div className="lg:col-span-5">
+          {activity.kind === "loading" && (
+            <Skeleton className="h-56 w-full rounded-xl" />
+          )}
+          {activity.kind === "failed" && (
+            <Failed
+              title="Your timeline could not be loaded"
+              reason={activity.reason}
+              retry={retryActivity}
+            />
+          )}
+          {activity.kind === "ready" && (
+            <Card className="lg:sticky lg:top-20" data-timeline>
+              <CardHeader>
+                <CardTitle>
+                  {studiedDays === 0
+                    ? "Your timeline starts with your first lesson"
+                    : `You studied on ${studiedDays} of the last ${activity.data.days} days`}
+                </CardTitle>
+                <CardDescription>
+                  Every mark opens. Today is open now.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-3">
+                <Timeline
+                  activity={activity.data}
+                  selected={markKey(sel)}
+                  onSelect={setSel}
+                />
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <TimelineLegend />
+                  <span data-key-hint className="flex items-center gap-1.5">
+                    <KbdGroup>
+                      <Kbd>[</Kbd>
+                      <Kbd>]</Kbd>
+                    </KbdGroup>
+                    earlier, later
+                    <Kbd>t</Kbd> today
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+export function HomePage() {
+  useDocumentTitle()
+  const [showcase, retryShowcase] = useJson("/api/showcase", ShowcaseJson)
+  const [resume] = useJson("/api/resume", ResumeJson)
+  const scope = React.useRef<HTMLDivElement>(null)
+
+  const ahead = showcase.kind === "ready" ? showcase.data : []
+  const hero =
+    showcase.kind === "ready" && resume.kind !== "loading"
+      ? heroOf(ahead, resume.kind === "ready" ? resume.data : null)
+      : null
+  const partway =
+    resume.kind === "ready" && resume.data.kind === "continue"
+      ? `${resume.data.course}:${resume.data.lesson.id}`
+      : null
+  const rest = ahead
+    .filter((a) => a !== hero?.item)
+    .sort(
+      (x, y) =>
+        Number(`${y.course}:${y.lesson.id}` === partway) -
+        Number(`${x.course}:${x.lesson.id}` === partway)
+    )
+
+  // A question comes back at the top of another lesson in its course: the next one ahead there.
+  const answerAt = (r: ReviewItem) => {
+    const there = ahead.find(
+      (a) => a.course === r.course && a.lesson.id !== r.lesson?.id
+    )
+    return there
+      ? lessonHref(there.course, there.lesson.id)
+      : `/courses/${r.course}`
+  }
+
+  useGSAP(
+    () => {
+      gsap.matchMedia().add("(prefers-reduced-motion: no-preference)", () => {
+        // Opacity and position only, never visibility: the hero's button takes focus while it comes in.
+        gsap.from("[data-hero]", {
+          y: 24,
+          opacity: 0,
+          duration: 0.5,
+          ease: "power3.out",
+        })
+        // The hero's figure draws itself, line by line.
+        scope.current
+          ?.querySelectorAll<SVGGeometryElement>(
+            "[data-hero] [data-figure] :is(path, polyline, line)"
+          )
+          .forEach((el, i) => {
+            if (typeof el.getTotalLength !== "function") return
+            const len = el.getTotalLength()
+            gsap.fromTo(
+              el,
+              { strokeDasharray: len, strokeDashoffset: len },
+              {
+                strokeDashoffset: 0,
+                duration: 2,
+                delay: 0.3 + i * 0.15,
+                ease: "power1.inOut",
+              }
+            )
+          })
+      })
+    },
+    {
+      scope,
+      dependencies: [hero?.item.course, hero?.item.lesson.id],
+      revertOnUpdate: true,
+    }
+  )
+
+  const nothing = showcase.kind === "ready" && ahead.length === 0
+  return (
+    <div ref={scope} className="flex w-full min-w-0 flex-col gap-10 2xl:gap-14">
+      {showcase.kind === "loading" && (
+        <>
+          <h1 className="sr-only">Home</h1>
+          <p className="flex items-center gap-2 text-lg text-muted-foreground">
+            <Spinner className="size-5" /> Finding what's next
+          </p>
+          <Skeleton className="h-80 w-full rounded-xl" />
+        </>
+      )}
+      {showcase.kind === "failed" && (
+        <>
+          <h1 className={`${heading} text-4xl`}>Home</h1>
+          <Failed
+            title="What's ahead could not be loaded"
+            reason={showcase.reason}
+            retry={retryShowcase}
+          />
+        </>
+      )}
+      {nothing && (
+        <>
+          <h1 className="sr-only">Home</h1>
+          <Empty className="border py-16">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <PartyPopperIcon />
+              </EmptyMedia>
+              <EmptyTitle className="text-2xl">
+                Nothing ahead right now
+              </EmptyTitle>
+              <EmptyDescription className="text-lg">
+                Every lesson with a question is done, or no course has lessons
+                yet. New lessons show up here as soon as a course adds them.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </>
+      )}
+      {hero && <HeroCard hero={hero} />}
+      {showcase.kind === "ready" && !hero && !nothing && (
+        <Skeleton className="h-80 w-full rounded-xl" />
+      )}
+      {rest.length > 0 && <AheadCarousel items={rest} partway={partway} />}
+      <SinceLastTime answerAt={answerAt} />
+    </div>
   )
 }
