@@ -35,20 +35,36 @@ export const CONTINUE = {
   minutes: 12,
 }
 
-export const REVIEWS = [
+export type Review = {
+  course: string
+  lesson: string
+  question: string
+  answered: string
+  reason: string
+}
+
+// Only questions the learner has answered can come back (due_review reads answers), so every item
+// names a course and lesson they have opened. The reasons use School's real wording.
+export const RULES =
+  "School brings back a question you've answered before when your first answer was wrong, or right only after help was shown. It waits at least a day, so the answer has to come from memory."
+
+export const REVIEWS: Review[] = [
   {
     course: "AIΩN Foundations",
-    question: "What does AIΩN keep, and what does it compute from it?",
+    lesson: "The Inversion",
+    question:
+      "A balance of 70 and the list +100, −50, +20. Which one can be rebuilt from the other?",
+    answered: "24 November",
     reason:
-      "Returning because your first answer on 24 November was wrong, and you got it right only after reading the reference.",
-    from: "The Inversion",
+      "Your first answer on 24 November was wrong, and the right one came after the explanation was shown.",
   },
   {
-    course: "The Mathematics of Bells",
-    question: "Why can't a ringer play a tune on a heavy bell?",
+    course: "AIΩN Foundations",
+    lesson: "Graphs of Graphs",
+    question: "What is the smallest possible WARP?",
+    answered: "24 November",
     reason:
-      "Returning because you answered it correctly four days ago without help, and it's time to check it stuck.",
-    from: "Bells that can't hurry",
+      "On 24 November you answered it right only after a reference was shown.",
   },
 ]
 
@@ -129,36 +145,52 @@ export const STUDY_DAYS: Record<string, string[]> = {
   ],
 }
 
-export const COMING_BACK: Record<
-  string,
-  { question: string; reason: string }[]
-> = {
+export const COMING_BACK: Record<string, Review[]> = {
   "AIΩN Foundations": [
     {
-      question: "What does AIΩN keep, and what does it compute from it?",
+      course: "AIΩN Foundations",
+      lesson: "The Inversion",
+      question:
+        "Which two properties of transformations make replay trustworthy?",
+      answered: "21 November",
       reason:
-        "Your first answer was wrong; you got it right after reading the reference.",
+        "Your first answer on 21 November was wrong; you put it right on a later try.",
     },
     {
-      question:
-        "Which way can you rebuild: history from state, or state from history?",
+      course: "AIΩN Foundations",
+      lesson: "Graphs of Graphs",
+      question: "Why does the paper insist nesting is well-founded?",
+      answered: "23 November",
       reason:
-        "Right first try a week earlier, with no help. Checking it stuck.",
+        "On 23 November you answered it right only after the model answer was shown.",
     },
   ],
   "The Mathematics of Bells": [
     {
-      question: "How many changes does the plain hunt on four bells take?",
-      reason: "You answered after opening the model answer.",
-    },
-    {
-      question: "Why can't a ringer play a tune on a heavy bell?",
+      course: "The Mathematics of Bells",
+      lesson: "The plain hunt",
+      question:
+        "How many changes does the plain hunt on four bells take to come back to rounds?",
+      answered: "24 November",
       reason:
-        "Right first try four days earlier, with no help. Checking it stuck.",
+        "On 24 November you answered it right only after the explanation was shown.",
     },
     {
-      question: "What makes a change legal?",
-      reason: "Right first try two weeks earlier. The second check.",
+      course: "The Mathematics of Bells",
+      lesson: "Writing changes down",
+      question: "Apply x to 1324.",
+      answered: "20 November",
+      reason:
+        "Your first answer on 20 November was wrong, and it was not put right then.",
+    },
+    {
+      course: "The Mathematics of Bells",
+      lesson: "Bells that can't hurry",
+      question:
+        "On four bells, which of these can follow 1234 as the next row?",
+      answered: "20 November",
+      reason:
+        "Your first answer on 20 November was wrong; you put it right on a later try.",
     },
   ],
 }

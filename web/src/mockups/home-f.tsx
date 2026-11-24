@@ -1,9 +1,4 @@
-import {
-  ArrowRightIcon,
-  BotIcon,
-  PenLineIcon,
-  RotateCcwIcon,
-} from "lucide-react"
+import { ArrowRightIcon, BotIcon, PenLineIcon } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -18,7 +13,6 @@ import {
 } from "@/components/ui/card"
 import {
   Item,
-  ItemActions,
   ItemContent,
   ItemDescription,
   ItemGroup,
@@ -26,8 +20,9 @@ import {
 } from "@/components/ui/item"
 import { Kbd } from "@/components/ui/kbd"
 import { Separator } from "@/components/ui/separator"
-import { CONTINUE, GRADED, REVIEWS, verdictWord, type Verdict } from "./learner"
+import { CONTINUE, GRADED, verdictWord, type Verdict } from "./learner"
 import { mount } from "./shell"
+import { ReviewList } from "./parts"
 
 const verdictVariant: Record<Verdict, "default" | "secondary" | "outline"> = {
   meets: "default",
@@ -44,7 +39,7 @@ mount(
       "Grading happens after you leave a lesson, so its notes are easy to miss. Feedback you never read teaches nothing. The home page is where it belongs.",
       "Each criterion is a word (Meets, Partly, Not yet) with the grader's note beside it. No score, as RFC 2 §4.3 decides.",
       "The one action that follows feedback is to try again, so 'Rewrite it' is the first button. Reading on without acting is still one click away.",
-      "Review items arrive the same way, with the reason they came back, so 'why am I seeing this again?' is answered before it's asked.",
+      "Every review item names its course and lesson, and its (i) answers 'why am I being asked this?' Only questions you've answered can come back, so a course you haven't opened never sends you one.",
       "Anything AI did carries the robot label and names the model, so the learner always knows a judgment came from Claude and not from School's rules.",
       "When there's nothing new, the page shrinks to the lesson to continue. It's quiet on quiet days.",
       "Needs: a 'since' query over gradings and decision notes newer than your last visit, plus a 'read' mark recorded as an event.",
@@ -106,23 +101,7 @@ mount(
 
     <div className="flex flex-col gap-3">
       <h2 className="font-heading text-xl font-medium">Came back for review</h2>
-      <ItemGroup className="gap-2">
-        {REVIEWS.map((r) => (
-          <Item key={r.question} variant="muted">
-            <ItemContent>
-              <ItemTitle className="text-base">{r.question}</ItemTitle>
-              <ItemDescription className="line-clamp-none">
-                {r.reason}
-              </ItemDescription>
-            </ItemContent>
-            <ItemActions>
-              <Button variant="outline" size="sm">
-                <RotateCcwIcon data-icon="inline-start" /> Answer
-              </Button>
-            </ItemActions>
-          </Item>
-        ))}
-      </ItemGroup>
+      <ReviewList />
     </div>
 
     <Separator />

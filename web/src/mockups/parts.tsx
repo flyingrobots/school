@@ -2,6 +2,8 @@ import * as React from "react"
 import * as d3 from "d3"
 import {
   ArrowRightIcon,
+  BookOpenIcon,
+  InfoIcon,
   BotIcon,
   PenLineIcon,
   RotateCcwIcon,
@@ -28,10 +30,20 @@ import {
 } from "@/components/ui/item"
 import { Kbd } from "@/components/ui/kbd"
 import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import {
   CONTINUE,
   GRADED,
   REVIEWS,
   RHYTHM,
+  RULES,
+  type Review,
   verdictWord,
   type Verdict,
 } from "./learner"
@@ -98,22 +110,50 @@ export function FeedbackCard({ compact = false }: { compact?: boolean }) {
   )
 }
 
-export function ReviewList({
-  items = REVIEWS,
-}: {
-  items?: readonly { question: string; reason: string }[]
-}) {
+// Opens on hover with a pointer and on tap with a finger, so the answer is never hover-only.
+export function WhyAsked({ item }: { item: Review }) {
+  const [open, setOpen] = React.useState(false)
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Why am I being asked this question?"
+          onMouseEnter={() => setOpen(true)}
+          onMouseLeave={() => setOpen(false)}
+        >
+          <InfoIcon />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-80">
+        <PopoverHeader>
+          <PopoverTitle>Why am I being asked this?</PopoverTitle>
+          <PopoverDescription>{item.reason}</PopoverDescription>
+        </PopoverHeader>
+        <p className="text-sm text-muted-foreground">
+          It's from {item.lesson}, in {item.course}. {RULES}
+        </p>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+export function ReviewList({ items = REVIEWS }: { items?: readonly Review[] }) {
   return (
     <ItemGroup className="gap-2">
       {items.map((r) => (
         <Item key={r.question} variant="muted">
           <ItemContent>
-            <ItemTitle className="text-base">{r.question}</ItemTitle>
-            <ItemDescription className="line-clamp-none">
-              {r.reason}
+            <ItemDescription className="flex items-center gap-1.5">
+              <BookOpenIcon className="size-3.5" />
+              {r.course} · {r.lesson}
             </ItemDescription>
+            <ItemTitle className="text-base">{r.question}</ItemTitle>
+            <ItemDescription>You answered it on {r.answered}.</ItemDescription>
           </ItemContent>
           <ItemActions>
+            <WhyAsked item={r} />
             <Button variant="outline" size="sm">
               <RotateCcwIcon data-icon="inline-start" /> Answer
             </Button>
