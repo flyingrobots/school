@@ -38,7 +38,6 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
-  SidebarHeader,
   SidebarInset,
   SidebarMenu,
   SidebarMenuBadge,
@@ -150,10 +149,7 @@ function Shell({
 
   return (
     <div ref={root} className="contents">
-      <Sidebar>
-        <SidebarHeader className="h-16 flex-row items-center px-4 py-0 md:ps-16">
-          <span className="font-heading text-2xl font-semibold">{title}</span>
-        </SidebarHeader>
+      <Sidebar className="top-16 h-[calc(100svh-4rem)]">
         <SidebarContent data-nav-region="sidebar">
           <SidebarGroup>
             <SidebarGroupLabel>Go to</SidebarGroupLabel>
@@ -213,22 +209,22 @@ function Shell({
       </Sidebar>
 
       <SidebarInset data-nav-region="main">
-        <header className="flex h-16 items-center gap-3 ps-16 pe-4 transition-[padding] duration-200 ease-linear md:ps-6 md:pe-6 md:[.peer[data-state=collapsed]~*_&]:ps-16">
-          {/* Fixed to the viewport, so it stays put while the sidebar slides; both headers pad to clear it. */}
-          <div className="fixed start-3 top-0 z-20 flex h-16 items-center">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <SidebarTrigger
-                  data-nav
-                  size="icon-lg"
-                  aria-keyshortcuts={`${modAria}+B`}
-                />
-              </TooltipTrigger>
-              <TooltipContent>
-                Sidebar <KeyHint keys={appKeys.sidebar} />
-              </TooltipContent>
-            </Tooltip>
-          </div>
+        {/* Full width and fixed above the sidebar, so neither the toggle nor the title moves when the sidebar
+            opens or closes. It stays inside the main region in the DOM, so its keys and tab order are unchanged. */}
+        <header className="fixed inset-x-0 top-0 z-20 flex h-16 items-center gap-3 border-b bg-background px-3 md:pe-6">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <SidebarTrigger
+                data-nav
+                size="icon-lg"
+                aria-keyshortcuts={`${modAria}+B`}
+              />
+            </TooltipTrigger>
+            <TooltipContent>
+              Sidebar <KeyHint keys={appKeys.sidebar} />
+            </TooltipContent>
+          </Tooltip>
+          <span className="font-heading text-2xl font-semibold">{title}</span>
           {leader && (
             <Badge variant="secondary" aria-live="polite">
               <KeyHint keys={["Space"]} /> then{" "}
@@ -255,7 +251,7 @@ function Shell({
             />
           </div>
         </header>
-        <Separator />
+        <div aria-hidden className="h-16 shrink-0" />
         <div className="flex flex-1 flex-col px-4 py-8 md:px-8 2xl:px-12">
           {children}
         </div>
