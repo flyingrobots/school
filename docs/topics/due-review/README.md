@@ -93,7 +93,9 @@ usual one: the same aid capture version, and activity within six hours.
   the same transaction. A note the record refuses opens nothing.
 
 The lesson API (`GET /api/courses/:course/lessons/:lesson`) returns that snapshot as `lesson`, and
-`review` lists each item's `blockId`, `rule` and `reason`, read back from the encounter's notes. A
+`review` lists each item's `blockId`, `rule` and `reason`, read back from the encounter's notes, and
+`from`, the `id` and `title` of the lesson that holds the quiz now (`null` when no lesson holds it
+any more), so the page can say where the question came from. A
 review quiz is answered in the encounter of the lesson that shows it. Its answer is not progress in
 that lesson, whose own quizzes are what the course and home pages count. The slides view opens no
 encounter and carries no review.
