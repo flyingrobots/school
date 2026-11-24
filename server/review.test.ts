@@ -63,6 +63,8 @@ test("the next lesson opens with the item due in a Review section at its top, it
   expect(opened.review).toEqual([{
     blockId: "q1", rule: "due-review/wrong-first-try",
     reason: `Back because your first answer on ${day} was wrong; you put it right on a later try.`,
+    // The lesson that holds the quiz (flyingrobots/school#159).
+    from: { id: "l1", title: "Orbits" },
   }]);
   // The review block is answered in this lesson's encounter like any of its own.
   const answered = await fetch(server!.url + "/api/answer", {
