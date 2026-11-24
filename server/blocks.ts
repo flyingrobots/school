@@ -10,8 +10,14 @@ export type Choice = { id: string; text: string; correct: boolean };
 
 const CHOICE_ID = /^[a-z0-9-]+$/;
 
+/**
+ * What a lesson is about, for the home page (flyingrobots/school#164): the question it answers, a
+ * one-line teaser, and an optional picture. `figure` is SVG markup, trusted like a prose block's HTML.
+ */
+export type Hook = { question: string; teaser: string; figure?: string };
+
 export type Block =
-  | { type: "page"; id: string; title: string; subtitle: string; children: Block[] }
+  | { type: "page"; id: string; title: string; subtitle: string; hook?: Hook; children: Block[] }
   | { type: "section"; id: string; title: string; children: Block[] }
   | { type: "prose"; id: string; html: string }
   | { type: "card"; id: string; html: string }
@@ -53,6 +59,13 @@ function parseNest(v: unknown, where: string): NestNode {
   return node;
 }
 
+function parseHook(v: unknown, where: string): Hook {
+  if (!isObj(v)) throw new BlockError(`${where}: "hook" must be an object with "question" and "teaser"`);
+  const hook: Hook = { question: str(v, "question", `${where} > hook`), teaser: str(v, "teaser", `${where} > hook`) };
+  if (v.figure !== undefined) hook.figure = str(v, "figure", `${where} > hook`);
+  return hook;
+}
+
 // A raw child is either a block or a reference to one by id.
 type Raw = { kind: "block"; block: Block } | { kind: "ref"; id: string };
 
@@ -70,6 +83,7 @@ function parseRaw(v: unknown, where: string, ctx: Ctx): Raw {
   switch (type) {
     case "page":
       block = { type, id, title: str(v, "title", at), subtitle: str(v, "subtitle", at), children: [] };
+      if (v.hook !== undefined) block.hook = parseHook(v.hook, at);
       pending.set(block, kids());
       break;
     case "section":

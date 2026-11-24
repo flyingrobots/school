@@ -267,6 +267,38 @@ async function coursesJson(): Promise<Response> {
   })));
 }
 
+/**
+ * What's ahead in the learner's courses, for the home page (flyingrobots/school#164): every lesson
+ * with a quiz not yet answered correctly, in course order, with its hook, or its title and subtitle
+ * when it has none. A course is started once any of its quizzes is answered correctly. A lesson with
+ * no quizzes is left out, as is a course whose lessons can't be read.
+ */
+async function showcaseJson(): Promise<Response> {
+  const ahead = await Promise.all(served.map(async (c) => {
+    let pages: Block[];
+    try {
+      const { library } = lessons(c);
+      if (library === null) return [];
+      pages = library.pages.filter((p) => p.type === "page");
+    } catch {
+      return [];
+    }
+    const progress = await school.lessonProgress(c.name);
+    const started = Object.values(progress).some((ids) => ids.length > 0);
+    return pages.flatMap((p, i) => {
+      if (p.type !== "page") return [];
+      const ids = [...quizIds(p)];
+      if (ids.length === 0 || ids.every((id) => progress[p.id]?.includes(id))) return [];
+      return [{
+        course: c.name, courseTitle: titleOf(c), started,
+        lesson: { id: p.id, title: p.title, subtitle: p.subtitle, position: i + 1, of: pages.length },
+        question: p.hook?.question ?? p.title, teaser: p.hook?.teaser ?? p.subtitle, figure: p.hook?.figure ?? null,
+      }];
+    });
+  }));
+  return json(ahead.flat(), 200, { "cache-control": "no-store" });
+}
+
 /** What to study now: where the learner left off and the next step from it (core/school.ts, resumeFrom). */
 async function resumeJson(): Promise<Response> {
   const outlines = await Promise.all(served.map(outline));
@@ -465,6 +497,7 @@ const http = Bun.serve({
     }
     if (pathname === "/api/courses") return coursesJson();
     if (pathname === "/api/resume") return resumeJson();
+    if (pathname === "/api/showcase") return showcaseJson();
     const api = /^\/api\/courses\/([a-z0-9][a-z0-9-]*)(?:\/lessons\/([\w-]+))?$/.exec(pathname);
     if (api !== null) {
       const c = course(config, api[1]!);
