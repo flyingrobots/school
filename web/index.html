@@ -6,7 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>School</title>
   </head>
-  <body>
+  <!-- A touch screen has no keyboard: hide every key hint there (flyingrobots/school#154). The keys still work. -->
+  <body
+    class="pointer-coarse:**:data-[slot=kbd]:hidden pointer-coarse:**:data-[slot=kbd-group]:hidden pointer-coarse:**:data-keys:hidden pointer-coarse:**:data-key-hint:hidden pointer-coarse:**:data-[slides=keys]:hidden"
+  >
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

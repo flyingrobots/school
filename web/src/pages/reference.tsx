@@ -242,7 +242,10 @@ function Body({
               </Item>
             ))}
           </ItemGroup>
-          <p className="flex items-center gap-2 text-base text-muted-foreground">
+          <p
+            data-key-hint
+            className="flex items-center gap-2 text-base text-muted-foreground"
+          >
             <Kbd>j</Kbd>
             <Kbd>k</Kbd>
             move between documents,

@@ -523,7 +523,10 @@ function CourseList({
               <CourseItem key={c.name} course={c} />
             ))}
           </ItemGroup>
-          <p className="flex flex-wrap items-center gap-2 text-base text-muted-foreground">
+          <p
+            data-key-hint
+            className="flex flex-wrap items-center gap-2 text-base text-muted-foreground"
+          >
             <Kbd>j</Kbd>
             <Kbd>k</Kbd>
             move between courses,
