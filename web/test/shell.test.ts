@@ -255,6 +255,69 @@ describe("leader keys", () => {
   })
 })
 
+describe("sidebar toggle (flyingrobots/school#148)", () => {
+  const toggle = (p: Page) =>
+    p.getByRole("button", { name: "Toggle Sidebar" }).first()
+  const settled = (p: Page, state: "expanded" | "collapsed") =>
+    p.waitForFunction(
+      (state) =>
+        document
+          .querySelector("[data-slot=sidebar][data-state]")
+          ?.getAttribute("data-state") === state &&
+        document.getAnimations().length === 0,
+      state
+    )
+  const overlaps = (
+    a: { x: number; y: number; width: number; height: number },
+    b: { x: number; y: number; width: number; height: number }
+  ) =>
+    a.x < b.x + b.width &&
+    b.x < a.x + a.width &&
+    a.y < b.y + b.height &&
+    b.y < a.y + a.height
+
+  test("stays in the same place when the sidebar closes and opens", async () => {
+    const p = await open()
+    await settled(p, "expanded")
+    const open1 = await toggle(p).boundingBox()
+    await p.keyboard.press("ControlOrMeta+b")
+    await settled(p, "collapsed")
+    const closed = await toggle(p).boundingBox()
+    await p.keyboard.press("ControlOrMeta+b")
+    await settled(p, "expanded")
+    const open2 = await toggle(p).boundingBox()
+    expect(open1).not.toBeNull()
+    expect(closed).toEqual(open1!)
+    expect(open2).toEqual(open1!)
+    await p.context().close()
+  })
+
+  test("covers neither the sidebar's title nor the main header's first item", async () => {
+    const p = await open()
+    await settled(p, "expanded")
+    const title = await p
+      .locator("[data-slot=sidebar-header]")
+      .getByText("School")
+      .boundingBox()
+    expect(overlaps((await toggle(p).boundingBox())!, title!)).toBe(false)
+    await p.keyboard.press("ControlOrMeta+b")
+    await settled(p, "collapsed")
+    // The header's first item after the toggle: the Commands button when no leader badge shows.
+    const commands = p.getByRole("button", { name: /Commands/ })
+    const header = await p
+      .locator("[data-nav-region=main] header")
+      .boundingBox()
+    const t = (await toggle(p).boundingBox())!
+    expect(overlaps(t, (await commands.boundingBox())!)).toBe(false)
+    // Nothing in the header's flow starts under the toggle: its start padding clears it.
+    const padStart = await p
+      .locator("[data-nav-region=main] header")
+      .evaluate((el) => parseFloat(getComputedStyle(el).paddingInlineStart))
+    expect(header!.x + padStart).toBeGreaterThanOrEqual(t.x + t.width)
+    await p.context().close()
+  })
+})
+
 describe("focus movement", () => {
   test.each([
     ["hjkl", { down: "j", up: "k", left: "h", right: "l" }],
