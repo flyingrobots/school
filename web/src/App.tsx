@@ -14,7 +14,7 @@ import {
   useNavigate,
 } from "react-router"
 
-import { AppShell, type AppShellPage } from "@/components/app-shell"
+import { AppShell, type AppShellPage } from "@/components/app-shell-pinned"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
@@ -42,7 +42,7 @@ const pages: AppShellPage[] = [
   { href: "/settings", label: "Settings", icon: SettingsIcon, leader: "s" },
 ]
 
-// The registry's app shell (@flyingrobots/app-shell), wired to React Router.
+// The registry's app shell (@flyingrobots/app-shell-pinned), wired to React Router.
 function Shell() {
   const { pathname } = useLocation()
   const navigate = useNavigate()
