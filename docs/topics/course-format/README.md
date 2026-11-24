@@ -12,6 +12,21 @@ names. School reads the folder and never writes to it ([ADR 6](../../adr/0006-se
 Anything else in the folder (`README.md`, `OBJECTIVES.md`, `RESOURCES.md`) is for the course's
 authors and readers; School does not read it.
 
+## More than one course under `./school up`
+
+Compose mounts the course in `SCHOOL_COURSE_DIR` at `/course`. School calls that course `course`.
+To serve more courses beside it, set two optional lines in `server/.env`:
+
+```sh
+SCHOOL_LIBRARY_DIR=../../school-bells   # mounted read-only at /library
+SCHOOL_COURSES=bells=/library           # name=path pairs, paths inside the container
+```
+
+For a folder holding several courses, point `SCHOOL_LIBRARY_DIR` at the folder and name each one:
+`SCHOOL_COURSES=bells=/library/bells,chess=/library/chess`. Without `SCHOOL_LIBRARY_DIR`, `/library`
+is the course folder again, and nothing reads it unless `SCHOOL_COURSES` says so. Run `./school up`
+again after changing either line.
+
 ## `course.json`
 
 ```json

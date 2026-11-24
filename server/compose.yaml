@@ -112,6 +112,9 @@ services:
       SCHOOL_ALLOWED_HOSTS: ${SCHOOL_ALLOWED_HOSTS:-}
       # Read-only source material the course cites, as name=path pairs inside the container.
       SCHOOL_MOUNTS: ${SCHOOL_MOUNTS:-}
+      # More courses, at paths under /library, beside the one at /course: `bells=/library`, or
+      # `a=/library/a,b=/library/b` for a folder of courses (flyingrobots/school#156). Optional.
+      SCHOOL_COURSES: ${SCHOOL_COURSES:-}
       # Explanation grading through the bridge on the host (bridge/bridge.ts). Optional: without
       # SCHOOL_BRIDGE_URL, explanations are saved but not graded. The token is the one the bridge
       # reads from the same Keychain item.
@@ -128,6 +131,8 @@ services:
       - ${SCHOOL_COURSE_DIR:?set SCHOOL_COURSE_DIR to the course repository}:/course:ro
       - ${SCHOOL_STATE_DIR:?set SCHOOL_STATE_DIR to the private learner-state directory}:/state
       - ${SCHOOL_SOURCES_DIR:?set SCHOOL_SOURCES_DIR to the course's source material, or to an empty directory}:/sources:ro
+      # Optional: the folder SCHOOL_COURSES reads from. Without it, the course folder again, which nothing reads there.
+      - ${SCHOOL_LIBRARY_DIR:-${SCHOOL_COURSE_DIR}}:/library:ro
 # Each from the launcher's environment (host/school.ts), which read it from the Keychain. Compose
 # copies each into the services that list it, at /run/secrets/<name>.
 secrets:

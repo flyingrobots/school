@@ -118,6 +118,15 @@ test("compose mounts the built web app, read-only, where the server looks for it
   expect(compose.services.school?.volumes).toContain(`../web/dist:${root}/web/dist:ro`);
 });
 
+test("compose can serve more courses from an optional library mount (flyingrobots/school#156)", () => {
+  const school = compose.services.school;
+  expect(school?.environment?.SCHOOL_COURSES).toBe("${SCHOOL_COURSES:-}");
+  // Without SCHOOL_LIBRARY_DIR the mount falls back to the course folder, so an existing deployment still starts.
+  expect(school?.volumes).toContain("${SCHOOL_LIBRARY_DIR:-${SCHOOL_COURSE_DIR}}:/library:ro");
+  // The course at /course is unchanged, slug and all.
+  expect(dockerfile).toMatch(/SCHOOL_COURSE=\/course/);
+});
+
 test("the image ships the migrate command", () => {
   expect(shipped).toContain("migrate.ts");
 });
