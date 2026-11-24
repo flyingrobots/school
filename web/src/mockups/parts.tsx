@@ -187,25 +187,33 @@ export const markKey = (m: Mark) =>
 export const day = (n: number) => d3.timeDay.offset(RHYTHM.today, n)
 export const fmtDay = d3.timeFormat("%A %-d %B")
 
+export type Lane = {
+  title: string
+  studied: number[]
+  returns: { day: number; items: number }[]
+  note?: string
+}
+
 // Every mark in time order, today included, for h/l stepping.
-export const MARKS: Mark[] = [
-  ...RHYTHM.lanes.flatMap((l) => [
-    ...l.studied
-      .filter((d) => d !== 0)
-      .map((d): Mark => ({ kind: "studied", lane: l.title, day: d })),
-    ...l.returns.map((r): Mark => ({ kind: "returns", lane: l.title, ...r })),
-  ]),
-  { kind: "today" } as Mark,
-].sort(
-  (a, b) =>
-    (a.kind === "today" ? 0 : a.day) - (b.kind === "today" ? 0 : b.day) ||
-    (a.kind === "today" ? -1 : 1)
-)
+export const marksFor = (lanes: readonly Lane[]): Mark[] =>
+  [
+    ...lanes.flatMap((l) => [
+      ...l.studied
+        .filter((d) => d !== 0)
+        .map((d): Mark => ({ kind: "studied", lane: l.title, day: d })),
+      ...l.returns.map((r): Mark => ({ kind: "returns", lane: l.title, ...r })),
+    ]),
+    { kind: "today" } as Mark,
+  ].sort(
+    (a, b) =>
+      (a.kind === "today" ? 0 : a.day) - (b.kind === "today" ? 0 : b.day) ||
+      (a.kind === "today" ? -1 : 1)
+  )
+export const MARKS: Mark[] = marksFor(RHYTHM.lanes)
 
 const W = 720
 const LANE = 56
 const PAD = { top: 28, left: 8, right: 8, bottom: 8 }
-const H = PAD.top + LANE * RHYTHM.lanes.length + PAD.bottom
 const x = d3
   .scaleTime()
   .domain([day(-14), day(14)])
@@ -240,10 +248,13 @@ export function RhythmLegend() {
 export function Rhythm({
   selected,
   onSelect,
+  lanes = RHYTHM.lanes,
 }: {
   selected?: string
   onSelect?: (m: Mark) => void
+  lanes?: readonly Lane[]
 }) {
+  const H = PAD.top + LANE * lanes.length + PAD.bottom
   const pick = (m: Mark) => ({
     role: onSelect ? "button" : undefined,
     tabIndex: onSelect ? 0 : undefined,
@@ -332,7 +343,7 @@ export function Rhythm({
           today
         </text>
       </g>
-      {RHYTHM.lanes.map((lane, i) => {
+      {lanes.map((lane, i) => {
         const y = PAD.top + LANE * i + LANE / 2 + 4
         return (
           <g key={lane.title}>
@@ -342,6 +353,12 @@ export function Rhythm({
               className="fill-muted-foreground text-[12px]"
             >
               {lane.title}
+              {lane.note && (
+                <tspan className="fill-muted-foreground italic">
+                  {" "}
+                  · {lane.note}
+                </tspan>
+              )}
             </text>
             <line
               x1={PAD.left}

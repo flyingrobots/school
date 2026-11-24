@@ -19,6 +19,7 @@ export default defineConfig({
         "home-g": resolve(import.meta.dirname, "mockups/home-g.html"),
         "home-h": resolve(import.meta.dirname, "mockups/home-h.html"),
         "home-i": resolve(import.meta.dirname, "mockups/home-i.html"),
+        "home-j": resolve(import.meta.dirname, "mockups/home-j.html"),
       },
     },
   },
