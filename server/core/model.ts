@@ -114,6 +114,10 @@ export type LessonProgress = z.infer<typeof LessonProgress>;
 export const LastStudied = z.object({ course: z.string(), lesson: z.string(), at: z.string() });
 export type LastStudied = z.infer<typeof LastStudied>;
 
+/** A local day the learner studied a course (flyingrobots/school#165). `day` is YYYY-MM-DD. */
+export const StudyDay = z.object({ course: z.string(), day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) });
+export type StudyDay = z.infer<typeof StudyDay>;
+
 export const Verdict = z.enum(["meets", "partly", "misses"]);
 export const Criterion = z.object({ verdict: Verdict, note: z.string() });
 export const Contradiction = z.object({ source_id: z.string(), quote: z.string(), note: z.string() });
@@ -127,6 +131,13 @@ export const Findings = z.object({
   summary: z.string(),
 });
 export type Findings = z.infer<typeof Findings>;
+
+/** The newest succeeded grading, with where its explanation was written (flyingrobots/school#165). */
+export const LatestFeedback = z.object({
+  submissionId: z.string(), course: z.string(), lesson: z.string(), blockId: z.string(),
+  model: z.string().nullable(), findings: Findings, at: z.string(),
+});
+export type LatestFeedback = z.infer<typeof LatestFeedback>;
 export const CheckedFindings = Findings.extend({ contradictions: z.array(Contradiction.extend({ quote_verified: z.boolean() })) });
 export type CheckedFindings = z.infer<typeof CheckedFindings>;
 

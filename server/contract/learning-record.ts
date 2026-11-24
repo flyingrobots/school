@@ -163,6 +163,48 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     expect(await r.lessonProgress("other")).toEqual({});
   });
 
+  // Since the learner was last here (flyingrobots/school#165).
+  t("study days are the local days with an opening, answer, explanation or view, per course, in the window", async (r) => {
+    const DAY = 24 * 3600 * 1000;
+    expect(await r.studyDays({ from: at(-DAY), to: at(3 * DAY), tz: "UTC" })).toEqual([]);
+    const page = lesson("l1", [quiz("q1"), explain]);
+    const e = await r.openEncounter({ course: "c", lesson: "l1", aidTracking: null, page, now: at(0) }); // 21 Nov, 10:00 UTC
+    await r.submit({ submissionId: uuid(), encounterId: e.id, blockId: "q1", choiceId: "wrong", ms: 1 }, at(90 * 60_000)); // 11:30 UTC
+    await r.saveExplanation({ submissionId: uuid(), encounterId: e.id, blockId: "e1", text: "Because.", ms: 1 }, at(DAY)); // 22 Nov
+    await r.recordView({ course: "d", lesson: "x" }, at(2 * DAY)); // 23 Nov
+    expect(await r.studyDays({ from: at(-DAY), to: at(3 * DAY), tz: "UTC" })).toEqual([
+      { course: "c", day: "2026-11-21" },
+      { course: "c", day: "2026-11-22" },
+      { course: "d", day: "2026-11-23" },
+    ]);
+    // In Auckland (UTC+13), the answer at 11:30 UTC falls on the 22nd, beside the opening on the 21st.
+    expect(await r.studyDays({ from: at(-DAY), to: at(DAY / 2), tz: "Pacific/Auckland" })).toEqual([
+      { course: "c", day: "2026-11-21" },
+      { course: "c", day: "2026-11-22" },
+    ]);
+    // The window is half-open: [from, to).
+    expect(await r.studyDays({ from: at(DAY), to: at(2 * DAY), tz: "UTC" })).toEqual([{ course: "c", day: "2026-11-22" }]);
+  });
+
+  t("the latest feedback is the newest succeeded grading, with where its explanation was written; none before one", async (r) => {
+    expect(await r.latestFeedback()).toBeNull();
+    const page = lesson("l1", [explain]);
+    const e = await r.openEncounter({ course: "c", lesson: "l1", aidTracking: null, page, now: at(0) });
+    const first = uuid(), second = uuid();
+    await r.saveExplanation({ submissionId: first, encounterId: e.id, blockId: "e1", text: "Because.", ms: 1 }, at(1000));
+    await r.recordGrading(failed(first, "the bridge could not be reached"), at(2000));
+    expect(await r.latestFeedback()).toBeNull();
+    await r.recordGrading(succeeded(first), at(3000));
+    await r.saveExplanation({ submissionId: second, encounterId: e.id, blockId: "e1", text: "Because, again.", ms: 1 }, at(4000));
+    await r.recordGrading(succeeded(second), at(5000));
+    expect(await r.latestFeedback()).toEqual({
+      submissionId: second, course: "c", lesson: "l1", blockId: "e1", model: "m", findings: succeeded(second).findings!, at: at(5000),
+    });
+    // A failed retry of an earlier submission does not hide the newest success.
+    await r.recordGrading(failed(first, "the bridge could not be reached"), at(6000));
+    expect((await r.latestFeedback())?.submissionId).toBe(second);
+  });
+
   t("where the learner left off is null on an empty record", async (r) => {
     expect(await r.lastStudied()).toBeNull();
   });
