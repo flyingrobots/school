@@ -304,7 +304,13 @@ async function lessonJson(c: Course, id: string, viewParam: string | null, aidTr
   // Any quiz of the course may come back for review at the top of this lesson (RFC 2 §5). `lesson` is
   // then what the encounter snapshotted, review included, and `review` holds each item's reason.
   const opened = await school.openLesson(c.name, page, aidTracking, [...library.byId.values()]);
-  return json({ ...base, lesson: opened.page, encounterId: opened.encounter.id, answers: opened.answers, explanations: opened.explanations, review: opened.review },
+  // Each item names the lesson that holds its quiz now, so the learner can place it (flyingrobots/school#159).
+  const home = (blockId: string) => {
+    const p = pages.find((q) => q.type === "page" && quizIds(q).has(blockId));
+    return p?.type === "page" ? { id: p.id, title: p.title } : null;
+  };
+  const review = opened.review.map((r) => ({ ...r, from: home(r.blockId) }));
+  return json({ ...base, lesson: opened.page, encounterId: opened.encounter.id, answers: opened.answers, explanations: opened.explanations, review },
     200, { "cache-control": "no-store" });
 }
 

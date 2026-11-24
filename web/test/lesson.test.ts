@@ -1670,6 +1670,13 @@ describe("delayed review (flyingrobots/school#32)", () => {
         expect(await why.textContent()).toMatch(
           /Back because your first answer on \d{1,2} [A-Z][a-z]+ was wrong; you put it right on a later try\./
         )
+        // It says where the question is from, and links there (flyingrobots/school#159).
+        expect(await why.textContent()).toContain("It's from Orbits.")
+        expect(
+          await why
+            .getByRole("link", { name: "Orbits", exact: true })
+            .getAttribute("href")
+        ).toBe(lessonPath("review", "orbits"))
         const reason = await why.textContent()
 
         // Answered in this lesson, right first try; a reload is the same encounter, with the same review.

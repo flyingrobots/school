@@ -136,6 +136,8 @@ const ReviewReason = z.object({
   blockId: z.string(),
   rule: z.string(),
   reason: z.string(),
+  /** The lesson that holds the quiz now; null when none does (flyingrobots/school#159). */
+  from: z.object({ id: z.string(), title: z.string() }).nullable().optional(),
 })
 export type ReviewReason = z.infer<typeof ReviewReason>
 

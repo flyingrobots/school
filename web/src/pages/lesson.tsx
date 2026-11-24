@@ -111,7 +111,20 @@ function held(lesson: api.LessonReply) {
   return {
     answers,
     explanations: new Map(lesson.explanations.map((x) => [x.blockId, x])),
-    reasons: new Map(lesson.review.map((r) => [r.blockId, r.reason])),
+    reasons: new Map(
+      lesson.review.map((r) => [
+        r.blockId,
+        {
+          reason: r.reason,
+          from: r.from
+            ? {
+                title: r.from.title,
+                to: `/courses/${lesson.course}/lessons/${r.from.id}`,
+              }
+            : null,
+        },
+      ])
+    ),
   }
 }
 
@@ -168,8 +181,11 @@ type Play = {
   shown: number
   answers: Map<string, QuizVerdict>
   explanations: Map<string, api.Explanation>
-  /** Why each review item came back, by block. */
-  reasons: Map<string, string>
+  /** Why each review item came back, and the lesson it is from, by block. */
+  reasons: Map<
+    string,
+    { reason: string; from: { title: string; to: string } | null }
+  >
   pending: ReturnType<typeof waitingByBlock>
 }
 
@@ -236,7 +252,22 @@ function BlockView({
               <HistoryIcon />
               <AlertTitle className="text-lg">Back for review</AlertTitle>
               <AlertDescription className="text-base">
-                {reason}
+                <p>
+                  {reason.reason}
+                  {reason.from && (
+                    <>
+                      {" "}
+                      It's from{" "}
+                      <Link
+                        to={reason.from.to}
+                        className="underline underline-offset-4"
+                      >
+                        {reason.from.title}
+                      </Link>
+                      .
+                    </>
+                  )}
+                </p>
               </AlertDescription>
             </Alert>
           )}
