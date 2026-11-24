@@ -36,8 +36,8 @@ function Detail({ mark }: { mark: Mark }) {
     return (
       <div className="flex flex-col gap-6">
         <h2 className="font-heading text-2xl font-medium">
-          Today: your explanation was read, and {REVIEWS.length} questions came
-          back.
+          Today: Claude read your explanation, and {REVIEWS.length} questions
+          are ready for another look.
         </h2>
         <FeedbackCard />
         <ReviewList />

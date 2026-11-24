@@ -68,14 +68,11 @@ export function FeedbackCard({ compact = false }: { compact?: boolean }) {
           {GRADED.lesson}, {GRADED.course}
         </CardDescription>
         <CardTitle
-          className={
-            compact
-              ? "text-lg leading-snug text-balance"
-              : "font-heading text-2xl leading-snug text-balance"
-          }
+          className={compact ? "text-lg" : "font-heading text-2xl leading-snug"}
         >
-          “{GRADED.prompt}”
+          Your explanation of {GRADED.lesson}
         </CardTitle>
+        <CardDescription>{GRADED.prompt}</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <p className={compact ? "leading-relaxed" : "text-lg leading-relaxed"}>
@@ -101,10 +98,10 @@ export function FeedbackCard({ compact = false }: { compact?: boolean }) {
       </CardContent>
       <CardFooter className="flex flex-wrap gap-2">
         <Button>
-          <PenLineIcon data-icon="inline-start" /> Rewrite it
+          <PenLineIcon data-icon="inline-start" /> Write a new draft
           <Kbd>↵</Kbd>
         </Button>
-        <Button variant="ghost">Read my answer again</Button>
+        <Button variant="ghost">Read what I wrote</Button>
       </CardFooter>
     </Card>
   )

@@ -79,7 +79,7 @@ function Journal({
     <svg
       viewBox={`0 0 ${W} ${H}`}
       className="w-full overflow-visible"
-      aria-label="Every explanation you've written, each attempt with its three judgments"
+      aria-label="Every explanation you've written, each draft with its three judgments"
     >
       {d3.timeMonday.range(dayOf(-14), dayOf(2)).map((w) => (
         <g key={+w}>
@@ -117,8 +117,8 @@ function Journal({
               className="fill-muted-foreground text-[11px]"
             >
               {e.attempts.length === 0
-                ? "not written yet"
-                : `${e.attempts.length} attempt${e.attempts.length > 1 ? "s" : ""}`}
+                ? "ready when you are"
+                : `${e.attempts.length} draft${e.attempts.length > 1 ? "s" : ""}`}
             </text>
             {pts.length > 1 && (
               <line
@@ -138,7 +138,7 @@ function Journal({
                   key={j}
                   role="button"
                   tabIndex={0}
-                  aria-label={`${e.lesson}, attempt ${j + 1}: ${a.verdicts.map((v, n) => `${CRITERIA[n]} ${verdictWord[v]}`).join(", ")}`}
+                  aria-label={`${e.lesson}, draft ${j + 1}: ${a.verdicts.map((v, n) => `${CRITERIA[n]} ${verdictWord[v]}`).join(", ")}`}
                   onClick={() => onSelect(k)}
                   onKeyDown={(ev) => ev.key === "Enter" && onSelect(k)}
                   className="cursor-pointer outline-none"
@@ -197,12 +197,13 @@ function Attempt({ k }: { k: string }) {
           <Badge variant="outline">
             <BotIcon /> graded by Claude
           </Badge>
-          {e.lesson}, attempt {Number(j) + 1},{" "}
+          {e.lesson}, draft {Number(j) + 1},{" "}
           {d3.timeFormat("%A %-d %B")(dayOf(a.day))}
         </CardDescription>
-        <CardTitle className="text-lg leading-snug text-balance">
-          “{e.prompt}”
+        <CardTitle className="text-lg">
+          Your explanation of {e.lesson}
         </CardTitle>
+        <CardDescription>{e.prompt}</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-wrap gap-2">
         {a.verdicts.map((v, n) => (
@@ -212,10 +213,10 @@ function Attempt({ k }: { k: string }) {
         ))}
       </CardContent>
       <CardFooter className="flex flex-wrap gap-2">
-        <Button variant="outline">Read this attempt and its notes</Button>
+        <Button variant="outline">Read this draft and its notes</Button>
         {Number(j) === e.attempts.length - 1 && (
           <Button>
-            <PenLineIcon data-icon="inline-start" /> Rewrite it
+            <PenLineIcon data-icon="inline-start" /> Write a new draft
           </Button>
         )}
       </CardFooter>
@@ -235,19 +236,19 @@ function Page() {
           Since you were last here, Sunday night
         </p>
         <h1 className="font-heading text-4xl font-semibold text-balance">
-          Your explanation of Graphs of Graphs went from two “not yet”s to
-          meeting every criterion, in three tries.
+          Your explanation of Graphs of Graphs now meets every criterion. You
+          got there in three drafts.
         </h1>
         <p className="text-lg text-muted-foreground">
-          Today's try at The Inversion was read. {REVIEWS.length} questions came
-          back too.
+          Claude read today's draft of The Inversion, and {REVIEWS.length}{" "}
+          questions are ready for another look.
         </p>
       </div>
       <Card>
         <CardHeader>
           <CardTitle>Everything you've explained</CardTitle>
           <CardDescription>
-            Each box is one attempt, with Claude's three judgments. Open one to
+            Each box is one draft, with Claude's three judgments. Open one to
             read its notes.
           </CardDescription>
         </CardHeader>
@@ -262,20 +263,22 @@ function Page() {
       {unwritten.length > 0 && (
         <Card className="border-dashed shadow-none">
           <CardHeader>
-            <CardDescription>Not written yet</CardDescription>
+            <CardDescription>Get back into it</CardDescription>
             <CardTitle className="text-lg leading-snug text-balance">
-              {unwritten[0].lesson}: “{unwritten[0].prompt}”
+              {unwritten[0].prompt}
             </CardTitle>
           </CardHeader>
           <CardFooter>
             <Button variant="outline">
-              <PenLineIcon data-icon="inline-start" /> Write it
+              <PenLineIcon data-icon="inline-start" /> Start writing
               <Kbd>w</Kbd>
             </Button>
           </CardFooter>
         </Card>
       )}
-      <h2 className="font-heading text-xl font-medium">Came back for review</h2>
+      <h2 className="font-heading text-xl font-medium">
+        Ready for another look
+      </h2>
       <ReviewList />
       <ContinueLine />
     </>
@@ -288,16 +291,16 @@ mount(
     summary:
       "F, followed over time: every explanation you've written, and how each one improved with every rewrite. E's timeline, applied to your own thinking.",
     points: [
-      "The single most motivating thing a learner can see is evidence they're improving. In School that evidence is the explanations: the grader's judgments on each criterion, attempt after attempt.",
-      "Each attempt is one box with three pips (fidelity, completeness, accessibility): filled for Meets, half for Partly, hollow for Not yet. Read left to right, a row filling in is progress you can see, made only of words, never a score.",
-      "The headline names the best story in the record in plain words: 'went from two not-yets to meeting every criterion, in three tries.'",
-      "Click any box to read that attempt's notes. The newest is open on arrival, so F's 'read your feedback' still comes first.",
-      "Explanations not written yet sit underneath as the next thing to do: writing is the strongest kind of practice, and this page makes it the habit.",
+      "The single most motivating thing a learner can see is evidence they're improving. In School that evidence is the explanations: the grader's judgments on each criterion, draft after draft.",
+      "Each draft is one box with three pips (fidelity, completeness, accessibility): filled for Meets, half for Partly, hollow for Not yet. Read left to right, a row filling in is progress you can see, made only of words, never a score.",
+      "The headline names the best story in the record in plain words: 'now meets every criterion; you got there in three drafts.' It celebrates where you arrived, not where you started",
+      "Click any box to read that draft's notes. The newest is open on arrival, so F's 'read your feedback' still comes first.",
+      "An explanation you haven't written yet sits underneath as an invitation, 'Get back into it', with its question: writing is the strongest kind of practice, and this page makes it the habit.",
       "Needs: gradings joined to their submissions and lessons, all already in the record.",
       "Trade-off: it only shows explanations. Quizzes and reading are left to the timeline (H) or the course pages.",
     ],
     components:
-      "Card, Badge, Button, Kbd, Item, Alert, mode toggle, and a d3 time scale for the attempts.",
+      "Card, Badge, Button, Kbd, Item, Alert, mode toggle, and a d3 time scale for the drafts.",
   },
   <Page />
 )

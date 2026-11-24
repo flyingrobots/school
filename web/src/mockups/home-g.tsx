@@ -22,7 +22,7 @@ mount(
       "F and E side by side: what's new on the left, and where it sits in time on the right.",
     points: [
       "The letter (F) is what you read; the timeline (E) is what you glance at. Putting them side by side lets each do its job without competing for the top of the page.",
-      "On a wide screen the timeline stays beside the letter as you scroll, so 'two questions came back' always has its context: which day they came from and what's coming next.",
+      "On a wide screen the timeline stays beside the letter as you scroll, so 'two questions are ready for another look' always has its context: which day they came from and what's coming next.",
       "On a phone the letter comes first and the timeline follows. Feedback is the thing you act on; the timeline is the thing you check.",
       "The headline is still one sentence in words. The chart never has to be read to know what to do.",
       "On a quiet day with no new feedback, the letter column shrinks to the lesson to continue and the timeline becomes the main thing on the page.",
@@ -37,7 +37,8 @@ mount(
         Since you were last here, Sunday night
       </p>
       <h1 className="font-heading text-4xl font-semibold text-balance">
-        Your explanation was read, and {REVIEWS.length} questions came back.
+        Claude read your explanation, and {REVIEWS.length} questions are ready
+        for another look.
       </h1>
     </div>
     <div className="grid gap-6 lg:grid-cols-12">
@@ -45,7 +46,7 @@ mount(
         <FeedbackCard />
         <div className="flex flex-col gap-3">
           <h2 className="font-heading text-xl font-medium">
-            Came back for review
+            Ready for another look
           </h2>
           <ReviewList />
         </div>

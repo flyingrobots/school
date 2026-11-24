@@ -38,7 +38,7 @@ mount(
     points: [
       "Grading happens after you leave a lesson, so its notes are easy to miss. Feedback you never read teaches nothing. The home page is where it belongs.",
       "Each criterion is a word (Meets, Partly, Not yet) with the grader's note beside it. No score, as RFC 2 §4.3 decides.",
-      "The one action that follows feedback is to try again, so 'Rewrite it' is the first button. Reading on without acting is still one click away.",
+      "The one action that follows feedback is to try again, so 'Write a new draft' is the first button. Reading on without acting is still one click away.",
       "Every review item names its course and lesson, and its (i) answers 'why am I being asked this?' Only questions you've answered can come back, so a course you haven't opened never sends you one.",
       "Anything AI did carries the robot label and names the model, so the learner always knows a judgment came from Claude and not from School's rules.",
       "When there's nothing new, the page shrinks to the lesson to continue. It's quiet on quiet days.",
@@ -54,7 +54,8 @@ mount(
         Since you were last here, Sunday night
       </p>
       <h1 className="font-heading text-4xl font-semibold text-balance">
-        Your explanation was read, and two questions came back.
+        Claude read your explanation, and two questions are ready for another
+        look.
       </h1>
     </div>
 
@@ -66,9 +67,10 @@ mount(
           </Badge>
           {GRADED.lesson}, {GRADED.course}
         </CardDescription>
-        <CardTitle className="font-heading text-2xl leading-snug text-balance">
-          “{GRADED.prompt}”
+        <CardTitle className="font-heading text-2xl leading-snug">
+          Your explanation of {GRADED.lesson}
         </CardTitle>
+        <CardDescription>{GRADED.prompt}</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <p className="text-lg leading-relaxed">{GRADED.summary}</p>
@@ -92,15 +94,17 @@ mount(
       </CardContent>
       <CardFooter className="flex flex-wrap gap-2">
         <Button>
-          <PenLineIcon data-icon="inline-start" /> Rewrite it
+          <PenLineIcon data-icon="inline-start" /> Write a new draft
           <Kbd>↵</Kbd>
         </Button>
-        <Button variant="ghost">Read my answer again</Button>
+        <Button variant="ghost">Read what I wrote</Button>
       </CardFooter>
     </Card>
 
     <div className="flex flex-col gap-3">
-      <h2 className="font-heading text-xl font-medium">Came back for review</h2>
+      <h2 className="font-heading text-xl font-medium">
+        Ready for another look
+      </h2>
       <ReviewList />
     </div>
 

@@ -46,7 +46,7 @@ export type Review = {
 // Only questions the learner has answered can come back (due_review reads answers), so every item
 // names a course and lesson they have opened. The reasons use School's real wording.
 export const RULES =
-  "School brings back a question you've answered before when your first answer was wrong, or right only after help was shown. It waits at least a day, so the answer has to come from memory."
+  "School brings back questions you've met before that took a second go or a little help. It waits at least a day, so this time the answer comes from memory, which is what makes it stick."
 
 export const REVIEWS: Review[] = [
   {
@@ -56,7 +56,7 @@ export const REVIEWS: Review[] = [
       "A balance of 70 and the list +100, −50, +20. Which one can be rebuilt from the other?",
     answered: "24 November",
     reason:
-      "Your first answer on 24 November was wrong, and the right one came after the explanation was shown.",
+      "On 24 November the explanation helped you find this one. Here it is again, to answer from memory.",
   },
   {
     course: "AIΩN Foundations",
@@ -64,7 +64,7 @@ export const REVIEWS: Review[] = [
     question: "What is the smallest possible WARP?",
     answered: "24 November",
     reason:
-      "On 24 November you answered it right only after a reference was shown.",
+      "On 24 November a reference helped you find this one. Here it is again, to answer from memory.",
   },
 ]
 
@@ -72,7 +72,7 @@ export const GRADED = {
   course: "AIΩN Foundations",
   lesson: "The Inversion",
   prompt:
-    "Explain the inversion to an imaginary engineer in under 30 seconds. Use one example that isn't the bank account.",
+    "How would you explain the inversion to an engineer in under 30 seconds, with an example that isn't a bank account?",
   gradedBy: "Claude",
   summary:
     "Good start: you grabbed the core idea of keeping history and found your own example. Next, add the one-way point: from the list of changes you can always get the value back, but from the value alone you can never get the changes back.",
@@ -85,7 +85,7 @@ export const GRADED = {
     {
       name: "Completeness",
       verdict: "misses" as Verdict,
-      note: "Two connections are missing: 'now' is a replay of the list, and the history can't be rebuilt from the current value.",
+      note: "Two connections would complete it: 'now' is a replay of the list, and the history can't be rebuilt from the current value.",
     },
     {
       name: "Accessibility",
@@ -99,7 +99,7 @@ export const WAITING = {
   course: "The Mathematics of Bells",
   lesson: "Bells that can't hurry",
   prompt:
-    "Explain to a friend who has never heard change ringing why church bells in England play patterns instead of tunes.",
+    "Why do English church bells ring patterns instead of tunes? How would you tell a friend who's never heard them?",
 }
 
 // Illustrative study days (offset from today, negative is past) per course, and when review
@@ -154,7 +154,7 @@ export const COMING_BACK: Record<string, Review[]> = {
         "Which two properties of transformations make replay trustworthy?",
       answered: "21 November",
       reason:
-        "Your first answer on 21 November was wrong; you put it right on a later try.",
+        "On 21 November you found this one on a second go. Here it is again, from memory this time.",
     },
     {
       course: "AIΩN Foundations",
@@ -162,7 +162,7 @@ export const COMING_BACK: Record<string, Review[]> = {
       question: "Why does the paper insist nesting is well-founded?",
       answered: "23 November",
       reason:
-        "On 23 November you answered it right only after the model answer was shown.",
+        "On 23 November the model answer helped you find this one. Here it is again, from memory this time.",
     },
   ],
   "The Mathematics of Bells": [
@@ -173,7 +173,7 @@ export const COMING_BACK: Record<string, Review[]> = {
         "How many changes does the plain hunt on four bells take to come back to rounds?",
       answered: "24 November",
       reason:
-        "On 24 November you answered it right only after the explanation was shown.",
+        "On 24 November the explanation helped you find this one. Here it is again, from memory this time.",
     },
     {
       course: "The Mathematics of Bells",
@@ -181,7 +181,7 @@ export const COMING_BACK: Record<string, Review[]> = {
       question: "Apply x to 1324.",
       answered: "20 November",
       reason:
-        "Your first answer on 20 November was wrong, and it was not put right then.",
+        "On 20 November this one hadn't settled yet. Here it is again, with fresh eyes.",
     },
     {
       course: "The Mathematics of Bells",
@@ -190,13 +190,13 @@ export const COMING_BACK: Record<string, Review[]> = {
         "On four bells, which of these can follow 1234 as the next row?",
       answered: "20 November",
       reason:
-        "Your first answer on 20 November was wrong; you put it right on a later try.",
+        "On 20 November you found this one on a second go. Here it is again, from memory this time.",
     },
   ],
 }
 
-// Mockup I: every explanation written, each attempt with its three judgments. Illustrative
-// except today's attempt at the inversion, which is the real grading.
+// Mockup I: every explanation written, each draft with its three judgments. Illustrative
+// except today's draft at the inversion, which is the real grading.
 export type Attempt = { day: number; verdicts: [Verdict, Verdict, Verdict] }
 export const CRITERIA = ["Fidelity", "Completeness", "Accessibility"] as const
 export const EXPLANATIONS: {
@@ -209,7 +209,7 @@ export const EXPLANATIONS: {
     course: "AIΩN Foundations",
     lesson: "Graphs of Graphs",
     prompt:
-      "Explain a WARP to an imaginary engineer in under 45 seconds, without the words “category”, “algebra” or “recursive”.",
+      "How would you describe a WARP to an engineer in under 45 seconds, without “category”, “algebra” or “recursive”?",
     attempts: [
       { day: -12, verdicts: ["partly", "misses", "misses"] },
       { day: -9, verdicts: ["meets", "partly", "meets"] },
@@ -220,7 +220,7 @@ export const EXPLANATIONS: {
     course: "AIΩN Foundations",
     lesson: "The Inversion",
     prompt:
-      "Explain the inversion to an imaginary engineer in under 30 seconds. Use one example that isn't the bank account.",
+      "How would you explain the inversion to an engineer in under 30 seconds, with an example that isn't a bank account?",
     attempts: [
       { day: -8, verdicts: ["misses", "misses", "partly"] },
       // The real grading in the record.
@@ -231,14 +231,14 @@ export const EXPLANATIONS: {
     course: "The Mathematics of Bells",
     lesson: "Bells that can't hurry",
     prompt:
-      "Explain to a friend who has never heard change ringing why church bells in England play patterns instead of tunes.",
+      "Why do English church bells ring patterns instead of tunes? How would you tell a friend who's never heard them?",
     attempts: [{ day: -3, verdicts: ["meets", "partly", "meets"] }],
   },
   {
     course: "The Mathematics of Bells",
     lesson: "The plain hunt",
     prompt:
-      "Describe the plain hunt so someone could ring it with you: the two changes, the path one bell follows, and when it ends.",
+      "How would you teach someone the plain hunt, so they could ring it with you?",
     attempts: [],
   },
 ]
