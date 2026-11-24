@@ -80,6 +80,9 @@ JSON API.
 | --- | --- | --- |
 | GET | `/api/courses` | Lists installed courses, each with its `name` (the slug in addresses) and `title` ([a course's folder](../course-format/README.md)), with lesson and reference counts, and each course's `quizzes` and `answeredCorrectly`; the counts are `null` for a course whose lessons cannot be read |
 | GET | `/api/resume` | What to study now, from where the learner left off: `continue`, `next`, `start`, `finished` or `nothing` ([the home page](../home-page/README.md)) |
+| GET | `/api/feedback` | The newest succeeded grading: its course, lesson, the prompt it answered and the findings; `null` before any |
+| GET | `/api/review` | The questions due for review now, across courses, each with its lesson, question and reason ([due review](../due-review/README.md)) |
+| GET | `/api/activity?days=14` | Each course's study days in the last `days` (1 to 60), and how many questions come back on each day ahead |
 | GET | `/api/courses/:c` | One course: its `name` and `title`, lessons with correct-quiz counts, reference documents. Lessons that cannot be read are `lessons: null` with the reason in `lessonsError`, still a 200 with the reference documents |
 | GET | `/api/courses/:c/lessons/:id` | One lesson; `?view=web` opens or resumes an encounter, `?view=slides` records nothing. `?aid=1` declares that the client records every exposure it shows, so the encounter is opened with aid tracking 1; absent, it is untracked and its aid unknown. Any other `aid` value is refused (400) |
 | POST | `/api/answer` | Records a quiz answer |
@@ -165,7 +168,7 @@ contract suite holds every driver under it to the same behaviour.
 
 The record is Postgres, built by the numbered migrations in `server/db/migrations/` (`0001_init.sql`,
 `0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_read_committed.sql`,
-`0006_due_review.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
+`0006_due_review.sql`, `0007_since_last_here.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -276,6 +279,12 @@ Where the learner left off is the port's `lastStudied()`: the course, lesson and
 encounter opened, answer or explanation stored, or view recorded. It is `school.last_studied()`
 from migration 0003, ordered by `seq`. The core's `resumeFrom` (`server/core/school.ts`) turns it
 and the courses as served into `GET /api/resume`.
+
+What happened since the learner was last here comes from two more read-only functions in migration
+0007 (flyingrobots/school#165). `school.study_days(from, to, tz)` is each course's local days, in
+time zone `tz`, with any of that same activity in `[from, to)`; the port's `studyDays`.
+`school.latest_feedback()` is the succeeded grading with the highest `seq` and where its explanation
+was written; the port's `latestFeedback`. A failed attempt is never feedback.
 
 **Figure 3. The learning record's tables**
 

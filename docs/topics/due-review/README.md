@@ -103,6 +103,14 @@ review quiz is answered in the encounter of the lesson that shows it. Its answer
 that lesson, whose own quizzes are what the course and home pages count. The slides view opens no
 encounter and carries no review.
 
+## On the home page
+
+`GET /api/review` runs the same selector for every served course over all its quizzes, now, and
+returns each item with its course, the lesson holding the quiz, the question and its reason, so the
+home page can show what is ready for another look (flyingrobots/school#165). `GET /api/activity`
+projects it forward: for each of the next `days` days, how many quizzes first become due by then.
+It counts every due quiz, not only the three a lesson shows.
+
 ## Not yet
 
 - **Flagged items.** RFC 2 §2 excludes a flagged item's answers from the evidence that drives

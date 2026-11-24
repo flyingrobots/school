@@ -267,6 +267,64 @@ async function coursesJson(): Promise<Response> {
   })));
 }
 
+// ---- Since the learner was last here (flyingrobots/school#165) -------------------------------
+
+/** The server's time zone, the one review reasons name their days in. */
+const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+/** Each served course's pages that can be read, or none. */
+function readablePages(c: Course): Extract<Block, { type: "page" }>[] {
+  try {
+    const { library } = lessons(c);
+    return library === null ? [] : library.pages.flatMap((p) => (p.type === "page" ? [p] : []));
+  } catch {
+    return [];
+  }
+}
+const lessonOf = (pages: Extract<Block, { type: "page" }>[], blockId: string) => {
+  const p = pages.find((q) => quizIds(q).has(blockId));
+  return p === undefined ? null : { id: p.id, title: p.title };
+};
+
+/** The newest succeeded grading, where its explanation was written, and the prompt it answered. */
+async function feedbackJson(): Promise<Response> {
+  const f = await school.latestFeedback();
+  if (f === null) return json(null, 200, { "cache-control": "no-store" });
+  const c = served.find((x) => x.name === f.course);
+  const page = c === undefined ? undefined : readablePages(c).find((p) => p.id === f.lesson);
+  return json({
+    course: f.course, courseTitle: c === undefined ? f.course : titleOf(c), lesson: { id: f.lesson, title: page?.title ?? f.lesson },
+    blockId: f.blockId, prompt: f.prompt, model: f.model, findings: f.findings, at: f.at,
+  }, 200, { "cache-control": "no-store" });
+}
+
+/** The questions due for review now, across served courses, each with where it lives and why it's back. */
+async function reviewJson(): Promise<Response> {
+  const due = await Promise.all(served.map(async (c) => {
+    const pages = readablePages(c);
+    const quizzesById = new Map(pages.flatMap((p) => quizzes(p).map((q) => [q.id, q] as const)));
+    return (await school.dueNow(c.name, [...quizzesById.keys()])).map(({ item, reason }) => ({
+      course: c.name, courseTitle: titleOf(c), lesson: lessonOf(pages, item.blockId), blockId: item.blockId,
+      question: quizzesById.get(item.blockId)?.q ?? null, answeredAt: item.answeredAt, rule: item.rule, reason,
+    }));
+  }));
+  return json(due.flat(), 200, { "cache-control": "no-store" });
+}
+
+/** Each course's study days in the last `days`, and how many questions come back on each day ahead. */
+async function activityJson(params: URLSearchParams): Promise<Response> {
+  const given = params.get("days");
+  const days = given === null ? 14 : /^[0-9]+$/.test(given) ? Number(given) : NaN;
+  if (!Number.isInteger(days) || days < 1 || days > 60) return json({ error: "days must be a whole number from 1 to 60" }, 400);
+  const tz = zone();
+  const courses = served.map((c) => ({ name: c.name, blocks: readablePages(c).flatMap((p) => [...quizIds(p)]) }));
+  const a = await school.activity(courses, days, tz);
+  return json({
+    today: a.today, tz, days,
+    courses: a.courses.map((x) => ({ course: x.course, courseTitle: titleOf(served.find((c) => c.name === x.course)!), studied: x.studied, due: x.due })),
+  }, 200, { "cache-control": "no-store" });
+}
+
 /** What to study now: where the learner left off and the next step from it (core/school.ts, resumeFrom). */
 async function resumeJson(): Promise<Response> {
   const outlines = await Promise.all(served.map(outline));
@@ -465,6 +523,9 @@ const http = Bun.serve({
     }
     if (pathname === "/api/courses") return coursesJson();
     if (pathname === "/api/resume") return resumeJson();
+    if (pathname === "/api/feedback") return feedbackJson();
+    if (pathname === "/api/review") return reviewJson();
+    if (pathname === "/api/activity") return activityJson(url.searchParams);
     const api = /^\/api\/courses\/([a-z0-9][a-z0-9-]*)(?:\/lessons\/([\w-]+))?$/.exec(pathname);
     if (api !== null) {
       const c = course(config, api[1]!);

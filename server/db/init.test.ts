@@ -12,8 +12,8 @@ const RECORD_TABLES = ["answers", "decision_notes", "encounters", "explanations"
 /** The functions `school_app` may execute, and nothing else. */
 const APP_FUNCTIONS = [
   "choice_decision_notes", "due_review", "encounter_answers", "encounter_decision_notes", "encounter_evidence", "encounter_explanations",
-  "explanation", "last_studied", "lesson_progress", "open_encounter", "open_lesson_encounter", "record_decision_note", "record_exposure", "record_grading",
-  "record_view", "save_explanation", "submission_aid", "submit",
+  "explanation", "last_studied", "latest_feedback", "lesson_progress", "open_encounter", "open_lesson_encounter", "record_decision_note", "record_exposure", "record_grading",
+  "record_view", "save_explanation", "study_days", "submission_aid", "submit",
 ];
 
 const SLOW = 30_000; // PGlite starts a whole Postgres in process.

@@ -2,7 +2,7 @@
 // Adapters implement them; the core never imports an adapter.
 import type {
   Aid, AidTracking, Block, DecisionChoice, DueItem, DueReviewQuery, ReviewNote, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingInput,
-  GradingRecord, LastStudied, LessonProgress, Outcome, Recorded, SaveResult, SavedExplanation, Submission, SubmitResult, ViewEvent,
+  GradingRecord, LastStudied, LatestFeedback, LessonProgress, Outcome, Recorded, SaveResult, SavedExplanation, StudyDay, Submission, SubmitResult, ViewEvent,
 } from "./model.ts";
 
 /**
@@ -39,6 +39,10 @@ export interface LearningRecord {
    * none. A refused submission is not activity, and neither is resuming an encounter, which stores nothing.
    */
   lastStudied(): Promise<LastStudied | null>;
+  /** Each course's local days, in time zone `tz`, with any activity in [from, to) (flyingrobots/school#165). */
+  studyDays(q: { from: string; to: string; tz: string }): Promise<StudyDay[]>;
+  /** The newest succeeded grading and where its explanation was written; null before any. */
+  latestFeedback(): Promise<LatestFeedback | null>;
   saveExplanation(s: ExplanationSubmission, now: string): Promise<SaveResult>;
   /** A saved explanation, its block from the snapshot and its latest grading; null if there is none. */
   explanation(submissionId: string): Promise<SavedExplanation | null>;

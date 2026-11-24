@@ -13,7 +13,7 @@
 import { z } from "zod";
 import {
   Aid, Block, DecisionNote, DecisionNoteResult, DueItem, Encounter, EvidenceKind, EvidenceRow, ExplanationState, ExposureResult, Grading,
-  LastStudied, LessonProgress, Recorded, SaveResult, Seq, SubmitResult, type ExplainBlock,
+  Findings, LastStudied, LatestFeedback, LessonProgress, Recorded, SaveResult, Seq, StudyDay, SubmitResult, type ExplainBlock,
 } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
 import type { Sql } from "./sql.ts";
@@ -52,6 +52,10 @@ const NoteRow = z.object({ note: DecisionNote });
 const OpenedLesson = Opened.extend({ content: Block });
 const Due = z.object({ item: DueItem });
 const Studied = z.object({ course: z.string(), lesson: z.string(), at: time });
+const FeedbackRow = z.object({
+  submission_id: z.string(), course: z.string(), lesson: z.string(), block_id: z.string(),
+  model: z.string().nullable(), findings: Findings, at: time,
+});
 
 /** `SELECT * FROM school.fn($1, ..., $n)`: the only statement shape this adapter issues. */
 const call = (fn: string, args: readonly unknown[]) =>
@@ -103,6 +107,16 @@ export function postgresRecord(sql: Sql): LearningRecord {
       const r = await rows("last_studied");
       if (r.length > 1) throw new Error(`school.last_studied returned ${r.length} rows, not at most one`);
       return r.length === 0 ? null : LastStudied.parse(Studied.parse(r[0]));
+    },
+
+    studyDays: async (q) => (await rows("study_days", q.from, q.to, q.tz)).map((row) => StudyDay.parse(row)),
+
+    latestFeedback: async () => {
+      const r = await rows("latest_feedback");
+      if (r.length > 1) throw new Error(`school.latest_feedback returned ${r.length} rows, not at most one`);
+      if (r.length === 0) return null;
+      const f = FeedbackRow.parse(r[0]);
+      return LatestFeedback.parse({ submissionId: f.submission_id, course: f.course, lesson: f.lesson, blockId: f.block_id, model: f.model, findings: f.findings, at: f.at });
     },
 
     saveExplanation: async (s, now) =>
