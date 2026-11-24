@@ -90,12 +90,17 @@ type Hero = {
 }
 
 function heroOf(ahead: Ahead[], resume: Resume | null): Hero | null {
-  const anyStarted = ahead.some((a) => a.started)
+  // Studied before at all: a finished course is no longer ahead, so ask where the learner left off.
+  const studied =
+    ahead.some((a) => a.started) ||
+    (resume !== null &&
+      resume.kind !== "nothing" &&
+      resume.lastStudied !== null)
   const fresh = ahead.find((a) => !a.started)
   if (fresh)
     return {
       item: fresh,
-      label: anyStarted ? "New for you" : "Start here",
+      label: studied ? "New for you" : "Start here",
       go: `Start lesson ${fresh.lesson.position}`,
       icon: <SparklesIcon />,
     }

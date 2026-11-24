@@ -308,6 +308,22 @@ describe("the hero", () => {
     await close(p.context())
   })
 
+  test("a learner who has studied, with every started course finished, is offered the new course as new, not as a start", async () => {
+    const c = await context()
+    // Astronomy is finished, so only Biology is ahead; the learner has still studied before.
+    await c.route(/\/api\/showcase$/, async (route) => {
+      const all = (await (
+        await fetch(partway.url + "/api/showcase")
+      ).json()) as { course: string }[]
+      await route.fulfill({ json: all.filter((a) => a.course === "bio") })
+    })
+    const p = await open(c)
+    await hero(p).waitFor()
+    expect((await hero(p).textContent()) ?? "").toContain("New for you")
+    expect((await hero(p).textContent()) ?? "").not.toContain("Start here")
+    await close(c)
+  })
+
   test("when every course is started, it is the lesson to study now, with Continue", async () => {
     const p = await open(await context(everywhere))
     await hero(p).waitFor()
