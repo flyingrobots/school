@@ -12,6 +12,9 @@ names. School reads the folder and never writes to it ([ADR 6](../../adr/0006-se
 Anything else in the folder (`README.md`, `OBJECTIVES.md`, `RESOURCES.md`) is for the course's
 authors and readers; School does not read it.
 
+The blocks a lesson file is written in, and every rule they must meet, are in
+[lesson blocks](blocks.md).
+
 ## Checking a course
 
 ```text
