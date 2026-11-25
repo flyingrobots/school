@@ -39,6 +39,9 @@ jobs:
       - run: bun install --frozen-lockfile
         working-directory: host
       - run: bunx tsc -p host
+      # The bridge has no packages of its own: it imports host/ and server/, and takes Bun's types
+      # from host's install above (flyingrobots/school#184).
+      - run: bunx tsc -p bridge
       # The web tests render components (web/test/quiz.test.tsx) and drive the app in Chrome,
       # preinstalled on the runner, through playwright-core (web/test/shell.test.ts); both need web's packages.
       - run: npm ci

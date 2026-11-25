@@ -110,6 +110,8 @@ Practical notes for anyone — human or agent — changing the framework.
   rather than hoping for it. Never synchronise a race with a sleep.
 - Typecheck the server with `bunx tsc -p server` after `bun install` in `server/`.
   A server file that is not TypeScript still needs adding explicitly.
+- Typecheck the bridge with `bunx tsc -p bridge` after `bun install` in `host/`: the bridge has
+  no packages of its own and takes Bun's types from `host/node_modules`.
 - `server/compose.yaml` names no course. Its paths come from a gitignored `server/.env`; copy
   `server/compose.example.env` to start one. It runs Postgres (`postgres:18.7`, pinned by digest)
   with its data in the named volume `postgres`; `docker compose down -v` deletes the record.
