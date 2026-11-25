@@ -528,6 +528,30 @@ describe("states", () => {
 })
 
 describe("layout", () => {
+  test("the timeline spans the section above today's detail, at a readable size, every label inside it", async () => {
+    const p = await open(await context(partway, { width: 1440, height: 900 }))
+    const timeline = main(p).locator("[data-timeline]")
+    await timeline.waitFor()
+    const section = await main(p)
+      .locator("section[aria-labelledby=home-since]")
+      .boundingBox()
+    const card = await timeline.boundingBox()
+    const detail = await main(p).locator("[data-since]").boundingBox()
+    expect(card!.width).toBeGreaterThan(section!.width - 2)
+    expect(detail!.y).toBeGreaterThan(card!.y + card!.height - 1)
+    const svg = await timeline
+      .locator("svg[aria-label^='Days you studied']")
+      .boundingBox()
+    const labels = timeline.locator("svg[aria-label^='Days you studied'] text")
+    for (let i = 0; i < (await labels.count()); i++) {
+      const b = (await labels.nth(i).boundingBox())!
+      expect(b.x).toBeGreaterThanOrEqual(svg!.x)
+      expect(b.x + b.width).toBeLessThanOrEqual(svg!.x + svg!.width + 0.5)
+      expect(b.height).toBeGreaterThanOrEqual(12)
+    }
+    await close(p.context())
+  })
+
   test("never scrolls sideways, from a phone to a wide screen", async () => {
     for (const viewport of [
       { width: 390, height: 844 },

@@ -437,64 +437,62 @@ function SinceLastTime({
       <h2 id="home-since" className={`${heading} text-2xl 2xl:text-3xl`}>
         Since you were last here
       </h2>
-      <div className="grid items-start gap-6 lg:grid-cols-12">
-        <div className="lg:col-span-7" data-since>
-          {sel.kind === "today" ? (
-            <Today
-              feedback={feedback}
-              review={review}
-              retryFeedback={retryFeedback}
-              retryReview={retryReview}
-              answerAt={answerAt}
-            />
-          ) : (
-            <Day mark={sel} />
-          )}
-        </div>
-        <div className="lg:col-span-5">
-          {activity.kind === "loading" && (
-            <Skeleton className="h-56 w-full rounded-xl" />
-          )}
-          {activity.kind === "failed" && (
-            <Failed
-              title="Your timeline could not be loaded"
-              reason={activity.reason}
-              retry={retryActivity}
-            />
-          )}
-          {activity.kind === "ready" && (
-            <Card className="lg:sticky lg:top-20" data-timeline>
-              <CardHeader>
-                <CardTitle>
-                  {studiedDays === 0
-                    ? "Your timeline starts with your first lesson"
-                    : `You studied on ${studiedDays} of the last ${activity.data.days} days`}
-                </CardTitle>
-                <CardDescription>
-                  Every mark opens. Today is open now.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-3">
-                <Timeline
-                  activity={activity.data}
-                  selected={markKey(sel)}
-                  onSelect={setSel}
-                />
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <TimelineLegend />
-                  <span data-key-hint className="flex items-center gap-1.5">
-                    <KbdGroup>
-                      <Kbd>[</Kbd>
-                      <Kbd>]</Kbd>
-                    </KbdGroup>
-                    earlier, later
-                    <Kbd>t</Kbd> today
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
+      <div>
+        {activity.kind === "loading" && (
+          <Skeleton className="h-56 w-full rounded-xl" />
+        )}
+        {activity.kind === "failed" && (
+          <Failed
+            title="Your timeline could not be loaded"
+            reason={activity.reason}
+            retry={retryActivity}
+          />
+        )}
+        {activity.kind === "ready" && (
+          <Card data-timeline>
+            <CardHeader>
+              <CardTitle>
+                {studiedDays === 0
+                  ? "Your timeline starts with your first lesson"
+                  : `You studied on ${studiedDays} of the last ${activity.data.days} days`}
+              </CardTitle>
+              <CardDescription>
+                Every mark opens its day below. Today is open now.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              <Timeline
+                activity={activity.data}
+                selected={markKey(sel)}
+                onSelect={setSel}
+              />
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                <TimelineLegend />
+                <span data-key-hint className="flex items-center gap-1.5">
+                  <KbdGroup>
+                    <Kbd>[</Kbd>
+                    <Kbd>]</Kbd>
+                  </KbdGroup>
+                  earlier, later
+                  <Kbd>t</Kbd> today
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+      <div data-since>
+        {sel.kind === "today" ? (
+          <Today
+            feedback={feedback}
+            review={review}
+            retryFeedback={retryFeedback}
+            retryReview={retryReview}
+            answerAt={answerAt}
+          />
+        ) : (
+          <Day mark={sel} />
+        )}
       </div>
     </section>
   )

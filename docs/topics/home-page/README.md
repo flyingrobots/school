@@ -28,8 +28,13 @@ others, and checks every reply with Zod (`web/src/lib/home-api.ts`) before showi
    cards, each with its question, teaser, figure (or a book icon), course and place, linking to the
    lesson. The lesson the learner is partway through (resume's `continue`) comes first, marked
    "You're partway".
-3. **Since you were last here**: two columns from `lg`, one on a phone.
-   - **On the left**, today's letter: the newest feedback (`GET /api/feedback`), titled "Your
+3. **Since you were last here**: one column at every width.
+   - **First**, the timeline, as wide as the page and drawn at that width so its labels stay one size (`GET /api/activity?days=14`): a lane per course, a dot per day
+     studied in the last 14 days, and a ring per day questions come back in the next 14, larger for
+     more. A course with neither says "not started yet". The heading counts the days studied in
+     words. Every mark is a button: a past day opens "You studied on <day>" below it, in the letter's place, a
+     ring opens how many questions come back that day and why. Today opens the letter again.
+   - **Below it**, today's letter: the newest feedback (`GET /api/feedback`), titled "Your
      explanation of <lesson>", with its prompt, the grader's summary, each criterion as a word
      (Meets, Partly, Not yet; never a score) with its note, a robot badge naming who graded it, and
      **Write a new draft**, linking to the explanation in its lesson. Then **Ready for another
@@ -37,11 +42,6 @@ others, and checks every reply with Zod (`web/src/lib/home-api.ts`) before showi
      answered, an ⓘ button that answers "Why am I being asked this?" on hover or tap, and
      **Answer**, which opens the next lesson ahead in its course, where the question comes back.
      When there is neither, it says "Nothing new since you were last here".
-   - **On the right**, the timeline (`GET /api/activity?days=14`): a lane per course, a dot per day
-     studied in the last 14 days, and a ring per day questions come back in the next 14, larger for
-     more. A course with neither says "not started yet". The heading counts the days studied in
-     words. Every mark is a button: a past day opens "You studied on <day>" in the letter's place, a
-     ring opens how many questions come back that day and why. Today opens the letter again.
 
 ## Keys
 
