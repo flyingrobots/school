@@ -112,6 +112,14 @@ Practical notes for anyone — human or agent — changing the framework.
   A server file that is not TypeScript still needs adding explicitly.
 - Typecheck the bridge with `bunx tsc -p bridge` after `bun install` in `host/`: the bridge has
   no packages of its own and takes Bun's types from `host/node_modules`.
+- `server/schema/school.graphql` describes the port shapes in `server/core/model.ts` for Wesley
+  (RFC 3 §5). `server/schema/check.ts` asserts, at compile time under `bunx tsc -p server`, that
+  each type Wesley generates equals the `z.infer` of its hand-written schema, so the two cannot
+  drift. The Zod stays the source of runtime validation. Change both together, then regenerate
+  with Wesley `0.3.0-alpha.4` (`bfff0f9a557d1061140ea9a40fdba13a01c7ccfe`) from a Wesley checkout:
+  `cargo run --locked --bin wesley -- emit typescript --schema <school>/server/schema/school.graphql
+  --out <school>/server/schema/school.generated.ts --metadata-out <school>/server/schema/school.metadata.json`.
+  Never edit the generated file by hand. CI needs no Rust: it checks the committed output.
 - `server/compose.yaml` names no course. Its paths come from a gitignored `server/.env`; copy
   `server/compose.example.env` to start one. It runs Postgres (`postgres:18.7`, pinned by digest)
   with its data in the named volume `postgres`; `docker compose down -v` deletes the record.
