@@ -17,6 +17,7 @@ import { CourseFileError, readCourseFile } from "./course-file.ts";
 import { allowedHosts, hostAllowed } from "./hosts.ts";
 import { withSecretFiles } from "./secrets.ts";
 import { agentOrder, agentTest } from "./agents.ts";
+import { feedbackSpeech, lessonSpeech, SEGMENT, SpeakRequest, toSpeech, UTTERANCE } from "./speak.ts";
 
 let config;
 let bridgeCfg;
@@ -298,6 +299,33 @@ async function feedbackJson(): Promise<Response> {
   }, 200, { "cache-control": "no-store" });
 }
 
+// ---- Reading aloud (flyingrobots/school#175) ----------------------------------------------------
+
+/** Why School cannot read aloud without a bridge, in words. */
+const noSpeech = () => unpaired(bridgeNow()) ? `School cannot read aloud: ${UNPAIRED}`
+  : "Reading aloud goes through the bridge, and no bridge is connected yet; connect one in Settings.";
+
+/** POST /api/speak: the server builds the text, from a lesson as written or the latest feedback, and hands it to the bridge. */
+async function speakJson(body: unknown): Promise<Response> {
+  const r = SpeakRequest.safeParse(body);
+  if (!r.success) return json({ status: "invalid", error: 'send { "course": ..., "lesson": ... } or { "feedback": true }' }, 400);
+  let text: string;
+  if ("feedback" in r.data) {
+    const f = await school.latestFeedback();
+    if (f === null) return json({ status: "none", error: "There is no feedback to read yet." }, 404);
+    const c = served.find((x) => x.name === f.course);
+    const page = c === undefined ? undefined : readablePages(c).find((p) => p.id === f.lesson);
+    text = feedbackSpeech({ lessonTitle: page?.title ?? f.lesson, prompt: f.prompt, findings: f.findings });
+  } else {
+    const { course: name, lesson: id } = r.data;
+    const c = served.find((x) => x.name === name);
+    const page = c === undefined ? undefined : readablePages(c).find((p) => p.id === id);
+    if (page === undefined) return json({ status: "not found", error: "no such lesson" }, 404);
+    text = lessonSpeech(page);
+  }
+  return toSpeech(currentBridge(), noSpeech(), "POST", "/speak", { body: { text } });
+}
+
 /** The questions due for review now, across served courses, each with where it lives and why it's back. */
 async function reviewJson(): Promise<Response> {
   const due = await Promise.all(served.map(async (c) => {
@@ -525,6 +553,12 @@ const http = Bun.serve({
       const r = await toBridge(currentBridge(), "POST", "/test", t);
       return json(r.body, r.status);
     }
+    if (req.method === "POST" && pathname === "/api/speak") return speakJson(await readJson(req));
+    const cancel = /^\/api\/speak\/([^/]+)\/cancel$/.exec(pathname);
+    if (req.method === "POST" && cancel !== null) {
+      if (!UTTERANCE.test(cancel[1]!)) return json({ status: "invalid", error: "not an utterance id" }, 400);
+      return toSpeech(currentBridge(), noSpeech(), "POST", `/speak/${cancel[1]}/cancel`);
+    }
     if (req.method === "POST" && pathname === "/api/view") {
       const v = ViewEvent.safeParse(await readJson(req));
       if (!v.success) return new Response("Bad view", { status: 400 });
@@ -543,6 +577,14 @@ const http = Bun.serve({
     if (pathname === "/api/settings/agents") {
       const r = await toBridge(currentBridge(), "GET", "/config");
       return json(r.body, r.status);
+    }
+    // Reading aloud's progress and audio, through the bridge, with the server's token (flyingrobots/school#175).
+    const speakPath = /^\/api\/speak\/([^/]+)(?:\/segments\/([^/]+))?$/.exec(pathname);
+    if (speakPath !== null) {
+      const [, id, n] = speakPath;
+      if (!UTTERANCE.test(id!) || (n !== undefined && !SEGMENT.test(n))) return json({ status: "invalid", error: "not an utterance or a segment" }, 400);
+      return n === undefined ? toSpeech(currentBridge(), noSpeech(), "GET", `/speak/${id}`)
+        : toSpeech(currentBridge(), noSpeech(), "GET", `/speak/${id}/segments/${n}`, { range: req.headers.get("range") });
     }
     // A submission's aid, derived by the record's order (RFC 2 §3): what a reader of the record sees.
     const aidPath = /^\/api\/aid\/([^/]+)$/.exec(pathname);
