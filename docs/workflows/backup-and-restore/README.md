@@ -102,6 +102,9 @@ chmod 600 school-20261123T041319Z.dump
 
 The copy holds the learner's whole record. Keep it as private as the record.
 
+Take one before renaming a course in the record, too (docs/topics/migrate-job, "Renaming a
+course"): the rename rewrites which course every encounter, view and decision note is filed under.
+
 ## 4. Drill a restore
 
 A drill restores a dump beside the live database, checks that it holds the same record, and leaves

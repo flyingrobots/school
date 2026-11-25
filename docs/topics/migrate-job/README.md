@@ -131,21 +131,39 @@ To check a run in a script, read the last line and its `event`, for example with
 
 A course's name files the learner's progress in the record: every encounter, view and decision
 note names its course. A deployment names its main course after the folder it is mounted at
-(`/course`, so `course`) unless `SCHOOL_COURSES` names it. To rename one, back up first
-(docs/workflows/backup-and-restore), then:
+(`/course`, so `course`) unless `SCHOOL_COURSES` names it. Renaming one changes where that progress
+is filed, so School must be stopped while it happens: a running server goes on writing under the
+name it started with. From `server/`:
 
-```text
-docker compose run --rm migrate bun migrate.ts --rename-course course=aion
-```
+1. Stop School, leaving the database up: `../school compose stop school`.
+2. Take a backup and copy it out (docs/workflows/backup-and-restore, steps 2 and 3).
+3. Rename: `../school compose run --rm migrate bun migrate.ts --rename-course course=aion`. It
+   prints `start`, `renamed` with the rows moved per table, then `done`.
+4. Name the course in `server/.env`: `SCHOOL_COMPOSE_COURSE=` (empty) and
+   `SCHOOL_COURSES=aion=/course,...` with any other courses.
+5. Start School again: `../school up`.
 
-and point the configuration at the new name (`SCHOOL_COURSE=` and `SCHOOL_COURSES=aion=/course,...`
-in `server/.env`) before `./school up`. The rename (`server/db/rename-course.ts`) is one transaction,
-as `school_owner`, under the job's lock. It refuses a name that is not lowercase letters, digits and
-hyphens, a `<from>` the record has nothing for, and a `<to>` it already has, since that would merge
-two courses. It lifts the append-only trigger on those three tables only inside the transaction,
-and commits only if every record table's row count is unchanged and every trigger is enabled again.
+The rename (`server/db/rename-course.ts`) is one transaction, as `school_owner`, holding both of the
+migrate job's advisory locks, so it waits for a migration run and none starts during it. It refuses:
+
+- while any `school_app` session is open on the database ("stop it first");
+- a name config would refuse: not a lowercase letter or digit followed by lowercase letters, digits
+  and hyphens, or a reserved name (`api`, `assets`, `courses`, `lessons`, `reference`); this one
+  before anything runs, as a usage error, exit 2;
+- a `<from>` the record has nothing for;
+- a `<to>` it already has, since that would merge two courses.
+
+Before checking anything it locks every record table against writes until it commits. It lifts the
+append-only trigger on the three tables that name a course only inside the transaction, and commits
+only if every record table's row count is unchanged, every trigger is enabled again and no row names
+`<from>`. A refusal or failure rolls all of it back, triggers included, and exits 1 with the reason.
 Snapshots hold page content and name no course, so they are not touched. Links to the old course's
 lessons stop working.
+
+If it refused because `<to>` already has rows, nothing changed: find out where those rows came from
+before choosing another name. To check the outcome, compare each table's count per course before and
+after (`SELECT course, count(*) FROM school.encounters GROUP BY 1`, and the same for `views` and
+`decision_notes`), through `../school compose exec postgres psql -U postgres -d school`.
 
 ## What the contract cannot cover
 

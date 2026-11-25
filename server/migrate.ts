@@ -25,6 +25,7 @@
 // scrubbed of all of them.
 import { join } from "node:path";
 import { APP, migrateRecord, redact, renameRecordCourse } from "./adapters/database.ts";
+import { badCourseName } from "./db/rename-course.ts";
 import { jsonLines, loadSchemas } from "./jsonl.ts";
 import { withPassword, withSecretFiles } from "./secrets.ts";
 
@@ -37,7 +38,7 @@ const OPTIONS = [
   { flags: ["--help", "-h"], description: "Print this help and the schema of every message type, then exit 0. Reads no setting and touches no database." },
   { flags: ["--schema"], description: "Print every published message schema, then exit 0. Reads no setting and touches no database." },
   { flags: ["--human", "--humanize"], description: "Print prose instead of JSON Lines. Nothing else switches the format." },
-  { flags: ["--rename-course <from>=<to>"], description: "After the migrations, rename course <from> to <to> in the record, in one transaction that keeps every row (flyingrobots/school#174). Refused if the record has nothing for <from>, or already has <to>. Take a backup first." },
+  { flags: ["--rename-course <from>=<to>"], description: "After the migrations, rename course <from> to <to> in the record, in one transaction that keeps every row (flyingrobots/school#174). Refused while School is connected, if the record has nothing for <from>, or if it already has <to>. Stop School and take a backup first." },
 ];
 const ENVIRONMENT = [
   { name: "SCHOOL_MIGRATE_URL", description: "The owner's or superuser's postgres:// URL; the role must be able to create roles." },
@@ -104,7 +105,11 @@ for (let i = 0; i < args.length; i++) {
   if (args[i] !== "--rename-course") { rest.push(args[i]!); continue; }
   const pair = /^([^=]+)=([^=]+)$/.exec(args[i + 1] ?? "");
   if (rename !== null || pair === null) fail("usage", 2, `--rename-course takes one <from>=<to> pair, once; usage: ${USAGE}`);
-  rename = { from: pair[1]!, to: pair[2]! };
+  for (const n of [pair![1]!, pair![2]!]) {
+    const bad = badCourseName(n);
+    if (bad !== null) fail("usage", 2, `--rename-course: ${bad}`);
+  }
+  rename = { from: pair![1]!, to: pair![2]! };
   i++;
 }
 const unknown = rest.filter((a) => !["--help", "-h", "--schema", "--human", "--humanize"].includes(a));

@@ -97,7 +97,8 @@ describe("renameCourse", () => {
   test("refuses a bad name, a course with no record, and a name that already has one, changing nothing", async () => {
     const db = await populated();
     const before = await snapshot(db);
-    expect(await error(renameCourse(db, "course", "Not A Name"))).toBe('"Not A Name" is not a course name: lowercase letters, digits and hyphens');
+    expect(await error(renameCourse(db, "course", "Not A Name"))).toBe('"Not A Name" is not a course name: a lowercase letter or digit, then lowercase letters, digits and hyphens');
+    expect(await error(renameCourse(db, "course", "api"))).toBe('"api" is reserved and cannot name a course');
     expect(await error(renameCourse(db, "course", "course"))).toBe("the course would be renamed to itself");
     expect(await error(renameCourse(db, "nothing", "aion"))).toBe('the record has nothing for course "nothing"');
     expect(await error(renameCourse(db, "course", "bells"))).toBe('the record already has course "bells"; renaming "course" to it would merge two courses');

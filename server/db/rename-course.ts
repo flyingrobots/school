@@ -1,10 +1,14 @@
 // Renaming a course in the record (flyingrobots/school#174). A course's name is how the record files
 // a learner's progress, and a deployment can change it (the folder a course is mounted at names it
-// unless SCHOOL_COURSES does). The record is append-only, so the rename is an operator's act: one
-// transaction, as school_owner, under the migrate job's lock, that lifts the append-only trigger on
-// each table that names a course, renames, restores the trigger, and checks before committing that
-// every count is unchanged and every trigger is enabled. Any failure rolls all of it back, triggers
-// included, since ALTER TABLE is transactional.
+// unless SCHOOL_COURSES does). The record is append-only, so the rename is an operator's act, with
+// School stopped: it refuses while any school_app session is open, because a running server would
+// go on writing under the old name. It is one transaction, as school_owner, holding both of the
+// migrate job's advisory locks (the runner's and the role step's), that first locks every record
+// table against writes, then checks, lifts the append-only trigger on each table that names a
+// course, renames, restores the trigger, and checks before committing that every count is unchanged
+// and every trigger is enabled. Any failure rolls all of it back, triggers included, since ALTER
+// TABLE is transactional.
+import { NAME, RESERVED } from "../config.ts";
 import type { Connection } from "./migrate.ts";
 import { OWNER } from "./migrate.ts";
 
@@ -12,14 +16,19 @@ import { OWNER } from "./migrate.ts";
 export const COURSE_TABLES = ["encounters", "views", "decision_notes"] as const;
 const RECORD_TABLES = ["snapshots", "encounters", "answers", "explanations", "gradings", "views", "exposures", "decision_notes"] as const;
 
-/** The names config.ts accepts for a course. */
-const NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-
 export type Renamed = { from: string; to: string; rows: Record<(typeof COURSE_TABLES)[number], number> };
+
+/** Why `name` cannot name a course, by the rules config.ts applies, or null if it can. */
+export function badCourseName(name: string): string | null {
+  if (!NAME.test(name)) return `${JSON.stringify(name)} is not a course name: a lowercase letter or digit, then lowercase letters, digits and hyphens`;
+  if ((RESERVED as readonly string[]).includes(name)) return `${JSON.stringify(name)} is reserved and cannot name a course`;
+  return null;
+}
 
 export async function renameCourse(db: Connection, from: string, to: string): Promise<Renamed> {
   for (const n of [from, to]) {
-    if (!NAME.test(n)) throw new Error(`${JSON.stringify(n)} is not a course name: lowercase letters, digits and hyphens`);
+    const bad = badCourseName(n);
+    if (bad !== null) throw new Error(bad);
   }
   if (from === to) throw new Error("the course would be renamed to itself");
   const count = async (sql: string, params: unknown[] = []) => Number((await db.query<{ n: number }>(sql, params)).rows[0]!.n);
@@ -36,8 +45,15 @@ export async function renameCourse(db: Connection, from: string, to: string): Pr
 
   await db.exec("BEGIN");
   try {
+    await db.exec("SELECT pg_advisory_xact_lock(hashtext('school.schema_migrations'))");
     await db.exec("SELECT pg_advisory_xact_lock(hashtext('school.migrate_job'))");
+    const sessions = await count("SELECT count(*)::int AS n FROM pg_stat_activity WHERE usename = 'school_app' AND datname = current_database()");
+    if (sessions > 0) {
+      throw new Error(`School is connected to the record (${sessions} school_app session${sessions === 1 ? "" : "s"}); stop it first: ./school compose stop school`);
+    }
     await db.exec(`SET LOCAL ROLE ${OWNER}`);
+    // Writes wait from here until COMMIT, so nothing lands between the checks and the rename.
+    await db.exec(`LOCK TABLE ${RECORD_TABLES.map((t) => `school.${t}`).join(", ")} IN EXCLUSIVE MODE`);
     if ((await named(from)) === 0) throw new Error(`the record has nothing for course ${JSON.stringify(from)}`);
     if ((await named(to)) > 0) {
       throw new Error(`the record already has course ${JSON.stringify(to)}; renaming ${JSON.stringify(from)} to it would merge two courses`);

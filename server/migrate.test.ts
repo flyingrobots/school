@@ -11,8 +11,9 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import Ajv2020 from "ajv/dist/2020";
-import { scratchPostgres, TEST_APP_PASSWORD, TEST_POSTGRES_URL as URL_ } from "./testing/postgres.ts";
+import { appUrl, scratchPostgres, TEST_APP_PASSWORD, TEST_POSTGRES_URL as URL_ } from "./testing/postgres.ts";
 import { readMigrations } from "./db/migrate.ts";
+import { renameRecordCourse } from "./adapters/database.ts";
 
 const SLOW = 30_000;
 const MIGRATE = join(import.meta.dir, "migrate.ts");
@@ -126,7 +127,8 @@ describe("the migrate command without a database", () => {
 
   test("--rename-course without a from=to pair is a usage error line on stderr, exit 2", async () => {
     const env = { SCHOOL_MIGRATE_URL: "postgres://nobody@127.0.0.1:1/none", SCHOOL_APP_PASSWORD: "a".repeat(24) };
-    for (const args of [["--rename-course"], ["--rename-course", "course"], ["--rename-course", "=aion"], ["--rename-course", "a=b", "--rename-course", "c=d"]]) {
+    for (const args of [["--rename-course"], ["--rename-course", "course"], ["--rename-course", "=aion"], ["--rename-course", "a=b", "--rename-course", "c=d"],
+      ["--rename-course", "course=Not A Name"], ["--rename-course", "course=api"]]) {
       const r = await run(args, env);
       expect({ args, code: r.code, stdout: r.stdout }).toEqual({ args, code: 2, stdout: "" });
       const err = validated(r.stderr);
@@ -233,6 +235,46 @@ describe.skipIf(URL_ === undefined)("the migrate command on a real Postgres thro
       expect(validated(again.stderr).at(-1)).toMatchObject({ error: "failed", message: 'the record has nothing for course "course"' });
     } finally {
       await db.close();
+    }
+  }, SLOW);
+
+  test("--rename-course refuses while School is connected, and changes nothing", async () => {
+    const url = await database();
+    const env = { SCHOOL_MIGRATE_URL: url, SCHOOL_APP_PASSWORD: TEST_APP_PASSWORD };
+    expect((await run([], env)).code).toBe(0);
+    const owner = new Bun.SQL(url);
+    const app = new Bun.SQL(appUrl(url));
+    try {
+      await owner.unsafe(`INSERT INTO school.views (course, lesson, at) VALUES ('course', 'l1', now())`);
+      await app.unsafe("SELECT 1");
+      const r = await run(["--rename-course", "course=aion"], env);
+      expect(r.code).toBe(1);
+      const last = validated(r.stderr).at(-1)!;
+      expect(last).toMatchObject({ error: "failed" });
+      expect(String(last.message)).toMatch(/^School is connected to the record \(\d+ school_app sessions?\); stop it first: \.\/school compose stop school$/);
+      expect(await owner.unsafe("SELECT course FROM school.views")).toEqual([{ course: "course" }]);
+    } finally {
+      await app.close();
+      await owner.close();
+    }
+  }, SLOW);
+
+  test("the rename itself waits for a migration run holding the runner's lock", async () => {
+    const url = await database();
+    expect((await run([], { SCHOOL_MIGRATE_URL: url, SCHOOL_APP_PASSWORD: TEST_APP_PASSWORD })).code).toBe(0);
+    const owner = new Bun.SQL(url);
+    try {
+      await owner.unsafe(`INSERT INTO school.views (course, lesson, at) VALUES ('course', 'l1', now())`);
+      const held = await owner.reserve();
+      await held.unsafe("SELECT pg_advisory_lock(hashtext('school.schema_migrations'))");
+      const renaming = renameRecordCourse(url, "course", "aion");
+      const early = await Promise.race([renaming.then(() => "done"), Bun.sleep(1500).then(() => "waiting")]);
+      await held.unsafe("SELECT pg_advisory_unlock(hashtext('school.schema_migrations'))");
+      held.release();
+      expect(early).toBe("waiting");
+      expect((await renaming).rows.views).toBe(1);
+    } finally {
+      await owner.close();
     }
   }, SLOW);
 
