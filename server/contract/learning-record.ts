@@ -164,24 +164,22 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
   });
 
   // Since the learner was last here (flyingrobots/school#165).
-  t("study days are the local days with an opening, answer, explanation or view, per course, in the window", async (r) => {
+  t("study days are the local days with an answer or a saved explanation, per course, in the window (flyingrobots/school#177)", async (r) => {
     const DAY = 24 * 3600 * 1000;
-    expect(await r.studyDays({ from: at(-DAY), to: at(3 * DAY), tz: "UTC" })).toEqual([]);
+    expect(await r.studyDays({ from: at(-DAY), to: at(4 * DAY), tz: "UTC" })).toEqual([]);
     const page = lesson("l1", [quiz("q1"), explain]);
     const e = await r.openEncounter({ course: "c", lesson: "l1", aidTracking: null, page, now: at(0) }); // 21 Nov, 10:00 UTC
     await r.submit({ submissionId: uuid(), encounterId: e.id, blockId: "q1", choiceId: "wrong", ms: 1 }, at(90 * 60_000)); // 11:30 UTC
     await r.saveExplanation({ submissionId: uuid(), encounterId: e.id, blockId: "e1", text: "Because.", ms: 1 }, at(DAY)); // 22 Nov
-    await r.recordView({ course: "d", lesson: "x" }, at(2 * DAY)); // 23 Nov
-    expect(await r.studyDays({ from: at(-DAY), to: at(3 * DAY), tz: "UTC" })).toEqual([
-      { course: "c", day: "2026-11-21" },
-      { course: "c", day: "2026-11-22" },
-      { course: "d", day: "2026-11-23" },
-    ]);
-    // In Auckland (UTC+13), the answer at 11:30 UTC falls on the 22nd, beside the opening on the 21st.
-    expect(await r.studyDays({ from: at(-DAY), to: at(DAY / 2), tz: "Pacific/Auckland" })).toEqual([
+    // A visit is not study: a view on the 23rd, and a lesson opened on the 24th with nothing answered.
+    await r.recordView({ course: "d", lesson: "x" }, at(2 * DAY));
+    await r.openEncounter({ course: "d", lesson: "x", aidTracking: null, page: lesson("x", [quiz("q1")]), now: at(3 * DAY) });
+    expect(await r.studyDays({ from: at(-DAY), to: at(4 * DAY), tz: "UTC" })).toEqual([
       { course: "c", day: "2026-11-21" },
       { course: "c", day: "2026-11-22" },
     ]);
+    // In Auckland (UTC+13) the answer at 11:30 UTC falls on the 22nd; the opening on the 21st is no study.
+    expect(await r.studyDays({ from: at(-DAY), to: at(DAY / 2), tz: "Pacific/Auckland" })).toEqual([{ course: "c", day: "2026-11-22" }]);
     // The window is half-open: [from, to).
     expect(await r.studyDays({ from: at(DAY), to: at(2 * DAY), tz: "UTC" })).toEqual([{ course: "c", day: "2026-11-22" }]);
   });

@@ -171,7 +171,7 @@ contract suite holds every driver under it to the same behaviour.
 
 The record is Postgres, built by the numbered migrations in `server/db/migrations/` (`0001_init.sql`,
 `0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_read_committed.sql`,
-`0006_due_review.sql`, `0007_since_last_here.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
+`0006_due_review.sql`, `0007_since_last_here.sql`, `0008_study_days.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -284,8 +284,10 @@ from migration 0003, ordered by `seq`. The core's `resumeFrom` (`server/core/sch
 and the courses as served into `GET /api/resume`.
 
 What happened since the learner was last here comes from two more read-only functions in migration
-0007 (flyingrobots/school#165). `school.study_days(from, to, tz)` is each course's local days, in
-time zone `tz`, with any of that same activity in `[from, to)`; the port's `studyDays`.
+0007 (flyingrobots/school#165). `school.study_days(from, to, tz)` is each course's local study days, in
+time zone `tz`, in `[from, to)`; the port's `studyDays`. Since migration 0008
+(flyingrobots/school#177) only an answer or a saved explanation makes a study day; an encounter opened
+or a view is a visit, and still counts for `last_studied`.
 `school.latest_feedback()` is the succeeded grading with the highest `seq` and where its explanation
 was written; the port's `latestFeedback`. A failed attempt is never feedback.
 

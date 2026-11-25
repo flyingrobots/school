@@ -51,6 +51,8 @@ Entries are tagged:
 
 **Objective item** *(School)* — A question with a declared correct answer: multiple choice and anything else checkable by comparison. Graded by the server, deterministically, with no model involved and no delay.
 
+<a id="study-day"></a>**Study day** *(School)* — A calendar day, in the learner's time zone, on which they answered at least one quiz question or saved an explanation, in any course. Opening a lesson or reading a page is a visit, not study. One answer is enough: there is no minimum, so any honest effort counts. Spacing is measured in study days, not sessions. The home timeline counts them (`school.study_days`, migration 0008), and so does the real-use gate (flyingrobots/school#30). Decided 2026-11-24 (flyingrobots/school#177).
+
 **Subjective item** *(School)* — A write-in or an explanation, with no declared answer, that needs reasoning to assess. Graded by an agent through the bridge.
 
 **Server grading** and **model grading** *(School)* — The two kinds of judgment, kept apart because they carry different authority. Comparing an answer against a declared one is not the same kind of evidence as a model's opinion of an explanation, and the record must never conflate them.
