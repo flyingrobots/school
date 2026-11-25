@@ -1,0 +1,306 @@
+# School's port shapes, declared once (RFC 3, §5; flyingrobots/school#182).
+#
+# Each type here mirrors a hand-written Zod schema in server/core/model.ts. Wesley compiles this
+# file to server/schema/school.generated.ts, and server/schema/check.ts asserts at compile time
+# that each generated type equals the z.infer of its schema, so `bunx tsc -p server` fails when
+# they disagree. Shapes SDL cannot state faithfully are left out and listed in check.ts.
+#
+# Conventions, because GraphQL has no literal types:
+#   * A discriminator such as `type: "quiz"` or `status: "conflict"` is a one-value enum.
+#   * Output (`type`) declarations are used even for request bodies: a nullable field of a GraphQL
+#     `input` may be omitted, but a Zod `.nullable()` field must be present.
+#   * Strings carry no constraints here (uuid, length, pattern, trim); Zod still enforces them.
+
+# ---- Lesson content ----------------------------------------------------------------------------
+
+type Choice {
+  id: String!
+  text: String!
+  correct: Boolean!
+}
+
+type Source {
+  id: String!
+  title: String!
+  text: String!
+}
+
+enum ProseType { prose }
+enum CardType { card }
+enum QuoteType { quote }
+enum AsideType { aside }
+enum QuizType { quiz }
+enum ExplainType { explain }
+
+type ProseBlock {
+  type: ProseType!
+  id: String!
+  html: String!
+}
+
+type CardBlock {
+  type: CardType!
+  id: String!
+  html: String!
+}
+
+type QuoteBlock {
+  type: QuoteType!
+  id: String!
+  html: String!
+}
+
+type AsideBlock {
+  type: AsideType!
+  id: String!
+  html: String!
+}
+
+type QuizBlock {
+  type: QuizType!
+  id: String!
+  q: String!
+  choices: [Choice!]!
+  why: String!
+}
+
+type ExplainBlock {
+  type: ExplainType!
+  id: String!
+  prompt: String!
+  model: String!
+  sources: [Source!]!
+}
+
+# ---- What the learner sends --------------------------------------------------------------------
+
+type Submission {
+  submissionId: String!
+  encounterId: String!
+  blockId: String!
+  choiceId: String!
+  ms: Int!
+}
+
+type ExplanationSubmission {
+  submissionId: String!
+  encounterId: String!
+  blockId: String!
+  ms: Int!
+  text: String!
+}
+
+type ViewEvent {
+  course: String!
+  lesson: String!
+}
+
+type GradeRequest {
+  submissionId: String!
+}
+
+type AidRequest {
+  submissionId: String!
+}
+
+# ---- What the record answers -------------------------------------------------------------------
+
+enum StoreStatus { stored duplicate conflict rejected }
+
+type ExposureResult {
+  status: StoreStatus!
+}
+
+type SaveResult {
+  status: StoreStatus!
+}
+
+type Encounter {
+  id: String!
+  hash: String!
+  resumed: Boolean!
+}
+
+enum SubmitAcceptedStatus { stored duplicate }
+enum SubmitConflictStatus { conflict }
+enum SubmitRejectedStatus { rejected }
+
+type SubmitAccepted {
+  status: SubmitAcceptedStatus!
+  correct: Boolean!
+  firstTry: Boolean!
+}
+
+type SubmitConflict {
+  status: SubmitConflictStatus!
+}
+
+type SubmitRejected {
+  status: SubmitRejectedStatus!
+}
+
+union SubmitResult = SubmitAccepted | SubmitConflict | SubmitRejected
+
+type Recorded {
+  blockId: String!
+  choiceId: String!
+  correct: Boolean!
+}
+
+type LastStudied {
+  course: String!
+  lesson: String!
+  at: String!
+}
+
+type StudyDay {
+  course: String!
+  day: String!
+}
+
+# ---- Grading -----------------------------------------------------------------------------------
+
+enum Verdict { meets partly misses }
+
+type Criterion {
+  verdict: Verdict!
+  note: String!
+}
+
+type Contradiction {
+  source_id: String!
+  quote: String!
+  note: String!
+}
+
+type Findings {
+  insufficient_evidence: Boolean!
+  fidelity: Criterion!
+  completeness: Criterion!
+  accessibility: Criterion!
+  contradictions: [Contradiction!]!
+  summary: String!
+}
+
+type LatestFeedback {
+  submissionId: String!
+  course: String!
+  lesson: String!
+  blockId: String!
+  model: String
+  findings: Findings!
+  at: String!
+}
+
+type CheckedContradiction {
+  source_id: String!
+  quote: String!
+  note: String!
+  quote_verified: Boolean!
+}
+
+type CheckedFindings {
+  insufficient_evidence: Boolean!
+  fidelity: Criterion!
+  completeness: Criterion!
+  accessibility: Criterion!
+  contradictions: [CheckedContradiction!]!
+  summary: String!
+}
+
+enum GradingSucceededStatus { succeeded }
+enum GradingFailedStatus { failed }
+
+type GradingSucceeded {
+  id: Int!
+  model: String
+  supersedes: Int
+  at: String!
+  status: GradingSucceededStatus!
+  findings: CheckedFindings!
+}
+
+type GradingFailed {
+  id: Int!
+  model: String
+  supersedes: Int
+  at: String!
+  status: GradingFailedStatus!
+  error: String!
+}
+
+union Grading = GradingSucceeded | GradingFailed
+
+type ExplanationState {
+  submissionId: String!
+  blockId: String!
+  text: String!
+  at: String!
+  grading: Grading
+}
+
+# ---- Decision notes ----------------------------------------------------------------------------
+
+enum EvidenceKind { encounter answer explanation grading exposure }
+
+type EvidenceRow {
+  seq: Int!
+  kind: EvidenceKind!
+  blockId: String
+}
+
+type DecisionChoice {
+  course: String!
+  lesson: String
+  blockId: String
+}
+
+type DecisionNoteInput {
+  noteId: String!
+  choice: DecisionChoice!
+  encounterId: String
+  rule: String!
+  reason: String!
+  evidence: [Int!]!
+}
+
+type DecisionNote {
+  id: String!
+  seq: Int!
+  choice: DecisionChoice!
+  encounterId: String
+  rule: String!
+  reason: String!
+  evidence: [Int!]!
+  at: String!
+}
+
+enum NoteAcceptedStatus { stored duplicate }
+enum NoteRefusedStatus { conflict rejected }
+
+type NoteAccepted {
+  status: NoteAcceptedStatus!
+  note: DecisionNote!
+}
+
+type NoteRefused {
+  status: NoteRefusedStatus!
+}
+
+union DecisionNoteResult = NoteAccepted | NoteRefused
+
+# ---- Due review --------------------------------------------------------------------------------
+
+type DueReviewQuery {
+  course: String!
+  blocks: [String!]!
+  now: String!
+  delayMs: Int!
+  limit: Int!
+}
+
+type ReviewReason {
+  blockId: String!
+  rule: String!
+  reason: String!
+}
