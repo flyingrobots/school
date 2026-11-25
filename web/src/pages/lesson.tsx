@@ -39,6 +39,7 @@ import {
   type LessonLinkProps,
 } from "@/components/lesson"
 import { Nest } from "@/components/nest"
+import { ReadAloud } from "@/components/read-aloud"
 import {
   Quiz,
   QuizAnswerError,
@@ -396,13 +397,19 @@ function Played({
       }
       renderLink={renderLink}
       actions={
-        <Button asChild variant="outline" size="lg">
-          <Link to={slides} aria-keyshortcuts="P">
-            <PresentationIcon data-icon="inline-start" />
-            Slides
-            <Kbd data-icon="inline-end">P</Kbd>
-          </Link>
-        </Button>
+        <>
+          <Button asChild variant="outline" size="lg">
+            <Link to={slides} aria-keyshortcuts="P">
+              <PresentationIcon data-icon="inline-start" />
+              Slides
+              <Kbd data-icon="inline-end">P</Kbd>
+            </Link>
+          </Button>
+          <ReadAloud
+            readKey={`lesson:${course}/${page.id}`}
+            request={{ course, lesson: page.id }}
+          />
+        </>
       }
     >
       <Blocks blocks={page.children} play={play} depth={0} />

@@ -12,7 +12,7 @@ import { publishedIn, wellFormed } from "../server/testing/schemas.ts";
 const BRIDGE = join(import.meta.dir, "bridge.ts");
 const TOKEN = "output-token-0123456789";
 const bridgeSchemas = publishedIn(join(import.meta.dir, "schemas"));
-const TYPES = ["attempt", "config.saved", "error", "help", "listening", "run.end", "run.start", "schema", "start", "test"];
+const TYPES = ["attempt", "config.saved", "error", "help", "listening", "run.end", "run.start", "schema", "speak.cancel", "speak.failed", "speak.submit", "start", "test"];
 const IDS = TYPES.map((t) => `school.bridge.${t}`);
 
 let dir = "";
@@ -98,7 +98,7 @@ describe("the bridge's output", () => {
     const out = bridgeSchemas.validated(help.stdout);
     expect(out[0]).toMatchObject({ kind: "bridge.help", command: "bridge" });
     expect((out[0]!.output as string[]).sort()).toEqual(IDS);
-    expect((out[0]!.environment as { name: string }[]).map((e) => e.name)).toEqual(["SCHOOL_BRIDGE_TOKEN", "SCHOOL_BRIDGE_CONFIG", "SCHOOL_BRIDGE_HOST", "SCHOOL_BRIDGE_PORT"]);
+    expect((out[0]!.environment as { name: string }[]).map((e) => e.name)).toEqual(["SCHOOL_BRIDGE_TOKEN", "SCHOOL_BRIDGE_CONFIG", "SCHOOL_BRIDGE_HOST", "SCHOOL_BRIDGE_PORT", "AI_TTS_SOCKET", "AI_TTS_HOME"]);
     expect(out.slice(1).map((l) => l.schema)).toEqual(bridgeSchemas.published.map((p) => p.schema) as never);
     expect(new Set(out.map((l) => l.run)).size).toBe(1);
     expect((await once(["-h"], {})).stdout.split("\n")[0]).toContain('"kind":"bridge.help"');

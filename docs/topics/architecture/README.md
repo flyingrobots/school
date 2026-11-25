@@ -96,6 +96,10 @@ JSON API.
 | GET, POST | `/api/settings/bridge` | The bridge address and token; the token is never returned except once when generated. A new address clears a saved token, and is refused (409) while the token comes from the environment |
 | GET, POST | `/api/settings/agents` | The bridge's agents as its file declares them; a POST only reorders them and switches them on or off |
 | POST | `/api/settings/agents/test` | Runs one declared agent for real |
+| POST | `/api/speak` | `{ course, lesson }` or `{ feedback: true }`, never text: the server builds the text and submits it to AI-TTS through the bridge; `{ id, state, segments }`. No bridge, or no daemon, is a 503 with the reason ([reading aloud](../reading-aloud/README.md)) |
+| GET | `/api/speak/:id` | That reading's progress, each segment ready or not |
+| GET | `/api/speak/:id/segments/:n` | One segment's WAV, with byte ranges |
+| POST | `/api/speak/:id/cancel` | Stops that reading at the daemon |
 | GET, PUT | `/api/settings/time-zone` | The time zone the learner chose, `{zone}`, or `null` for automatic; a PUT appends a choice (an IANA zone or `null`; anything else is 400) |
 | GET | `/courses/:c/reference/*`, `/<mount>/*` | Files, contained in their folder after resolving symlinks |
 
@@ -485,6 +489,10 @@ throws before the failure is stored ([flyingrobots/school#17](https://github.com
 | Local or hosted | Agents are launched locally; whether inference is local depends on the agent. A hosted CLI sends the prompt and the explanation over the network. |
 | Grading | Fidelity, completeness, accessibility, each `meets`, `partly` or `misses`, or insufficient evidence; quoted contradictions are checked to exist in the source, not to support the criticism |
 
+The bridge also reads aloud: it hands text the server built to the AI-TTS daemon on the host's
+Unix socket, for synthesis only, and serves the audio back for the browser to play
+([reading aloud](../reading-aloud/README.md)).
+
 In short: the bridge confines model work to the host and records every outcome, with one known
 gap in handling a malformed reply.
 
@@ -500,6 +508,8 @@ The bridge writes JSON Lines on stdout: one JSON object per line, each with a `k
 | `bridge.run.start`, `bridge.attempt`, `bridge.run.end` | Each `POST /run`, its attempts, and its outcome |
 | `bridge.test` | Each `POST /test` |
 | `bridge.config.saved` | Each accepted `PUT /config` |
+| `bridge.speak.submit`, `bridge.speak.cancel` | Each text submitted to AI-TTS, and each cancelled ([reading aloud](../reading-aloud/README.md)); never the text |
+| `bridge.speak.failed` | Each `/speak` request AI-TTS could not serve, `unavailable` or `refused`, with a `message` |
 | `bridge.error` | Every failure, with a `message` |
 
 A refusal to start is one `bridge.error` line and exit 2: a token under 16 characters, a port that

@@ -22,6 +22,7 @@ import { BridgeConfigError, loadConfig, runChain, type BridgeConfig } from "./ru
 import { keychainStore } from "../host/keychain.ts";
 import { accountFrom, resolveSecret } from "../host/secrets.ts";
 import { lineWriter, loadSchemas } from "../server/jsonl.ts";
+import { fileResponse, MAX_TEXT, NoSegment, NotOurs, socketPath, speech, SpeechRefused, SpeechUnavailable } from "./speech.ts";
 
 // Every line names its published schema, `school.bridge.<kind>` in bridge/schemas/, carries the
 // process's `run` id, and is scrubbed of the token (flyingrobots/school#135;
@@ -56,6 +57,9 @@ function prose(l: Record<string, any>): string {
     case "bridge.run.start": return `run ${l.id} started`;
     case "bridge.attempt": return `run ${l.id}: ${l.agent} ${l.status} in ${l.ms} ms${l.error === null ? "" : ` (${l.error})`}`;
     case "bridge.run.end": return `run ${l.id} ${l.status}${l.agent === null ? "" : ` (${l.agent})`}`;
+    case "bridge.speak.submit": return `speech ${l.id} submitted to AI-TTS: ${l.segments ?? "an unknown number of"} segments`;
+    case "bridge.speak.cancel": return `speech ${l.id} cancelled (${l.state ?? "no state"})`;
+    case "bridge.speak.failed": return `speech ${l.op} ${l.status}: ${l.message}`;
     default: return `error: ${l.message}`;
   }
 }
@@ -80,6 +84,8 @@ function prose(l: Record<string, any>): string {
         { name: "SCHOOL_BRIDGE_CONFIG", description: "The agents file, re-read on every request. Default ~/.config/school/bridge.json." },
         { name: "SCHOOL_BRIDGE_HOST", description: "The address to listen on. Default 127.0.0.1." },
         { name: "SCHOOL_BRIDGE_PORT", description: "The port to listen on; 0 lets the OS choose. Default 4748." },
+        { name: "AI_TTS_SOCKET", description: "The AI-TTS daemon's Unix socket, for reading aloud. Default $AI_TTS_HOME/ai-tts.sock." },
+        { name: "AI_TTS_HOME", description: "The AI-TTS daemon's folder, when AI_TTS_SOCKET is unset. Default ~/Library/Application Support/ai-tts." },
       ],
       exit: [
         { code: 0, meaning: "--help or --schema printed; or stopped." },
@@ -214,6 +220,57 @@ const serially = <T>(work: () => Promise<T>): Promise<T> => {
   return next;
 };
 
+// Reading aloud (flyingrobots/school#175): the AI-TTS daemon synthesizes, School's page plays. The
+// socket is resolved at each request, so starting AI-TTS after the bridge needs no restart.
+const voice = speech(() => socketPath(process.env));
+
+/** The /speak routes' answer, or null for any other path. The text is never logged. */
+async function speakRoute(req: Request, pathname: string): Promise<Response | null> {
+  const m = /^\/speak(?:\/([^/]+)(?:\/(segments\/([^/]+)|cancel))?)?$/.exec(pathname);
+  if (m === null) return null;
+  const [, id, tail, n] = m;
+  const op = id === undefined ? "submit" : tail === undefined ? "get" : tail === "cancel" ? "cancel" : "segment";
+  const allowed = op === "submit" || op === "cancel" ? "POST" : "GET";
+  if (req.method !== allowed) return json({ status: "method not allowed" }, 405);
+  try {
+    if (op === "submit") {
+      if (!isJsonRequest(req)) return json({ status: "expected application/json" }, 415);
+      const body = (await req.json().catch(() => null)) as { text?: unknown } | null;
+      const text = body?.text;
+      if (typeof text !== "string" || text.trim() === "" || text.includes("\u0000") || Buffer.byteLength(text) > MAX_TEXT) {
+        return json({ status: "invalid", error: `text must be words to speak, at most ${MAX_TEXT} bytes` }, 400);
+      }
+      const r = await voice.submit(text);
+      log("speak.submit", { id: r.id, state: r.state, segments: r.segments });
+      return json(r);
+    }
+    if (op === "get") return json(await voice.progress(id!), 200);
+    if (op === "cancel") {
+      const r = await voice.cancel(id!);
+      log("speak.cancel", { id: r.id, state: r.state });
+      return json(r);
+    }
+    if (!/^[0-9]{1,6}$/.test(n!)) return json({ status: "not found", error: "a segment is numbered from 0" }, 404);
+    // Ownership first: a foreign utterance is a 403 whatever segment is asked for.
+    const file = await voice.segmentFile(id!, Number(n));
+    return fileResponse(file, req.headers.get("range"), "audio/wav");
+  } catch (e) {
+    if (e instanceof NotOurs) return json({ status: "forbidden", error: e.message }, 403);
+    if (e instanceof NoSegment) return json({ status: e.notReady ? "not ready" : "not found", error: e.message }, e.notReady ? 409 : 404);
+    if (e instanceof SpeechUnavailable) {
+      log("speak.failed", { op, status: "unavailable", message: e.message });
+      return json({ status: "unavailable", error: e.message }, 503);
+    }
+    if (e instanceof SpeechRefused) {
+      log("speak.failed", { op, status: "refused", message: e.message });
+      return json({ status: e.type === "not_found" ? "gone" : "refused", error: e.message }, e.type === "not_found" ? 404 : 502);
+    }
+    throw e;
+  }
+}
+
+const isJsonRequest = (r: Request) => (r.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase() === "application/json";
+
 function listen(options: Parameters<typeof Bun.serve>[0]) {
   try {
     return Bun.serve(options);
@@ -326,6 +383,8 @@ const server = listen({
       log("run.end", { id, status: result.status, agent: result.status === "succeeded" ? result.agent : null });
       return json(result);
     }
+    const spoken = await speakRoute(req, pathname);
+    if (spoken !== null) return spoken;
     return json({ status: "not found" }, 404);
   },
 });

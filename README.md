@@ -94,6 +94,11 @@ What an agent may do is set by its own command: the example turns off Claude Cod
 | `SCHOOL_BRIDGE_TOKEN` | At least 16 characters, the same value the server has. Unset, the Keychain item `./school up` stores (account `school`, or `SCHOOL_KEYCHAIN_ACCOUNT`). |
 | `SCHOOL_BRIDGE_CONFIG` | Default `~/.config/school/bridge.json`. Re-read on every request. |
 | `SCHOOL_BRIDGE_HOST`, `SCHOOL_BRIDGE_PORT` | Default `127.0.0.1:4748`. Port `0` lets the OS choose; the `bridge.listening` log line gives the port. |
+| `AI_TTS_SOCKET`, `AI_TTS_HOME` | Where the AI-TTS daemon listens, for reading aloud. Default `~/Library/Application Support/ai-tts/ai-tts.sock`; `AI_TTS_HOME` replaces the folder, `AI_TTS_SOCKET` the whole path. Read at each request. |
+
+#### Reading aloud
+
+The bridge also reads lessons and the latest feedback aloud, through the AI-TTS daemon running on the same computer (version 0.2.0 or later). School's server builds the text, never the browser, and leaves out everything that would give an answer away; the bridge hands it to the daemon to synthesize only, and the browser plays the audio, so nothing plays on the host's speakers. **Read aloud** (`R`) is on every lesson and on the home page's feedback card. With no bridge, or no daemon, School says why. [Reading aloud](docs/topics/reading-aloud/README.md) has the details.
 
 The record lives in Postgres, and `SCHOOL_DATABASE_URL` says where; the server refuses to start without it. For a learner's record, use a Postgres server, as `server/compose.yaml` does: the migrate job applies the migrations as the owner and sets `school_app`'s password, and the server logs in as `school_app` (`postgres://school_app:password@host:5432/db`). `pglite:<dir>` keeps it in PGlite, a Postgres inside the server's process, for development and tests only: PGlite does not fsync, so a power cut can lose answers, and the server says so when it starts.
 
