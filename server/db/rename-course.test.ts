@@ -55,8 +55,9 @@ async function snapshot(db: PGlite) {
 }
 
 const enabled = async (db: PGlite) =>
-  (await db.query<{ tgname: string; tgenabled: string }>(
-    "SELECT tgname, tgenabled FROM pg_trigger WHERE NOT tgisinternal AND tgrelid::regclass::text LIKE 'school.%' ORDER BY 1")).rows;
+  (await db.query<{ tgname: string; tgenabled: string }>(`SELECT t.tgname, t.tgenabled FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace WHERE NOT t.tgisinternal AND n.nspname = 'school' ORDER BY 1`)).rows;
+const canLogin = async (db: PGlite) => (await db.query<{ l: boolean }>("SELECT rolcanlogin AS l FROM pg_roles WHERE rolname = 'school_app'")).rows[0]!.l;
 
 describe("renameCourse", () => {
   test("moves every row of the old course to the new name, and nothing else", async () => {
@@ -71,7 +72,22 @@ describe("renameCourse", () => {
       expect(strip(after.all[t]!)).toEqual(strip(before.all[t]!));
     }
     for (const t of ["snapshots", "answers", "explanations", "gradings", "exposures"]) expect(after.all[t]).toEqual(before.all[t]);
+    expect(triggers.length).toBe(16);
     expect(await enabled(db)).toEqual(triggers);
+  }, SLOW);
+
+  test("leaves school_app unable to log in until the next migrate run, and a refusal leaves its login as it was", async () => {
+    const db = await populated();
+    await db.exec("ALTER ROLE school_app LOGIN");
+    await error(renameCourse(db, "course", "bells"));
+    expect(await canLogin(db)).toBe(true);
+    await renameCourse(db, "course", "aion");
+    expect(await canLogin(db)).toBe(false);
+  }, SLOW);
+
+  test("accepts every name config accepts, such as a trailing or doubled hyphen", async () => {
+    const db = await populated();
+    expect((await renameCourse(db, "course", "aion--2-")).to).toBe("aion--2-");
   }, SLOW);
 
   test("the learner's progress reads under the new name, and none is left under the old", async () => {

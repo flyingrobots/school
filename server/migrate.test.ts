@@ -74,6 +74,13 @@ describe("the migrate command's schemas (server/schemas/)", () => {
     }
   });
 
+  test("the renamed line admits exactly the course names config.ts accepts", async () => {
+    const { NAME } = await import("./config.ts");
+    const renamed = published.find((p) => p.file === "school.migrate.renamed.schema.json")!.schema;
+    expect(renamed.properties.from.pattern).toBe(NAME.source);
+    expect(renamed.properties.to.pattern).toBe(NAME.source);
+  });
+
   test("a line naming a database cannot carry a user or password: `where` admits no user info", () => {
     const start = validators.get(published.find((p) => p.file === "school.migrate.start.schema.json")!.schema.$id)!;
     const base = { _schema: { id: "school.migrate.start", version: "1.0.0" }, kind: "school.migrate", event: "start",
@@ -230,11 +237,13 @@ describe.skipIf(URL_ === undefined)("the migrate command on a real Postgres thro
       expect(out[1]).toMatchObject({ from: "course", to: "aion", rows: { encounters: 0, views: 2, decision_notes: 0 } });
       expect(await db.unsafe("SELECT course, count(*)::int AS n FROM school.views GROUP BY 1 ORDER BY 1")).toEqual([
         { course: "aion", n: 2 }, { course: "bells", n: 1 }]);
+      expect(await db.unsafe("SELECT rolcanlogin AS l FROM pg_roles WHERE rolname = 'school_app'")).toEqual([{ l: false }]);
       const again = await run(["--rename-course", "course=aion"], env);
       expect(again.code).toBe(1);
       expect(validated(again.stderr).at(-1)).toMatchObject({ error: "failed", message: 'the record has nothing for course "course"' });
     } finally {
       await db.close();
+      expect((await run([], env)).code).toBe(0); // school_app may log in again, as after `./school up`
     }
   }, SLOW);
 
@@ -251,7 +260,8 @@ describe.skipIf(URL_ === undefined)("the migrate command on a real Postgres thro
       expect(r.code).toBe(1);
       const last = validated(r.stderr).at(-1)!;
       expect(last).toMatchObject({ error: "failed" });
-      expect(String(last.message)).toMatch(/^School is connected to the record \(\d+ school_app sessions?\); stop it first: \.\/school compose stop school$/);
+      expect(String(last.message)).toMatch(/^School is connected to the record \(\d+ school_app sessions?\); stop it first: \.\/school compose stop school, from the checkout$/);
+      expect(await owner.unsafe("SELECT rolcanlogin AS l FROM pg_roles WHERE rolname = 'school_app'")).toEqual([{ l: true }]);
       expect(await owner.unsafe("SELECT course FROM school.views")).toEqual([{ course: "course" }]);
     } finally {
       await app.close();
@@ -275,6 +285,7 @@ describe.skipIf(URL_ === undefined)("the migrate command on a real Postgres thro
       expect((await renaming).rows.views).toBe(1);
     } finally {
       await owner.close();
+      expect((await run([], { SCHOOL_MIGRATE_URL: url, SCHOOL_APP_PASSWORD: TEST_APP_PASSWORD })).code).toBe(0);
     }
   }, SLOW);
 

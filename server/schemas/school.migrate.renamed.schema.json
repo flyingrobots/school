@@ -41,12 +41,12 @@
     },
     "from": {
       "type": "string",
-      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
       "description": "The course name the record used."
     },
     "to": {
       "type": "string",
-      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
       "description": "The course name the record uses now."
     },
     "rows": {

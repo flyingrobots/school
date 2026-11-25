@@ -146,14 +146,19 @@ name it started with. From `server/`:
 The rename (`server/db/rename-course.ts`) is one transaction, as `school_owner`, holding both of the
 migrate job's advisory locks, so it waits for a migration run and none starts during it. It refuses:
 
-- while any `school_app` session is open on the database ("stop it first");
+- while any `school_app` session is open on the database ("stop it first"), checked after the
+  tables are locked and again just before committing;
 - a name config would refuse: not a lowercase letter or digit followed by lowercase letters, digits
   and hyphens, or a reserved name (`api`, `assets`, `courses`, `lessons`, `reference`); this one
   before anything runs, as a usage error, exit 2;
 - a `<from>` the record has nothing for;
 - a `<to>` it already has, since that would merge two courses.
 
-Before checking anything it locks every record table against writes until it commits. It lifts the
+It first takes away `school_app`'s login, then locks every record table against writes until it
+commits, and only then checks; it checks for `school_app` sessions again just before committing, so a
+School that started in between is refused rather than left writing under the old name. Committed,
+`school_app` cannot log in until the next migrate run, which `../school up` (step 5) starts with the
+new configuration; a refusal leaves its login as it was. It lifts the
 append-only trigger on the three tables that name a course only inside the transaction, and commits
 only if every record table's row count is unchanged, every trigger is enabled again and no row names
 `<from>`. A refusal or failure rolls all of it back, triggers included, and exits 1 with the reason.
