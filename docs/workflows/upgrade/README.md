@@ -98,6 +98,9 @@ prints names, never values:
 {"kind":"school.import","event":"done","ok":true,"imported":["SCHOOL_POSTGRES_PASSWORD","SCHOOL_APP_PASSWORD"]}
 ```
 
+*Recorded before flyingrobots/school#200. Each line now also carries `_schema`
+(`school.launcher.<event>`) and `run`, as in the refusal above.*
+
 That transcript is from the drill with a throwaway account, so its account read `school-test-...`.
 If `server/.env` never had `SCHOOL_APP_PASSWORD` (a deployment from before
 flyingrobots/school#91) or `SCHOOL_BRIDGE_TOKEN`, step 4 generates them. If the superuser's
@@ -144,6 +147,9 @@ migrate-1  | {"kind":"school.migrate","event":"start","where":"postgres://postgr
 migrate-1  | {"kind":"school.migrate","event":"done","ok":true,"where":"postgres://postgres:5432/school","applied":[],"role":"school_app"}
 school-1   | school: record in Postgres at postgres://postgres:5432/school as school_app
 ```
+
+*Recorded before flyingrobots/school#120: the migrate job's lines now also carry `_schema`, `run`
+and `at` ([its output](../../topics/migrate-job/README.md)).*
 
 `applied` lists the migrations this run applied; `[]` means the record was already current. A run
 that applies migrations also prints an `applied` line for each as it commits. Every line, and
@@ -243,3 +249,6 @@ $ docker compose up -d --build    # with --build: the same result
 $ docker compose exec -T postgres psql -U postgres -d school -Atc "SELECT submission_id, choice_id, first_try FROM school.answers ORDER BY seq"
 8473769c-bfcd-46da-b386-6bf824485898|a|t
 ```
+
+*Recorded before flyingrobots/school#120: the migrate job's lines now also carry `_schema`, `run`
+and `at` ([its output](../../topics/migrate-job/README.md)).*
