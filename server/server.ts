@@ -278,10 +278,16 @@ const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
  * without it a learner west of Greenwich studies "tomorrow" every evening. `null` when `tz` is
  * given and is not a zone, which the caller answers with 400.
  */
-function zoneParam(params: URLSearchParams): string | null {
+async function zoneParam(params: URLSearchParams): Promise<string | null> {
   const tz = params.get("tz");
-  if (tz === null) return zone();
-  if (!/^[A-Za-z][A-Za-z0-9_+\-]*(\/[A-Za-z0-9_+\-]+){0,2}$/.test(tz) || tz.length > 64) return null;
+  if (tz !== null && validZone(tz) === null) return null;
+  // A zone chosen in Settings wins over the browser's (flyingrobots/school#181).
+  return (await school.timeZone()) ?? (tz === null ? zone() : validZone(tz));
+}
+
+/** `tz` as Intl resolves it, when it is an IANA zone of a sane shape; otherwise null. */
+function validZone(tz: string): string | null {
+  if (tz.length > 64 || !/^[A-Za-z][A-Za-z0-9_+\-]*(\/[A-Za-z0-9_+\-]+){0,2}$/.test(tz)) return null;
   try {
     return new Intl.DateTimeFormat("en", { timeZone: tz }).resolvedOptions().timeZone;
   } catch {
@@ -318,7 +324,7 @@ async function feedbackJson(): Promise<Response> {
 
 /** The questions due for review now, across served courses, each with where it lives and why it's back. */
 async function reviewJson(params: URLSearchParams): Promise<Response> {
-  const tz = zoneParam(params);
+  const tz = await zoneParam(params);
   if (tz === null) return json(BAD_ZONE, 400);
   const due = await Promise.all(served.map(async (c) => {
     const pages = readablePages(c);
@@ -336,7 +342,7 @@ async function activityJson(params: URLSearchParams): Promise<Response> {
   const given = params.get("days");
   const days = given === null ? 14 : /^[0-9]+$/.test(given) ? Number(given) : NaN;
   if (!Number.isInteger(days) || days < 1 || days > 60) return json({ error: "days must be a whole number from 1 to 60" }, 400);
-  const tz = zoneParam(params);
+  const tz = await zoneParam(params);
   if (tz === null) return json(BAD_ZONE, 400);
   const courses = served.map((c) => ({ name: c.name, blocks: readablePages(c).flatMap((p) => [...quizIds(p)]) }));
   const a = await school.activity(courses, days, tz);
@@ -458,7 +464,7 @@ const http = Bun.serve({
     }
     const url = new URL(req.url);
     const { pathname } = url;
-    if (req.method === "POST" && pathname.startsWith("/api/")) {
+    if ((req.method === "POST" || req.method === "PUT") && pathname.startsWith("/api/")) {
       const refused = guardApi(req);
       if (refused !== null) return refused;
     }
@@ -546,6 +552,18 @@ const http = Bun.serve({
       const r = await toBridge(currentBridge(), "POST", "/test", t);
       return json(r.body, r.status);
     }
+    if (pathname === "/api/settings/time-zone") {
+      if (req.method === "PUT") {
+        const body = (await readJson(req)) as { zone?: unknown } | null;
+        const given = body?.zone;
+        const chosen = given === null ? null : typeof given === "string" ? validZone(given) : undefined;
+        if (chosen === undefined || (given !== null && chosen === null)) return json(BAD_ZONE, 400);
+        await school.chooseTimeZone(chosen);
+        return json({ zone: chosen }, 200, { "cache-control": "no-store" });
+      }
+      if (req.method === "GET") return json({ zone: await school.timeZone() }, 200, { "cache-control": "no-store" });
+      return json({ error: "use GET or PUT" }, 405);
+    }
     if (req.method === "POST" && pathname === "/api/view") {
       const v = ViewEvent.safeParse(await readJson(req));
       if (!v.success) return new Response("Bad view", { status: 400 });
@@ -587,7 +605,7 @@ const http = Bun.serve({
       if (api[2] === undefined) return courseJson(c);
       const aid = aidParam(url.searchParams);
       if (aid === null) return json({ status: "invalid", error: `aid must be a known capture version: ${AID_CAPTURE_VERSIONS.join(", ")}` }, 400);
-      const tz = zoneParam(url.searchParams);
+      const tz = await zoneParam(url.searchParams);
       if (tz === null) return json(BAD_ZONE, 400);
       return lessonJson(c, api[2], url.searchParams.get("view"), aid.aid, tz);
     }

@@ -184,6 +184,17 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     expect(await r.studyDays({ from: at(DAY), to: at(2 * DAY), tz: "UTC" })).toEqual([{ course: "c", day: "2026-11-22" }]);
   });
 
+  // The learner's chosen time zone (flyingrobots/school#181): appended, never edited; the newest wins.
+  t("no time zone is chosen at first; each choice is kept, the newest wins, and null goes back to automatic", async (r) => {
+    expect(await r.timeZone()).toBeNull();
+    await r.chooseTimeZone("Pacific/Auckland", at(0));
+    expect(await r.timeZone()).toBe("Pacific/Auckland");
+    await r.chooseTimeZone("America/Los_Angeles", at(1000));
+    expect(await r.timeZone()).toBe("America/Los_Angeles");
+    await r.chooseTimeZone(null, at(2000));
+    expect(await r.timeZone()).toBeNull();
+  });
+
   t("the latest feedback is the newest succeeded grading, with where its explanation was written; none before one", async (r) => {
     expect(await r.latestFeedback()).toBeNull();
     const page = lesson("l1", [explain]);

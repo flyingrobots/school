@@ -2,6 +2,7 @@
 // reorder, switch on or off and test them through /api/settings/*. Agents' commands are written
 // only in the bridge's file on its computer (flyingrobots/school#18), so nothing here edits one.
 // The token is write-only: the page sends it and learns only whether one is set.
+import { TimeZoneCard } from "@/components/time-zone-card"
 import * as React from "react"
 import { useGSAP } from "@gsap/react"
 import gsap from "gsap"
@@ -610,6 +611,8 @@ export function SettingsPage() {
             )}
           </CardContent>
         </Card>
+
+        <TimeZoneCard className="xl:col-span-2 2xl:col-span-1" />
 
         <Card
           data-animate="card"

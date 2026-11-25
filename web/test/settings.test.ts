@@ -488,6 +488,54 @@ describe("the bridge's agents", () => {
 
 // flyingrobots/school#114: the intro must not swallow keys. The page's clock is paused before it
 // loads (test/intro.ts), so the cards are held before they start to fade in.
+describe("time zone", () => {
+  test("automatic shows the browser's zone; a chosen zone is kept by School, and automatic restores the browser's", async () => {
+    const w = await world()
+    const c = await browser.newContext({ timezoneId: "America/Los_Angeles" })
+    const p = await c.newPage()
+    p.setDefaultTimeout(8_000)
+    await p.route("**/api/**", async (route) => {
+      const u = new URL(route.request().url())
+      await route.fulfill({
+        response: await route.fetch({ url: w.school + u.pathname + u.search }),
+      })
+    })
+    await p.goto(base + "/settings")
+    const card = p.locator("[data-settings=time-zone]")
+    await card
+      .getByText("Automatic: America/Los_Angeles, from this browser")
+      .waitFor()
+    const zone = async () =>
+      (await (await fetch(w.school + "/api/settings/time-zone")).json()).zone
+    expect(await zone()).toBeNull()
+    const input = card.getByRole("combobox", { name: "Time zone" })
+    await input.fill("Kiritimati")
+    await p.getByRole("option", { name: "Pacific/Kiritimati" }).click()
+    await card
+      .getByText("Saved: School names days in Pacific/Kiritimati")
+      .waitFor()
+    expect(await zone()).toBe("Pacific/Kiritimati")
+    await p.reload()
+    expect(
+      await p
+        .locator("[data-settings=time-zone]")
+        .getByRole("combobox", { name: "Time zone" })
+        .inputValue()
+    ).toBe("Pacific/Kiritimati")
+    const again = p
+      .locator("[data-settings=time-zone]")
+      .getByRole("combobox", { name: "Time zone" })
+    await again.fill("Automatic")
+    await p.getByRole("option", { name: "Automatic" }).click()
+    await p
+      .locator("[data-settings=time-zone]")
+      .getByText("Automatic: America/Los_Angeles, from this browser")
+      .waitFor()
+    expect(await zone()).toBeNull()
+    await c.close()
+  })
+})
+
 describe("the intro", () => {
   test("j pressed during the intro reaches each focus stop in order, and every stop can take focus", async () => {
     const w = await world()
@@ -510,7 +558,12 @@ describe("the intro", () => {
         .getByRole("button", { name: "Test fake" })
         .waitFor({ state: "attached" })
     )
-    expect(await opacities(p, "[data-animate=card]")).toEqual(["0", "0", "0"])
+    expect(await opacities(p, "[data-animate=card]")).toEqual([
+      "0",
+      "0",
+      "0",
+      "0",
+    ])
     // j moves through the stops up to the first text field, where it is typed instead.
     const all = await stops(p)
     const field = all.indexOf("bridge-address")
@@ -530,7 +583,12 @@ describe("the intro", () => {
         .locator("[data-nav-region=main] [data-nav]:not(:disabled)")
         .count()
     ).toBeGreaterThan(field + 6)
-    expect(await opacities(p, "[data-animate=card]")).toEqual(["0", "0", "0"])
+    expect(await opacities(p, "[data-animate=card]")).toEqual([
+      "0",
+      "0",
+      "0",
+      "0",
+    ])
     await p.clock.resume()
     await p.waitForFunction(() =>
       [...document.querySelectorAll("[data-animate=card]")].every(

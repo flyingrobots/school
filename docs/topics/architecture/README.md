@@ -96,9 +96,10 @@ JSON API.
 | GET, POST | `/api/settings/bridge` | The bridge address and token; the token is never returned except once when generated. A new address clears a saved token, and is refused (409) while the token comes from the environment |
 | GET, POST | `/api/settings/agents` | The bridge's agents as its file declares them; a POST only reorders them and switches them on or off |
 | POST | `/api/settings/agents/test` | Runs one declared agent for real |
+| GET, PUT | `/api/settings/time-zone` | The time zone the learner chose, `{zone}`, or `null` for automatic; a PUT appends a choice (an IANA zone or `null`; anything else is 400) |
 | GET | `/courses/:c/reference/*`, `/<mount>/*` | Files, contained in their folder after resolving symlinks |
 
-`tz` (flyingrobots/school#178) is the learner's IANA time zone, which the web app sends from the browser on every request whose answer names a day: `/api/activity`, `/api/review` and a lesson opened in the web view. Without it the server uses its own zone, which is UTC under Docker. A `tz` that is not a zone is refused (400).
+`tz` (flyingrobots/school#178) is the learner's IANA time zone, which the web app sends from the browser on every request whose answer names a day: `/api/activity`, `/api/review` and a lesson opened in the web view. A zone chosen in Settings (`/api/settings/time-zone`, flyingrobots/school#181) wins over `tz`. Without either, the server uses its own zone, which is UTC under Docker. A `tz` that is not a zone is refused (400).
 
 Before any route, the server refuses with a 403 every request whose `Host` header is not one of
 its names: `127.0.0.1`, `localhost`, `::1`, `HOST` when it is a real name, and the names in
@@ -171,7 +172,7 @@ contract suite holds every driver under it to the same behaviour.
 
 The record is Postgres, built by the numbered migrations in `server/db/migrations/` (`0001_init.sql`,
 `0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_read_committed.sql`,
-`0006_due_review.sql`, `0007_since_last_here.sql`, `0008_study_days.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
+`0006_due_review.sql`, `0007_since_last_here.sql`, `0008_study_days.sql`, `0009_time_zone_choices.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -288,6 +289,10 @@ What happened since the learner was last here comes from two more read-only func
 time zone `tz`, in `[from, to)`; the port's `studyDays`. Since migration 0008
 (flyingrobots/school#177) only an answer or a saved explanation makes a study day; an encounter opened
 or a view is a visit, and still counts for `last_studied`.
+Migration 0009 (flyingrobots/school#181) adds `time_zone_choices`, append-only like every record
+table: each time zone the learner chooses in Settings, `NULL` for automatic, the newest by `seq` in
+force. `school.choose_time_zone(zone, at)` appends one and `school.time_zone()` reads the zone in
+force; the port's `chooseTimeZone` and `timeZone`.
 `school.latest_feedback()` is the succeeded grading with the highest `seq` and where its explanation
 was written; the port's `latestFeedback`. A failed attempt is never feedback.
 

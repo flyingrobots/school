@@ -72,7 +72,7 @@ describe("renameCourse", () => {
       expect(strip(after.all[t]!)).toEqual(strip(before.all[t]!));
     }
     for (const t of ["snapshots", "answers", "explanations", "gradings", "exposures"]) expect(after.all[t]).toEqual(before.all[t]);
-    expect(triggers.length).toBe(16);
+    expect(triggers.length).toBe(18); // two per record table: append-only, and no truncate
     expect(await enabled(db)).toEqual(triggers);
   }, SLOW);
 
