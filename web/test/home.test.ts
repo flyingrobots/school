@@ -190,6 +190,16 @@ beforeAll(
           ago(7200_000 - 1000)
         )
       }
+      // Visits, not study (flyingrobots/school#177): five days ago a view of Tides, and four days ago
+      // Tides opened with nothing answered. Neither makes a study day.
+      await r.recordView({ course: "astro", lesson: "tides" }, ago(5 * DAY))
+      await r.openEncounter({
+        course: "astro",
+        lesson: "tides",
+        page: tides,
+        now: ago(4 * DAY),
+        aidTracking: 1,
+      })
       // An hour ago, in Tides: q3 right, so Tides is where the learner left off.
       const t = await r.openEncounter({
         course: "astro",
@@ -428,6 +438,29 @@ describe("since you were last here", () => {
     // [ steps to the earlier mark again.
     await p.keyboard.press("[")
     await day.waitFor()
+    await close(p.context())
+  })
+})
+
+describe("study days", () => {
+  test("a day with only a visit has no mark; a day with an answer has one", async () => {
+    const p = await open()
+    const timeline = main(p).locator("[data-timeline]")
+    await timeline.waitFor()
+    const DAY = 24 * 3600 * 1000
+    const { tz } = (await (
+      await fetch(partway.url + "/api/activity?days=14")
+    ).json()) as { tz: string }
+    const local = (ms: number) =>
+      new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(
+        new Date(Date.now() - ms)
+      )
+    const marks = await timeline
+      .locator("[data-mark^='studied:astro:']")
+      .evaluateAll((els) => els.map((e) => e.getAttribute("data-mark")))
+    expect(marks).toContain(`studied:astro:${local(2 * DAY)}`)
+    expect(marks).not.toContain(`studied:astro:${local(4 * DAY)}`)
+    expect(marks).not.toContain(`studied:astro:${local(5 * DAY)}`)
     await close(p.context())
   })
 })
