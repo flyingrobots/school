@@ -146,7 +146,7 @@ describe("due review on opening a lesson (RFC 2 §5; flyingrobots/school#32)", (
     const all = [
       item("q", { shown: ["feedback"] }), item("q"), item("q", { corrected: false }),
       item("q", { rule: "due-review/aided-first-try", shown: ["hint"] }), item("q", { rule: "due-review/unknown-aid" }),
-    ].map(reviewReason);
+    ].map((item) => reviewReason(item));
     for (const reason of all) expect(reason).not.toMatch(/wrong|fail|mistake|incorrect/i);
     for (const reason of [reviewReason(item("q")), reviewReason(item("q", { rule: "due-review/unknown-aid" }))]) {
       expect(reason).not.toMatch(/[0-9]+ ?%|score|points?\b/i); // results in words, never scores

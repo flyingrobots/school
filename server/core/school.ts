@@ -46,8 +46,8 @@ const listed = (words: string[]) => words.length <= 1 ? words.join("") : `${word
  * Why an item came back, in words, from the facts the selector names (RFC 2 §5: "every review item
  * says why it came back"). The day is the answer's in the server's time zone (`TZ`).
  */
-export function reviewReason(item: DueItem): string {
-  const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long" }).format(new Date(item.answeredAt));
+export function reviewReason(item: DueItem, tz?: string): string {
+  const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", timeZone: tz }).format(new Date(item.answeredAt));
   const help = listed(item.shown.map((k) => helpWords[k]));
   // School's voice: say what helped, never what was wrong (docs/topics/voice/README.md).
   const back = "It's back so you can answer it from memory.";
@@ -80,7 +80,8 @@ export interface School {
    * lesson may come back for review (RFC 2 §5), at the top of it, each with a decision note. A
    * reload inside the resume window shows the review the encounter opened with.
    */
-  openLesson(course: string, page: Block, aidTracking: AidTracking, reviewable?: readonly Block[]): Promise<OpenedLesson>;
+  /** `tz`: the zone each review reason names its day in; the server's when absent. */
+  openLesson(course: string, page: Block, aidTracking: AidTracking, reviewable?: readonly Block[], tz?: string): Promise<OpenedLesson>;
   submitAnswer(s: Submission): Promise<SubmitResult>;
   saveExplanation(s: ExplanationSubmission): Promise<{ result: SaveResult; explanation: ExplanationState | null }>;
   /** One grading attempt, stored whatever its outcome; null when there is no such explanation. */
@@ -100,7 +101,8 @@ export interface School {
   /** The newest succeeded grading, with the prompt its explanation answered; null before any (flyingrobots/school#165). */
   latestFeedback(): Promise<(LatestFeedback & { prompt: string | null }) | null>;
   /** The quizzes among `blocks` due for review now, each with its reason in words. */
-  dueNow(course: string, blocks: readonly string[]): Promise<{ item: DueItem; reason: string }[]>;
+  /** `tz`: the zone the reason names its day in; the server's when absent. */
+  dueNow(course: string, blocks: readonly string[], tz?: string): Promise<{ item: DueItem; reason: string }[]>;
   /**
    * For each course, the local days in time zone `tz` it was studied in the last `days` days, and,
    * for each of the next `days` days, how many of its quizzes become due for review that day.
@@ -113,7 +115,7 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
   const { record, grader, clock } = ports;
   const explanationNow = async (id: string) => (await record.explanation(id))?.state ?? null;
   return {
-    async openLesson(course, page, aidTracking, reviewable = []) {
+    async openLesson(course, page, aidTracking, reviewable = [], tz) {
       if (page.type !== "page") throw new TypeError("a lesson is a page block");
       const now = clock.now();
       const own = quizIdsIn(page);
@@ -126,7 +128,7 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
         ...page,
         children: [{ type: "section", id: REVIEW_SECTION_ID, title: "Review", children: items.map((d) => candidates.get(d.blockId)!) }, ...page.children],
       };
-      const notes: ReviewNote[] = items.map((d) => ({ blockId: d.blockId, rule: d.rule, reason: reviewReason(d), evidence: d.evidence }));
+      const notes: ReviewNote[] = items.map((d) => ({ blockId: d.blockId, rule: d.rule, reason: reviewReason(d, tz), evidence: d.evidence }));
       const opened = await record.openLessonEncounter({ course, lesson: page.id, lessonPage: page, page: shown, notes, now, aidTracking });
       const { encounter } = opened;
       const [answers, explanations, noted] = await Promise.all([
@@ -167,10 +169,10 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
       const saved = await record.explanation(f.submissionId);
       return { ...f, prompt: saved?.block.type === "explain" ? saved.block.prompt : null };
     },
-    async dueNow(course, blocks) {
+    async dueNow(course, blocks, tz) {
       if (blocks.length === 0) return [];
       const due = await record.dueReview({ course, blocks: [...blocks], now: clock.now(), delayMs: REVIEW_DELAY_MS, limit: REVIEW_LIMIT });
-      return due.map((item) => ({ item, reason: reviewReason(item) }));
+      return due.map((item) => ({ item, reason: reviewReason(item, tz) }));
     },
     async activity(courses, days, tz) {
       const now = Date.parse(clock.now());

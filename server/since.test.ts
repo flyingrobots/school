@@ -118,3 +118,28 @@ test("activity lists each course's study days in the window, and how many questi
   for (const bad of ["0", "61", "x", "1.5"]) await get(server, `/api/activity?days=${bad}`, 400);
   expect((await get(server, "/api/activity")).days).toBe(14);
 });
+
+// The learner's zone, not the server's (flyingrobots/school#178): the page sends its own as `tz`.
+const dayOf = (ms: number, tz: string) =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
+const wordsOf = (ms: number, tz: string) => new Intl.DateTimeFormat("en-GB", { timeZone: tz, day: "numeric", month: "long" }).format(new Date(ms));
+
+test("activity reads days in the zone the page sends, and refuses one that is not a zone", async () => {
+  for (const tz of ["Pacific/Kiritimati", "Pacific/Pago_Pago"]) {
+    const a = await get(server, `/api/activity?days=14&tz=${encodeURIComponent(tz)}`);
+    expect({ tz: a.tz, today: a.today }).toEqual({ tz, today: dayOf(Date.now(), tz) });
+    const c = a.courses.find((x: { course: string }) => x.course === "c");
+    expect(c.studied).toEqual([...new Set([dayOf(NOW - 48 * HOUR + 3000, tz), dayOf(NOW - 10 * HOUR + 2000, tz)])]);
+  }
+  for (const bad of ["Not/AZone", "", "../etc", "x".repeat(200)]) await get(server, `/api/activity?tz=${encodeURIComponent(bad)}`, 400);
+});
+
+test("a question's reason names the day it was answered in the zone the page sends", async () => {
+  const at = NOW - 48 * HOUR + 1000;
+  const reasons = await Promise.all(["Pacific/Kiritimati", "Pacific/Pago_Pago"].map(async (tz) =>
+    (await get(server, `/api/review?tz=${encodeURIComponent(tz)}`))[0].reason as string));
+  expect(reasons[0]).toStartWith(`On ${wordsOf(at, "Pacific/Kiritimati")},`);
+  expect(reasons[1]).toStartWith(`On ${wordsOf(at, "Pacific/Pago_Pago")},`);
+  expect(reasons[0]).not.toBe(reasons[1]);
+  await get(server, "/api/review?tz=Not%2FAZone", 400);
+});
