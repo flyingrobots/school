@@ -162,7 +162,11 @@ export function ReadAloud({
     [readKey]
   )
   useShortcut("r", go, {
-    when: () => !inExplain(),
+    // While this reads, `r` does not start it again from the top.
+    when: () =>
+      !inExplain() &&
+      (readAloud.reading()?.key !== readKey ||
+        readAloud.reading()?.phase === "failed"),
     description: "Read aloud",
   })
   React.useEffect(

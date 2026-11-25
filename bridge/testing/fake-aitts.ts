@@ -39,7 +39,7 @@ export type FakeDaemon = {
 };
 
 /** A silent mono 16-bit WAV of `seconds` at 8 kHz. */
-export function silentWav(seconds: number, rate = 8000): Uint8Array {
+export function silentWav(seconds: number, rate = 8000): Uint8Array<ArrayBuffer> {
   const samples = Math.round(rate * seconds);
   const data = samples * 2;
   const b = new ArrayBuffer(44 + data);
