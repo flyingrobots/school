@@ -38,6 +38,7 @@ are in its [test plan](test-plan.md).
 
 ```text
 SCHOOL_MIGRATE_URL=postgres://... SCHOOL_APP_PASSWORD=... bun migrate.ts
+bun migrate.ts --rename-course <from>=<to>
 bun migrate.ts --help | --schema [--human]
 ```
 
@@ -45,9 +46,11 @@ bun migrate.ts --help | --schema [--human]
 | --- | --- |
 | `--help`, `-h` | Prints a `help` line, then a `schema` line for every message type; exit 0. Reads no setting, touches no database |
 | `--schema` | Prints a `schema` line for every message type; exit 0. Reads no setting, touches no database |
+| `--rename-course <from>=<to>` | After the migrations, renames course `<from>` to `<to>` in the record and prints a `renamed` line (below) |
 | `--human`, `--humanize` | Prose instead of JSON Lines. With `--help`, the prose names the message types rather than printing their schemas; `--schema --human` prints each schema indented |
 
-Any other argument is an `error.usage` line and exit 2, before any setting is read.
+Any other argument, or `--rename-course` without one `<from>=<to>` pair or given twice, is an
+`error.usage` line and exit 2, before any setting is read.
 
 | Exit | Means |
 | --- | --- |
@@ -66,6 +69,7 @@ prints them.
 | `school.migrate.schema` | `schema` | stdout | `id`, `version`, `schema` (the published file) | `--schema`, and `--help` after its help line |
 | `school.migrate.start` | `start` | stdout | `where`, `role` | Settings accepted, before connecting |
 | `school.migrate.applied` | `applied` | stdout | `version`, `name` | Each migration, once committed |
+| `school.migrate.renamed` | `renamed` | stdout | `from`, `to`, `rows` (`encounters`, `views`, `decision_notes`) | `--rename-course`, once the rename commits |
 | `school.migrate.done` | `done` | stdout | `ok: true`, `where`, `applied` (versions, in order), `role` | Last line of a good run |
 | `school.migrate.captured` | `captured` | either | `stream`, `text` | A library printed something |
 | `school.migrate.error.usage` | `error` | stderr | `error: "usage"`, `code: 2`, `message` | Unknown argument |
@@ -122,6 +126,52 @@ exit=1
 
 To check a run in a script, read the last line and its `event`, for example with `jq`:
 `bun migrate.ts | tail -n 1 | jq -e '.event == "done"'`.
+
+## Renaming a course
+
+A course's name files the learner's progress in the record: every encounter, view and decision
+note names its course. A deployment names its main course after the folder it is mounted at
+(`/course`, so `course`) unless `SCHOOL_COURSES` names it. Renaming one changes where that progress
+is filed, so School must be stopped while it happens: a running server goes on writing under the
+name it started with. From `server/`:
+
+1. Stop School, leaving the database up: `../school compose stop school`.
+2. Take a backup and copy it out (docs/workflows/backup-and-restore, steps 2 and 3).
+3. Rename: `../school compose run --rm migrate bun migrate.ts --rename-course course=aion`. It
+   prints `start`, `renamed` with the rows moved per table, then `done`.
+4. Name the course in `server/.env`: `SCHOOL_COMPOSE_COURSE=` (empty) and
+   `SCHOOL_COURSES=aion=/course,...` with any other courses.
+5. Start School again: `../school up`.
+
+The rename (`server/db/rename-course.ts`) is one transaction, as `school_owner`, holding both of the
+migrate job's advisory locks, so it waits for a migration run and none starts during it. It refuses:
+
+- while any `school_app` session is open on the database ("stop it first"), checked after the
+  tables are locked and again just before committing;
+- a name config would refuse: not a lowercase letter or digit followed by lowercase letters, digits
+  and hyphens, or a reserved name (`api`, `assets`, `courses`, `lessons`, `reference`); this one
+  before anything runs, as a usage error, exit 2;
+- a `<from>` the record has nothing for;
+- a `<to>` it already has, since that would merge two courses.
+
+It first takes away `school_app`'s login, committed on its own, so School cannot log in while the
+rename runs. Then it locks every record table against writes until it commits, checks, and checks
+for `school_app` sessions again just before committing. After a rename `school_app` cannot log in
+until the next migrate run, which `../school up` (step 5) starts with the new configuration; a
+refusal gives the login back. `school_app` is a role of the whole Postgres server, so this covers
+every database on it: rehearsing on a restored copy beside the live record (the backup drill's
+`school_restore`) also keeps the live School from logging in until `../school up`, so stop School
+for a rehearsal too. It lifts the
+append-only trigger on the three tables that name a course only inside the transaction, and commits
+only if every record table's row count is unchanged, every trigger is enabled again and no row names
+`<from>`. A refusal or failure rolls all of it back, triggers included, and exits 1 with the reason.
+Snapshots hold page content and name no course, so they are not touched. Links to the old course's
+lessons stop working.
+
+If it refused because `<to>` already has rows, nothing changed: find out where those rows came from
+before choosing another name. To check the outcome, compare each table's count per course before and
+after (`SELECT course, count(*) FROM school.encounters GROUP BY 1`, and the same for `views` and
+`decision_notes`), through `../school compose exec postgres psql -U postgres -d school`.
 
 ## What the contract cannot cover
 

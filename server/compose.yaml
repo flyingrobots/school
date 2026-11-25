@@ -115,6 +115,11 @@ services:
       # More courses, at paths under /library, beside the one at /course: `bells=/library`, or
       # `a=/library/a,b=/library/b` for a folder of courses (flyingrobots/school#156). Optional.
       SCHOOL_COURSES: ${SCHOOL_COURSES:-}
+      # The course at /course, named after that folder (`course`). Set SCHOOL_COMPOSE_COURSE empty in
+      # .env to name that course in SCHOOL_COURSES instead (`aion=/course,bells=/library`), after
+      # renaming it in the record (docs/topics/migrate-job, "Renaming a course"). Its own variable,
+      # so a SCHOOL_COURSE exported for running the server on the host never reaches the container.
+      SCHOOL_COURSE: ${SCHOOL_COMPOSE_COURSE-/course}
       # Explanation grading through the bridge on the host (bridge/bridge.ts). Optional: without
       # SCHOOL_BRIDGE_URL, explanations are saved but not graded. The token is the one the bridge
       # reads from the same Keychain item.

@@ -21,6 +21,7 @@
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from "node:crypto";
 import { migrate, OWNER, type OnApplied } from "../db/migrate.ts";
 import { bunSql, reservedConnection } from "./bunsql.ts";
+import { renameCourse, type Renamed } from "../db/rename-course.ts";
 import { openPglite, pgliteSql } from "./pglite.ts";
 import type { Sql } from "./sql.ts";
 import type { Target } from "../config.ts";
@@ -360,6 +361,21 @@ export async function migrateRecord(url: string, appPassword: string, onApplied?
         }
       }
       return { applied };
+    } finally {
+      conn.release();
+    }
+  } finally {
+    await pool.close();
+  }
+}
+
+/** Rename a course in the record at `url` (db/rename-course.ts), on one reserved connection. */
+export async function renameRecordCourse(url: string, from: string, to: string): Promise<Renamed> {
+  const pool = new Bun.SQL(url);
+  try {
+    const conn = await reservedConnection(pool);
+    try {
+      return await renameCourse(conn, from, to);
     } finally {
       conn.release();
     }

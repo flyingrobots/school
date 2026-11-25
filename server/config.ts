@@ -7,7 +7,7 @@ import { withPassword } from "./secrets.ts";
 /** Route prefixes the framework owns. A configured mount may not take one of these. */
 export const RESERVED = ["assets", "courses", "lessons", "reference", "api"] as const;
 
-const NAME = /^[a-z0-9][a-z0-9-]*$/;
+export const NAME = /^[a-z0-9][a-z0-9-]*$/;
 
 export type Config = {
   /** The framework checkout. Supplies `assets/` and nothing else. */

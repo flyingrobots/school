@@ -11,8 +11,9 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import Ajv2020 from "ajv/dist/2020";
-import { scratchPostgres, TEST_APP_PASSWORD, TEST_POSTGRES_URL as URL_ } from "./testing/postgres.ts";
+import { appUrl, scratchPostgres, TEST_APP_PASSWORD, TEST_POSTGRES_URL as URL_ } from "./testing/postgres.ts";
 import { readMigrations } from "./db/migrate.ts";
+import { renameRecordCourse } from "./adapters/database.ts";
 
 const SLOW = 30_000;
 const MIGRATE = join(import.meta.dir, "migrate.ts");
@@ -54,7 +55,8 @@ async function run(args: string[], env: Record<string, string | undefined> = {})
 
 /** The message types the command can print, as the schema files name them. */
 const IDS = ["school.migrate.applied", "school.migrate.captured", "school.migrate.done", "school.migrate.error.failed",
-  "school.migrate.error.settings", "school.migrate.error.usage", "school.migrate.help", "school.migrate.schema", "school.migrate.start"];
+  "school.migrate.error.settings", "school.migrate.error.usage", "school.migrate.help", "school.migrate.renamed", "school.migrate.schema",
+  "school.migrate.start"];
 
 describe("the migrate command's schemas (server/schemas/)", () => {
   test("every message type has one schema file, named for its id, whose $id is id/version and whose _schema pins both", () => {
@@ -70,6 +72,13 @@ describe("the migrate command's schemas (server/schemas/)", () => {
       expect(schema.additionalProperties).toBe(false);
       for (const field of ["_schema", "kind", "event", "run", "at"]) expect(schema.required).toContain(field);
     }
+  });
+
+  test("the renamed line admits exactly the course names config.ts accepts", async () => {
+    const { NAME } = await import("./config.ts");
+    const renamed = published.find((p) => p.file === "school.migrate.renamed.schema.json")!.schema;
+    expect(renamed.properties.from.pattern).toBe(NAME.source);
+    expect(renamed.properties.to.pattern).toBe(NAME.source);
   });
 
   test("a line naming a database cannot carry a user or password: `where` admits no user info", () => {
@@ -121,6 +130,18 @@ describe("the migrate command without a database", () => {
     expect(err).toHaveLength(1);
     expect(err[0]).toMatchObject({ _schema: { id: "school.migrate.error.usage" }, event: "error", error: "usage", code: 2 });
     expect(String(err[0]!.message)).toContain("--frobnicate");
+  });
+
+  test("--rename-course without a from=to pair is a usage error line on stderr, exit 2", async () => {
+    const env = { SCHOOL_MIGRATE_URL: "postgres://nobody@127.0.0.1:1/none", SCHOOL_APP_PASSWORD: "a".repeat(24) };
+    for (const args of [["--rename-course"], ["--rename-course", "course"], ["--rename-course", "=aion"], ["--rename-course", "a=b", "--rename-course", "c=d"],
+      ["--rename-course", "course=Not A Name"], ["--rename-course", "course=api"]]) {
+      const r = await run(args, env);
+      expect({ args, code: r.code, stdout: r.stdout }).toEqual({ args, code: 2, stdout: "" });
+      const err = validated(r.stderr);
+      expect(err[0]).toMatchObject({ _schema: { id: "school.migrate.error.usage" }, error: "usage", code: 2 });
+      expect(String(err[0]!.message)).toContain("--rename-course");
+    }
   });
 
   test("a missing or invalid setting is a settings error line on stderr, exit 2, naming no password", async () => {
@@ -200,6 +221,98 @@ describe.skipIf(URL_ === undefined)("the migrate command on a real Postgres thro
     const second = validated(again.stdout);
     expect(second.map((l) => l.event)).toEqual(["start", "done"]);
     expect(second[0]!.run).not.toBe(out[0]!.run);
+  }, SLOW);
+
+  test("--rename-course from=to applies the migrations, then renames the course in the record: a renamed line before done", async () => {
+    const url = await database();
+    const env = { SCHOOL_MIGRATE_URL: url, SCHOOL_APP_PASSWORD: TEST_APP_PASSWORD };
+    expect((await run([], env)).code).toBe(0);
+    const db = new Bun.SQL(url);
+    try {
+      await db.unsafe(`INSERT INTO school.views (course, lesson, at) VALUES ('course', 'l1', now()), ('course', 'l2', now()), ('bells', 'l1', now())`);
+      const r = await run(["--rename-course", "course=aion"], env);
+      expect({ code: r.code, stderr: r.stderr }).toEqual({ code: 0, stderr: "" });
+      const out = validated(r.stdout);
+      expect(out.map((l) => l.event)).toEqual(["start", "renamed", "done"]);
+      expect(out[1]).toMatchObject({ from: "course", to: "aion", rows: { encounters: 0, views: 2, decision_notes: 0 } });
+      expect(await db.unsafe("SELECT course, count(*)::int AS n FROM school.views GROUP BY 1 ORDER BY 1")).toEqual([
+        { course: "aion", n: 2 }, { course: "bells", n: 1 }]);
+      expect(await db.unsafe("SELECT rolcanlogin AS l FROM pg_roles WHERE rolname = 'school_app'")).toEqual([{ l: false }]);
+      const again = await run(["--rename-course", "course=aion"], env);
+      expect(again.code).toBe(1);
+      expect(validated(again.stderr).at(-1)).toMatchObject({ error: "failed", message: 'the record has nothing for course "course"' });
+    } finally {
+      await db.close();
+      expect((await run([], env)).code).toBe(0); // school_app may log in again, as after `./school up`
+    }
+  }, SLOW);
+
+  test("--rename-course refuses while School is connected, and changes nothing", async () => {
+    const url = await database();
+    const env = { SCHOOL_MIGRATE_URL: url, SCHOOL_APP_PASSWORD: TEST_APP_PASSWORD };
+    expect((await run([], env)).code).toBe(0);
+    const owner = new Bun.SQL(url);
+    const app = new Bun.SQL(appUrl(url));
+    try {
+      await owner.unsafe(`INSERT INTO school.views (course, lesson, at) VALUES ('course', 'l1', now())`);
+      await app.unsafe("SELECT 1");
+      const r = await run(["--rename-course", "course=aion"], env);
+      expect(r.code).toBe(1);
+      const last = validated(r.stderr).at(-1)!;
+      expect(last).toMatchObject({ error: "failed" });
+      expect(String(last.message)).toMatch(/^School is connected to the record \(\d+ school_app sessions?\); stop it first: \.\/school compose stop school, from the checkout$/);
+      expect(await owner.unsafe("SELECT rolcanlogin AS l FROM pg_roles WHERE rolname = 'school_app'")).toEqual([{ l: true }]);
+      expect(await owner.unsafe("SELECT course FROM school.views")).toEqual([{ course: "course" }]);
+    } finally {
+      await app.close();
+      await owner.close();
+    }
+  }, SLOW);
+
+  test("the rename itself waits for a migration run holding the runner's lock", async () => {
+    const url = await database();
+    expect((await run([], { SCHOOL_MIGRATE_URL: url, SCHOOL_APP_PASSWORD: TEST_APP_PASSWORD })).code).toBe(0);
+    const owner = new Bun.SQL(url);
+    try {
+      await owner.unsafe(`INSERT INTO school.views (course, lesson, at) VALUES ('course', 'l1', now())`);
+      const held = await owner.reserve();
+      await held.unsafe("SELECT pg_advisory_lock(hashtext('school.schema_migrations'))");
+      const renaming = renameRecordCourse(url, "course", "aion");
+      const early = await Promise.race([renaming.then(() => "done"), Bun.sleep(1500).then(() => "waiting")]);
+      await held.unsafe("SELECT pg_advisory_unlock(hashtext('school.schema_migrations'))");
+      held.release();
+      expect(early).toBe("waiting");
+      expect((await renaming).rows.views).toBe(1);
+    } finally {
+      await owner.close();
+      expect((await run([], { SCHOOL_MIGRATE_URL: url, SCHOOL_APP_PASSWORD: TEST_APP_PASSWORD })).code).toBe(0);
+    }
+  }, SLOW);
+
+  test("while a rename runs, School cannot log in; once it is refused, School can again", async () => {
+    const url = await database();
+    expect((await run([], { SCHOOL_MIGRATE_URL: url, SCHOOL_APP_PASSWORD: TEST_APP_PASSWORD })).code).toBe(0);
+    const owner = new Bun.SQL(url);
+    const login = async () => {
+      const app = new Bun.SQL(appUrl(url));
+      try { await app.unsafe("SELECT 1"); return "logged in"; } catch (e) { return (e as Error).message; } finally { await app.close(); }
+    };
+    try {
+      await owner.unsafe(`INSERT INTO school.views (course, lesson, at) VALUES ('course', 'l1', now()), ('aion', 'l1', now())`);
+      const held = await owner.reserve();
+      await held.unsafe("BEGIN");
+      await held.unsafe("LOCK TABLE school.views IN SHARE MODE"); // the rename waits here, after closing the login
+      const renaming = renameRecordCourse(url, "course", "aion").then(() => "renamed", (e: Error) => e.message);
+      await Bun.sleep(500);
+      const during = await login();
+      await held.unsafe("COMMIT");
+      held.release();
+      expect(during).toContain("not permitted to log in");
+      expect(await renaming).toBe('the record already has course "aion"; renaming "course" to it would merge two courses');
+      expect(await login()).toBe("logged in");
+    } finally {
+      await owner.close();
+    }
   }, SLOW);
 
   test("a database that refuses the login is a failed error line on stderr, exit 1, naming neither password", async () => {
