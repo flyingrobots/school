@@ -59,6 +59,8 @@ In a School checkout the same pages are under `docs/`.
 9. **Check it.** From a School checkout run `./school check <course-folder>`. Exit 0 means School
    would serve it. Otherwise the error line names the first problem and its file. Fix it, run the
    check again, and repeat until it exits 0. Never say a course is ready before this passes.
+   The check proves structure only. It cannot tell whether a claim is true, a source supports it,
+   or the copy keeps School's voice. Read the course back for those yourself.
 
 ## Revise a course
 
