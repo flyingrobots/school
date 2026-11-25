@@ -65,6 +65,11 @@
     "exitCode": {
       "type": "integer",
       "description": "docker compose's exit code."
+    },
+    "line": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The line of server/.env the error is about."
     }
   },
   "required": [

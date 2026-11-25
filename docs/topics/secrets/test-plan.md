@@ -38,6 +38,7 @@ states its case and oracle.
 | SEC-L25 | Two overlapping first runs leave one superuser password, the one both start compose with | implemented | `host/launcher.test.ts`: `SEC-L25: two overlapping first runs leave one superuser password, the one both start compose with` |
 | SEC-L26 | A generated or prompted secret never replaces an item that appeared since it was read; the run uses that item | implemented | `host/launcher.test.ts`: `SEC-L26: a generated or prompted secret never replaces an item that appeared since it was read; the run uses that item` |
 | SEC-L27 | The lock is exclusive, waits for its holder, takes over a dead holder's lock, and gives up on a live one naming its pid | implemented | `host/lock.test.ts`: `SEC-L27: the lock is exclusive, waits for its holder, takes over a dead holder's lock, and gives up on a live one naming its pid` |
+| SEC-L28 | Every line the launcher prints (prose and `check`'s pass-through aside) names a schema in `host/schemas/` and validates against it, in every launcher test; `--schema` prints them all; one run id per invocation | implemented | `host/launcher.test.ts`: `the command line > SEC-L28: --schema prints every published schema, and every line of one run shares one run id`, and the check in its `run` helper |
 
 ## The Keychain adapter and the shared rule
 

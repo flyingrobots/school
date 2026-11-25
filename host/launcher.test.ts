@@ -184,7 +184,8 @@ describe("school up", () => {
     });
     expect(r.code).toBe(1);
     const compose = parsed(r.stdout).filter((e) => e.event === "compose");
-    expect(compose).toEqual([
+    // The original fields exactly; _schema and run are checked by the schema itself.
+    expect(compose).toMatchObject([
       { kind: "school.up", event: "compose", stream: "stderr", line: " Container server-postgres-1 Started" },
       { kind: "school.up", event: "compose", stream: "stdout", line: "echoed (redacted) by mistake" },
     ]);

@@ -73,7 +73,7 @@ Since flyingrobots/school#123, `./school up` refuses to start while `server/.env
 `SCHOOL_POSTGRES_PASSWORD`, `SCHOOL_APP_PASSWORD` or `SCHOOL_BRIDGE_TOKEN`:
 
 ```text
-{"kind":"school.up","event":"error","code":2,"message":"/path/to/school/server/.env still holds SCHOOL_POSTGRES_PASSWORD, SCHOOL_APP_PASSWORD: run `school import` to move them into the Keychain, then `school up` again","keys":["SCHOOL_POSTGRES_PASSWORD","SCHOOL_APP_PASSWORD"]}
+{"_schema":{"id":"school.launcher.error","version":"1.0.0"},"kind":"school.up","event":"error","code":2,"message":"/path/to/school/server/.env still holds SCHOOL_POSTGRES_PASSWORD, SCHOOL_APP_PASSWORD: run `school import` to move them into the Keychain, then `school up` again","keys":["SCHOOL_POSTGRES_PASSWORD","SCHOOL_APP_PASSWORD"],"run":"e3765e55-79a7-46f5-934c-ecfb893ab393"}
 ```
 
 Install the launcher's packages, then move them:
