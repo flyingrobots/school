@@ -12,6 +12,9 @@ names. School reads the folder and never writes to it ([ADR 6](../../adr/0006-se
 Anything else in the folder (`README.md`, `OBJECTIVES.md`, `RESOURCES.md`) is for the course's
 authors and readers; School does not read it.
 
+The blocks a lesson file is written in, and every rule they must meet, are in
+[lesson blocks](blocks.md).
+
 ## More than one course under `./school up`
 
 Compose mounts the course in `SCHOOL_COURSE_DIR` at `/course`. School calls that course `course`.

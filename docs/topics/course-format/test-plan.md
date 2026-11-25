@@ -1,6 +1,6 @@
 # Course format test plan
 
-The contract ledger for [a course's folder](README.md): the course title (flyingrobots/school#143) and a lesson's hook (flyingrobots/school#164).
+The contract ledger for [a course's folder](README.md): the course title (flyingrobots/school#143), a lesson's hook (flyingrobots/school#164) and [lesson blocks](blocks.md) (flyingrobots/school#196).
 Every case runs in `bun test`. The server cases call the loader and start the real School process
 on PGlite over course folders the test writes; the browser cases drive Chrome through
 playwright-core against the Vite dev server, with `/api` answered by that real server.
@@ -40,3 +40,10 @@ playwright-core against the Vite dev server, with `/api` answered by that real s
 | FORMAT-19 | Hook malformed | A hook missing `question` or `teaser`, with a non-string `figure`, or not an object, is rejected naming the lesson | implemented | `server/blocks.test.ts`: `a hook without its question or teaser, or with a figure that isn't text, is rejected, naming the lesson` |
 | FORMAT-20 | What's ahead | `GET /api/showcase` lists lessons with a quiz not yet answered correctly, in course order; a reading lesson and an unreadable course are left out; without a hook, the title and subtitle stand in | implemented | `server/showcase.test.ts`: `on a fresh record every lesson with a quiz is ahead, in course order; without a hook, its title and subtitle stand in` |
 | FORMAT-21 | Started and finished | A wrong answer starts nothing; a right one marks the course started; a lesson with every quiz right is no longer listed | implemented | `server/showcase.test.ts`: `a wrong answer starts nothing; a right one starts the course; a lesson with every quiz right is no longer ahead` |
+
+## Lesson blocks (flyingrobots/school#196)
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| FORMAT-22 | Examples load | Every `json` example on [lesson blocks](blocks.md) loads through `loadLibrary`; one that is not a page is wrapped in one | implemented | `server/block-reference.test.ts`: `the block reference > example %d loads through loadLibrary` |
+| FORMAT-23 | Examples cover the format | Between them the examples show all nine block types and a `ref` | implemented | `the block reference > shows every block type and a ref` |
