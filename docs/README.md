@@ -9,7 +9,7 @@ Start here. Each page has one job; this page routes to all of them.
 | [App shell](topics/app-shell/README.md) | Reference: the web app's routes, keys, theme switch and layout. |
 | [Home page](topics/home-page/README.md) | Reference: what Home shows: a question from a course still ahead, the lessons still ahead with their pictures, and what happened since the learner was last here; and the page's states. |
 | [Settings page](topics/settings-page/README.md) | Reference: what `/settings` shows and does, state by state. |
-| [A course's folder](topics/course-format/README.md) | Reference: what School reads from a course's folder (`course.json` and its title, `lessons/`, `reference/`) and [the blocks a lesson is written in](topics/course-format/blocks.md), and `school check`, which says whether School would serve one; with its [test plan](topics/course-format/test-plan.md). |
+| [A course's folder](topics/course-format/README.md) | Reference: what School reads from a course's folder (`course.json` and its title, `lessons/`, `reference/`) and [the blocks a lesson is written in](topics/course-format/blocks.md), `school check`, which says whether School would serve one, and the `school` skill that writes one; with its [test plan](topics/course-format/test-plan.md). |
 | [Course page](topics/course-page/README.md) | Reference: a course's lessons, the learner's progress in words, and the page's states. |
 | [Reference page](topics/reference-page/README.md) | Reference: a course's reference documents, how each opens, and the page's states. |
 | [Lesson page](topics/lesson-page/README.md) | Reference: what the lesson page shows, records and reloads. |

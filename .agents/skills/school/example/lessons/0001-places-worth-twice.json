@@ -1,0 +1,74 @@
+{
+  "type": "page",
+  "id": "places-worth-twice",
+  "title": "Places worth twice",
+  "subtitle": "Binary is decimal's idea with two digits instead of ten.",
+  "hook": {
+    "question": "How can 1 0 1 mean five?",
+    "teaser": "Each place is worth twice the one to its right, so the ones that are switched on add up."
+  },
+  "children": [
+    {
+      "type": "section",
+      "id": "places-idea",
+      "title": "The idea",
+      "children": [
+        { "type": "prose", "id": "places-intro", "html": "<p>In decimal, each place is worth ten times the place to its right: ones, tens, hundreds. Binary keeps the idea and uses two digits, 0 and 1, so each place is worth <strong>twice</strong> the place to its right: 1, 2, 4, 8, 16.</p>" },
+        { "type": "card", "id": "places-card", "html": "<p><strong>101</strong> in binary is 4 + 0 + 1 = <strong>5</strong>.</p>" },
+        { "type": "quote", "id": "places-quote", "html": "<p>Each place is worth twice the place to its right.</p>" },
+        { "type": "aside", "id": "places-aside", "html": "<p>A single binary digit is called a <em>bit</em>.</p>" },
+        {
+          "type": "nest",
+          "id": "places-nest",
+          "root": {
+            "label": "1 0 1",
+            "children": [
+              { "label": "4", "edge": "the 1 in the fours place", "atoms": ["1 × 4"] },
+              { "label": "0", "edge": "the 0 in the twos place", "atoms": ["0 × 2"] },
+              { "label": "1", "edge": "the 1 in the ones place", "atoms": ["1 × 1"] }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "type": "section",
+      "id": "places-practice",
+      "title": "Practice",
+      "children": [
+        {
+          "type": "quiz",
+          "id": "places-q-worth",
+          "q": "In binary, what is the third place from the right worth?",
+          "choices": [
+            { "id": "four", "text": "4", "correct": true },
+            { "id": "three", "text": "3", "correct": false },
+            { "id": "hundred", "text": "100", "correct": false }
+          ],
+          "why": "The places are worth 1, 2 and then 4: each is twice the one to its right."
+        },
+        {
+          "type": "quiz",
+          "id": "places-q-read",
+          "q": "What number is 110 in binary?",
+          "choices": [
+            { "id": "six", "text": "6", "correct": true },
+            { "id": "one-hundred-ten", "text": "110", "correct": false },
+            { "id": "three", "text": "3", "correct": false }
+          ],
+          "why": "4 + 2 + 0 = 6."
+        },
+        {
+          "type": "explain",
+          "id": "places-explain",
+          "prompt": "How would you explain to a friend why 101 in binary means five, in under a minute?",
+          "model": "Binary places are worth 1, 2, 4 and so on, each twice the one to its right. 101 has a 1 in the fours place and a 1 in the ones place, and 4 + 1 = 5.",
+          "sources": [
+            { "id": "places-rule", "title": "Place value", "text": "Each place is worth twice the place to its right: 1, 2, 4, 8, 16." },
+            { "id": "places-example", "title": "An example", "text": "101 in binary is 4 + 0 + 1 = 5." }
+          ]
+        }
+      ]
+    }
+  ]
+}

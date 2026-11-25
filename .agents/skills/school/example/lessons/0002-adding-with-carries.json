@@ -1,0 +1,49 @@
+{
+  "type": "page",
+  "id": "adding-with-carries",
+  "title": "Adding with carries",
+  "subtitle": "1 + 1 is 10, and everything else follows.",
+  "hook": {
+    "question": "Why is 1 + 1 written 10 in binary?",
+    "teaser": "Two ones fill a place, so it carries, just as 9 + 1 does in decimal."
+  },
+  "children": [
+    {
+      "type": "section",
+      "id": "carries-idea",
+      "title": "The carry",
+      "children": [
+        { "type": "prose", "id": "carries-intro", "html": "<p>Add binary place by place from the right, as in decimal. When a place's sum reaches 2, write 0 and carry 1 to the next place: <strong>1 + 1 = 10</strong>.</p>" },
+        { "type": "card", "id": "carries-card", "html": "<p><strong>011 + 001 = 100</strong>: 3 + 1 = 4, with a carry through two places.</p>" }
+      ]
+    },
+    {
+      "type": "section",
+      "id": "carries-practice",
+      "title": "Practice",
+      "children": [
+        {
+          "type": "quiz",
+          "id": "carries-q-sum",
+          "q": "What is 01 + 01 in binary?",
+          "choices": [
+            { "id": "ten", "text": "10", "correct": true },
+            { "id": "two", "text": "2", "correct": false },
+            { "id": "eleven", "text": "11", "correct": false }
+          ],
+          "why": "1 + 1 fills the ones place, so it is written 0 with 1 carried: 10, which is two."
+        },
+        { "ref": "places-q-read" },
+        {
+          "type": "explain",
+          "id": "carries-explain",
+          "prompt": "How would you show someone, with one small example, why a carry happens in binary?",
+          "model": "In binary each place holds only 0 or 1. Adding 1 + 1 gives two, which fills the place, so you write 0 and carry 1 to the next place: 1 + 1 = 10.",
+          "sources": [
+            { "id": "carries-rule", "title": "The carry", "text": "When a place's sum reaches 2, write 0 and carry 1 to the next place: 1 + 1 = 10." }
+          ]
+        }
+      ]
+    }
+  ]
+}

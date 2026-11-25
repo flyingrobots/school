@@ -15,6 +15,10 @@ authors and readers; School does not read it.
 The blocks a lesson file is written in, and every rule they must meet, are in
 [lesson blocks](blocks.md).
 
+An agent writes and revises courses with the `school` skill,
+[`.agents/skills/school/`](../../../.agents/skills/school/SKILL.md), which links to these pages
+and ends with `school check`. Its `example/` is a small complete course.
+
 ## Checking a course
 
 ```text
