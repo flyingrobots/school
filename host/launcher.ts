@@ -1,4 +1,5 @@
 // `school up`, `school down`, `school compose` and `school import` (flyingrobots/school#123): the host launcher.
+// `school check` (flyingrobots/school#197) runs server/check-course.ts, which needs no secret.
 // Containers cannot reach the Mac's Keychain, so this process resolves School's secrets on the host
 // (the environment first, then the Keychain; host/secrets.ts), and runs `docker compose` with them
 // in that child's environment only. Compose copies each into the services that need it as a file
@@ -45,12 +46,13 @@ export type Deps = {
   serverDir: string;
 };
 
-type Command = "up" | "down" | "compose" | "import";
+type Command = "up" | "down" | "compose" | "import" | "check";
 const COMMANDS: { command: Command; does: string }[] = [
   { command: "up", does: "Resolve School's secrets (environment, then the Keychain; ask for the superuser's password or generate the others when missing, and store them), then `docker compose up --detach --build` with them in compose's environment only" },
   { command: "down", does: "`docker compose down`. Needs no secret; keeps the record's volume" },
   { command: "compose", does: "`docker compose <arguments>` from server/, the arguments passed as they are, with the secrets resolved as for `up` and in compose's environment only: for `run`, `up` of single services and the like in the how-tos. Flags for school itself, such as --human, go before `compose`" },
   { command: "import", does: "Move every secret still in server/.env into the Keychain, and remove those lines from server/.env" },
+  { command: "check", does: "`school check <folder>`: load a course folder with School's own loader and say whether School would serve it (server/check-course.ts, flyingrobots/school#197). Its lines are that program's own JSON Lines, each naming its schema; needs no secret and no Docker" },
 ];
 
 /** The output of one command: JSON lines, or prose with --human; every string scrubbed of the secrets it knows. */
@@ -200,6 +202,13 @@ async function resolveAndStore(deps: Deps, o: Output, account: string): Promise<
   return env;
 }
 
+/** Runs server/check-course.ts with `args`, writing its lines as they are and exiting with its code. */
+async function check(deps: Deps, args: string[]): Promise<number> {
+  const child = deps.spawn(["bun", join(deps.serverDir, "check-course.ts"), ...args], { cwd: process.cwd(), env: { ...deps.env }, stdin: "ignore" });
+  for await (const { stream, line } of child.lines) (stream === "stdout" ? deps.out : deps.err)(line);
+  return await child.exited;
+}
+
 async function withSecrets(deps: Deps, o: Output, args: string[], stdin: "ignore" | "inherit"): Promise<number> {
   const env = await secrets(deps, o);
   return typeof env === "number" ? env : compose(deps, o, args, env, stdin);
@@ -269,7 +278,7 @@ function importUnderLock(deps: Deps, o: Output, account: string, dotenv: string,
 
 function help(deps: Deps, human: boolean): number {
   const o = new Output(deps, "school.help", human);
-  o.line("out", { usage: "school [--human] <command>", does: "Run School under docker compose with its secrets in the macOS Keychain" }, "usage: school [--human] <up|down|compose ...|import>");
+  o.line("out", { usage: "school [--human] <command>", does: "Run School under docker compose with its secrets in the macOS Keychain" }, "usage: school [--human] <up|down|compose ...|import|check <folder>>");
   for (const c of COMMANDS) o.line("out", { command: c.command, does: c.does }, `  ${c.command.padEnd(7)} ${c.does}`);
   o.line("out", { exitCodes: { 0: "done", 1: "a failure, such as compose failing or the Keychain refusing", 2: "a missing or invalid setting; nothing was started" } }, "exit codes: 0 done, 1 failure, 2 missing or invalid setting");
   return 0;
@@ -283,6 +292,9 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
   const ours = at < 0 ? argv : argv.slice(0, at + 1);
   const passed = at < 0 ? [] : argv.slice(at + 1);
   const human = ours.some(HUMAN);
+  // `check` hands everything after it to server/check-course.ts, which prints its own schema'd lines.
+  const checkAt = ours.indexOf("check");
+  if (checkAt >= 0 && ours.slice(0, checkAt).every(HUMAN)) return await check(deps, [...(human ? ["--human"] : []), ...ours.slice(checkAt + 1).filter((a) => !HUMAN(a))]);
   const rest = ours.filter((a) => !HUMAN(a));
   if (rest.length === 0 || rest[0] === "--help" || rest[0] === "-h" || rest[0] === "help") return help(deps, human);
   const command = rest[0] as Command;
