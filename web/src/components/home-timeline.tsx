@@ -1,6 +1,7 @@
 // The home page's timeline (flyingrobots/school#166): each course's study days behind today and the
 // days questions come back ahead of it, from GET /api/activity. Every mark can be chosen.
 import * as d3 from "d3"
+import * as React from "react"
 
 import { daysBetween, type Activity } from "@/lib/home-api"
 
@@ -40,7 +41,6 @@ export function marksOf(a: Activity): Mark[] {
   )
 }
 
-const W = 720
 const LANE = 56
 const PAD = { top: 28, left: 8, right: 8, bottom: 8 }
 
@@ -64,6 +64,17 @@ export function Timeline({
   selected: string
   onSelect: (m: Mark) => void
 }) {
+  const box = React.useRef<HTMLDivElement>(null)
+  const [W, setW] = React.useState(720)
+  React.useLayoutEffect(() => {
+    const el = box.current
+    if (!el) return
+    const fit = () => setW(Math.max(320, Math.round(el.clientWidth)))
+    fit()
+    const ro = new ResizeObserver(fit)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   const H = PAD.top + LANE * a.courses.length + PAD.bottom
   const x = d3
     .scaleLinear()
@@ -73,6 +84,7 @@ export function Timeline({
   const ticks = d3
     .range(-a.days, a.days + 1)
     .filter((k) => k !== 0 && k % 7 === 0)
+  const labelled = (k: number) => k !== a.days || W >= 560
   const pick = (m: Mark, label: string) => ({
     role: "button",
     tabIndex: 0,
@@ -103,151 +115,158 @@ export function Timeline({
     />
   )
   return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      className="w-full overflow-visible"
-      aria-label={`Days you studied in the last ${a.days} days, and when questions come back in the next ${a.days}`}
-    >
-      <rect
-        x={x(0)}
-        y={PAD.top - 8}
-        width={x(a.days) - x(0)}
-        height={H - PAD.top}
-        className="fill-muted"
-        rx={6}
-      />
-      {ticks.map((k) => (
-        <g key={k}>
+    <div ref={box} className="w-full">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        width={W}
+        height={H}
+        className="block max-w-full overflow-visible"
+        aria-label={`Days you studied in the last ${a.days} days, and when questions come back in the next ${a.days}`}
+      >
+        <rect
+          x={x(0)}
+          y={PAD.top - 8}
+          width={x(a.days) - x(0)}
+          height={H - PAD.top}
+          className="fill-muted"
+          rx={6}
+        />
+        {ticks.map((k) => (
+          <g key={k}>
+            <line
+              x1={x(k)}
+              x2={x(k)}
+              y1={PAD.top - 8}
+              y2={H}
+              className="stroke-border"
+            />
+            {labelled(k) && (
+              <text
+                x={k === a.days ? x(k) - 4 : x(k) + 4}
+                y={14}
+                textAnchor={k === a.days ? "end" : "start"}
+                className="fill-muted-foreground text-xs"
+              >
+                {k < 0 ? `${-k / 7} wk ago` : `in ${k / 7} wk`}
+              </text>
+            )}
+          </g>
+        ))}
+        <g {...pick({ kind: "today" }, "Today")}>
+          <rect
+            x={x(0) - 10}
+            y={PAD.top - 26}
+            width={40}
+            height={H - PAD.top + 26}
+            className="fill-transparent"
+          />
+          <rect
+            x={x(0) - 8}
+            y={PAD.top - 26}
+            width={16}
+            height={H - PAD.top + 26}
+            rx={8}
+            className={
+              selected === "today"
+                ? "fill-none stroke-ring ring"
+                : "fill-none stroke-transparent ring"
+            }
+            strokeWidth={2}
+          />
           <line
-            x1={x(k)}
-            x2={x(k)}
-            y1={PAD.top - 8}
+            x1={x(0)}
+            x2={x(0)}
+            y1={PAD.top - 12}
             y2={H}
-            className="stroke-border"
+            className="stroke-foreground"
+            strokeWidth={2}
           />
           <text
-            x={x(k) + 4}
-            y={12}
-            className="fill-muted-foreground text-[11px]"
+            x={x(0) + 12}
+            y={PAD.top - 14}
+            className="fill-foreground text-xs font-semibold"
           >
-            {k < 0 ? `${-k / 7} wk ago` : `in ${k / 7} wk`}
+            today
           </text>
         </g>
-      ))}
-      <g {...pick({ kind: "today" }, "Today")}>
-        <rect
-          x={x(0) - 10}
-          y={PAD.top - 26}
-          width={40}
-          height={H - PAD.top + 26}
-          className="fill-transparent"
-        />
-        <rect
-          x={x(0) - 8}
-          y={PAD.top - 26}
-          width={16}
-          height={H - PAD.top + 26}
-          rx={8}
-          className={
-            selected === "today"
-              ? "fill-none stroke-ring ring"
-              : "fill-none stroke-transparent ring"
-          }
-          strokeWidth={2}
-        />
-        <line
-          x1={x(0)}
-          x2={x(0)}
-          y1={PAD.top - 12}
-          y2={H}
-          className="stroke-foreground"
-          strokeWidth={2}
-        />
-        <text
-          x={x(0) + 4}
-          y={PAD.top - 14}
-          className="fill-foreground text-[11px] font-semibold"
-        >
-          today
-        </text>
-      </g>
-      {a.courses.map((c, i) => {
-        const y = PAD.top + LANE * i + LANE / 2 + 4
-        const fresh = c.studied.length === 0 && c.due.length === 0
-        return (
-          <g key={c.course} data-lane={c.course}>
-            <text
-              x={PAD.left}
-              y={y - 18}
-              className="fill-muted-foreground text-[12px]"
-            >
-              {c.courseTitle}
-              {fresh && <tspan className="italic"> · not started yet</tspan>}
-            </text>
-            <line
-              x1={PAD.left}
-              x2={W - PAD.right}
-              y1={y}
-              y2={y}
-              className="stroke-border"
-              strokeDasharray="2 4"
-            />
-            {c.studied.map((day) => {
-              const m: Mark = {
-                kind: "studied",
-                course: c.course,
-                title: c.courseTitle,
-                day,
-              }
-              const cx = x(offset(day))
-              const dot = (
-                <circle cx={cx} cy={y} r={6} className="fill-primary" />
-              )
-              return day === a.today ? (
-                <g key={day}>{dot}</g>
-              ) : (
-                <g
-                  key={day}
-                  {...pick(m, `Studied ${c.courseTitle}, ${dayWords(day)}`)}
-                >
-                  {ring(markKey(m), cx, y, 6)}
-                  {dot}
-                </g>
-              )
-            })}
-            {c.due.map((d) => {
-              const m: Mark = {
-                kind: "due",
-                course: c.course,
-                title: c.courseTitle,
-                day: d.day,
-                items: d.items,
-              }
-              const cx = x(offset(d.day))
-              const r = 5 + Math.min(d.items, 5) * 2
-              return (
-                <g
-                  key={d.day}
-                  {...pick(
-                    m,
-                    `${d.items} ${d.items === 1 ? "question comes" : "questions come"} back in ${c.courseTitle}, ${dayWords(d.day)}`
-                  )}
-                >
-                  {ring(markKey(m), cx, y, r)}
-                  <circle
-                    cx={cx}
-                    cy={y}
-                    r={r}
-                    className="fill-background stroke-chart-2"
-                    strokeWidth={2}
-                  />
-                </g>
-              )
-            })}
-          </g>
-        )
-      })}
-    </svg>
+        {a.courses.map((c, i) => {
+          const y = PAD.top + LANE * i + LANE / 2 + 4
+          const fresh = c.studied.length === 0 && c.due.length === 0
+          return (
+            <g key={c.course} data-lane={c.course}>
+              <text
+                x={PAD.left}
+                y={y - 18}
+                className="fill-muted-foreground text-sm"
+              >
+                {c.courseTitle}
+                {fresh && <tspan className="italic"> · not started yet</tspan>}
+              </text>
+              <line
+                x1={PAD.left}
+                x2={W - PAD.right}
+                y1={y}
+                y2={y}
+                className="stroke-border"
+                strokeDasharray="2 4"
+              />
+              {c.studied.map((day) => {
+                const m: Mark = {
+                  kind: "studied",
+                  course: c.course,
+                  title: c.courseTitle,
+                  day,
+                }
+                const cx = x(offset(day))
+                const dot = (
+                  <circle cx={cx} cy={y} r={6} className="fill-primary" />
+                )
+                return day === a.today ? (
+                  <g key={day}>{dot}</g>
+                ) : (
+                  <g
+                    key={day}
+                    {...pick(m, `Studied ${c.courseTitle}, ${dayWords(day)}`)}
+                  >
+                    {ring(markKey(m), cx, y, 6)}
+                    {dot}
+                  </g>
+                )
+              })}
+              {c.due.map((d) => {
+                const m: Mark = {
+                  kind: "due",
+                  course: c.course,
+                  title: c.courseTitle,
+                  day: d.day,
+                  items: d.items,
+                }
+                const cx = x(offset(d.day))
+                const r = 5 + Math.min(d.items, 5) * 2
+                return (
+                  <g
+                    key={d.day}
+                    {...pick(
+                      m,
+                      `${d.items} ${d.items === 1 ? "question comes" : "questions come"} back in ${c.courseTitle}, ${dayWords(d.day)}`
+                    )}
+                  >
+                    {ring(markKey(m), cx, y, r)}
+                    <circle
+                      cx={cx}
+                      cy={y}
+                      r={r}
+                      className="fill-background stroke-chart-2"
+                      strokeWidth={2}
+                    />
+                  </g>
+                )
+              })}
+            </g>
+          )
+        })}
+      </svg>
+    </div>
   )
 }
 
