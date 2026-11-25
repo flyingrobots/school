@@ -29,8 +29,9 @@ others, and checks every reply with Zod (`web/src/lib/home-api.ts`) before showi
    lesson. The lesson the learner is partway through (resume's `continue`) comes first, marked
    "You're partway".
 3. **Since you were last here**: one column at every width.
-   - **First**, the timeline, as wide as the page and drawn at that width so its labels stay one size (`GET /api/activity?days=14`): a lane per course, a dot per day
-     studied in the last 14 days, and a ring per day questions come back in the next 14, larger for
+   - **First**, the timeline, as wide as the page and drawn at that width so its labels stay one size (`GET /api/activity?days=14`): a lane per course, a dot per
+     [study day](../../glossary.md#study-day) (a day with a quiz answered or an explanation saved; a
+     visit alone is not one) in the last 14 days, and a ring per day questions come back in the next 14, larger for
      more. A course with neither says "not started yet". The heading counts the days studied in
      words. Every mark is a button: a past day opens "You studied on <day>" below it, in the letter's place, a
      ring opens how many questions come back that day and why. Today opens the letter again.

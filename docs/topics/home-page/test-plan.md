@@ -43,4 +43,5 @@ started and Biology is not, and one where both are.
 | HOME-11 | Quiet day | No feedback and nothing to review says "Nothing new since you were last here" | implemented | `states > a quiet day says nothing is new` |
 | HOME-12 | Nothing ahead | An empty showcase says "Nothing ahead right now" | implemented | `states > nothing ahead says so` |
 | HOME-13 | Width | No sideways scroll at 390, 768, 1024 and 1440 px | implemented | `layout > never scrolls sideways, from a phone to a wide screen` |
-| HOME-14 | Timeline width | At 1440 px the timeline card spans the section above today's detail, every label inside the timeline and at least 12 px tall | implemented | `layout > the timeline spans the section above today's detail, at a readable size, every label inside it` |
+| HOME-15 | Timeline width | At 1440 px the timeline card spans the section above today's detail, every label inside the timeline and at least 12 px tall | implemented | `layout > the timeline spans the section above today's detail, at a readable size, every label inside it` |
+| HOME-16 | Study days | A day with only a view or a lesson opened has no timeline mark; a day with an answer has one (flyingrobots/school#177) | implemented | `study days > a day with only a visit has no mark; a day with an answer has one` |
