@@ -54,7 +54,8 @@ async function run(args: string[], env: Record<string, string | undefined> = {})
 
 /** The message types the command can print, as the schema files name them. */
 const IDS = ["school.migrate.applied", "school.migrate.captured", "school.migrate.done", "school.migrate.error.failed",
-  "school.migrate.error.settings", "school.migrate.error.usage", "school.migrate.help", "school.migrate.schema", "school.migrate.start"];
+  "school.migrate.error.settings", "school.migrate.error.usage", "school.migrate.help", "school.migrate.renamed", "school.migrate.schema",
+  "school.migrate.start"];
 
 describe("the migrate command's schemas (server/schemas/)", () => {
   test("every message type has one schema file, named for its id, whose $id is id/version and whose _schema pins both", () => {
@@ -121,6 +122,17 @@ describe("the migrate command without a database", () => {
     expect(err).toHaveLength(1);
     expect(err[0]).toMatchObject({ _schema: { id: "school.migrate.error.usage" }, event: "error", error: "usage", code: 2 });
     expect(String(err[0]!.message)).toContain("--frobnicate");
+  });
+
+  test("--rename-course without a from=to pair is a usage error line on stderr, exit 2", async () => {
+    const env = { SCHOOL_MIGRATE_URL: "postgres://nobody@127.0.0.1:1/none", SCHOOL_APP_PASSWORD: "a".repeat(24) };
+    for (const args of [["--rename-course"], ["--rename-course", "course"], ["--rename-course", "=aion"], ["--rename-course", "a=b", "--rename-course", "c=d"]]) {
+      const r = await run(args, env);
+      expect({ args, code: r.code, stdout: r.stdout }).toEqual({ args, code: 2, stdout: "" });
+      const err = validated(r.stderr);
+      expect(err[0]).toMatchObject({ _schema: { id: "school.migrate.error.usage" }, error: "usage", code: 2 });
+      expect(String(err[0]!.message)).toContain("--rename-course");
+    }
   });
 
   test("a missing or invalid setting is a settings error line on stderr, exit 2, naming no password", async () => {
@@ -200,6 +212,28 @@ describe.skipIf(URL_ === undefined)("the migrate command on a real Postgres thro
     const second = validated(again.stdout);
     expect(second.map((l) => l.event)).toEqual(["start", "done"]);
     expect(second[0]!.run).not.toBe(out[0]!.run);
+  }, SLOW);
+
+  test("--rename-course from=to applies the migrations, then renames the course in the record: a renamed line before done", async () => {
+    const url = await database();
+    const env = { SCHOOL_MIGRATE_URL: url, SCHOOL_APP_PASSWORD: TEST_APP_PASSWORD };
+    expect((await run([], env)).code).toBe(0);
+    const db = new Bun.SQL(url);
+    try {
+      await db.unsafe(`INSERT INTO school.views (course, lesson, at) VALUES ('course', 'l1', now()), ('course', 'l2', now()), ('bells', 'l1', now())`);
+      const r = await run(["--rename-course", "course=aion"], env);
+      expect({ code: r.code, stderr: r.stderr }).toEqual({ code: 0, stderr: "" });
+      const out = validated(r.stdout);
+      expect(out.map((l) => l.event)).toEqual(["start", "renamed", "done"]);
+      expect(out[1]).toMatchObject({ from: "course", to: "aion", rows: { encounters: 0, views: 2, decision_notes: 0 } });
+      expect(await db.unsafe("SELECT course, count(*)::int AS n FROM school.views GROUP BY 1 ORDER BY 1")).toEqual([
+        { course: "aion", n: 2 }, { course: "bells", n: 1 }]);
+      const again = await run(["--rename-course", "course=aion"], env);
+      expect(again.code).toBe(1);
+      expect(validated(again.stderr).at(-1)).toMatchObject({ error: "failed", message: 'the record has nothing for course "course"' });
+    } finally {
+      await db.close();
+    }
   }, SLOW);
 
   test("a database that refuses the login is a failed error line on stderr, exit 1, naming neither password", async () => {

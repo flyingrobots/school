@@ -5,6 +5,7 @@
 // (service_completed_successfully).
 //
 //   SCHOOL_MIGRATE_URL=postgres://postgres:...@host:5432/school SCHOOL_APP_PASSWORD=... bun migrate.ts
+//   bun migrate.ts --rename-course <from>=<to>   (flyingrobots/school#174; db/rename-course.ts)
 //   bun migrate.ts --help | --schema [--human]
 //
 // Output (flyingrobots/school#120; docs/topics/migrate-job/README.md) is JSON Lines on stdout and
@@ -23,19 +24,20 @@
 // (server/secrets.ts). Every secret is resolved before the output is built, so every line is
 // scrubbed of all of them.
 import { join } from "node:path";
-import { APP, migrateRecord, redact } from "./adapters/database.ts";
+import { APP, migrateRecord, redact, renameRecordCourse } from "./adapters/database.ts";
 import { jsonLines, loadSchemas } from "./jsonl.ts";
 import { withPassword, withSecretFiles } from "./secrets.ts";
 
 const KIND = "school.migrate";
 const schemas = loadSchemas(join(import.meta.dir, "schemas"));
 const ids = { start: `${KIND}.start`, applied: `${KIND}.applied`, done: `${KIND}.done`, captured: `${KIND}.captured`,
-  help: `${KIND}.help`, schema: `${KIND}.schema`, usage: `${KIND}.error.usage`, settings: `${KIND}.error.settings`, failed: `${KIND}.error.failed` };
+  help: `${KIND}.help`, renamed: `${KIND}.renamed`, schema: `${KIND}.schema`, usage: `${KIND}.error.usage`, settings: `${KIND}.error.settings`, failed: `${KIND}.error.failed` };
 
 const OPTIONS = [
   { flags: ["--help", "-h"], description: "Print this help and the schema of every message type, then exit 0. Reads no setting and touches no database." },
   { flags: ["--schema"], description: "Print every published message schema, then exit 0. Reads no setting and touches no database." },
   { flags: ["--human", "--humanize"], description: "Print prose instead of JSON Lines. Nothing else switches the format." },
+  { flags: ["--rename-course <from>=<to>"], description: "After the migrations, rename course <from> to <to> in the record, in one transaction that keeps every row (flyingrobots/school#174). Refused if the record has nothing for <from>, or already has <to>. Take a backup first." },
 ];
 const ENVIRONMENT = [
   { name: "SCHOOL_MIGRATE_URL", description: "The owner's or superuser's postgres:// URL; the role must be able to create roles." },
@@ -48,7 +50,7 @@ const EXIT = [
   { code: 1, meaning: "The database refused, a migration failed (that file was rolled back), or anything else went wrong." },
   { code: 2, meaning: "An unknown argument, or SCHOOL_MIGRATE_URL or SCHOOL_APP_PASSWORD missing or invalid. Nothing was changed." },
 ];
-const USAGE = "bun migrate.ts [--help | --schema] [--human]";
+const USAGE = "bun migrate.ts [--help | --schema] [--rename-course <from>=<to>] [--human]";
 const SUMMARY = "Apply School's pending migrations as school_owner, make school_app a login with SCHOOL_APP_PASSWORD, and exit.";
 
 const args = process.argv.slice(2);
@@ -79,6 +81,7 @@ function prose(l: Record<string, any>): string {
     case ids.schema: return `schema ${l.id} ${l.version}\n${JSON.stringify(l.schema, null, 2)}`;
     case ids.start: return `migrating ${l.where} for ${l.role} (run ${l.run})`;
     case ids.applied: return `applied ${l.name}`;
+    case ids.renamed: return `renamed course ${l.from} to ${l.to}: ${l.rows.encounters} encounters, ${l.rows.views} views, ${l.rows.decision_notes} decision notes`;
     case ids.done: return `done: ${l.applied.length === 0 ? "nothing to apply" : `applied ${l.applied.length} migration${l.applied.length === 1 ? "" : "s"}`}; ${l.role} may log in`;
     case ids.captured: return `(${l.stream}) ${l.text}`;
     default: return `error (${l.error}): ${l.message}`;
@@ -94,7 +97,17 @@ function fail(kind: "usage" | "settings" | "failed", code: 1 | 2, message: strin
   process.exit(code);
 }
 
-const unknown = args.filter((a) => !["--help", "-h", "--schema", "--human", "--humanize"].includes(a));
+// `--rename-course <from>=<to>`, at most once; its value is the next argument.
+let rename: { from: string; to: string } | null = null;
+const rest: string[] = [];
+for (let i = 0; i < args.length; i++) {
+  if (args[i] !== "--rename-course") { rest.push(args[i]!); continue; }
+  const pair = /^([^=]+)=([^=]+)$/.exec(args[i + 1] ?? "");
+  if (rename !== null || pair === null) fail("usage", 2, `--rename-course takes one <from>=<to> pair, once; usage: ${USAGE}`);
+  rename = { from: pair[1]!, to: pair[2]! };
+  i++;
+}
+const unknown = rest.filter((a) => !["--help", "-h", "--schema", "--human", "--humanize"].includes(a));
 if (unknown.length > 0) fail("usage", 2, `unknown argument${unknown.length === 1 ? "" : "s"} ${unknown.join(" ")}; usage: ${USAGE}`);
 
 const printSchemas = () => {
@@ -122,6 +135,10 @@ out.capture(ids.captured);
 out.emit("stdout", ids.start, { event: "start", where: redact(url), role: APP });
 try {
   const { applied } = await migrateRecord(url, password, (m) => out.emit("stdout", ids.applied, { event: "applied", version: m.version, name: m.name }));
+  if (rename !== null) {
+    const r = await renameRecordCourse(url, rename.from, rename.to);
+    out.emit("stdout", ids.renamed, { event: "renamed", from: r.from, to: r.to, rows: r.rows });
+  }
   out.emit("stdout", ids.done, { event: "done", ok: true, where: redact(url), applied, role: APP });
   process.exit(0);
 } catch (e) {

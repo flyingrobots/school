@@ -38,6 +38,7 @@ are in its [test plan](test-plan.md).
 
 ```text
 SCHOOL_MIGRATE_URL=postgres://... SCHOOL_APP_PASSWORD=... bun migrate.ts
+bun migrate.ts --rename-course <from>=<to>
 bun migrate.ts --help | --schema [--human]
 ```
 
@@ -45,9 +46,11 @@ bun migrate.ts --help | --schema [--human]
 | --- | --- |
 | `--help`, `-h` | Prints a `help` line, then a `schema` line for every message type; exit 0. Reads no setting, touches no database |
 | `--schema` | Prints a `schema` line for every message type; exit 0. Reads no setting, touches no database |
+| `--rename-course <from>=<to>` | After the migrations, renames course `<from>` to `<to>` in the record and prints a `renamed` line (below) |
 | `--human`, `--humanize` | Prose instead of JSON Lines. With `--help`, the prose names the message types rather than printing their schemas; `--schema --human` prints each schema indented |
 
-Any other argument is an `error.usage` line and exit 2, before any setting is read.
+Any other argument, or `--rename-course` without one `<from>=<to>` pair or given twice, is an
+`error.usage` line and exit 2, before any setting is read.
 
 | Exit | Means |
 | --- | --- |
@@ -66,6 +69,7 @@ prints them.
 | `school.migrate.schema` | `schema` | stdout | `id`, `version`, `schema` (the published file) | `--schema`, and `--help` after its help line |
 | `school.migrate.start` | `start` | stdout | `where`, `role` | Settings accepted, before connecting |
 | `school.migrate.applied` | `applied` | stdout | `version`, `name` | Each migration, once committed |
+| `school.migrate.renamed` | `renamed` | stdout | `from`, `to`, `rows` (`encounters`, `views`, `decision_notes`) | `--rename-course`, once the rename commits |
 | `school.migrate.done` | `done` | stdout | `ok: true`, `where`, `applied` (versions, in order), `role` | Last line of a good run |
 | `school.migrate.captured` | `captured` | either | `stream`, `text` | A library printed something |
 | `school.migrate.error.usage` | `error` | stderr | `error: "usage"`, `code: 2`, `message` | Unknown argument |
@@ -122,6 +126,26 @@ exit=1
 
 To check a run in a script, read the last line and its `event`, for example with `jq`:
 `bun migrate.ts | tail -n 1 | jq -e '.event == "done"'`.
+
+## Renaming a course
+
+A course's name files the learner's progress in the record: every encounter, view and decision
+note names its course. A deployment names its main course after the folder it is mounted at
+(`/course`, so `course`) unless `SCHOOL_COURSES` names it. To rename one, back up first
+(docs/workflows/backup-and-restore), then:
+
+```text
+docker compose run --rm migrate bun migrate.ts --rename-course course=aion
+```
+
+and point the configuration at the new name (`SCHOOL_COURSE=` and `SCHOOL_COURSES=aion=/course,...`
+in `server/.env`) before `./school up`. The rename (`server/db/rename-course.ts`) is one transaction,
+as `school_owner`, under the job's lock. It refuses a name that is not lowercase letters, digits and
+hyphens, a `<from>` the record has nothing for, and a `<to>` it already has, since that would merge
+two courses. It lifts the append-only trigger on those three tables only inside the transaction,
+and commits only if every record table's row count is unchanged and every trigger is enabled again.
+Snapshots hold page content and name no course, so they are not touched. Links to the old course's
+lessons stop working.
 
 ## What the contract cannot cover
 

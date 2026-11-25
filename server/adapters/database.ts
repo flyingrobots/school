@@ -21,6 +21,7 @@
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from "node:crypto";
 import { migrate, OWNER, type OnApplied } from "../db/migrate.ts";
 import { bunSql, reservedConnection } from "./bunsql.ts";
+import { renameCourse, type Renamed } from "../db/rename-course.ts";
 import { openPglite, pgliteSql } from "./pglite.ts";
 import type { Sql } from "./sql.ts";
 import type { Target } from "../config.ts";
@@ -323,6 +324,21 @@ const APP_PASSWORD = /^[A-Za-z0-9]{20,}$/;
  * the same password again. The password reaches Postgres only as a SCRAM-SHA-256 verifier, never
  * as text, so not even a statement log holds it. `onApplied` hears of each migration as it commits.
  */
+/** Rename a course in the record at `url` (db/rename-course.ts), on one reserved connection. */
+export async function renameRecordCourse(url: string, from: string, to: string): Promise<Renamed> {
+  const pool = new Bun.SQL(url);
+  try {
+    const conn = await reservedConnection(pool);
+    try {
+      return await renameCourse(conn, from, to);
+    } finally {
+      conn.release();
+    }
+  } finally {
+    await pool.close();
+  }
+}
+
 export async function migrateRecord(url: string, appPassword: string, onApplied?: OnApplied): Promise<{ applied: number[] }> {
   if (!APP_PASSWORD.test(appPassword)) {
     throw new Error("SCHOOL_APP_PASSWORD must be at least 20 letters and digits (it goes into a URL as it is); " +
