@@ -1,6 +1,6 @@
 # Course format test plan
 
-The contract ledger for [a course's folder](README.md): the course title (flyingrobots/school#143), a lesson's hook (flyingrobots/school#164), [lesson blocks](blocks.md) (flyingrobots/school#196) and `school check` (flyingrobots/school#197).
+The contract ledger for [a course's folder](README.md): the course title (flyingrobots/school#143), a lesson's hook (flyingrobots/school#164), [lesson blocks](blocks.md) (flyingrobots/school#196) `school check` (flyingrobots/school#197) and the `school` skill (flyingrobots/school#193).
 Every case runs in `bun test`. The server cases call the loader and start the real School process
 on PGlite over course folders the test writes; the browser cases drive Chrome through
 playwright-core against the Vite dev server, with `/api` answered by that real server.
@@ -61,3 +61,12 @@ Every case runs the program as a process, and every line it prints is validated 
 | CHECK-5 | Help and schemas | `--help` is a `help` line listing every message type, then each schema; `--schema` prints every schema | implemented | `CHECK-5: --help describes the command, then prints every schema; --schema prints them alone` |
 | CHECK-6 | Prose | `--human` prints prose naming the title and the lesson count | implemented | `CHECK-6: --human prints prose, not JSON` |
 | CHECK-7 | Launcher | `./school check <folder>` runs `server/check-course.ts`, passing `--human`, its lines and its exit code through, and opens no vault | implemented | `host/launcher.test.ts`: `the command line > CHECK-7: \`school check <folder>\` runs School's course check on it, passing its lines and exit code through; it needs no secret` |
+
+## The `school` skill (flyingrobots/school#193)
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| SKILL-1 | Frontmatter | `SKILL.md` is named `school` and its description says it is for a School course | implemented | `server/school-skill.test.ts`: `the school skill > SKILL-1: its frontmatter names it school and says when to use it` |
+| SKILL-2 | Example served | `school check` on `example/` exits 0 with a title and at least two lessons | implemented | `SKILL-2: its worked example is a course School would serve` |
+| SKILL-3 | Example covers the format | The example shows all nine block types and a `ref` | implemented | `SKILL-3: the example shows every block type and a ref` |
+| SKILL-4 | Example's voice | Every explain prompt in the example is a question | implemented | `SKILL-4: every explain prompt in the example is a question` |
