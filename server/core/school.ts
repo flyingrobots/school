@@ -100,6 +100,10 @@ export interface School {
   encounterDecisionNotes(encounterId: string): Promise<DecisionNote[]>;
   /** The newest succeeded grading, with the prompt its explanation answered; null before any (flyingrobots/school#165). */
   latestFeedback(): Promise<(LatestFeedback & { prompt: string | null }) | null>;
+  /** The time zone the learner chose in Settings, or null for automatic (flyingrobots/school#181). */
+  timeZone(): Promise<string | null>;
+  /** Choose a time zone, or null to go back to automatic; recorded at the clock's now. */
+  chooseTimeZone(zone: string | null): Promise<void>;
   /** The quizzes among `blocks` due for review now, each with its reason in words. */
   /** `tz`: the zone the reason names its day in; the server's when absent. */
   dueNow(course: string, blocks: readonly string[], tz?: string): Promise<{ item: DueItem; reason: string }[]>;
@@ -163,6 +167,8 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
     },
     lessonProgress: (course) => record.lessonProgress(course),
     lastStudied: () => record.lastStudied(),
+    timeZone: () => record.timeZone(),
+    chooseTimeZone: (zone) => record.chooseTimeZone(zone, clock.now()),
     async latestFeedback() {
       const f = await record.latestFeedback();
       if (f === null) return null;

@@ -143,3 +143,22 @@ test("a question's reason names the day it was answered in the zone the page sen
   expect(reasons[0]).not.toBe(reasons[1]);
   await get(server, "/api/review?tz=Not%2FAZone", 400);
 });
+
+// A zone chosen in Settings wins over the browser's (flyingrobots/school#181).
+test("a time zone chosen in Settings wins over the one the page sends, until set back to automatic", async () => {
+  const put = (zone: unknown) => fetch(server!.url + "/api/settings/time-zone", {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ zone }),
+  });
+  expect(await get(server, "/api/settings/time-zone")).toEqual({ zone: null });
+  expect((await put("Pacific/Kiritimati")).status).toBe(200);
+  expect(await get(server, "/api/settings/time-zone")).toEqual({ zone: "Pacific/Kiritimati" });
+  const a = await get(server, `/api/activity?days=14&tz=${encodeURIComponent("Pacific/Pago_Pago")}`);
+  expect({ tz: a.tz, today: a.today }).toEqual({ tz: "Pacific/Kiritimati", today: dayOf(Date.now(), "Pacific/Kiritimati") });
+  const reason = (await get(server, "/api/review?tz=Pacific%2FPago_Pago"))[0].reason as string;
+  expect(reason).toStartWith(`On ${wordsOf(NOW - 48 * HOUR + 1000, "Pacific/Kiritimati")},`);
+  for (const bad of ["Not/AZone", "", 5, "x".repeat(200)]) expect((await put(bad)).status).toBe(400);
+  expect((await fetch(server!.url + "/api/settings/time-zone", { method: "PUT", body: JSON.stringify({ zone: "UTC" }) })).status).toBe(415);
+  expect((await put(null)).status).toBe(200);
+  expect(await get(server, "/api/settings/time-zone")).toEqual({ zone: null });
+  expect((await get(server, "/api/activity?days=14&tz=Pacific%2FPago_Pago")).tz).toBe("Pacific/Pago_Pago");
+});

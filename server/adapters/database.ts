@@ -124,6 +124,7 @@ type Login = {
  */
 export const GRANTED_FUNCTIONS: readonly string[] = [
   "school.choice_decision_notes(text,text,text)",
+  "school.choose_time_zone(text,timestamp with time zone)",
   "school.due_review(text,jsonb,timestamp with time zone,bigint,integer)",
   "school.encounter_answers(uuid)",
   "school.encounter_decision_notes(uuid)",
@@ -143,6 +144,7 @@ export const GRANTED_FUNCTIONS: readonly string[] = [
   "school.study_days(timestamp with time zone,timestamp with time zone,text)",
   "school.submission_aid(uuid)",
   "school.submit(uuid,uuid,text,text,bigint,timestamp with time zone)",
+  "school.time_zone()",
 ];
 
 /**
