@@ -10,6 +10,7 @@ import {
   RotateCcwIcon,
 } from "lucide-react"
 
+import { ReadAloud } from "@/components/read-aloud"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -110,6 +111,11 @@ export function FeedbackCard({ feedback: f }: { feedback: Feedback }) {
             <PenLineIcon data-icon="inline-start" /> Write a new draft
           </Link>
         </Button>
+        <ReadAloud
+          readKey={`feedback:${f.at}`}
+          request={{ feedback: true }}
+          size="default"
+        />
       </CardFooter>
     </Card>
   )

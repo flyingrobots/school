@@ -205,6 +205,17 @@ describe("POST /api/speak", () => {
       bridgeReply = null;
     }
   });
+
+  test("speak-old-bridge: a bridge from before reading aloud, with no /speak route, is a 503 asking for it to be updated", async () => {
+    bridgeReply = { status: 404, body: { status: "not found" } };
+    try {
+      const r = await post(school, "/api/speak", { course: "astro", lesson: "orbits" });
+      expect(r.status).toBe(503);
+      expect((await r.json()).error).toContain("Update and restart the bridge");
+    } finally {
+      bridgeReply = null;
+    }
+  });
 });
 
 describe("the proxy", () => {
