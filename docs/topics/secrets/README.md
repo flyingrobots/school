@@ -97,28 +97,39 @@ without the launcher. Run without the launcher, `docker compose up` starts nothi
 environment variable "SCHOOL_POSTGRES_PASSWORD" required by secret "server_postgres_password" is not set
 ```
 
-Output is JSON Lines on stdout and stderr, one object per line with `kind` (`school.up`,
-`school.down`, `school.compose`, `school.import`, `school.help`, `school.error`) and `event`.
-Compose's own output arrives as `compose` events, scrubbed of every secret (each string before it
-is serialised, so a secret with a quote or backslash is caught too); errors are `error`
-lines on stderr with a `code`. `--human`, before the command, prints prose instead.
-`./school --help` lists the commands as JSON Lines. Exit codes: 0 done, 2 a missing or invalid
-setting with nothing started, 1 any other failure, such as compose failing.
+Output is JSON Lines on stdout and stderr, and keeps [the programs' output
+contract](../program-output/README.md#the-contract) (flyingrobots/school#200). Every line names its
+schema, `_schema: {"id": "school.launcher.<event>", "version": ...}`, published in `host/schemas/`.
+Each line also carries `kind` (`school.up`, `school.down`, `school.compose`, `school.import`,
+`school.help`, `school.error`), `event`, and `run`, one UUID per invocation.
 
-A first `up` from a clean Keychain, recorded for flyingrobots/school#123 with a throwaway
-account (compose's 135 progress lines left out):
+- **Compose's output** arrives as `compose` events, scrubbed of every secret. Each string is
+  scrubbed before it is serialised, so a secret with a quote or backslash is caught too.
+- **Errors** are `error` lines on stderr with a `code`.
+- **Help and schemas:** `./school --help` lists the commands as `usage`, `command` and
+  `exit-codes` lines. `./school --schema` prints every schema.
+- **Prose:** `--human`, before the command, prints prose instead.
+- **`./school check`** passes through the lines of its own program, which name `school.check.*`
+  schemas.
+
+Exit codes: 0 done, 2 a missing or invalid setting with nothing started, 1 any other failure, such
+as compose failing.
+
+`./school compose version` from a checkout on 2026-11-25, with throwaway values for all three
+secrets in the environment, so the Keychain was not read:
 
 ```text
-{"kind":"school.up","event":"keychain","account":"school-test-1b1b6ec3"}
-{"kind":"school.up","event":"prompt","name":"SCHOOL_POSTGRES_PASSWORD","message":"SCHOOL_POSTGRES_PASSWORD is not in the Keychain. If this deployment already has a database, enter the superuser's password it was created with (the old SCHOOL_POSTGRES_PASSWORD); for a new deployment press Enter to generate one"}
-
-{"kind":"school.up","event":"secret","name":"SCHOOL_POSTGRES_PASSWORD","from":"generated"}
-{"kind":"school.up","event":"secret","name":"SCHOOL_APP_PASSWORD","from":"generated"}
-{"kind":"school.up","event":"secret","name":"SCHOOL_BRIDGE_TOKEN","from":"generated"}
-{"kind":"school.up","event":"done","ok":true}
+{"_schema":{"id":"school.launcher.keychain","version":"1.0.0"},"kind":"school.compose","event":"keychain","account":"school","run":"424fbd24-4c77-4020-95cc-81fc48577322"}
+{"_schema":{"id":"school.launcher.secret","version":"1.0.0"},"kind":"school.compose","event":"secret","name":"SCHOOL_POSTGRES_PASSWORD","from":"environment","run":"424fbd24-4c77-4020-95cc-81fc48577322"}
+{"_schema":{"id":"school.launcher.secret","version":"1.0.0"},"kind":"school.compose","event":"secret","name":"SCHOOL_APP_PASSWORD","from":"environment","run":"424fbd24-4c77-4020-95cc-81fc48577322"}
+{"_schema":{"id":"school.launcher.secret","version":"1.0.0"},"kind":"school.compose","event":"secret","name":"SCHOOL_BRIDGE_TOKEN","from":"environment","run":"424fbd24-4c77-4020-95cc-81fc48577322"}
+{"_schema":{"id":"school.launcher.compose","version":"1.0.0"},"kind":"school.compose","event":"compose","stream":"stdout","line":"Docker Compose version v5.5.0","run":"424fbd24-4c77-4020-95cc-81fc48577322"}
+{"_schema":{"id":"school.launcher.done","version":"1.0.0"},"kind":"school.compose","event":"done","ok":true,"run":"424fbd24-4c77-4020-95cc-81fc48577322"}
 ```
 
-The second run asks nothing and says `"from":"keychain"` for all three.
+A first `up` from a clean Keychain prints a `prompt` line on stderr for the superuser's password.
+It then prints `"from":"generated"` (or `"prompted"`) for each secret it made. A second run asks
+nothing and says `"from":"keychain"` for all three.
 
 ## Reading `*_FILE` in School's own processes
 

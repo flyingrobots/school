@@ -15,6 +15,7 @@
 // Every effect is a dependency (Deps), so the tests run it with a fake vault and a fake compose
 // (host/launcher.test.ts); host/school.ts wires the real ones.
 import { join } from "node:path";
+import { loadSchemas } from "../server/jsonl.ts";
 import { accountFrom, SECRETS, SecretError, storable, type SecretName, type Source, type Store } from "./secrets.ts";
 
 export type Spawned = {
@@ -56,8 +57,13 @@ const COMMANDS: { command: Command; does: string }[] = [
 ];
 
 /** The output of one command: JSON lines, or prose with --human; every string scrubbed of the secrets it knows. */
+// The launcher's message types (flyingrobots/school#200): one schema per `event`, `school.launcher.<event>`.
+const SCHEMAS = loadSchemas(join(import.meta.dir, "schemas"));
+
 class Output {
   private readonly secrets = new Set<string>();
+  /** One id per invocation, on every line. */
+  private readonly run = crypto.randomUUID();
   constructor(private readonly deps: Deps, private readonly kind: string, private readonly human: boolean) {}
 
   know(value: string) { if (value !== "") this.secrets.add(value); }
@@ -78,7 +84,10 @@ class Output {
 
   line(stream: "out" | "err", fields: Record<string, unknown>, prose: string) {
     const write = stream === "out" ? this.deps.out : this.deps.err;
-    write(this.human ? this.scrub(prose) : JSON.stringify(this.scrubbed({ kind: this.kind, ...fields })));
+    const id = `school.launcher.${String(fields.event)}`;
+    const published = SCHEMAS.get(id);
+    if (published === undefined) throw new Error(`no published schema for ${id}`);
+    write(this.human ? this.scrub(prose) : JSON.stringify(this.scrubbed({ _schema: { id, version: published.version }, kind: this.kind, ...fields, run: this.run })));
   }
   error(code: 1 | 2, message: string, extra: Record<string, unknown> = {}) {
     this.line("err", { event: "error", code, message, ...extra }, `error: ${message}`);
@@ -278,9 +287,9 @@ function importUnderLock(deps: Deps, o: Output, account: string, dotenv: string,
 
 function help(deps: Deps, human: boolean): number {
   const o = new Output(deps, "school.help", human);
-  o.line("out", { usage: "school [--human] <command>", does: "Run School under docker compose with its secrets in the macOS Keychain" }, "usage: school [--human] <up|down|compose ...|import|check <folder>>");
-  for (const c of COMMANDS) o.line("out", { command: c.command, does: c.does }, `  ${c.command.padEnd(7)} ${c.does}`);
-  o.line("out", { exitCodes: { 0: "done", 1: "a failure, such as compose failing or the Keychain refusing", 2: "a missing or invalid setting; nothing was started" } }, "exit codes: 0 done, 1 failure, 2 missing or invalid setting");
+  o.line("out", { event: "usage", usage: "school [--human] <command>", does: "Run School under docker compose with its secrets in the macOS Keychain" }, "usage: school [--human] <up|down|compose ...|import|check <folder>>");
+  for (const c of COMMANDS) o.line("out", { event: "command", command: c.command, does: c.does }, `  ${c.command.padEnd(7)} ${c.does}`);
+  o.line("out", { event: "exit-codes", exitCodes: { 0: "done", 1: "a failure, such as compose failing or the Keychain refusing", 2: "a missing or invalid setting; nothing was started" } }, "exit codes: 0 done, 1 failure, 2 missing or invalid setting");
   return 0;
 }
 
@@ -297,6 +306,11 @@ export async function main(argv: string[], deps: Deps): Promise<number> {
   if (checkAt >= 0 && ours.slice(0, checkAt).every(HUMAN)) return await check(deps, [...(human ? ["--human"] : []), ...ours.slice(checkAt + 1).filter((a) => !HUMAN(a))]);
   const rest = ours.filter((a) => !HUMAN(a));
   if (rest.length === 0 || rest[0] === "--help" || rest[0] === "-h" || rest[0] === "help") return help(deps, human);
+  if (rest[0] === "--schema" && rest.length === 1) {
+    const o = new Output(deps, "school.help", human);
+    for (const p of SCHEMAS.values()) o.line("out", { event: "schema", id: p.id, version: p.version, schema: p.schema }, `schema ${p.id} ${p.version}\n${JSON.stringify(p.schema, null, 2)}`);
+    return 0;
+  }
   const command = rest[0] as Command;
   if (command === "compose" && passed.length === 0) {
     return new Output(deps, "school.compose", human).error(2, "`school compose` needs compose's arguments, such as `school compose ps`");
