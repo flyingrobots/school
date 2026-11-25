@@ -1,0 +1,7 @@
+{
+  "schemaHash": "ae93f0c015ff2ab5abd0804240f9afb986c6f59329bf60176708f201ebbf574d",
+  "schemaHashQualified": "sha256:ae93f0c015ff2ab5abd0804240f9afb986c6f59329bf60176708f201ebbf574d",
+  "generator": "wesley-emit-typescript",
+  "generatorVersion": "0.3.0-alpha.4",
+  "executionMode": "rust-native"
+}
