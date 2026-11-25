@@ -38,7 +38,8 @@ others, and checks every reply with Zod (`web/src/lib/home-api.ts`) before showi
    - **Below it**, today's letter: the newest feedback (`GET /api/feedback`), titled "Your
      explanation of <lesson>", with its prompt, the grader's summary, each criterion as a word
      (Meets, Partly, Not yet; never a score) with its note, a robot badge naming who graded it, and
-     **Write a new draft**, linking to the explanation in its lesson. Then **Ready for another
+     **Write a new draft**, linking to the explanation in its lesson, and **Read aloud** (`R`),
+     which reads the feedback aloud ([reading aloud](../reading-aloud/README.md)). Then **Ready for another
      look** (`GET /api/review`): each question with its course and lesson, the day it was
      answered, an ⓘ button that answers "Why am I being asked this?" on hover or tap, and
      **Answer**, which opens the next lesson ahead in its course, where the question comes back.
@@ -48,7 +49,8 @@ others, and checks every reply with Zod (`web/src/lib/home-api.ts`) before showi
 
 When the page loads, focus starts on the hero's button, unless something else already has it, so
 `↵` starts the lesson. `[` and `]` step to the earlier and later mark on the timeline, and `t`
-returns to today; the timeline shows these keys. `j` and `k` move between the page's links and
+returns to today; the timeline shows these keys. `r` reads the newest feedback aloud, and while it
+reads, `,` `.` `/` and `Esc` step, pause and stop ([the playback bar](../reading-aloud/README.md#the-playback-bar)). `j` and `k` move between the page's links and
 buttons as everywhere in the shell. Key hints are hidden on touch screens.
 
 ## States

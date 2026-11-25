@@ -26,7 +26,9 @@ From the `xl` breakpoint an outline of the lesson's sections sits beside the blo
 previous and next lessons close the page; the first lesson has no previous link and the last no
 next one.
 
-Under the title a **Slides** button (`P`) opens the same lesson in [the slides view](#the-slides-view).
+Under the title a **Slides** button (`P`) opens the same lesson in [the slides view](#the-slides-view),
+and **Read aloud** (`R`) reads the lesson aloud, with a playback bar at the bottom of the page and
+none of its answers ([reading aloud](../reading-aloud/README.md)).
 
 The frame and the reading blocks are the `@flyingrobots/lesson` registry block
 (`web/src/components/lesson.tsx`, installed with the shadcn CLI, never edited here). School's own

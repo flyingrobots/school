@@ -161,9 +161,12 @@ SCHOOL_BRIDGE_TOKEN=<shared secret> bun bridge/bridge.ts [--help | --schema] [--
 | `school.bridge.run.end` | `bridge.run.end` | `id`, `status`, `agent` | How the run ended |
 | `school.bridge.test` | `bridge.test` | `agent`, `status` | A `POST /test` |
 | `school.bridge.config.saved` | `bridge.config.saved` | `config`, `agents` (names, in order) | An accepted `PUT /config` |
+| `school.bridge.speak.submit` | `bridge.speak.submit` | `id`, `state`, `segments` | A `POST /speak` the daemon accepted ([reading aloud](../reading-aloud/README.md)) |
+| `school.bridge.speak.cancel` | `bridge.speak.cancel` | `id`, `state` | A `POST /speak/:id/cancel` |
+| `school.bridge.speak.failed` | `bridge.speak.failed` | `op` (`submit`, `get`, `segment` or `cancel`), `status` (`unavailable` or `refused`), `message` | A `/speak` request the daemon could not serve |
 | `school.bridge.error` | `bridge.error` | `message`; for a port it cannot listen on also `host`, `port` and `code` (`EADDRINUSE` for a taken port, else the system's code or null) | A refusal to start, an uncaught throw or rejection, or a request handler's throw (answered 500) |
 
-No line holds a prompt or an answer. Before flyingrobots/school#135 the lines had no `_schema`
+No line holds a prompt, an answer or text to speak. Before flyingrobots/school#135 the lines had no `_schema`
 and no `run`, and arguments were ignored.
 
 ### What the bridge printed
