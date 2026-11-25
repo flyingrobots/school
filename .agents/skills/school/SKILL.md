@@ -31,12 +31,16 @@ In a School checkout the same pages are under `docs/`.
 1. **Objectives first.** `OBJECTIVES.md` says what a learner can do after the course, as a
    numbered list of things they could show. Every lesson serves one or more of them.
 2. **Sources, not memory.** Knowledge comes from high-trust sources, never from what you happen to
-   recall. List them in `RESOURCES.md` with what each one supports. If you cannot source a claim,
-   leave it out or mark it as open.
+   recall. List them in `RESOURCES.md` with what each one supports. If you cannot read the sources
+   (no web access, a book you don't have), say so plainly in `RESOURCES.md`, mark every claim
+   written without them as unsourced, and tell the person who asked. Never list a source you did
+   not read as if you had.
 3. **One lesson per file**, numbered so file-name order is course order:
    `lessons/0001-<slug>.json`, `0002-…`. Each file's root is a `page` with a `title`, a
    `subtitle` and a `hook`. The hook's `question` is the one the lesson answers, worth wanting
-   answered.
+   answered. Name things after the lesson's slug: the page id is the slug without its number
+   (`places-worth-twice`), and every block id in the lesson starts with a short form of it
+   (`places-q-read`), so ids stay unique across the course.
 4. **Teach, then practise.** Reading blocks (`prose`, `card`, `quote`, `aside`, `nest`) inside
    `section`s, then the lesson's quizzes, then one `explain` block. A quiz checks one idea the
    lesson actually taught.
