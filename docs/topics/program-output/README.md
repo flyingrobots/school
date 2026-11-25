@@ -14,6 +14,8 @@ where each program differs from it. What each program does is elsewhere: the bac
 [back up and restore](../../workflows/backup-and-restore/README.md), the bridge in
 [the architecture](../architecture/README.md), the gate in [the working notes](../../working-notes.md).
 The cases that pin this page are in its [test plan](test-plan.md).
+`school check` keeps the same contract; its message types are in
+[a course's folder](../course-format/README.md#checking-a-course).
 
 ## The contract
 

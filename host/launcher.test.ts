@@ -296,10 +296,21 @@ describe("the command line", () => {
     expect(help.code).toBe(0);
     const lines = parsed(help.stdout);
     expect(lines.every((l) => l.kind === "school.help")).toBe(true);
-    expect(lines.filter((l) => l.command !== undefined).map((l) => l.command)).toEqual(["up", "down", "compose", "import"]);
+    expect(lines.filter((l) => l.command !== undefined).map((l) => l.command)).toEqual(["up", "down", "compose", "import", "check"]);
     const bad = await run(["fly"]);
     expect(bad.code).toBe(2);
     expect(parsed(bad.stderr).at(-1)).toMatchObject({ kind: "school.error", event: "error", code: 2 });
+  });
+
+  test("CHECK-7: `school check <folder>` runs School's course check on it, passing its lines and exit code through; it needs no secret", async () => {
+    const line = '{"_schema":{"id":"school.check.done","version":"1.0.0"}}';
+    const r = await run(["--human", "check", "/courses/bells"], { composeCode: 1, composeLines: [{ stream: "stdout", line }, { stream: "stderr", line: "problem" }],
+      store: () => { throw new Error("check needs no secret"); } });
+    expect(r.spawned).toHaveLength(1);
+    expect(r.spawned[0]!.args).toEqual(["bun", "/checkout/server/check-course.ts", "--human", "/courses/bells"]);
+    expect(r.stdout).toEqual([line]);
+    expect(r.stderr).toEqual(["problem"]);
+    expect(r.code).toBe(1);
   });
 
   test("SEC-L16: a Keychain that throws is an error line, exit 1, never a stack trace", async () => {

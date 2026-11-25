@@ -15,6 +15,65 @@ authors and readers; School does not read it.
 The blocks a lesson file is written in, and every rule they must meet, are in
 [lesson blocks](blocks.md).
 
+## Checking a course
+
+```text
+./school check <folder> [--human]
+./school check --help | --schema
+```
+
+`school check` loads a course folder with School's own loader, the one the server uses for
+`course.json` and `lessons/`, and says whether School would serve it. It reads the folder, writes
+nothing, and needs no secret and no Docker. Run it before saying a course is ready. The loader
+stops at the first problem, so that is the one reported; fix it and run the check again.
+
+| Exit | Means |
+| --- | --- |
+| 0 | School would serve the course; or `--help` or `--schema` printed |
+| 1 | School would refuse it: the error line names the first problem. Or the check itself failed |
+| 2 | No folder, more than one, an unknown argument, or a folder that does not exist. Nothing was checked |
+
+Its output keeps [the programs' output contract](../program-output/README.md#the-contract): JSON
+Lines on stdout and stderr, each line naming its schema in `server/schemas/check/`, with `kind`
+`school.check`, an `event`, the invocation's `run` and the time (`at`). `--human` prints prose.
+
+| `_schema.id` | Stream | Fields beyond the envelope | When |
+| --- | --- | --- | --- |
+| `school.check.help` | stdout | `command`, `usage`, `summary`, `options`, `exit`, `output` | First line of `--help` |
+| `school.check.schema` | stdout | `id`, `version`, `schema` | `--schema`, and `--help` after its help line |
+| `school.check.start` | stdout | `folder`, as an absolute path | First, once the arguments are accepted |
+| `school.check.done` | stdout | `ok`, `folder`, `title` (null when none is declared), `lessons` (each `file`, `id`, `title`, `quizzes`, `explains`), and the course's `quizzes` and `explains` | Last, before exit 0 |
+| `school.check.error.invalid` | stderr | `error`, `code` (1), `file` (`course.json`, a lesson file, or null for a problem across files, such as an unknown ref), `message` | School would refuse the course |
+| `school.check.error.usage` | stderr | `error`, `code` (2), `message` | A bad argument or no such folder |
+| `school.check.error.failed` | stderr | `error`, `code` (1), `message` | Anything else went wrong |
+
+A quiz or explain block reused through `ref` counts once.
+
+On 2026-11-25, a one-lesson course in a temporary folder shown as `$DIR`, its quiz with two
+correct choices:
+
+```text
+$ ./school check $DIR          # stdout
+{"_schema":{"id":"school.check.start","version":"1.0.0"},"kind":"school.check","event":"start","folder":"$DIR","run":"0b1bfe66-e936-4db6-9c24-4b8e374fc0d8","at":"2026-11-25T12:50:55.941Z"}
+$ ./school check $DIR          # stderr; exit 1
+{"_schema":{"id":"school.check.error.invalid","version":"1.0.0"},"kind":"school.check","event":"error","error":"invalid","code":1,"file":"0001-rounds.json","message":"0001-rounds.json > rounds > q1: exactly one choice must be correct","run":"0b1bfe66-e936-4db6-9c24-4b8e374fc0d8","at":"2026-11-25T12:50:55.942Z"}
+$ ./school --human check $DIR
+checking $DIR
+error (invalid) in 0001-rounds.json: 0001-rounds.json > rounds > q1: exactly one choice must be correct
+```
+
+The same course with the second choice made wrong:
+
+```text
+$ ./school check $DIR          # exit 0
+{"_schema":{"id":"school.check.start","version":"1.0.0"},"kind":"school.check","event":"start","folder":"$DIR","run":"866c5766-2be1-48cc-9f48-985734bafe43","at":"2026-11-25T12:50:56.018Z"}
+{"_schema":{"id":"school.check.done","version":"1.0.0"},"kind":"school.check","event":"done","ok":true,"folder":"$DIR","title":"Rounds","lessons":[{"file":"0001-rounds.json","id":"rounds","title":"Rounds","quizzes":1,"explains":0}],"quizzes":1,"explains":0,"run":"866c5766-2be1-48cc-9f48-985734bafe43","at":"2026-11-25T12:50:56.019Z"}
+$ ./school --human check $DIR
+checking $DIR
+ok: Rounds, 1 lesson, 1 quiz, 0 explain blocks
+  0001-rounds.json  Rounds  (1 quiz, 0 explain blocks)
+```
+
 ## More than one course under `./school up`
 
 Compose mounts the course in `SCHOOL_COURSE_DIR` at `/course`. School calls that course `course`.
