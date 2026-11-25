@@ -269,8 +269,26 @@ async function coursesJson(): Promise<Response> {
 
 // ---- Since the learner was last here (flyingrobots/school#165) -------------------------------
 
-/** The server's time zone, the one review reasons name their days in. */
+/** The server's time zone: the fallback when a request names none. */
 const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+/**
+ * The learner's time zone (flyingrobots/school#178): `tz`, which the page sends from its browser,
+ * when it is an IANA zone; the server's own when it is absent. Under Docker the server's is UTC, so
+ * without it a learner west of Greenwich studies "tomorrow" every evening. `null` when `tz` is
+ * given and is not a zone, which the caller answers with 400.
+ */
+function zoneParam(params: URLSearchParams): string | null {
+  const tz = params.get("tz");
+  if (tz === null) return zone();
+  if (!/^[A-Za-z][A-Za-z0-9_+\-]*(\/[A-Za-z0-9_+\-]+){0,2}$/.test(tz) || tz.length > 64) return null;
+  try {
+    return new Intl.DateTimeFormat("en", { timeZone: tz }).resolvedOptions().timeZone;
+  } catch {
+    return null;
+  }
+}
+const BAD_ZONE = { error: "tz must be an IANA time zone, such as America/Los_Angeles" };
 
 /** Each served course's pages that can be read, or none. */
 function readablePages(c: Course): Extract<Block, { type: "page" }>[] {
@@ -299,11 +317,13 @@ async function feedbackJson(): Promise<Response> {
 }
 
 /** The questions due for review now, across served courses, each with where it lives and why it's back. */
-async function reviewJson(): Promise<Response> {
+async function reviewJson(params: URLSearchParams): Promise<Response> {
+  const tz = zoneParam(params);
+  if (tz === null) return json(BAD_ZONE, 400);
   const due = await Promise.all(served.map(async (c) => {
     const pages = readablePages(c);
     const quizzesById = new Map(pages.flatMap((p) => quizzes(p).map((q) => [q.id, q] as const)));
-    return (await school.dueNow(c.name, [...quizzesById.keys()])).map(({ item, reason }) => ({
+    return (await school.dueNow(c.name, [...quizzesById.keys()], tz)).map(({ item, reason }) => ({
       course: c.name, courseTitle: titleOf(c), lesson: lessonOf(pages, item.blockId), blockId: item.blockId,
       question: quizzesById.get(item.blockId)?.q ?? null, answeredAt: item.answeredAt, rule: item.rule, reason,
     }));
@@ -316,7 +336,8 @@ async function activityJson(params: URLSearchParams): Promise<Response> {
   const given = params.get("days");
   const days = given === null ? 14 : /^[0-9]+$/.test(given) ? Number(given) : NaN;
   if (!Number.isInteger(days) || days < 1 || days > 60) return json({ error: "days must be a whole number from 1 to 60" }, 400);
-  const tz = zone();
+  const tz = zoneParam(params);
+  if (tz === null) return json(BAD_ZONE, 400);
   const courses = served.map((c) => ({ name: c.name, blocks: readablePages(c).flatMap((p) => [...quizIds(p)]) }));
   const a = await school.activity(courses, days, tz);
   return json({
@@ -381,7 +402,7 @@ function aidParam(params: URLSearchParams): { aid: AidTracking } | null {
  * already answered in it, which is what opening the page used to do, and any items due for review.
  * The slides view records nothing.
  */
-async function lessonJson(c: Course, id: string, viewParam: string | null, aidTracking: AidTracking): Promise<Response> {
+async function lessonJson(c: Course, id: string, viewParam: string | null, aidTracking: AidTracking, tz: string): Promise<Response> {
   const view = isView(viewParam) ? viewParam : "web";
   const { library, error } = lessons(c);
   if (library === null) return json({ error: error?.message ?? "the lessons could not be loaded" }, 500);
@@ -393,7 +414,7 @@ async function lessonJson(c: Course, id: string, viewParam: string | null, aidTr
   if (view !== "web") return json(base);
   // Any quiz of the course may come back for review at the top of this lesson (RFC 2 §5). `lesson` is
   // then what the encounter snapshotted, review included, and `review` holds each item's reason.
-  const opened = await school.openLesson(c.name, page, aidTracking, [...library.byId.values()]);
+  const opened = await school.openLesson(c.name, page, aidTracking, [...library.byId.values()], tz);
   // Each item names the lesson that holds its quiz now, so the learner can place it (flyingrobots/school#159).
   const home = (blockId: string) => {
     const p = pages.find((q) => q.type === "page" && quizIds(q).has(blockId));
@@ -556,7 +577,7 @@ const http = Bun.serve({
     if (pathname === "/api/courses") return coursesJson();
     if (pathname === "/api/resume") return resumeJson();
     if (pathname === "/api/feedback") return feedbackJson();
-    if (pathname === "/api/review") return reviewJson();
+    if (pathname === "/api/review") return reviewJson(url.searchParams);
     if (pathname === "/api/activity") return activityJson(url.searchParams);
     if (pathname === "/api/showcase") return showcaseJson();
     const api = /^\/api\/courses\/([a-z0-9][a-z0-9-]*)(?:\/lessons\/([\w-]+))?$/.exec(pathname);
@@ -566,7 +587,9 @@ const http = Bun.serve({
       if (api[2] === undefined) return courseJson(c);
       const aid = aidParam(url.searchParams);
       if (aid === null) return json({ status: "invalid", error: `aid must be a known capture version: ${AID_CAPTURE_VERSIONS.join(", ")}` }, 400);
-      return lessonJson(c, api[2], url.searchParams.get("view"), aid.aid);
+      const tz = zoneParam(url.searchParams);
+      if (tz === null) return json(BAD_ZONE, 400);
+      return lessonJson(c, api[2], url.searchParams.get("view"), aid.aid, tz);
     }
     if (pathname.startsWith("/api/")) return json({ error: "not found" }, 404);
 

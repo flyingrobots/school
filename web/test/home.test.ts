@@ -442,6 +442,44 @@ describe("since you were last here", () => {
   })
 })
 
+describe("the learner's zone", () => {
+  test("the home page and a lesson send the browser's time zone with every request that names a day", async () => {
+    const c = await browser.newContext({
+      viewport: { width: 1280, height: 900 },
+      reducedMotion: "reduce",
+      timezoneId: "Pacific/Kiritimati",
+    })
+    const sent: string[] = []
+    await c.route(/\/api\//, async (route) => {
+      const u = new URL(route.request().url())
+      sent.push(u.pathname + u.search)
+      await route.fulfill({
+        response: await route.fetch({
+          url: partway.url + u.pathname + u.search,
+        }),
+      })
+    })
+    const p = await open(c)
+    await main(p).locator("[data-timeline]").waitFor()
+    await p.goto(base + "/courses/astro/lessons/tides")
+    await p.getByRole("heading", { level: 1 }).waitFor()
+    const zone = (path: string) =>
+      sent
+        .filter((s) => s.startsWith(path))
+        .map((s) => new URL("http://x" + s).searchParams.get("tz"))
+    for (const path of [
+      "/api/activity",
+      "/api/review",
+      "/api/courses/astro/lessons/tides",
+    ]) {
+      const zones = zone(path)
+      expect({ path, sent: zones.length > 0 }).toEqual({ path, sent: true })
+      expect(new Set(zones)).toEqual(new Set(["Pacific/Kiritimati"]))
+    }
+    await close(c)
+  })
+})
+
 describe("study days", () => {
   test("a day with only a visit has no mark; a day with an answer has one", async () => {
     const p = await open()
@@ -542,7 +580,7 @@ describe("states", () => {
   test("a quiet day says nothing is new", async () => {
     const c = await context()
     await c.route(/\/api\/feedback$/, (route) => route.fulfill({ json: null }))
-    await c.route(/\/api\/review$/, (route) => route.fulfill({ json: [] }))
+    await c.route(/\/api\/review(\?|$)/, (route) => route.fulfill({ json: [] }))
     const p = await open(c)
     await main(p).locator("[data-quiet]").waitFor()
     expect(
