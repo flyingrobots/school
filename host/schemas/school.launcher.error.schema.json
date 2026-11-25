@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "school.launcher.error/1.0.0",
+  "title": "Error",
+  "description": "On stderr, before exit 1 or 2: what went wrong, scrubbed of every secret.",
+  "type": "object",
+  "properties": {
+    "_schema": {
+      "type": "object",
+      "description": "The schema this line follows.",
+      "properties": {
+        "id": {
+          "const": "school.launcher.error"
+        },
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "kind": {
+      "enum": [
+        "school.up",
+        "school.down",
+        "school.compose",
+        "school.import",
+        "school.help",
+        "school.error"
+      ],
+      "description": "The command that printed the line: school.<command>, school.help or school.error."
+    },
+    "event": {
+      "const": "error"
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "One random (version 4) UUID per invocation, on every line it prints."
+    },
+    "code": {
+      "enum": [
+        1,
+        2
+      ]
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1
+    },
+    "keys": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "The secrets server/.env still holds."
+    },
+    "name": {
+      "type": "string",
+      "description": "The secret the error is about."
+    },
+    "exitCode": {
+      "type": "integer",
+      "description": "docker compose's exit code."
+    }
+  },
+  "required": [
+    "_schema",
+    "kind",
+    "event",
+    "run",
+    "code",
+    "message"
+  ],
+  "additionalProperties": false
+}

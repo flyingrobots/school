@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "school.launcher.keychain/1.0.0",
+  "title": "Keychain account",
+  "description": "On stdout: the Keychain account the command reads and writes.",
+  "type": "object",
+  "properties": {
+    "_schema": {
+      "type": "object",
+      "description": "The schema this line follows.",
+      "properties": {
+        "id": {
+          "const": "school.launcher.keychain"
+        },
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "kind": {
+      "enum": [
+        "school.up",
+        "school.compose",
+        "school.import"
+      ],
+      "description": "The command that printed the line: school.<command>, school.help or school.error."
+    },
+    "event": {
+      "const": "keychain"
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "One random (version 4) UUID per invocation, on every line it prints."
+    },
+    "account": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "_schema",
+    "kind",
+    "event",
+    "run",
+    "account"
+  ],
+  "additionalProperties": false
+}

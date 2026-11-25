@@ -4,6 +4,10 @@
 import { describe, expect, test } from "bun:test";
 import { main, type Deps, type Spawned } from "./launcher.ts";
 import { SECRETS, type Store } from "./secrets.ts";
+import { publishedIn } from "../server/testing/schemas.ts";
+
+// Every line the launcher prints names a schema in host/schemas/ and validates against it (flyingrobots/school#200).
+const schemas = publishedIn(new URL("./schemas", import.meta.url).pathname);
 
 /** A vault adapter in memory, counting every read and write. */
 function fakeStore(initial: Record<string, string> = {}) {
@@ -55,6 +59,8 @@ async function run(argv: string[], over: Partial<Deps> & { answers?: string[]; c
     ...over,
   };
   r.code = await main(argv, deps);
+  // `--human` prints prose, which no schema covers; `check` passes server/check-course.ts's lines through, checked by its own tests.
+  if (!argv.includes("check") && !argv.includes("--human")) for (const l of [...r.stdout, ...r.stderr]) schemas.check(l);
   return r;
 }
 
@@ -313,6 +319,14 @@ describe("the command line", () => {
     expect(r.code).toBe(1);
   });
 
+  test("SEC-L28: --schema prints every published schema, and every line of one run shares one run id", async () => {
+    const r = await run(["--schema"]);
+    expect(r.code).toBe(0);
+    expect(parsed(r.stdout).map((l) => l.id).sort()).toEqual([...schemas.ids].sort());
+    const up = await run(["up"], { env: { SCHOOL_POSTGRES_PASSWORD: "EnvPg0123456789abcdef", SCHOOL_APP_PASSWORD: "EnvApp01234567890123456", SCHOOL_BRIDGE_TOKEN: "EnvBridge0123456789" } });
+    expect(new Set(parsed(up.stdout).map((l) => l.run)).size).toBe(1);
+  });
+
   test("SEC-L16: a Keychain that throws is an error line, exit 1, never a stack trace", async () => {
     const r = await run(["up"], { store: () => ({ get() { throw new Error("security: boom"); }, set() {}, create() { return "stored" as const; } }) });
     expect(r.code).toBe(1);
@@ -328,7 +342,7 @@ describe("scrubbing and server/.env, flyingrobots/school#132 review", () => {
     const env = { SCHOOL_POSTGRES_PASSWORD: 'Quote"d\\Back0123456789', SCHOOL_APP_PASSWORD: "EnvApp01234567890123456", SCHOOL_BRIDGE_TOKEN: "EnvBridge0123456789" };
     const r = await run(["up"], { env, composeLines: [{ stream: "stdout", line: `SCHOOL_POSTGRES_PASSWORD=${env.SCHOOL_POSTGRES_PASSWORD}` }] });
     expect(r.code).toBe(0);
-    expect(parsed(r.stdout).filter((e) => e.event === "compose")).toEqual([{ kind: "school.up", event: "compose", stream: "stdout", line: "SCHOOL_POSTGRES_PASSWORD=(redacted)" }]);
+    expect(parsed(r.stdout).filter((e) => e.event === "compose")).toMatchObject([{ _schema: { id: "school.launcher.compose" }, kind: "school.up", event: "compose", stream: "stdout", line: "SCHOOL_POSTGRES_PASSWORD=(redacted)" }]);
     const escaped = JSON.stringify(env.SCHOOL_POSTGRES_PASSWORD).slice(1, -1);
     for (const l of all(r)) expect(l).not.toContain(escaped);
     contract(r, Object.values(env));

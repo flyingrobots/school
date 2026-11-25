@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "school.launcher.command/1.0.0",
+  "title": "Command",
+  "description": "On stdout, in --help: one command and what it does.",
+  "type": "object",
+  "properties": {
+    "_schema": {
+      "type": "object",
+      "description": "The schema this line follows.",
+      "properties": {
+        "id": {
+          "const": "school.launcher.command"
+        },
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "kind": {
+      "enum": [
+        "school.help"
+      ],
+      "description": "The command that printed the line: school.<command>, school.help or school.error."
+    },
+    "event": {
+      "const": "command"
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "One random (version 4) UUID per invocation, on every line it prints."
+    },
+    "command": {
+      "enum": [
+        "up",
+        "down",
+        "compose",
+        "import",
+        "check"
+      ]
+    },
+    "does": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "_schema",
+    "kind",
+    "event",
+    "run",
+    "command",
+    "does"
+  ],
+  "additionalProperties": false
+}
