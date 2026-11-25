@@ -2,6 +2,7 @@
 // with Zod before the page reads it, so a reply of the wrong shape is a failure, never a verdict.
 // Correctness is the server's: a quiz choice's `correct` flag is in the lesson JSON, and the page
 // never reads it.
+import { tzParam } from "./zone"
 import { z } from "zod"
 
 import type { NestNode } from "@/components/nest"
@@ -181,7 +182,7 @@ export async function openLesson(
   signal?: AbortSignal
 ): Promise<LessonReply> {
   return lessonRequest(
-    `/api/courses/${encodeURIComponent(course)}/lessons/${encodeURIComponent(lesson)}?aid=${AID_CAPTURE_VERSION}`,
+    `/api/courses/${encodeURIComponent(course)}/lessons/${encodeURIComponent(lesson)}?aid=${AID_CAPTURE_VERSION}&${tzParam()}`,
     LessonReply,
     signal
   )

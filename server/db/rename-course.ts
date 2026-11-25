@@ -15,7 +15,7 @@ import { OWNER } from "./migrate.ts";
 
 /** The record tables with a `course` column. Snapshots hold page content and name no course. */
 export const COURSE_TABLES = ["encounters", "views", "decision_notes"] as const;
-const RECORD_TABLES = ["snapshots", "encounters", "answers", "explanations", "gradings", "views", "exposures", "decision_notes"] as const;
+const RECORD_TABLES = ["snapshots", "encounters", "answers", "explanations", "gradings", "views", "exposures", "decision_notes", "time_zone_choices"] as const;
 
 export type Renamed = { from: string; to: string; rows: Record<(typeof COURSE_TABLES)[number], number> };
 

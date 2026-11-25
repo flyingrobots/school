@@ -60,16 +60,25 @@ field for a command.
 so it is marked as AI with a robot icon, as is the card that shows the result: whether it
 succeeded, and each attempt the bridge made, with its status, time, exit code and error.
 
+## Time zone
+
+The **Time zone** card chooses the zone School names days in: the days studied on the home timeline,
+today, and the day a question was answered in "Ready for another look". **Automatic**, the default,
+is the zone this browser sends (flyingrobots/school#178), shown as "Automatic: <zone>, from this
+browser". Choosing a zone (a searchable list of every zone `Intl` knows) stores it in School's
+record through `PUT /api/settings/time-zone` (flyingrobots/school#181), so it holds on every device;
+the server then uses it over any zone a page sends. Choosing Automatic again stores no zone.
+
 ## Built from
 
-Stock shadcn `Card`, `Field`, `Input`, `Button`, `Switch`, `Badge`, `Alert`, `Item`, `Skeleton`,
+Stock shadcn `Card`, `Combobox`, `Field`, `Input`, `Button`, `Switch`, `Badge`, `Alert`, `Item`, `Skeleton`,
 `Spinner` and `Breadcrumb`, and the `@flyingrobots/sortable-list` registry block
 (`web/src/components/sortable-list.tsx`, `web/src/lib/sortable-list-behavior.ts`), installed with
 the shadcn CLI and never edited here. The block is ui-sdk's `createReorder` behind a handle, drawn
 with stock `ItemGroup`, `Item`, `Button` and `Kbd`. The page itself is `web/src/pages/settings.tsx`.
 
 On a phone the cards stack; from `xl` the bridge and the agents sit side by side with the test
-below them, and from `2xl` the three share one row, the agents two columns wide. A GSAP timeline brings the heading and then the cards in, animating
+below them, and from `2xl` the three share one row, the agents two columns wide. The time zone card comes after them. A GSAP timeline brings the heading and then the cards in, animating
 opacity and position only (never visibility, so every field and button can take focus while it
 fades in), unless the viewer prefers reduced motion.
 
@@ -80,7 +89,7 @@ fades in), unless the viewer prefers reduced motion.
 (`server/testing/processes.ts`). It covers each connection state, the loading skeletons, the token
 never appearing after a save or a reload, a malformed reply shown as an error, the one-time generated token, the cleared-token notice,
 the environment locks, reordering by keyboard (arrows, `j`, `Esc`) read back from the bridge's
-file, switching an agent off, a test's attempts, and keys pressed during the intro (`j` reaches each
+file, switching an agent off, a test's attempts, choosing a time zone and going back to automatic, and keys pressed during the intro (`j` reaches each
 stop up to the first field, and every stop takes focus, with the page's clock held). It runs in `bun test` from the repository root.
 
 The browser title is `Settings · School`; `web/test/settings.test.ts` checks it (`connecting the bridge > the browser title is Settings · School`).

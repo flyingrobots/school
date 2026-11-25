@@ -119,6 +119,16 @@ export function postgresRecord(sql: Sql): LearningRecord {
       return LatestFeedback.parse({ submissionId: f.submission_id, course: f.course, lesson: f.lesson, blockId: f.block_id, model: f.model, findings: f.findings, at: f.at });
     },
 
+    timeZone: async () => {
+      const z = await value("time_zone");
+      if (z !== null && typeof z !== "string") throw new Error("school.time_zone returned neither text nor null");
+      return z;
+    },
+
+    chooseTimeZone: async (zone, now) => {
+      await value("choose_time_zone", zone, now);
+    },
+
     saveExplanation: async (s, now) =>
       SaveResult.parse({ status: await value("save_explanation", s.submissionId, s.encounterId, s.blockId, s.text, s.ms, now) }),
 

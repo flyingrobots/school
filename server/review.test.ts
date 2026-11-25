@@ -29,6 +29,10 @@ beforeAll(async () => {
   mkdirSync(join(root, "c", "lessons"), { recursive: true });
   writeFileSync(join(root, "c", "lessons", "0001.json"), JSON.stringify(l1));
   writeFileSync(join(root, "c", "lessons", "0002.json"), JSON.stringify(l2));
+  // A second course, opened with the learner's zone (flyingrobots/school#178).
+  mkdirSync(join(root, "d", "lessons"), { recursive: true });
+  writeFileSync(join(root, "d", "lessons", "0001.json"), JSON.stringify(page("m1", "Bells", ["b1"])));
+  writeFileSync(join(root, "d", "lessons", "0002.json"), JSON.stringify(page("m2", "Changes", ["b2"])));
   // Two days ago, as the server's own record would hold it: q1 wrong then right, q2 right first try.
   const dir = join(root, "record");
   const db = await openDatabase({ driver: "pglite", dir });
@@ -37,10 +41,14 @@ beforeAll(async () => {
   for (const [blockId, choiceId, ms] of [["q1", "wrong", 1000], ["q1", "right", 2000], ["q2", "right", 3000]] as const) {
     await r.submit({ submissionId: crypto.randomUUID(), encounterId: e.id, blockId, choiceId, ms: 10 }, yesterday(ms));
   }
+  const d = await r.openEncounter({ course: "d", lesson: "m1", page: page("m1", "Bells", ["b1"]), now: yesterday(0), aidTracking: 1 });
+  for (const [choiceId, ms] of [["wrong", 1000], ["right", 2000]] as const) {
+    await r.submit({ submissionId: crypto.randomUUID(), encounterId: d.id, blockId: "b1", choiceId, ms: 10 }, yesterday(ms));
+  }
   await db.close();
   server = await startSchool({
     ...process.env, HOST: "127.0.0.1", SCHOOL_STATE: join(root, "state"), SCHOOL_WEB: join(root, "no-web"),
-    SCHOOL_DATABASE_URL: `pglite:${dir}`, SCHOOL_COURSES: `c=${join(root, "c")}`,
+    SCHOOL_DATABASE_URL: `pglite:${dir}`, SCHOOL_COURSES: `c=${join(root, "c")},d=${join(root, "d")}`,
     TZ: "Pacific/Auckland", // a reason names the day in the server's time zone
   });
 }, timeout(1));
@@ -78,11 +86,19 @@ test("the next lesson opens with the item due in a Review section at its top, it
   expect(again.review).toEqual(opened.review);
   expect(again.answers).toEqual([{ blockId: "q1", choiceId: "right", correct: true }]);
   // A review answer in Tides is not progress in Tides: its own quiz is still to answer.
-  expect(await get("/api/courses")).toEqual([{ name: "c", title: "c", lessons: 2, reference: 0, quizzes: 3, answeredCorrectly: 2 }]);
+  expect((await get("/api/courses"))[0]).toEqual({ name: "c", title: "c", lessons: 2, reference: 0, quizzes: 3, answeredCorrectly: 2 });
 });
 
 test("the slides view records nothing, so it carries no review", async () => {
   const slides = await get("/api/courses/c/lessons/l2?view=slides");
   expect(slides.lesson).toEqual(l2);
   expect(slides.review).toBeUndefined();
+});
+
+test("a lesson opened with the learner's zone names the day in it, and refuses a zone that is not one", async () => {
+  const tz = "Pacific/Pago_Pago"; // UTC-11, a day behind Auckland at most hours
+  const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", timeZone: tz }).format(new Date(YESTERDAY.getTime() + 1000));
+  const opened = await get(`/api/courses/d/lessons/m2?aid=1&tz=${encodeURIComponent(tz)}`);
+  expect(opened.review[0].reason).toStartWith(`On ${day}, `);
+  expect((await fetch(server!.url + "/api/courses/d/lessons/m2?aid=1&tz=Not%2FAZone")).status).toBe(400);
 });

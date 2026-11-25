@@ -81,11 +81,11 @@ JSON API.
 | GET | `/api/courses` | Lists installed courses, each with its `name` (the slug in addresses) and `title` ([a course's folder](../course-format/README.md)), with lesson and reference counts, and each course's `quizzes` and `answeredCorrectly`; the counts are `null` for a course whose lessons cannot be read |
 | GET | `/api/resume` | What to study now, from where the learner left off: `continue`, `next`, `start`, `finished` or `nothing` ([the home page](../home-page/README.md)) |
 | GET | `/api/feedback` | The newest succeeded grading: its course, lesson, the prompt it answered and the findings; `null` before any |
-| GET | `/api/review` | The questions due for review now, across courses, each with its lesson, question and reason ([due review](../due-review/README.md)) |
-| GET | `/api/activity?days=14` | Each course's study days in the last `days` (1 to 60), and how many questions come back on each day ahead |
+| GET | `/api/review?tz=` | The questions due for review now, across courses, each with its lesson, question and reason ([due review](../due-review/README.md)); the reason names its day in `tz` |
+| GET | `/api/activity?days=14&tz=` | Each course's study days in the last `days` (1 to 60), and how many questions come back on each day ahead, as days in `tz` |
 | GET | `/api/showcase` | What's ahead: every lesson with a quiz not yet answered correctly, with its hook ([a course's folder](../course-format/README.md#a-lessons-hook)) |
 | GET | `/api/courses/:c` | One course: its `name` and `title`, lessons with correct-quiz counts, reference documents. Lessons that cannot be read are `lessons: null` with the reason in `lessonsError`, still a 200 with the reference documents |
-| GET | `/api/courses/:c/lessons/:id` | One lesson; `?view=web` opens or resumes an encounter, `?view=slides` records nothing. `?aid=1` declares that the client records every exposure it shows, so the encounter is opened with aid tracking 1; absent, it is untracked and its aid unknown. Any other `aid` value is refused (400) |
+| GET | `/api/courses/:c/lessons/:id` | One lesson; `?view=web` opens or resumes an encounter, `?view=slides` records nothing. `?aid=1` declares that the client records every exposure it shows, so the encounter is opened with aid tracking 1; absent, it is untracked and its aid unknown. Any other `aid` value is refused (400). `?tz=` is the zone a review reason names its day in |
 | POST | `/api/answer` | Records a quiz answer |
 | POST | `/api/explanation` | Saves an explanation, before any grading |
 | POST | `/api/grade` | One grading attempt through the bridge |
@@ -100,7 +100,10 @@ JSON API.
 | GET | `/api/speak/:id` | That reading's progress, each segment ready or not |
 | GET | `/api/speak/:id/segments/:n` | One segment's WAV, with byte ranges |
 | POST | `/api/speak/:id/cancel` | Stops that reading at the daemon |
+| GET, PUT | `/api/settings/time-zone` | The time zone the learner chose, `{zone}`, or `null` for automatic; a PUT appends a choice (an IANA zone or `null`; anything else is 400) |
 | GET | `/courses/:c/reference/*`, `/<mount>/*` | Files, contained in their folder after resolving symlinks |
+
+`tz` (flyingrobots/school#178) is the learner's IANA time zone, which the web app sends from the browser on every request whose answer names a day: `/api/activity`, `/api/review` and a lesson opened in the web view. A zone chosen in Settings (`/api/settings/time-zone`, flyingrobots/school#181) wins over `tz`. Without either, the server uses its own zone, which is UTC under Docker. A `tz` that is not a zone is refused (400).
 
 Before any route, the server refuses with a 403 every request whose `Host` header is not one of
 its names: `127.0.0.1`, `localhost`, `::1`, `HOST` when it is a real name, and the names in
@@ -173,7 +176,7 @@ contract suite holds every driver under it to the same behaviour.
 
 The record is Postgres, built by the numbered migrations in `server/db/migrations/` (`0001_init.sql`,
 `0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_read_committed.sql`,
-`0006_due_review.sql`, `0007_since_last_here.sql`, `0008_study_days.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
+`0006_due_review.sql`, `0007_since_last_here.sql`, `0008_study_days.sql`, `0009_time_zone_choices.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -290,6 +293,10 @@ What happened since the learner was last here comes from two more read-only func
 time zone `tz`, in `[from, to)`; the port's `studyDays`. Since migration 0008
 (flyingrobots/school#177) only an answer or a saved explanation makes a study day; an encounter opened
 or a view is a visit, and still counts for `last_studied`.
+Migration 0009 (flyingrobots/school#181) adds `time_zone_choices`, append-only like every record
+table: each time zone the learner chooses in Settings, `NULL` for automatic, the newest by `seq` in
+force. `school.choose_time_zone(zone, at)` appends one and `school.time_zone()` reads the zone in
+force; the port's `chooseTimeZone` and `timeZone`.
 `school.latest_feedback()` is the succeeded grading with the highest `seq` and where its explanation
 was written; the port's `latestFeedback`. A failed attempt is never feedback.
 

@@ -43,6 +43,10 @@ export interface LearningRecord {
   studyDays(q: { from: string; to: string; tz: string }): Promise<StudyDay[]>;
   /** The newest succeeded grading and where its explanation was written; null before any. */
   latestFeedback(): Promise<LatestFeedback | null>;
+  /** The time zone the learner chose in Settings, or null for automatic (flyingrobots/school#181). */
+  timeZone(): Promise<string | null>;
+  /** Append a choice of time zone; null goes back to automatic. */
+  chooseTimeZone(zone: string | null, now: string): Promise<void>;
   saveExplanation(s: ExplanationSubmission, now: string): Promise<SaveResult>;
   /** A saved explanation, its block from the snapshot and its latest grading; null if there is none. */
   explanation(submissionId: string): Promise<SavedExplanation | null>;

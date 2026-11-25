@@ -4,6 +4,7 @@
 // the newest feedback and the questions ready for another look, beside a timeline of the days they
 // studied and the days questions come back. Each part loads, fails and retries on its own.
 // Results are words, never scores (RFC 2 §4.3), in School's voice (docs/topics/voice/README.md).
+import { tzParam } from "@/lib/zone"
 import * as React from "react"
 import { useGSAP } from "@gsap/react"
 import gsap from "gsap"
@@ -411,9 +412,9 @@ function SinceLastTime({
   answerAt: (item: ReviewItem) => string
 }) {
   const [feedback, retryFeedback] = useJson("/api/feedback", FeedbackJson)
-  const [review, retryReview] = useJson("/api/review", ReviewJson)
+  const [review, retryReview] = useJson(`/api/review?${tzParam()}`, ReviewJson)
   const [activity, retryActivity] = useJson(
-    "/api/activity?days=14",
+    `/api/activity?days=14&${tzParam()}`,
     ActivityJson
   )
   const [sel, setSel] = React.useState<Mark>({ kind: "today" })
