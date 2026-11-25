@@ -154,11 +154,14 @@ migrate job's advisory locks, so it waits for a migration run and none starts du
 - a `<from>` the record has nothing for;
 - a `<to>` it already has, since that would merge two courses.
 
-It first takes away `school_app`'s login, then locks every record table against writes until it
-commits, and only then checks; it checks for `school_app` sessions again just before committing, so a
-School that started in between is refused rather than left writing under the old name. Committed,
-`school_app` cannot log in until the next migrate run, which `../school up` (step 5) starts with the
-new configuration; a refusal leaves its login as it was. It lifts the
+It first takes away `school_app`'s login, committed on its own, so School cannot log in while the
+rename runs. Then it locks every record table against writes until it commits, checks, and checks
+for `school_app` sessions again just before committing. After a rename `school_app` cannot log in
+until the next migrate run, which `../school up` (step 5) starts with the new configuration; a
+refusal gives the login back. `school_app` is a role of the whole Postgres server, so this covers
+every database on it: rehearsing on a restored copy beside the live record (the backup drill's
+`school_restore`) also keeps the live School from logging in until `../school up`, so stop School
+for a rehearsal too. It lifts the
 append-only trigger on the three tables that name a course only inside the transaction, and commits
 only if every record table's row count is unchanged, every trigger is enabled again and no row names
 `<from>`. A refusal or failure rolls all of it back, triggers included, and exits 1 with the reason.

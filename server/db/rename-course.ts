@@ -2,8 +2,8 @@
 // a learner's progress, and a deployment can change it (the folder a course is mounted at names it
 // unless SCHOOL_COURSES does). The record is append-only, so the rename is an operator's act, with
 // School stopped: it refuses while any school_app session is open, because a running server would
-// go on writing under the old name, and it leaves school_app unable to log in until the next
-// migrate run. It is one transaction, as school_owner, holding both of the
+// go on writing under the old name, and it first closes school_app's login (on the whole server)
+// until the next migrate run. It is one transaction, as school_owner, holding both of the
 // migrate job's advisory locks (the runner's and the role step's), that first locks every record
 // table against writes, then checks, lifts the append-only trigger on each table that names a
 // course, renames, restores the trigger, and checks before committing that every count is unchanged
@@ -44,20 +44,25 @@ export async function renameCourse(db: Connection, from: string, to: string): Pr
     return n;
   };
 
-  // Checked after the tables are locked and again just before COMMIT: a session that logged in
-  // before the NOLOGIN commits could otherwise write under the old name once the locks are gone.
+  // Checked after the tables are locked, and again just before COMMIT: a session opened before the
+  // login was closed would otherwise write under the old name once the locks are gone.
   const refuseWhileConnected = async () => {
     const n = await count("SELECT count(*)::int AS n FROM pg_stat_activity WHERE usename = 'school_app' AND datname = current_database()");
     if (n > 0) throw new Error(`School is connected to the record (${n} school_app session${n === 1 ? "" : "s"}); stop it first: ./school compose stop school, from the checkout`);
   };
 
+  // School may not log in from here on: committed on its own, before the rename's transaction, so
+  // no login can succeed while it runs. It holds after a rename until the next migrate run, which
+  // `./school up` starts with the new configuration; a refusal gives the login back. The role is
+  // the cluster's, so this covers every database on the server, a restored copy's too.
+  const couldLogIn = (await db.query<{ l: boolean }>("SELECT rolcanlogin AS l FROM pg_roles WHERE rolname = 'school_app'")).rows[0]?.l === true;
+  await db.exec("ALTER ROLE school_app NOLOGIN");
+  let renamed = false;
+
   await db.exec("BEGIN");
   try {
     await db.exec("SELECT pg_advisory_xact_lock(hashtext('school.schema_migrations'))");
     await db.exec("SELECT pg_advisory_xact_lock(hashtext('school.migrate_job'))");
-    // School may not log in again until the next migrate run, which `./school up` starts with the
-    // new configuration; committed with the rename, rolled back with a refusal.
-    await db.exec("ALTER ROLE school_app NOLOGIN");
     await db.exec(`SET LOCAL ROLE ${OWNER}`);
     // Writes wait from here until COMMIT, so nothing lands between the checks and the rename.
     await db.exec(`LOCK TABLE ${RECORD_TABLES.map((t) => `school.${t}`).join(", ")} IN EXCLUSIVE MODE`);
@@ -81,9 +86,12 @@ export async function renameCourse(db: Connection, from: string, to: string): Pr
     if ((await named(from)) > 0) throw new Error(`rows still name course ${JSON.stringify(from)}`);
     await refuseWhileConnected();
     await db.exec("COMMIT");
+    renamed = true;
     return { from, to, rows };
   } catch (e) {
     await db.exec("ROLLBACK");
     throw e;
+  } finally {
+    if (!renamed && couldLogIn) await db.exec("ALTER ROLE school_app LOGIN");
   }
 }

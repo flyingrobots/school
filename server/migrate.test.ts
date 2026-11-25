@@ -289,6 +289,32 @@ describe.skipIf(URL_ === undefined)("the migrate command on a real Postgres thro
     }
   }, SLOW);
 
+  test("while a rename runs, School cannot log in; once it is refused, School can again", async () => {
+    const url = await database();
+    expect((await run([], { SCHOOL_MIGRATE_URL: url, SCHOOL_APP_PASSWORD: TEST_APP_PASSWORD })).code).toBe(0);
+    const owner = new Bun.SQL(url);
+    const login = async () => {
+      const app = new Bun.SQL(appUrl(url));
+      try { await app.unsafe("SELECT 1"); return "logged in"; } catch (e) { return (e as Error).message; } finally { await app.close(); }
+    };
+    try {
+      await owner.unsafe(`INSERT INTO school.views (course, lesson, at) VALUES ('course', 'l1', now()), ('aion', 'l1', now())`);
+      const held = await owner.reserve();
+      await held.unsafe("BEGIN");
+      await held.unsafe("LOCK TABLE school.views IN SHARE MODE"); // the rename waits here, after closing the login
+      const renaming = renameRecordCourse(url, "course", "aion").then(() => "renamed", (e: Error) => e.message);
+      await Bun.sleep(500);
+      const during = await login();
+      await held.unsafe("COMMIT");
+      held.release();
+      expect(during).toContain("not permitted to log in");
+      expect(await renaming).toBe('the record already has course "aion"; renaming "course" to it would merge two courses');
+      expect(await login()).toBe("logged in");
+    } finally {
+      await owner.close();
+    }
+  }, SLOW);
+
   test("a database that refuses the login is a failed error line on stderr, exit 1, naming neither password", async () => {
     const url = await database();
     const wrong = new URL(url);
