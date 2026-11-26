@@ -60,11 +60,11 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
+import { HookFigure } from "@/components/hook-figure"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { useDocumentTitle } from "@/lib/document-title"
-import { safeFigure } from "@/lib/figure"
 import {
   ActivityJson,
   FeedbackJson,
@@ -123,19 +123,6 @@ function heroOf(ahead: Ahead[], resume: Resume | null): Hero | null {
   return next
     ? { item: next, label: "Up next", go: "Start", icon: <ArrowRightIcon /> }
     : null
-}
-
-/** A course's SVG figure, kept to drawing (lib/figure.ts), sized by its box. */
-function Figure({ svg, className }: { svg: string; className?: string }) {
-  const safe = React.useMemo(() => safeFigure(svg), [svg])
-  if (safe === null) return null
-  return (
-    <div
-      data-figure
-      className={`flex items-center justify-center [&_svg]:h-full [&_svg]:w-auto [&_svg]:max-w-full ${className ?? ""}`}
-      dangerouslySetInnerHTML={{ __html: safe }}
-    />
-  )
 }
 
 function Failed({
@@ -215,7 +202,7 @@ function HeroCard({ hero }: { hero: Hero }) {
           </div>
         </CardHeader>
         {item.figure && (
-          <Figure
+          <HookFigure
             svg={item.figure}
             className="h-72 border-t bg-background px-6 py-6 md:h-[26rem] md:border-t-0 md:border-l"
           />
@@ -264,7 +251,7 @@ function AheadCarousel({
                   <Card className="h-full overflow-hidden pt-0 transition-colors hover:bg-muted/40">
                     <div className="flex h-40 items-center justify-center border-b bg-background p-4">
                       {a.figure ? (
-                        <Figure svg={a.figure} className="h-full" />
+                        <HookFigure svg={a.figure} className="h-full" />
                       ) : (
                         <BookOpenIcon
                           className="size-10 text-muted-foreground"
