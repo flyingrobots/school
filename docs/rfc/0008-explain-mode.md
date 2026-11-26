@@ -3,13 +3,13 @@ title: "RFC 8: Explain mode"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-26
 updated: 2026-11-26
-version: 0.1.0
-status: "Proposal, awaiting the maintainer's decision. Answers flyingrobots/school#191. Builds on flyingrobots/school at commit 2f18da4."
+version: 0.2.0
+status: "Decided, 2026-11-26: pitched from RFC 5's mastery over RFC 6's ask path, every open question answered as recommended. Decided by an agent under the maintainer's delegated authority; the maintainer may overturn it. Answers flyingrobots/school#191. Builds on flyingrobots/school at commit 2f18da4."
 ---
 
 # RFC 8: Explain mode
 
-> **How to read this.** **Built** means it exists at commit `2f18da4`. **Proposed** means this RFC asks for it. **Open** means it needs the maintainer's decision. Nothing here is decided. It builds on two RFCs decided on 2026-11-26 whose pull requests are not yet merged: [RFC 5, mastery that fades](https://github.com/flyingrobots/school/pull/208) and [RFC 6, ask about a passage](https://github.com/flyingrobots/school/pull/207). What they propose is cited as theirs and is not re-proposed here. How School works today is in the [architecture reference](../topics/architecture/README.md).
+> **How to read this.** **Built** means it exists at commit `2f18da4`. **Proposed** means this RFC asks for it. **Open** means it needs the maintainer's decision. The decision is recorded at the end of this RFC. It builds on two RFCs decided on 2026-11-26 whose pull requests are not yet merged: [RFC 5, mastery that fades](https://github.com/flyingrobots/school/pull/208) and [RFC 6, ask about a passage](https://github.com/flyingrobots/school/pull/207). What they propose is cited as theirs and is not re-proposed here. How School works today is in the [architecture reference](../topics/architecture/README.md).
 
 ## Executive Summary
 
@@ -40,6 +40,7 @@ In short: read mastery, pick a pitch, record the help, then ask the model throug
 6. [Out of scope](#6-out-of-scope)
 7. [Risks](#7-risks)
 8. [Open questions](#8-open-questions)
+9. [Decision](#9-decision)
 
 ## 1. The problem and who it serves
 
@@ -441,3 +442,23 @@ The maintainer decides Q1 to Q5, which are the issue's own and RFC 6's Q7; the r
 _Table 8.1. Open questions and recommendations. Q1 to Q4 come from flyingrobots/school#191 and Q5 from RFC 6; Q6 to Q9 come from this design._
 
 In short: the maintainer decides the measure, caching, the aid rule, the relation to RFC 2 and grading feedback; the rest can stand as recommended.
+
+## 9. Decision
+
+Decided on 2026-11-26 by an agent under the maintainer's delegated authority for that run. The decision record, with each option's pros, cons and why it was rejected, was delivered to Reader's inbox (receipt `50952baa-af52-4b91-b35d-f1757ad4f0f0`). The maintainer may overturn any part.
+
+Every recommendation is accepted as written.
+
+| Task | Issue |
+| --- | --- |
+| 1 | flyingrobots/school#248 |
+| 2 | flyingrobots/school#249 |
+| 3 | flyingrobots/school#250 |
+| 4 | flyingrobots/school#251 |
+| 5 | flyingrobots/school#252 |
+| 6 | flyingrobots/school#253 |
+| 7 | flyingrobots/school#254 |
+| 8 | flyingrobots/school#255 |
+| 9 | flyingrobots/school#256 |
+
+In short: this RFC is decided as written, and its tasks are filed.
