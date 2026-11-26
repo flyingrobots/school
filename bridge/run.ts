@@ -8,11 +8,13 @@ import { join } from "node:path";
 import { validate, type Schema } from "./schema.ts";
 import { TemplateError, expand, splitCommand, usesPlaceholder } from "./template.ts";
 
-export const OUTPUTS = ["text", "claude-json"] as const;
+export const OUTPUTS = ["text", "claude-json", "claude-stream-json"] as const;
 export type OutputKind = (typeof OUTPUTS)[number];
 
 export type Agent = { name: string; argv: string[]; output: OutputKind; timeoutMs: number; enabled: boolean };
-export type BridgeConfig = { timeoutMs: number; agents: Agent[] };
+/** The agents that answer a learner's question (RFC 6 §5.4): a list of their own, with their own timeout. */
+export type AskConfig = { timeoutMs: number; agents: Agent[] };
+export type BridgeConfig = { timeoutMs: number; agents: Agent[]; ask: AskConfig | null };
 
 const MAX_OUTPUT = 1024 * 1024;
 const TAIL = 4000;
@@ -51,7 +53,7 @@ export function loadConfig(raw: unknown): BridgeConfig {
     const ownTimeout = x.timeout_seconds === undefined ? timeoutMs : seconds(x.timeout_seconds, `agent "${name}": `);
     return { name, argv, output, timeoutMs: ownTimeout, enabled: x.enabled !== false };
   });
-  return { timeoutMs, agents };
+  return { timeoutMs, agents, ask: null };
 }
 
 export type Attempt = {
@@ -157,7 +159,7 @@ async function runAgent(agent: Agent, job: Job, timeoutMs: number): Promise<Atte
 }
 
 /** Try each enabled agent in order until one succeeds, within an overall deadline if one is given. */
-export async function runChain(cfg: BridgeConfig, job: Job): Promise<ChainResult> {
+export async function runChain(cfg: Pick<BridgeConfig, "timeoutMs" | "agents">, job: Job): Promise<ChainResult> {
   const attempts: Attempt[] = [];
   const end = job.deadlineMs === undefined ? Infinity : Date.now() + job.deadlineMs;
   for (const agent of cfg.agents) {
