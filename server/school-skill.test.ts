@@ -2,7 +2,7 @@
 // its worked example is a course School would serve (run through `school check`, server/check-course.ts),
 // showing every block type, with explain prompts written as questions (docs/topics/voice).
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 const SKILL = join(import.meta.dir, "..", ".agents", "skills", "school");
@@ -53,5 +53,12 @@ describe("the school skill", () => {
     const prompts = lessons().flatMap((l) => blocks(l)).filter((b) => b.type === "explain").map((b) => String(b.prompt));
     expect(prompts.length).toBeGreaterThan(0);
     expect(prompts.filter((p) => !p.trim().endsWith("?"))).toEqual([]);
+  });
+  test("SKILL-5: .claude/skills/school links to it, so agents in a clone find it", () => {
+    const link = join(import.meta.dir, "..", ".claude", "skills", "school");
+    let isLink = false;
+    try { isLink = lstatSync(link).isSymbolicLink(); } catch {}
+    expect(isLink).toBe(true);
+    expect(realpathSync(link)).toBe(realpathSync(SKILL));
   });
 });
