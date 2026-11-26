@@ -140,12 +140,11 @@ test("with record: \"server\" the server creates and migrates the record itself"
 }, timeout(1));
 
 test("a start that is never ready fails with the time it waited and everything the process wrote", async () => {
-  const root = mkdtempSync(join(tmpdir(), "school-never-ready-"));
-  dirs.push(root);
-  const script = join(root, "never-ready.ts");
-  writeFileSync(script, 'console.log("still opening the record"); console.error("a warning on stderr"); setInterval(() => {}, 1000);\n');
+  const script = join(import.meta.dir, "fixtures", "never-ready.ts");
   const began = Date.now();
-  const e = await startSchool(schoolEnv(), { script, readyMs: 1_000 }).then(() => null, (x) => x);
+  // The fake process never reads the record, so skip seeding: on a fresh process it migrates a template,
+  // which can use the whole readyMs before the process starts (flyingrobots/school#215).
+  const e = await startSchool(schoolEnv(), { script, readyMs: 1_000, record: "server" }).then(() => null, (x) => x);
   expect(e).toBeInstanceOf(NotStarted);
   expect(Date.now() - began).toBeGreaterThanOrEqual(1_000);
   expect(e.exitCode).toBeNull();
