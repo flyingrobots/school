@@ -101,7 +101,8 @@ JSON API.
 | GET | `/api/speak/:id/segments/:n` | One segment's WAV, with byte ranges |
 | POST | `/api/speak/:id/cancel` | Stops that reading at the daemon |
 | GET, PUT | `/api/settings/time-zone` | The time zone the learner chose, `{zone}`, or `null` for automatic; a PUT appends a choice (an IANA zone or `null`; anything else is 400) |
-| GET | `/courses/:c/reference/*`, `/<mount>/*` | Files, contained in their folder after resolving symlinks. An untrusted course's are sandboxed ([trust](#trust-and-known-defects)) |
+| GET | `/courses/:c/reference/*` | A course's reference files, contained in its folder after resolving symlinks. An untrusted course's are sandboxed ([trust](#trust-and-known-defects)) |
+| GET | `/<mount>/*` | A mount's files, contained in its folder after resolving symlinks. Never sandboxed, so no mount may reach an untrusted course's folder: startup refuses one that does ([trust](#trust-and-known-defects)) |
 
 `tz` (flyingrobots/school#178) is the learner's IANA time zone, which the web app sends from the browser on every request whose answer names a day: `/api/activity`, `/api/review` and a lesson opened in the web view. A zone chosen in Settings (`/api/settings/time-zone`, flyingrobots/school#181) wins over `tz`. Without either, the server uses its own zone, which is UTC under Docker. A `tz` that is not a zone is refused (400).
 
@@ -556,16 +557,20 @@ is currently broken.
 | Untrusted courses (`SCHOOL_UNTRUSTED_COURSES`) | Not trusted with School's authority: they are served in safe mode, and their files cannot run script on School's origin (below) |
 | Configured agents | They run with the learner's account on the host, under their own commands' limits |
 
-An untrusted course is served in safe mode (flyingrobots/school#210, RFC 4 step 2). Every response that carries its bytes, its reference files of any type and its course and lesson JSON, has two headers a trusted course's responses do not:
+An untrusted course is served in safe mode (flyingrobots/school#210, RFC 4 step 2). Its reference files of any type (`/courses/:c/reference/*`) and its course and lesson JSON (`/api/courses/:c`, `/api/courses/:c/lessons/:l`) carry two headers a trusted course's responses do not:
 
 | Header | Effect |
 | --- | --- |
-| `Content-Security-Policy: sandbox` | No `allow-*` token, so a document opened from the course, HTML or SVG, runs no script and has an opaque origin: it cannot call School's API or read its storage |
+| `Content-Security-Policy: sandbox` | No `allow-*` token, so a document opened from the course, HTML or SVG, runs no script, submits no form and has an opaque origin: it cannot read School's API replies or storage, and cannot send the JSON requests every state-changing endpoint requires. Like any web page, it can still make requests that read nothing back, such as a GET from `<img src="/api/...">` |
 | `X-Content-Type-Options: nosniff` | The browser takes the bytes as the type School names (`image/svg+xml` for SVG, never HTML), not as a type it guesses |
 
-Lesson blocks keep the path every course's take: prose, card, quote and aside HTML goes through the markdown item's sanitiser (Streamdown: `rehype-sanitize` and `rehype-harden`), and a hook's SVG figure through `safeFigure` (`web/src/lib/figure.ts`), which keeps only drawing. `web/test/sanitise.test.tsx` runs 35 cross-site-scripting payloads through each block kind and 6 hostile figures through `safeFigure`, and finds no script, handler or script URL left. The course page shows a note that the course is in safe mode ([the course page](../course-page/README.md)).
+Other JSON replies also carry course-written strings without those headers: `/api/showcase`, `/api/resume`, `/api/review`, `/api/feedback` and `/api/activity` hold course and lesson titles, questions, teasers and prompts, and `/api/showcase` holds hook figures. A JSON reply runs nothing when opened, and the web app shows those strings as React text, never parsed as HTML.
 
-A course is trusted or untrusted, never both: the server refuses to start (exit 2) when a name is in `SCHOOL_COURSES` or `SCHOOL_COURSE` and in `SCHOOL_UNTRUSTED_COURSES`, or when an untrusted course's folder is, contains or sits inside a trusted course's, since the trusted course would serve the same bytes unsandboxed. A sandboxed document still loads what it links to, such as images from other sites, and still shows what it says; safe mode stops it acting as School, not showing content.
+Lesson blocks take the same path for every course: prose, card, quote and aside HTML goes through the markdown item's sanitiser (Streamdown: `rehype-sanitize` and `rehype-harden`). A hook's SVG figure goes through `safeFigure` (`web/src/lib/figure.ts`), which keeps only drawing: it drops script, embedded documents, links, animation, `style` elements, the raw-text elements a reparse could turn into markup (`noscript`, `noembed`, `noframes`, `xmp`, `plaintext`, `textarea`), every element outside the SVG namespace, event handlers, `href`s, and the `style` and `class` attributes. A trusted course's figure is then drawn inline. An untrusted course's figure is drawn as an `<img src="data:image/svg+xml,…">`, where nothing runs whatever it holds, with each `var(--token)` replaced by the theme's current value. `/api/showcase` gives each item's `trusted` for this.
+
+`web/test/sanitise.test.tsx` runs 35 cross-site-scripting payloads through each block kind and 13 hostile figures through `safeFigure` (6 mutation-XSS payloads and a page overlay among them), and finds no script, handler, script URL, raw-text element or `style` left. The course page shows a note that the course is in safe mode ([the course page](../course-page/README.md)).
+
+A course is trusted or untrusted, never both: the server refuses to start (exit 2) when a name is in `SCHOOL_COURSES` or `SCHOOL_COURSE` and in `SCHOOL_UNTRUSTED_COURSES`, or when an untrusted course's folder is, contains or sits inside a trusted course's, since the trusted course would serve the same bytes unsandboxed. It refuses in the same way a `SCHOOL_MOUNTS` or `SCHOOL_WEB` folder that is, contains or sits inside an untrusted course's folder, compared on real paths, naming both variables and both folders: mounts and the web app are never sandboxed. A sandboxed document still loads what it links to, such as images from other sites, and still shows what it says; safe mode stops it acting as School, not showing content.
 
 | Defect | Effect | Issue |
 | --- | --- | --- |
@@ -587,8 +592,8 @@ A course is trusted or untrusted, never both: the server refuses to start (exit 
 | `SCHOOL_MIGRATE_PASSWORD`, `SCHOOL_MIGRATE_PASSWORD_FILE` | Migrate job | The owner's password, for a `SCHOOL_MIGRATE_URL` that names none; the file wins. Compose gives the file | none |
 | `SCHOOL_APP_PASSWORD`, `SCHOOL_APP_PASSWORD_FILE` | Migrate job | The password the job gives `school_app`, at least 20 letters and digits; the same one the server logs in with. The file wins | none: required |
 | `DB_PATH` | Server | The old SQLite record, only read: startup refuses while it holds learner work | `<SCHOOL_STATE>/progress.db` |
-| `SCHOOL_MOUNTS` | Server | `name=path` pairs served read-only | none |
-| `SCHOOL_WEB` | Server | The built web app | `web/dist` |
+| `SCHOOL_MOUNTS` | Server | `name=path` pairs served read-only, never sandboxed; one over an untrusted course's folder is refused | none |
+| `SCHOOL_WEB` | Server | The built web app; a folder over an untrusted course's is refused | `web/dist` |
 | `HOST`, `PORT` | Server | Listen address | `127.0.0.1:4747` |
 | `SCHOOL_ALLOWED_HOSTS` | Server | Host names answered besides `127.0.0.1`, `localhost`, `::1` and `HOST`, comma-separated; the tailnet name | none |
 | `SCHOOL_BRIDGE_URL`, `SCHOOL_BRIDGE_TOKEN` | Server | Override the saved bridge settings; `SCHOOL_BRIDGE_TOKEN_FILE`, which compose gives, wins over the token | none |
