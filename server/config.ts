@@ -165,6 +165,18 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
       }
     }
   }
+  // A mount or the web app's folder is served with no sandbox, so neither may be, contain or sit
+  // inside an untrusted course's folder: it would serve that course's files as School.
+  const mounts = parseMounts(env.SCHOOL_MOUNTS, cwd);
+  const web = abs(env.SCHOOL_WEB ?? join(framework, "web", "dist"), cwd);
+  const served: [string, string][] = [...Object.entries(mounts).map(([m, path]): [string, string] => [`SCHOOL_MOUNTS mount ${JSON.stringify(m)}`, path]), ["SCHOOL_WEB", web]];
+  for (const [name, path] of Object.entries(untrusted)) {
+    for (const [what, folder] of served) {
+      if (within(folder, path) || within(path, folder)) {
+        throw new ConfigError(`${what} (${folder}) overlaps untrusted course ${JSON.stringify(name)} (${path}) from SCHOOL_UNTRUSTED_COURSES; it would serve the course's files unsandboxed`);
+      }
+    }
+  }
   Object.assign(courses, untrusted);
   const state = abs(env.SCHOOL_STATE ?? join(framework, "state"), cwd);
 
@@ -197,8 +209,8 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     state,
     dbPath,
     database,
-    web: abs(env.SCHOOL_WEB ?? join(framework, "web", "dist"), cwd),
-    mounts: parseMounts(env.SCHOOL_MOUNTS, cwd),
+    web,
+    mounts,
     host: env.HOST ?? "127.0.0.1",
     port,
   };

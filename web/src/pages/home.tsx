@@ -204,6 +204,7 @@ function HeroCard({ hero }: { hero: Hero }) {
         {item.figure && (
           <HookFigure
             svg={item.figure}
+            trusted={item.trusted}
             className="h-72 border-t bg-background px-6 py-6 md:h-[26rem] md:border-t-0 md:border-l"
           />
         )}
@@ -251,7 +252,11 @@ function AheadCarousel({
                   <Card className="h-full overflow-hidden pt-0 transition-colors hover:bg-muted/40">
                     <div className="flex h-40 items-center justify-center border-b bg-background p-4">
                       {a.figure ? (
-                        <HookFigure svg={a.figure} className="h-full" />
+                        <HookFigure
+                          svg={a.figure}
+                          trusted={a.trusted}
+                          className="h-full"
+                        />
                       ) : (
                         <BookOpenIcon
                           className="size-10 text-muted-foreground"

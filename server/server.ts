@@ -399,7 +399,8 @@ async function activityJson(params: URLSearchParams): Promise<Response> {
  * What's ahead in the learner's courses, for the home page (flyingrobots/school#164): every lesson
  * with a quiz not yet answered correctly, in course order, with its hook, or its title and subtitle
  * when it has none. A course is started once any of its quizzes is answered correctly. A lesson with
- * no quizzes is left out, as is a course whose lessons can't be read.
+ * no quizzes is left out, as is a course whose lessons can't be read. Each item gives its course's
+ * `trusted`, so the page draws an untrusted course's figure as an image (flyingrobots/school#210).
  */
 async function showcaseJson(): Promise<Response> {
   const ahead = await Promise.all(served.map(async (c) => {
@@ -418,7 +419,7 @@ async function showcaseJson(): Promise<Response> {
       const ids = [...quizIds(p)];
       if (ids.length === 0 || ids.every((id) => progress[p.id]?.includes(id))) return [];
       return [{
-        course: c.name, courseTitle: titleOf(c), started,
+        course: c.name, courseTitle: titleOf(c), trusted: c.trusted, started,
         lesson: { id: p.id, title: p.title, subtitle: p.subtitle, position: i + 1, of: pages.length },
         question: p.hook?.question ?? p.title, teaser: p.hook?.teaser ?? p.subtitle, figure: p.hook?.figure ?? null,
       }];
