@@ -39,11 +39,11 @@ type Lesson = { file: string; id: string; title: string; quizzes: number; explai
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-/** The done line's author, license and format, as a prose line naming those the course declares; none when it declares none. */
-function manifestLine(l: { author: string | null; license: string | null; format: number | null }): string[] {
+/** The done line's summary, author, license and format as prose lines, leaving out those the course does not declare. */
+function manifestLines(l: { summary: string | null; author: string | null; license: string | null; format: number | null }): string[] {
   const parts = [l.author === null ? null : `by ${l.author}`, l.license === null ? null : `license ${l.license}`, l.format === null ? null : `format ${l.format}`];
   const declared = parts.filter((p) => p !== null);
-  return declared.length === 0 ? [] : [`  ${declared.join("; ")}`];
+  return [...(l.summary === null ? [] : [`summary: ${l.summary}`]), ...(declared.length === 0 ? [] : [declared.join("; ")])];
 }
 
 function prose(l: Record<string, any>): string {
@@ -58,9 +58,8 @@ function prose(l: Record<string, any>): string {
     case ids.start: return `checking ${l.folder}`;
     case ids.done:
       return [`ok: ${l.title ?? "(no title declared)"}, ${plural(l.lessons.length, "lesson")}, ${plural(l.quizzes, "quiz", "quizzes")}, ${plural(l.explains, "explain block")}`,
-        ...(l.summary === null ? [] : [`  ${l.summary}`]),
-        ...manifestLine({ author: l.author, license: l.license, format: l.format }),
-        ...l.lessons.map((x: Lesson) => `  ${x.file}  ${x.title}  (${plural(x.quizzes, "quiz", "quizzes")}, ${plural(x.explains, "explain block")})`)].join("\n");
+        ...l.lessons.map((x: Lesson) => `  ${x.file}  ${x.title}  (${plural(x.quizzes, "quiz", "quizzes")}, ${plural(x.explains, "explain block")})`),
+        ...manifestLines({ summary: l.summary, author: l.author, license: l.license, format: l.format })].join("\n");
     default: return `error (${l.error})${l.file ? ` in ${l.file}` : ""}: ${l.message}`;
   }
 }
