@@ -64,6 +64,8 @@ describe("school check", () => {
     ["a course.json with a whitespace-only summary", { course: JSON.stringify({ title: "T", summary: "  " }) }, "course.json", '"summary"'],
     ["a course.json whose author is not a string", { course: JSON.stringify({ title: "T", author: 7 }) }, "course.json", '"author"'],
     ["a course.json with an unknown SPDX id", { course: JSON.stringify({ title: "T", license: "Frobnicate-1.0" }) }, "course.json", "Frobnicate-1.0"],
+    ["a course.json with an unknown exception after WITH", { course: JSON.stringify({ title: "T", license: "MIT WITH Frobnicate-exception" }) }, "course.json", "Frobnicate-exception"],
+    ["a course.json with a LicenseRef after WITH", { course: JSON.stringify({ title: "T", license: "MIT WITH LicenseRef-x" }) }, "course.json", "LicenseRef-x"],
     ["a course.json in format 2", { course: JSON.stringify({ title: "T", format: 2 }) }, "course.json", '"format" is 2'],
     ["a lesson that is not JSON", { lessons: { "0001.json": "{" } }, "0001.json", "invalid JSON"],
     ["a duplicate block id", { lessons: { "0001.json": page("a", [quiz("q")]), "0002.json": page("b", [quiz("q")]) } }, "0002.json", "duplicate block id"],

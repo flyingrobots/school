@@ -82,6 +82,9 @@ describe("readCourseFile: the manifest", () => {
     "LicenseRef-Our-Own",
     "mit",
     "CC-BY-SA-4.0",
+    "GPL-2.0-only WITH Classpath-exception-2.0",
+    "GPL-2.0-only WITH classpath-exception-2.0",
+    "DocumentRef-spdx-tool-1.2:LicenseRef-MIT-Style",
   ])("MANIFEST-4: the license %p is an SPDX expression, and is given as declared", (license) => {
     expect(readCourseFile(fresh(root, { title: "T", license })).license).toBe(license);
   });
@@ -102,6 +105,8 @@ describe("readCourseFile: the manifest", () => {
     ["an expression with a dangling operator", { license: "MIT OR" }, "license"],
     ["an expression with an unclosed parenthesis", { license: "(MIT OR Apache-2.0" }, "license"],
     ["a lowercase operator", { license: "MIT or Apache-2.0" }, "license"],
+    ["an unknown exception after WITH", { license: "MIT WITH Frobnicate-exception" }, "Frobnicate-exception"],
+    ["a LicenseRef after WITH", { license: "MIT WITH LicenseRef-x" }, "LicenseRef-x"],
     ["a format that is not a number", { format: "1" }, "format"],
     ["a format that is not an integer", { format: 1.5 }, "format"],
     ["a format of zero", { format: 0 }, "format"],
@@ -135,10 +140,11 @@ describe("the course API: the manifest", () => {
     courseDir(root, "binary", JSON.stringify(FULL));
     courseDir(root, "titled", JSON.stringify({ title: "Titled" }));
     courseDir(root, "plain");
+    writeFileSync(join(courseDir(root, "unreadable", JSON.stringify(FULL)), "lessons", "0001.json"), "{");
     server = await startSchool({
       ...process.env, HOST: "127.0.0.1", SCHOOL_STATE: join(root, "state"), SCHOOL_WEB: join(root, "no-web"),
       SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`,
-      SCHOOL_COURSES: ["binary", "titled", "plain"].map((c) => `${c}=${join(root, c)}`).join(","),
+      SCHOOL_COURSES: ["binary", "titled", "plain", "unreadable"].map((c) => `${c}=${join(root, c)}`).join(","),
     });
   }, timeout(1));
   afterAll(async () => {
@@ -158,6 +164,12 @@ describe("the course API: the manifest", () => {
     expect(manifest(await get("/api/courses/binary"))).toEqual(manifest(DECLARED));
   });
 
+  test("MANIFEST-8b: GET /api/courses/:course gives the manifest when the lessons cannot be read", async () => {
+    const body = await get("/api/courses/unreadable");
+    expect(body.lessons).toBeNull();
+    expect(manifest(body)).toEqual(manifest(DECLARED));
+  });
+
   test("MANIFEST-9: GET /api/courses/:course gives null for each key a course does not declare", async () => {
     expect(manifest(await get("/api/courses/titled"))).toEqual(UNDECLARED);
     expect(manifest(await get("/api/courses/plain"))).toEqual(UNDECLARED);
@@ -169,6 +181,7 @@ describe("the course API: the manifest", () => {
       { name: "binary", ...manifest(DECLARED) },
       { name: "plain", ...UNDECLARED },
       { name: "titled", ...UNDECLARED },
+      { name: "unreadable", ...manifest(DECLARED) },
     ]);
   });
 });
