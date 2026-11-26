@@ -8,9 +8,10 @@
 //   `git ls-tree` and each blob read with `git cat-file --batch`, under a clean environment (no
 //   system or global configuration, `core.hooksPath=/dev/null`, no replace objects).
 // - The whole listing is checked before anything is written: every name (no `.`, `..`, empty
-//   name, `.git` prefix in any case, `/`, `\` or control character, valid UTF-8), every mode (no
-//   symlink, no submodule), the limits of Table 6.2 (`DEFAULT_LIMITS`), and names that would
-//   collide on a case-insensitive or normalising filesystem. Sizes come from the listing, before
+//   name, `.git` prefix in any case, `\` or control character, valid UTF-8), every mode (no
+//   symlink, no submodule), the limits of Table 6.2 (`DEFAULT_LIMITS`; path length and depth are
+//   measured on file paths only), and names that would collide on a case-insensitive or
+//   normalising filesystem under full case folding. Sizes come from the listing, before
 //   any blob is read. The first problem found is the answer.
 // - Then the folder is created (its parent must exist; it must not) and each file written with
 //   exclusive creation and mode 0644. A Git LFS pointer is found here, by its first line; any
