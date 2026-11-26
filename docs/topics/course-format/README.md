@@ -151,12 +151,13 @@ its `done` line.
   deprecated, matched without regard to case, optionally followed by `+` (this version or later);
   or a `LicenseRef-<name>` for a license of your own.
 - `AND`, `OR` and `WITH` join them, in capitals. `WITH` binds tightest, then `AND`, then `OR`;
-  parentheses group. An exception after `WITH` is checked for its form only, since School carries
-  no list of exceptions.
+  parentheses group. The name after `WITH` is an id on the SPDX exceptions list, matched without
+  regard to case; a `LicenseRef-` is not an exception.
 
-The list is `server/spdx-license-ids.ts`, copied from the `spdx-license-ids` package (3.0.24,
-CC0-1.0) rather than added as a dependency; a license published after that release is refused
-until the list is updated. School has no preference among licenses: any listed id is accepted.
+The lists are `server/spdx-license-ids.ts`, copied from the `spdx-license-ids` package (3.0.24,
+CC0-1.0), and `server/spdx-exception-ids.ts`, from `spdx-exceptions` (2.5.0, CC0-1.0), rather than
+added as dependencies; a license or exception published after those releases is refused until the
+lists are updated. School has no preference among licenses: any listed id is accepted.
 
 ### The course format
 
