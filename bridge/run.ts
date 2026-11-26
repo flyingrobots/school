@@ -115,8 +115,14 @@ export function answerText(kind: OutputKind, stdout: string): string {
     if (result.text === null) throw new Error("claude-stream-json output had no result string");
     return result.text;
   }
-  // `claude -p --output-format json`: one object whose `result` is the final message.
-  const o = JSON.parse(stdout) as { result?: unknown; is_error?: boolean };
+  // `claude -p --output-format json`: one object whose `result` is the final message. The parser's
+  // own message quotes the text it choked on, which would put the answer in the log.
+  let o: { result?: unknown; is_error?: boolean };
+  try {
+    o = JSON.parse(stdout) as { result?: unknown; is_error?: boolean };
+  } catch {
+    throw new Error("claude-json output was not JSON");
+  }
   if (o.is_error === true) throw new Error("the CLI reported an error");
   if (typeof o.result !== "string") throw new Error("claude-json output had no result string");
   return o.result;
