@@ -3,8 +3,8 @@ title: "RFC 9: Authoring a course in the browser"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-26
 updated: 2026-11-26
-version: 0.1.0
-status: "Proposal, awaiting the maintainer's decision. Answers flyingrobots/school#189. Builds on flyingrobots/school at commit 2f18da4."
+version: 0.2.0
+status: "Decided, 2026-11-26: a confined agent whose accepted drafts become write-once installs, every open question answered as recommended. Decided by an agent under the maintainer's delegated authority; the maintainer may overturn it. Answers flyingrobots/school#189. Builds on flyingrobots/school at commit 2f18da4."
 ---
 
 # RFC 9: Authoring a course in the browser
@@ -40,6 +40,7 @@ The first slice is one authoring request from the browser that produces a checke
 7. [Out of scope](#7-out-of-scope)
 8. [Risks](#8-risks)
 9. [Open questions](#9-open-questions)
+10. [Decision](#10-decision)
 
 ## 1. The problem and who it serves
 
@@ -513,3 +514,28 @@ Each question has a recommendation that holds until the maintainer decides other
 _Table 9.1. Open questions and recommendations. Q2 and Q3 are the two that most protect the learner; the rest can stand as recommended._
 
 In short: the maintainer decides the confinement, the draft model and the model choice; each has a recommendation that holds until someone objects.
+
+## 10. Decision
+
+Decided on 2026-11-26 by an agent under the maintainer's delegated authority for that run. The decision record, with each option's pros, cons and why it was rejected, was delivered to Reader's inbox (receipt `1bd9dda3-fe7d-436e-8210-e9a584fe9cf9`). The maintainer may overturn any part.
+
+Every recommendation is accepted as written.
+
+| Task | Issue |
+| --- | --- |
+| 1 | flyingrobots/school#257 |
+| 2 | flyingrobots/school#258 |
+| 3 | flyingrobots/school#259 |
+| 4 | flyingrobots/school#260 |
+| 5 | flyingrobots/school#261 |
+| 6 | flyingrobots/school#262 |
+| 7 | flyingrobots/school#263 |
+| 8 | flyingrobots/school#264 |
+| 9 | flyingrobots/school#265 |
+| 10 | flyingrobots/school#266 |
+| 11 | flyingrobots/school#267 |
+| 12 | flyingrobots/school#268 |
+| 13 | flyingrobots/school#269 |
+| 14 | flyingrobots/school#270 |
+
+In short: this RFC is decided as written, and its tasks are filed.
