@@ -67,25 +67,28 @@ const HOSTILE: Hostile[] = [
   { name: "course.json as a symlink", entries: [["course.json", symlink("/etc/passwd")]], reason: "symlink", path: "course.json" },
   { name: "a submodule in reference/", entries: [ref(["vendor", submodule("a".repeat(40))])], reason: "submodule", path: "reference/vendor" },
   { name: "a Git LFS pointer", entries: [ref(["big.pdf", file(LFS)])], reason: "lfs-pointer", path: "reference/big.pdf" },
-  { name: "folders named .. climbing out of staging", entries: [ref(["..", dir(["..", dir(["..", dir(["escape.html", file("out")])])])])], reason: "unsafe-name", path: "reference/../../../escape.html" },
+  { name: "folders named .. climbing out of staging", entries: [ref(["..", dir(["..", dir(["..", dir(["escape.html", file("out")])])])])], reason: "unsafe-name", path: "reference/.." },
   { name: "a name holding ../ that climbs out of staging", entries: [ref(["../../../escape.html", file("out")])], reason: "unsafe-name", path: "reference/../../../escape.html" },
+  { name: "a name holding / between safe parts", entries: [ref(["a/b.html", file("x")])], reason: "unsafe-name", path: "reference/a/b.html" },
   { name: "an absolute path", entries: [ref(["/tmp/escape.html", file("out")])], reason: "unsafe-name", path: "reference//tmp/escape.html" },
-  { name: "a folder named .", entries: [ref([".", dir(["x.html", file("x")])])], reason: "unsafe-name", path: "reference/./x.html" },
-  { name: "a .git folder", entries: [ref([".git", dir(["config", file("[core]\n")])])], reason: "unsafe-name", path: "reference/.git/config" },
-  { name: "a .GIT folder in another case", entries: [lessons([".GIT", dir(["HEAD", file("x")])])], reason: "unsafe-name", path: "lessons/.GIT/HEAD" },
+  { name: "a folder named .", entries: [ref([".", dir(["x.html", file("x")])])], reason: "unsafe-name", path: "reference/." },
+  { name: "a .git folder", entries: [ref([".git", dir(["config", file("[core]\n")])])], reason: "unsafe-name", path: "reference/.git" },
+  { name: "a .GIT folder in another case", entries: [lessons([".GIT", dir(["HEAD", file("x")])])], reason: "unsafe-name", path: "lessons/.GIT" },
   { name: "a .gitattributes file", entries: [ref([".gitattributes", file("* filter=evil\n")])], reason: "unsafe-name", path: "reference/.gitattributes" },
   { name: "a name holding a backslash", entries: [ref(["..\\escape.html", file("out")])], reason: "unsafe-name", path: "reference/..\\escape.html" },
   { name: "a name holding a control character", entries: [ref(["a\u0001.html", file("x")])], reason: "unsafe-name", path: "reference/a\u0001.html" },
   { name: "a name holding a newline", entries: [ref(["a\n.html", file("x")])], reason: "unsafe-name", path: "reference/a\n.html" },
   { name: "a name holding DEL", entries: [ref(["a\u007f.html", file("x")])], reason: "unsafe-name", path: "reference/a\u007f.html" },
   { name: "a name that is not UTF-8", entries: [ref([new Uint8Array([0x61, 0xff, 0x2e, 0x68]), file("x")])], reason: "unsafe-name" },
-  { name: "an empty name", entries: [ref(["", file("x")])], reason: "unsafe-name", path: "reference/" },
+  // git itself will not read a tree with an empty name ("fatal: empty filename in tree entry"), so
+  // School answers with git's failure; the check for an empty name stays as a second line.
+  { name: "an empty name", entries: [ref(["", file("x")])], reason: "git-failed" },
   { name: "two files equal after case folding", entries: [ref(["A.html", file("1")], ["a.html", file("2")])], reason: "case-collision", path: "reference/a.html" },
-  { name: "two files equal after Unicode NFC", entries: [ref(["é.html", file("1")], ["é.html", file("2")])], reason: "case-collision", path: "reference/é.html" },
+  { name: "two files equal after Unicode NFC", entries: [ref(["\u00e9.html", file("1")], ["e\u0301.html", file("2")])], reason: "case-collision", path: "reference/\u00e9.html" },
   { name: "two folders equal after case folding", entries: [ref(["Docs", dir(["x.html", file("1")])], ["docs", dir(["y.html", file("2")])])], reason: "case-collision", path: "reference/docs/y.html" },
   { name: "two lessons equal after case folding", entries: [lessons(["A.json", file("{}")], ["a.json", file("{}")])], reason: "case-collision", path: "lessons/a.json" },
   { name: "one name twice in a tree", entries: [ref(["a.html", file("1")], ["a.html", file("2")])], reason: "case-collision", path: "reference/a.html", sorted: false },
-  { name: "more folders than the limit", entries: [ref(["a", dir()], ["b", dir()], ["c", dir()])], limits: { files: 2 }, reason: "too-many-files", path: "reference/c" },
+  { name: "more folders than files times depth", entries: [ref(["a", dir()], ["b", dir()], ["c", dir()])], limits: { files: 1, depth: 2 }, reason: "too-many-files", path: "reference/c" },
   { name: "more files than the limit", entries: [ref(["a", file("1")], ["b", file("2")], ["c", file("3")])], limits: { files: 2 }, reason: "too-many-files", path: "reference/c" },
   { name: "a file over the limit", entries: [ref(["a.html", file("12345")])], limits: { fileBytes: 4 }, reason: "file-too-large", path: "reference/a.html" },
   { name: "files whose total is over the limit", entries: [ref(["a", file("123")], ["b", file("456")], ["c", file("789")])], limits: { totalBytes: 8 }, reason: "total-too-large", path: "reference/c" },
@@ -277,24 +280,29 @@ function place(entries: Entry[], parts: string[], content: string) {
 describe(`generated trees (SCHOOL_FUZZ_SEED=${SEED})`, () => {
   const LIMITS: Limits = { files: 5, fileBytes: 12, totalBytes: 40, pathBytes: 28, depth: 3, gitMs: 60_000 };
 
-  test("EXTRACT-12: a tree of safe names is refused exactly when it passes a limit, and otherwise extracted byte for byte", async () => {
+  test("EXTRACT-12: a tree within the limits is extracted byte for byte, and one pushed past a single limit is refused for that limit", async () => {
     const g = generator(SEED);
+    const TARGETS = ["none", "too-many-files", "file-too-large", "total-too-large", "path-too-long", "too-deep"] as const;
     const outcomes = new Map<string, number>();
     for (let c = 0; c < CASES; c++) {
+      // A tree inside every limit: at most 4 files, 2 folders below reference/, 24-byte paths, 8-byte files.
       const files = new Map<string, string>();
-      const count = g.int(0, 7);
-      for (let i = 0; i < count; i++) {
-        const depth = g.int(0, 4);
-        const parts = ["reference", ...Array.from({ length: depth }, () => g.pick(["a", "b", "cc"])), `f${i}${"x".repeat(g.int(0, 8))}`];
-        files.set(parts.join("/"), "z".repeat(g.int(0, 15)));
+      const count = g.int(0, 4);
+      const add = (folders: string[], name: string, content: string) => files.set(["reference", ...folders, name].join("/"), content);
+      for (let i = 0; i < count; i++) add(Array.from({ length: g.int(0, 2) }, () => g.pick(["a", "b", "cc"])), `f${i}${"x".repeat(g.int(0, 6))}`, "z".repeat(g.int(0, 8)));
+      // Then past exactly one limit, or none.
+      const target = TARGETS[c % TARGETS.length] as (typeof TARGETS)[number];
+      switch (target) {
+        case "none": break;
+        case "too-many-files": for (let i = files.size; i <= LIMITS.files; i++) add([], `m${i}`, ""); break;
+        case "file-too-large": add([], "big", "z".repeat(LIMITS.fileBytes + 1)); break;
+        case "total-too-large": files.clear(); for (let i = 0; i < 4; i++) add([], `t${i}`, "z".repeat(LIMITS.fileBytes - 1)); break;
+        case "path-too-long": add([], "p".repeat(LIMITS.pathBytes - "reference/".length + 1), ""); break;
+        case "too-deep": add(["a", "b", "c"], "d", ""); break;
+        default: { const never: never = target; throw new Error(String(never)); }
       }
-      const entries: Entry[] = [];
-      for (const [p, content] of files) place(entries, p.split("/"), content);
-      const s = scene(entries);
-      const before = everything();
-      const r = await extractCommit({ repository: s.repo, commit: s.commit, into: s.into, limits: LIMITS });
       // Oracle: Table 6.2 applied to the generated list directly, not to the tree.
-      const over = new Set<RefusalReason>();
+      const over = new Set<string>();
       if (files.size > LIMITS.files) over.add("too-many-files");
       let total = 0;
       for (const [p, content] of files) {
@@ -304,28 +312,30 @@ describe(`generated trees (SCHOOL_FUZZ_SEED=${SEED})`, () => {
         if (p.split("/").length - 1 > LIMITS.depth) over.add("too-deep");
       }
       if (total > LIMITS.totalBytes) over.add("total-too-large");
-      const label = `seed ${SEED}, case ${c}: ${JSON.stringify([...files.keys()])}`;
-      if (r.ok) {
-        expect({ label, over: [...over] }).toEqual({ label, over: [] });
-        expect(filesUnder(s.into)).toEqual([...files.keys()].map((p) => p).sort());
+      const label = `seed ${SEED}, case ${c}, ${target}: ${JSON.stringify([...files].map(([p, v]) => [p, v.length]))}`;
+      expect({ label, over: [...over] }).toEqual({ label, over: target === "none" ? [] : [target] });
+      const entries: Entry[] = [];
+      for (const [p, content] of files) place(entries, p.split("/"), content);
+      const s = scene(entries);
+      const before = everything();
+      const r = await extractCommit({ repository: s.repo, commit: s.commit, into: s.into, limits: LIMITS });
+      if (target === "none") {
+        expect({ label, ok: r.ok }).toEqual({ label, ok: true });
+        expect(filesUnder(s.into)).toEqual([...files.keys()].sort());
         for (const [p, content] of files) expect(readFileSync(join(s.into, p), "utf8")).toBe(content);
       } else {
-        expect({ label, reason: over.has(r.refusal.reason) }).toEqual({ label, reason: true });
+        expect({ label, reason: r.ok ? "extracted" : r.refusal.reason }).toEqual({ label, reason: target });
         expect(existsSync(s.into)).toBe(false);
         expect(everything()).toEqual(before);
       }
-      const key = r.ok ? "extracted" : r.refusal.reason;
-      outcomes.set(key, (outcomes.get(key) ?? 0) + 1);
+      outcomes.set(target, (outcomes.get(target) ?? 0) + 1);
     }
-    // Both outcomes must occur, or the generator proves nothing.
-    expect(outcomes.get("extracted") ?? 0).toBeGreaterThan(0);
-    expect(CASES - (outcomes.get("extracted") ?? 0)).toBeGreaterThan(0);
-    console.log(`EXTRACT-12 outcomes (seed ${SEED}): ${JSON.stringify(Object.fromEntries(outcomes))}`);
+    console.log(`EXTRACT-12 cases (seed ${SEED}): ${JSON.stringify(Object.fromEntries(outcomes))}`);
   }, 60_000);
 
   test("EXTRACT-13: a tree of random names never writes outside its folder, and writes only safe, distinct names", async () => {
     const g = generator(SEED + 1);
-    const PIECES = ["a", "A", ".", "..", ".git", ".Git", "\\", "\u0001", "\n", "é", "é", "/", "x.json", "x.JSON", " ", "-", "~"] as const;
+    const PIECES = ["a", "A", ".", "..", ".git", ".Git", "\\", "\u0001", "\n", "\u00e9", "e\u0301", "/", "x.json", "x.JSON", " ", "-", "~"] as const;
     // Oracle, written from Table 6.1 independently of the module: a safe name is not empty, `.` or
     // `..`, does not start with `.git` in any case, and holds no `/`, `\` or control character.
     const safe = (name: string) => name !== "" && name !== "." && name !== ".." && !name.toLowerCase().startsWith(".git") && !/[/\\\u0000-\u001f\u007f-\u009f]/.test(name);
