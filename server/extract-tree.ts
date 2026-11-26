@@ -15,6 +15,10 @@
 // - Then the folder is created (its parent must exist; it must not) and each file written with
 //   exclusive creation and mode 0644. A Git LFS pointer is found here, by its first line; any
 //   refusal at this stage deletes the folder, so a refusal leaves nothing behind.
+// - `git fsck --strict` runs after the listing's checks and before anything is written, for what a listing cannot show: a name holding `/` beside a folder
+//   (fullPathname, refused as unsafe-name) and a name twice in a tree (duplicateEntries, refused as
+//   case-collision). Creation that meets an existing name is a case-collision too, so no problem
+//   throws: each is a `{ ok: false }` refusal.
 // - Every git process has a time limit and is killed when it passes it.
 //
 // Only entries under the three installed names are listed and checked. Anything else in the
@@ -93,8 +97,12 @@ function unsafeName(name: string): string | null {
   return null;
 }
 
-/** The key two names share when a case-insensitive, normalising filesystem would treat them as one. */
-const folded = (path: string) => path.normalize("NFC").toLowerCase().normalize("NFC");
+/**
+ * The key two names share when a case-insensitive, normalising filesystem would treat them as one.
+ * Upper-casing first applies the full case mappings that `toLowerCase` alone lacks (s and ſ, σ and ς,
+ * ss and ß, ff and ﬀ, μ and µ, K and the Kelvin sign).
+ */
+const folded = (path: string) => path.normalize("NFC").toUpperCase().toLowerCase().normalize("NFC");
 
 /** What School installs: course.json, a lesson file directly in lessons/, anything in reference/. */
 const installed = (path: string) =>
@@ -108,7 +116,7 @@ type Run = { code: number; stdout: Uint8Array; stderr: string };
  * `onChunk`, stdout is handed over as it arrives (a Refused thrown from it kills git); otherwise
  * it is collected, up to `maxStdout` bytes.
  */
-async function run(g: Git, args: string[], o: { input?: Uint8Array; maxStdout?: number; onChunk?: (chunk: Uint8Array) => void } = {}): Promise<Run> {
+async function run(g: Git, args: string[], o: { input?: Uint8Array; maxStdout?: number; maxStderr?: number; onChunk?: (chunk: Uint8Array) => void } = {}): Promise<Run> {
   const env = {
     PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: g.home, LC_ALL: "C",
     GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0", GIT_NO_REPLACE_OBJECTS: "1",
@@ -142,10 +150,24 @@ async function run(g: Git, args: string[], o: { input?: Uint8Array; maxStdout?: 
   }
   const code = await proc.exited;
   clearTimeout(timer);
-  const err = (await stderr).slice(0, 2000).trim();
+  const err = (await stderr).slice(0, o.maxStderr ?? 2000).trim();
   if (timedOut) refuse("timeout", null, `git ${args[0]} ran longer than ${g.ms} ms and was stopped`);
   if (failure !== null) throw failure;
   return { code, stdout: Buffer.concat(chunks), stderr: err };
+}
+
+/**
+ * Asks git's own strict checker about the commit and its trees, for what the listing cannot show:
+ * a name holding `/` (fullPathname) that sits beside a folder of its first part, and a name twice in
+ * one tree (duplicateEntries). Any other finding is left to the checks that follow.
+ */
+async function fsck(g: Git, commit: string): Promise<void> {
+  const r = await run(g, ["fsck", "--strict", "--no-dangling", commit], { maxStdout: 1 << 20, maxStderr: 1 << 20 });
+  const finding = (kind: string) => r.stderr.split("\n").find((line) => line.includes(`${kind}:`));
+  const slash = finding("fullPathname");
+  if (slash) refuse("unsafe-name", null, `git's check found a tree entry whose name holds /: ${slash}`);
+  const twice = finding("duplicateEntries");
+  if (twice) refuse("case-collision", null, `git's check found one name twice in a tree: ${twice}`);
 }
 
 type Planned = { path: string; id: string; size: number };
@@ -228,6 +250,16 @@ async function plan(g: Git, commit: string, limits: Limits): Promise<Planned[]> 
 
 const startsWith = (data: Uint8Array, prefix: Uint8Array) => data.length >= prefix.length && prefix.every((b, i) => data[i] === b);
 
+/** Runs one creation; a name already taken is a case-collision the checks missed, never an error with a path in it. */
+function create(path: string, make: () => void): void {
+  try {
+    make();
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") refuse("case-collision", path, `${quoted(path)} names something already written, so the filesystem treats two names as one`);
+    throw e;
+  }
+}
+
 /** Reads every planned blob in one `git cat-file --batch` and writes it under `into`. */
 async function write(g: Git, files: Planned[], into: string): Promise<void> {
   if (files.length === 0) return;
@@ -252,9 +284,9 @@ async function write(g: Git, files: Planned[], into: string): Promise<void> {
     const parts = f.path.split("/");
     for (let k = 1; k < parts.length; k++) {
       const folder = parts.slice(0, k).join("/");
-      if (!made.has(folder)) { mkdirSync(join(root, folder)); made.add(folder); }
+      if (!made.has(folder)) { create(f.path, () => mkdirSync(join(root, folder))); made.add(folder); }
     }
-    writeFileSync(target, data, { flag: "wx", mode: 0o644 });
+    create(f.path, () => writeFileSync(target, data, { flag: "wx", mode: 0o644 }));
   }
 }
 
@@ -276,6 +308,7 @@ export async function extractCommit(request: ExtractRequest): Promise<Extraction
     if (type !== "commit") refuse("not-a-commit", null, `${request.commit} is ${type === "missing" ? "not in the repository" : `a ${type}, not a commit`}`);
 
     const files = await plan(g, request.commit, limits);
+    await fsck(g, request.commit);
     try {
       mkdirSync(into);
     } catch (e) {
