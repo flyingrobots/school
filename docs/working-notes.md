@@ -168,3 +168,8 @@ Practical notes for anyone — human or agent — changing the framework.
   and its allowlist. It has no dependencies beyond Bun and is started by hand:
   `SCHOOL_BRIDGE_TOKEN=... bun bridge/bridge.ts`. Its tests write fake agent scripts and
   never contact a model.
+- The `school` skill lives in `.agents/skills/school/`. `.claude/skills/school` is a symlink to it,
+  written by `sync-agents --project` and recorded in `.agents/sync.lock.json`, so an agent in any
+  clone finds the skill. After adding or renaming a skill under `.agents/skills/`, run
+  `sync-agents --project` and commit the link and the lockfile; `sync-agents --project --check`
+  exits 0 when they match (flyingrobots/school#203).
