@@ -46,12 +46,13 @@ Lines on stdout and stderr, each line naming its schema in `server/schemas/check
 | `school.check.help` | stdout | `command`, `usage`, `summary`, `options`, `exit`, `output` | First line of `--help` |
 | `school.check.schema` | stdout | `id`, `version`, `schema` | `--schema`, and `--help` after its help line |
 | `school.check.start` | stdout | `folder`, as an absolute path | First, once the arguments are accepted |
-| `school.check.done` | stdout | `ok`, `folder`, `title`, `summary`, `author`, `license` and `format` (each null when not declared), `lessons` (each `file`, `id`, `title`, `quizzes`, `explains`), and the course's `quizzes` and `explains` | Last, before exit 0 |
+| `school.check.manifest` | stdout | `summary`, `author`, `license` and `format`, each null when not declared | Just before `done`, on success; not printed with `--human` |
+| `school.check.done` | stdout | `ok`, `folder`, `title` (null when none is declared), `lessons` (each `file`, `id`, `title`, `quizzes`, `explains`), and the course's `quizzes` and `explains` | Last, before exit 0 |
 | `school.check.error.invalid` | stderr | `error`, `code` (1), `file` (`course.json`, a lesson file, or null for a problem across files, such as an unknown ref), `message` | School would refuse the course |
 | `school.check.error.usage` | stderr | `error`, `code` (2), `message` | A bad argument or no such folder |
 | `school.check.error.failed` | stderr | `error`, `code` (1), `message` | Anything else went wrong |
 
-A quiz or explain block reused through `ref` counts once. `--human` adds the summary, then the
+A quiz or explain block reused through `ref` counts once. `school.check.done` stays at 1.0.0, so a consumer written against it still validates every line; the manifest has a message of its own. `--human` adds the summary, then the
 author, license and format, on lines of their own after the lessons, leaving out any the course
 does not declare.
 
@@ -73,8 +74,9 @@ only `{ "title": "Rounds" }`:
 
 ```text
 $ ./school check $DIR          # exit 0
-{"_schema":{"id":"school.check.start","version":"1.0.0"},"kind":"school.check","event":"start","folder":"$DIR","run":"a0854dcb-c3b6-46f4-865a-d5730b509292","at":"2026-11-26T22:33:04.028Z"}
-{"_schema":{"id":"school.check.done","version":"1.1.0"},"kind":"school.check","event":"done","ok":true,"folder":"$DIR","title":"Rounds","summary":null,"author":null,"license":null,"format":null,"lessons":[{"file":"0001-rounds.json","id":"rounds","title":"Rounds","quizzes":1,"explains":0}],"quizzes":1,"explains":0,"run":"a0854dcb-c3b6-46f4-865a-d5730b509292","at":"2026-11-26T22:33:04.029Z"}
+{"_schema":{"id":"school.check.start","version":"1.0.0"},"kind":"school.check","event":"start","folder":"$DIR","run":"9cdab92a-44e4-4edf-a871-dfe8e02e92de","at":"2026-11-26T23:45:45.220Z"}
+{"_schema":{"id":"school.check.manifest","version":"1.0.0"},"kind":"school.check","event":"manifest","summary":null,"author":null,"license":null,"format":null,"run":"9cdab92a-44e4-4edf-a871-dfe8e02e92de","at":"2026-11-26T23:45:45.223Z"}
+{"_schema":{"id":"school.check.done","version":"1.0.0"},"kind":"school.check","event":"done","ok":true,"folder":"$DIR","title":"Rounds","lessons":[{"file":"0001-rounds.json","id":"rounds","title":"Rounds","quizzes":1,"explains":0}],"quizzes":1,"explains":0,"run":"9cdab92a-44e4-4edf-a871-dfe8e02e92de","at":"2026-11-26T23:45:45.223Z"}
 $ ./school --human check $DIR
 checking $DIR
 ok: Rounds, 1 lesson, 1 quiz, 0 explain blocks
@@ -82,11 +84,14 @@ ok: Rounds, 1 lesson, 1 quiz, 0 explain blocks
 ```
 
 The same course once its `course.json` also declares
-`"summary": "Ring the bells in order.", "license": "CC-BY-4.0", "format": 1`:
+`"summary": "Ring the bells in order.", "license": "CC-BY-4.0", "format": 1`; only the `manifest`
+line differs, and `done` carries nothing new:
 
 ```text
-$ ./school check $DIR          # the done line; exit 0
-{"_schema":{"id":"school.check.done","version":"1.1.0"},"kind":"school.check","event":"done","ok":true,"folder":"$DIR","title":"Rounds","summary":"Ring the bells in order.","author":null,"license":"CC-BY-4.0","format":1,"lessons":[{"file":"0001-rounds.json","id":"rounds","title":"Rounds","quizzes":1,"explains":0}],"quizzes":1,"explains":0,"run":"6eccee2d-a9aa-4813-b604-27af2dc6d539","at":"2026-11-26T22:33:04.131Z"}
+$ ./school check $DIR          # exit 0
+{"_schema":{"id":"school.check.start","version":"1.0.0"},"kind":"school.check","event":"start","folder":"$DIR","run":"54ed9571-73c1-4045-9d62-abf613bd2cb6","at":"2026-11-26T23:45:45.360Z"}
+{"_schema":{"id":"school.check.manifest","version":"1.0.0"},"kind":"school.check","event":"manifest","summary":"Ring the bells in order.","author":null,"license":"CC-BY-4.0","format":1,"run":"54ed9571-73c1-4045-9d62-abf613bd2cb6","at":"2026-11-26T23:45:45.364Z"}
+{"_schema":{"id":"school.check.done","version":"1.0.0"},"kind":"school.check","event":"done","ok":true,"folder":"$DIR","title":"Rounds","lessons":[{"file":"0001-rounds.json","id":"rounds","title":"Rounds","quizzes":1,"explains":0}],"quizzes":1,"explains":0,"run":"54ed9571-73c1-4045-9d62-abf613bd2cb6","at":"2026-11-26T23:45:45.364Z"}
 $ ./school --human check $DIR
 checking $DIR
 ok: Rounds, 1 lesson, 1 quiz, 0 explain blocks
@@ -139,8 +144,8 @@ called by its name everywhere a title would show.
 
 `GET /api/courses` and `GET /api/courses/:course` give `name`, the slug; `title`, the course's
 title or, when it declares none, its name; and `summary`, `author`, `license` and `format`, each
-as declared or null when the course does not declare it. `school check` reports the same five on
-its `done` line.
+as declared or null when the course does not declare it. `school check` reports the last four on
+its `manifest` line, and the title on `done`.
 
 ### Licenses
 
