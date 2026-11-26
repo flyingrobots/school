@@ -82,7 +82,7 @@ function prose(l: Record<string, any>): string {
     case ids.schema: return `schema ${l.id} ${l.version}\n${JSON.stringify(l.schema, null, 2)}`;
     case ids.start: return `migrating ${l.where} for ${l.role} (run ${l.run})`;
     case ids.applied: return `applied ${l.name}`;
-    case ids.renamed: return `renamed course ${l.from} to ${l.to}: ${l.rows.encounters} encounters, ${l.rows.views} views, ${l.rows.decision_notes} decision notes`;
+    case ids.renamed: return `renamed course ${l.from} to ${l.to}: ${l.rows.encounters} encounters, ${l.rows.views} views, ${l.rows.decision_notes} decision notes, ${l.rows.course_installs} installs, ${l.rows.course_removals} removals`;
     case ids.done: return `done: ${l.applied.length === 0 ? "nothing to apply" : `applied ${l.applied.length} migration${l.applied.length === 1 ? "" : "s"}`}; ${l.role} may log in`;
     case ids.captured: return `(${l.stream}) ${l.text}`;
     default: return `error (${l.error}): ${l.message}`;

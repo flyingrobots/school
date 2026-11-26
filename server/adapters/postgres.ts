@@ -12,7 +12,7 @@
 // end as the model's ISO form, 2026-11-21T10:00:00.000Z.
 import { z } from "zod";
 import {
-  Aid, Block, DecisionNote, DecisionNoteResult, DueItem, Encounter, EvidenceKind, EvidenceRow, ExplanationState, ExposureResult, Grading,
+  Aid, Block, DecisionNote, InstallResult, InstalledCourse, RemovalResult, TrustResult, DecisionNoteResult, DueItem, Encounter, EvidenceKind, EvidenceRow, ExplanationState, ExposureResult, Grading,
   Findings, LastStudied, LatestFeedback, LessonProgress, Recorded, SaveResult, Seq, StudyDay, SubmitResult, type ExplainBlock,
 } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
@@ -52,6 +52,10 @@ const NoteRow = z.object({ note: DecisionNote });
 const OpenedLesson = Opened.extend({ content: Block });
 const Due = z.object({ item: DueItem });
 const Studied = z.object({ course: z.string(), lesson: z.string(), at: time });
+const InstalledRow = z.object({
+  id: z.string(), course: z.string(), source: z.string(), url: z.string().nullable(), bundle_sha256: z.string().nullable(), commit: z.string(),
+  content_sha256: z.string(), title: z.string(), format: z.number().nullable(), at: time, trusted: z.boolean(),
+});
 const FeedbackRow = z.object({
   submission_id: z.string(), course: z.string(), lesson: z.string(), block_id: z.string(),
   model: z.string().nullable(), findings: Findings, at: time,
@@ -129,10 +133,20 @@ export function postgresRecord(sql: Sql): LearningRecord {
       await value("choose_time_zone", zone, now);
     },
 
-    installCourse: async () => { throw new Error("not implemented"); },
-    removeInstalledCourse: async () => { throw new Error("not implemented"); },
-    chooseCourseTrust: async () => { throw new Error("not implemented"); },
-    installedCourses: async () => { throw new Error("not implemented"); },
+    installCourse: async (i, now) => InstallResult.parse({ status: await value("install_course",
+      i.id, i.course, i.source, i.url, i.bundleSha256, i.commit, i.contentSha256, i.title, i.format, now) }),
+
+    removeInstalledCourse: async (course, now) => RemovalResult.parse({ status: await value("remove_installed_course", course, now) }),
+
+    chooseCourseTrust: async (installId, trusted, now) =>
+      TrustResult.parse({ status: await value("choose_course_trust", installId, trusted, now) }),
+
+    installedCourses: async () =>
+      (await rows("installed_courses")).map((row) => {
+        const c = InstalledRow.parse(row);
+        return InstalledCourse.parse({ id: c.id, course: c.course, source: c.source, url: c.url, bundleSha256: c.bundle_sha256, commit: c.commit,
+          contentSha256: c.content_sha256, title: c.title, format: c.format, at: c.at, trusted: c.trusted });
+      }),
 
     saveExplanation: async (s, now) =>
       SaveResult.parse({ status: await value("save_explanation", s.submissionId, s.encounterId, s.blockId, s.text, s.ms, now) }),

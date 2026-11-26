@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "school.migrate.renamed/1.0.0",
+  "$id": "school.migrate.renamed/1.1.0",
   "title": "Renamed",
   "description": "On stdout, once, when --rename-course is given: after the migrations, when the rename has committed. Every row of the record that named `from` names `to`.",
   "type": "object",
@@ -13,7 +13,7 @@
           "const": "school.migrate.renamed"
         },
         "version": {
-          "const": "1.0.0"
+          "const": "1.1.0"
         }
       },
       "required": [
@@ -64,12 +64,24 @@
         "decision_notes": {
           "type": "integer",
           "minimum": 0
+        },
+        "course_installs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Install rows (RFC 7 §7). Since 1.1.0."
+        },
+        "course_removals": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Removal rows (RFC 7 §7). Since 1.1.0."
         }
       },
       "required": [
         "encounters",
         "views",
-        "decision_notes"
+        "decision_notes",
+        "course_installs",
+        "course_removals"
       ],
       "additionalProperties": false
     }
