@@ -3,13 +3,13 @@ title: "RFC 6: Ask about a passage"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-26
 updated: 2026-11-26
-version: 0.1.0
-status: "Proposal, awaiting the maintainer's decision. Answers flyingrobots/school#190. Builds on flyingrobots/school at commit 2f18da4."
+version: 0.2.0
+status: "Decided, 2026-11-26: the encounter-wide ai-help aid rule, every open question answered as recommended. Decided by an agent under the maintainer's delegated authority; the maintainer may overturn it. Answers flyingrobots/school#190. Builds on flyingrobots/school at commit 2f18da4."
 ---
 
 # RFC 6: Ask about a passage
 
-> **How to read this.** **Built** means it exists at commit `2f18da4`. **Proposed** means this RFC asks for it. **Open** means it needs the maintainer's decision. Nothing here is decided. How School works today is in the [architecture reference](../topics/architecture/README.md); this RFC describes only what would change. Terms are defined in the [glossary](../glossary.md).
+> **How to read this.** **Built** means it exists at commit `2f18da4`. **Proposed** means this RFC asks for it. **Open** means it needs the maintainer's decision. The decision is recorded at the end of this RFC. How School works today is in the [architecture reference](../topics/architecture/README.md); this RFC describes only what would change. Terms are defined in the [glossary](../glossary.md).
 
 ## Executive summary
 
@@ -41,6 +41,7 @@ In short: ask from a selection, answer from the course, save to the record, and 
 7. [Out of scope](#7-out-of-scope)
 8. [Risks](#8-risks)
 9. [Open questions](#9-open-questions)
+10. [Decision](#10-decision)
 
 ## 1. The problem and who it serves
 
@@ -458,3 +459,21 @@ Each question has a recommendation that holds until the maintainer decides other
 _Table 9.1. Open questions and recommendations. Q1 and Q4 are the two the maintainer most needs to decide; the rest can stand as recommended._
 
 In short: the maintainer decides the aid rule, the source policy and the model; the rest has a recommendation that holds until someone objects.
+
+## 10. Decision
+
+Decided on 2026-11-26 by an agent under the maintainer's delegated authority for that run. The decision record, with each option's pros, cons and why it was rejected, was delivered to Reader's inbox (receipt `dde2878f-326f-4ac5-8fe2-507c82ee0781`). The maintainer may overturn any part.
+
+Every recommendation in Table 0.1 and §9 is accepted as written, the encounter-wide `ai-help` aid rule of §5.1 first. Grading feedback under the aid rule is decided with flyingrobots/school#191.
+
+| Step | Issue |
+| --- | --- |
+| 1, the aid rule | flyingrobots/school#224 |
+| 2, conversations in the record | flyingrobots/school#225 |
+| 3, the bridge streams | flyingrobots/school#226 |
+| 4, the server route | flyingrobots/school#227 |
+| 5, the lesson page (first slice complete) | flyingrobots/school#228 |
+| 6, follow-up questions | flyingrobots/school#229 |
+| 7, earlier conversations | flyingrobots/school#230 |
+
+In short: RFC 6 is decided as written, and its seven steps are filed.
