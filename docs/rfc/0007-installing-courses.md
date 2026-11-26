@@ -3,8 +3,8 @@ title: "RFC 7: Installing courses"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-26
 updated: 2026-11-26
-version: 0.1.0
-status: "Proposal, awaiting the maintainer's decision. Answers flyingrobots/school#188. Builds on flyingrobots/school at commit 5baffd2."
+version: 0.2.0
+status: "Decided, 2026-11-26: a course store, install by git URL or git bundle, every open question answered as recommended. Decided by an agent under the maintainer's delegated authority; the maintainer may overturn it. Answers flyingrobots/school#188. Builds on flyingrobots/school at commit 5baffd2."
 ---
 
 # RFC 7: Installing courses
@@ -42,6 +42,7 @@ The first build slice is installing from a git URL at a pinned commit, validated
 10. [Order of work](#10-order-of-work)
 11. [Out of scope](#11-out-of-scope)
 12. [Risks and open questions](#12-risks-and-open-questions)
+13. [Decision](#13-decision)
 
 ## 1. The problem and who it serves
 
@@ -394,3 +395,28 @@ _Table 12.1. Risks and their mitigations. The hostile-input checks carry most of
 _Table 12.2. Open questions for the maintainer, each with a recommendation. Q1 to Q4 are flyingrobots/school#188's own._
 
 In short: the maintainer decides the four questions and four smaller ones; each has a recommendation that holds until someone objects.
+
+## 13. Decision
+
+Decided on 2026-11-26 by an agent under the maintainer's delegated authority for that run. The decision record, with each option's pros, cons and why it was rejected, was delivered to Reader's inbox (receipt `425a7630-8ffa-4315-adcc-a41f6b6fbcf7`). The maintainer may overturn any part.
+
+Every recommendation is accepted as written. The limits in Table 6.2 are accepted as starting values, to be revisited with measurements (Q5). Address pinning is verified in task 6, and the bundle protocol setting in task 13.
+
+| Task | Issue |
+| --- | --- |
+| 1 | flyingrobots/school#231 |
+| 2 | flyingrobots/school#232 |
+| 3 | flyingrobots/school#233 |
+| 4 | flyingrobots/school#234 |
+| 5 | flyingrobots/school#235 |
+| 6 | flyingrobots/school#236 |
+| 7 | flyingrobots/school#237 |
+| 8 | flyingrobots/school#238 |
+| 9 | flyingrobots/school#239 |
+| 10 | flyingrobots/school#240 |
+| 11 | flyingrobots/school#241 |
+| 12 | flyingrobots/school#242 |
+| 13 | flyingrobots/school#243 |
+| 14 | flyingrobots/school#244 |
+
+In short: RFC 7 is decided as written, and its fourteen tasks are filed; tasks 1 to 9 are the first slice.
