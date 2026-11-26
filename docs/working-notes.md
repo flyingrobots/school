@@ -173,3 +173,7 @@ Practical notes for anyone — human or agent — changing the framework.
   clone finds the skill. After adding or renaming a skill under `.agents/skills/`, run
   `sync-agents --project` and commit the link and the lockfile; `sync-agents --project --check`
   exits 0 when they match (flyingrobots/school#203).
+- A course's `license` in `course.json` is checked against the SPDX License List copied into
+  `server/spdx-license-ids.ts` from `spdx-license-ids` 3.0.24 (CC0-1.0), not a dependency (ADR 2).
+  A license SPDX adds later is refused until that file is updated: copy `index.json` and
+  `deprecated.json` from a newer release into its two lists (flyingrobots/school#209).
