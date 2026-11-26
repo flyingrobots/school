@@ -1,6 +1,6 @@
 // Where the framework finds a course, the learner's state, and any extra source material.
 // Nothing here names a subject: a course is configured, never compiled in (ADR 6).
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { withPassword } from "./secrets.ts";
 
@@ -134,7 +134,42 @@ function within(inner: string, outer: string): boolean {
   return i === o || i.startsWith(o.endsWith(sep) ? o : o + sep);
 }
 
-export function parseConfig(env: Record<string, string | undefined>, frameworkDefault: string): Config {
+/** A folder's filesystem identity: what stat(2) gives as st_dev and st_ino. */
+export type Stat = (path: string) => { dev: number | bigint; ino: number | bigint };
+
+/**
+ * The identity of `p` (null when it does not exist yet) and of every ancestor that exists, as
+ * "dev:ino" strings. Two names for one folder, such as one directory bind-mounted twice into a
+ * container, resolve to two paths but share an identity (flyingrobots/school#280).
+ */
+function lineage(p: string, stat: Stat): { self: string | null; all: Set<string> } {
+  const all = new Set<string>();
+  let self: string | null = null;
+  let at = resolved(p);
+  for (let first = true; ; first = false) {
+    try {
+      const s = stat(at);
+      const id = `${s.dev}:${s.ino}`;
+      all.add(id);
+      if (first) self = id;
+    } catch (e) {
+      if (code(e) !== "ENOENT") throw new ConfigError(`cannot stat ${at}: ${code(e) ?? String(e)}`);
+    }
+    const up = dirname(at);
+    if (up === at) return { self, all };
+    at = up;
+  }
+}
+
+/** Whether `a` is `b`, holds it or sits inside it by identity, whatever their paths say. */
+function sameTree(a: string, b: string, stat: Stat): boolean {
+  const x = lineage(a, stat);
+  const y = lineage(b, stat);
+  return (x.self !== null && y.all.has(x.self)) || (y.self !== null && x.all.has(y.self));
+}
+
+/** `stat` is the filesystem's identity; tests give a fake one, since aliases need a bind mount. */
+export function parseConfig(env: Record<string, string | undefined>, frameworkDefault: string, stat: Stat = statSync): Config {
   const cwd = process.cwd();
   const framework = abs(env.SCHOOL_ROOT ?? frameworkDefault, cwd);
   // SCHOOL_COURSES registers many; SCHOOL_COURSE stays accepted as a single unnamed course,
@@ -174,6 +209,19 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     for (const [what, folder] of served) {
       if (within(folder, path) || within(path, folder)) {
         throw new ConfigError(`${what} (${folder}) overlaps untrusted course ${JSON.stringify(name)} (${path}) from SCHOOL_UNTRUSTED_COURSES; it would serve the course's files unsandboxed`);
+      }
+    }
+  }
+  // The same rules by identity (flyingrobots/school#280): compose bind-mounts the course folder at
+  // /course and, by default, again at /library, and realpath cannot see that those are one folder.
+  const roots: [string, string][] = [
+    ...Object.entries(courses).map(([other, root]): [string, string] => [`trusted course ${JSON.stringify(other)} (${root}) from ${other === single ? "SCHOOL_COURSE" : "SCHOOL_COURSES"}`, root]),
+    ...served.map(([what, folder]): [string, string] => [`${what} (${folder})`, folder]),
+  ];
+  for (const [name, path] of Object.entries(untrusted)) {
+    for (const [what, root] of roots) {
+      if (sameTree(path, root, stat)) {
+        throw new ConfigError(`untrusted course ${JSON.stringify(name)} (${path}) from SCHOOL_UNTRUSTED_COURSES and ${what} are the same folder under two names, or one holds the other (same device and inode, as when Docker bind-mounts one folder twice); a folder is trusted or untrusted, not both`);
       }
     }
   }

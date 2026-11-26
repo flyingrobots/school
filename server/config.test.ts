@@ -286,30 +286,31 @@ const fakeStat = (ids: Record<string, Id>) => (p: string): Id => {
   if (id === undefined) throw Object.assign(new Error(`ENOENT: ${p}`), { code: "ENOENT" });
   return id;
 };
-// /course and /library are one bind-mounted folder (inode 42); /other is a different one.
+// /mnt/course and /mnt/library are one bind-mounted folder (inode 42); /mnt/other is another.
+// Under /mnt, which macOS lacks, since its case-insensitive /library would resolve to /Library.
 const ALIASED = fakeStat({
   "/": { dev: 1, ino: 2 },
-  "/course": { dev: 7, ino: 42 },
-  "/library": { dev: 7, ino: 42 },
-  "/course/guest": { dev: 7, ino: 43 },
-  "/library/guest": { dev: 7, ino: 43 },
-  "/other": { dev: 7, ino: 50 },
+  "/mnt/course": { dev: 7, ino: 42 },
+  "/mnt/library": { dev: 7, ino: 42 },
+  "/mnt/course/guest": { dev: 7, ino: 43 },
+  "/mnt/library/guest": { dev: 7, ino: 43 },
+  "/mnt/other": { dev: 7, ino: 50 },
 });
 const aliased = (env: Record<string, string>) =>
   parseConfigFrom({ SCHOOL_DATABASE_URL: "postgres://db/school", SCHOOL_STATE: "/var/school", ...env }, FRAMEWORK, ALIASED);
 
 test.each([
-  ["the trusted folder under another name", { SCHOOL_COURSE: "/course" }, "guest=/library", 'trusted course "course" \\(/course\\) from SCHOOL_COURSE'],
-  ["inside the trusted folder under another name", { SCHOOL_COURSE: "/course" }, "guest=/library/guest", 'trusted course "course" \\(/course\\) from SCHOOL_COURSE'],
-  ["around the trusted folder under another name", { SCHOOL_COURSES: "own=/course/guest" }, "guest=/library", 'trusted course "own" \\(/course/guest\\) from SCHOOL_COURSES'],
-  ["a mount's folder under another name", { SCHOOL_MOUNTS: "lib=/course" }, "guest=/library", 'SCHOOL_MOUNTS mount "lib" \\(/course\\)'],
-  ["the web folder under another name", { SCHOOL_WEB: "/course" }, "guest=/library/guest", "SCHOOL_WEB \\(/course\\)"],
+  ["the trusted folder under another name", { SCHOOL_COURSE: "/mnt/course" }, "guest=/mnt/library", 'trusted course "course" \\(/mnt/course\\) from SCHOOL_COURSE'],
+  ["inside the trusted folder under another name", { SCHOOL_COURSE: "/mnt/course" }, "guest=/mnt/library/guest", 'trusted course "course" \\(/mnt/course\\) from SCHOOL_COURSE'],
+  ["around the trusted folder under another name", { SCHOOL_COURSES: "own=/mnt/course/guest" }, "guest=/mnt/library", 'trusted course "own" \\(/mnt/course/guest\\) from SCHOOL_COURSES'],
+  ["a mount's folder under another name", { SCHOOL_MOUNTS: "lib=/mnt/course" }, "guest=/mnt/library", 'SCHOOL_MOUNTS mount "lib" \\(/mnt/course\\)'],
+  ["the web folder under another name", { SCHOOL_WEB: "/mnt/course" }, "guest=/mnt/library/guest", "SCHOOL_WEB \\(/mnt/course\\)"],
 ])("an untrusted folder that is %s, by device and inode, is refused", (_, env, untrusted, other) => {
   expect(() => aliased({ ...env, SCHOOL_UNTRUSTED_COURSES: untrusted }))
     .toThrow(new RegExp(`untrusted course "guest" \\(${untrusted.slice("guest=".length)}\\) from SCHOOL_UNTRUSTED_COURSES and ${other} are the same folder under two names`));
 });
 
 test("folders with different device and inode stay accepted under the same fake stat", () => {
-  const c = aliased({ SCHOOL_COURSE: "/course", SCHOOL_MOUNTS: "lib=/course", SCHOOL_UNTRUSTED_COURSES: "guest=/other" });
+  const c = aliased({ SCHOOL_COURSE: "/mnt/course", SCHOOL_MOUNTS: "lib=/mnt/course", SCHOOL_UNTRUSTED_COURSES: "guest=/mnt/other" });
   expect([course(c, "course")?.trusted, course(c, "guest")?.trusted]).toEqual([true, false]);
 });
