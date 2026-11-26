@@ -40,6 +40,7 @@ describe("the school skill", () => {
     expect(code).toBe(0);
     const done = JSON.parse(stdout.trim().split("\n").at(-1)!);
     expect(done.title).toEqual(expect.any(String));
+    expect(done).toMatchObject({ summary: expect.any(String), author: expect.any(String), license: expect.any(String), format: 1 });
     expect(done.lessons.length).toBeGreaterThanOrEqual(2);
   });
 
