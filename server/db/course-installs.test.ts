@@ -4,7 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
 import { NAME, RESERVED } from "../config.ts";
-import { CourseName } from "../core/model.ts";
+import { CourseInstall, CourseName } from "../core/model.ts";
 import { migrate } from "./migrate.ts";
 import { badCourseName } from "./rename-course.ts";
 
@@ -44,6 +44,28 @@ describe("course installs", () => {
     expect(verdicts).toEqual(expected);
     expect(expected.filter((v) => v.endsWith("true")).length).toBeGreaterThan(4); // witnesses on both sides
     expect(expected.filter((v) => v.endsWith("false")).length).toBeGreaterThan(4);
+  }, SLOW);
+
+  // Oracle: the model's title, trimmed and non-empty. A row the table kept that the model refuses
+  // would break every later read of the installed courses.
+  test("the table admits exactly the titles the model reads back unchanged", async () => {
+    const db = new PGlite();
+    await migrate(db);
+    const titles = ["", " ", "\t", "\n", "\u00a0", "\u3000", "\ufeff", "\u2028", "a ", " a", "\ta", "a\n", "\u00a0a", "a\u3000", "\ufeffa",
+      "a b", "a\u00a0b", "Bells", "é", "\u200b", "a\u200b"];
+    const stored = (title: string) => as(db, "school_app", () => db.query(
+      "SELECT school.install_course($1, 'bells', 'git', 'https://example.com/c.git', NULL, $2, $3, $4, NULL, $5)",
+      [crypto.randomUUID(), "a".repeat(40), "c".repeat(64), title, at]).then(() => true, () => false));
+    const model = (title: string) => {
+      const p = CourseInstall.safeParse({ id: crypto.randomUUID(), course: "bells", source: "git", url: "https://example.com/c.git", bundleSha256: null,
+        commit: "a".repeat(40), contentSha256: "c".repeat(64), title, format: null });
+      return p.success && p.data.title === title;
+    };
+    const verdicts: string[] = [];
+    for (const t of titles) verdicts.push(`${JSON.stringify(t)}: table ${await stored(t)}`);
+    expect(verdicts).toEqual(titles.map((t) => `${JSON.stringify(t)}: table ${model(t)}`));
+    expect(titles.filter(model).length).toBeGreaterThan(3); // witnesses on both sides
+    expect(titles.filter((t) => !model(t)).length).toBeGreaterThan(8);
   }, SLOW);
 
   // RFC 9 will add an `authored` source in a migration of its own: the source rule is one named

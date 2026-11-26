@@ -32,7 +32,7 @@ import { withPassword, withSecretFiles } from "./secrets.ts";
 const KIND = "school.migrate";
 const schemas = loadSchemas(join(import.meta.dir, "schemas"));
 const ids = { start: `${KIND}.start`, applied: `${KIND}.applied`, done: `${KIND}.done`, captured: `${KIND}.captured`,
-  help: `${KIND}.help`, renamed: `${KIND}.renamed`, schema: `${KIND}.schema`, usage: `${KIND}.error.usage`, settings: `${KIND}.error.settings`, failed: `${KIND}.error.failed` };
+  help: `${KIND}.help`, renamed: `${KIND}.renamed`, renamedInstalls: `${KIND}.renamed.installs`, schema: `${KIND}.schema`, usage: `${KIND}.error.usage`, settings: `${KIND}.error.settings`, failed: `${KIND}.error.failed` };
 
 const OPTIONS = [
   { flags: ["--help", "-h"], description: "Print this help and the schema of every message type, then exit 0. Reads no setting and touches no database." },
@@ -82,7 +82,8 @@ function prose(l: Record<string, any>): string {
     case ids.schema: return `schema ${l.id} ${l.version}\n${JSON.stringify(l.schema, null, 2)}`;
     case ids.start: return `migrating ${l.where} for ${l.role} (run ${l.run})`;
     case ids.applied: return `applied ${l.name}`;
-    case ids.renamed: return `renamed course ${l.from} to ${l.to}: ${l.rows.encounters} encounters, ${l.rows.views} views, ${l.rows.decision_notes} decision notes, ${l.rows.course_installs} installs, ${l.rows.course_removals} removals`;
+    case ids.renamed: return `renamed course ${l.from} to ${l.to}: ${l.rows.encounters} encounters, ${l.rows.views} views, ${l.rows.decision_notes} decision notes`;
+    case ids.renamedInstalls: return `  and ${l.course_installs} installs, ${l.course_removals} removals`;
     case ids.done: return `done: ${l.applied.length === 0 ? "nothing to apply" : `applied ${l.applied.length} migration${l.applied.length === 1 ? "" : "s"}`}; ${l.role} may log in`;
     case ids.captured: return `(${l.stream}) ${l.text}`;
     default: return `error (${l.error}): ${l.message}`;
@@ -142,7 +143,10 @@ try {
   const { applied } = await migrateRecord(url, password, (m) => out.emit("stdout", ids.applied, { event: "applied", version: m.version, name: m.name }));
   if (rename !== null) {
     const r = await renameRecordCourse(url, rename.from, rename.to);
-    out.emit("stdout", ids.renamed, { event: "renamed", from: r.from, to: r.to, rows: r.rows });
+    // `renamed` is 1.0.0, as consumers know it; the install and removal counts follow in a line of their own.
+    const { encounters, views, decision_notes, course_installs, course_removals } = r.rows;
+    out.emit("stdout", ids.renamed, { event: "renamed", from: r.from, to: r.to, rows: { encounters, views, decision_notes } });
+    out.emit("stdout", ids.renamedInstalls, { event: "renamed_installs", course_installs, course_removals });
   }
   out.emit("stdout", ids.done, { event: "done", ok: true, where: redact(url), applied, role: APP });
   process.exit(0);

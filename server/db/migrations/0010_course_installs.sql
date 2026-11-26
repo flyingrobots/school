@@ -34,7 +34,11 @@ CREATE TABLE school.course_installs (
     CHECK ((bundle_sha256 IS NOT NULL) = (source = 'bundle') AND (bundle_sha256 IS NULL OR bundle_sha256 ~ '^[0-9a-f]{64}$')),
   commit text NOT NULL CONSTRAINT course_installs_commit CHECK (commit ~ '^([0-9a-f]{40}|[0-9a-f]{64})$'),
   content_sha256 text NOT NULL CONSTRAINT course_installs_content CHECK (content_sha256 ~ '^[0-9a-f]{64}$'),
-  title text NOT NULL CONSTRAINT course_installs_title CHECK (btrim(title) <> ''),
+  -- Trimmed and non-empty as core/model.ts reads it: z.string().trim() strips the characters of
+  -- JavaScript's String.prototype.trim (\s, no-break and other Unicode spaces, the byte order mark).
+  title text NOT NULL CONSTRAINT course_installs_title CHECK (
+    title <> '' AND title !~ '^[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]'
+                AND title !~ '[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]$'),
   format integer CONSTRAINT course_installs_format CHECK (format > 0),
   at timestamptz NOT NULL
 );

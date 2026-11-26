@@ -12,7 +12,7 @@
 // end as the model's ISO form, 2026-11-21T10:00:00.000Z.
 import { z } from "zod";
 import {
-  Aid, Block, DecisionNote, InstallResult, InstalledCourse, RemovalResult, TrustResult, DecisionNoteResult, DueItem, Encounter, EvidenceKind, EvidenceRow, ExplanationState, ExposureResult, Grading,
+  CourseInstall, Aid, Block, DecisionNote, InstallResult, InstalledCourse, RemovalResult, TrustResult, DecisionNoteResult, DueItem, Encounter, EvidenceKind, EvidenceRow, ExplanationState, ExposureResult, Grading,
   Findings, LastStudied, LatestFeedback, LessonProgress, Recorded, SaveResult, Seq, StudyDay, SubmitResult, type ExplainBlock,
 } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
@@ -133,8 +133,13 @@ export function postgresRecord(sql: Sql): LearningRecord {
       await value("choose_time_zone", zone, now);
     },
 
-    installCourse: async (i, now) => InstallResult.parse({ status: await value("install_course",
-      i.id, i.course, i.source, i.url, i.bundleSha256, i.commit, i.contentSha256, i.title, i.format, now) }),
+    // Parsed first, as installedCourses reads every row back through the same model: a title the
+    // model trims is stored trimmed, and one it refuses never reaches the table.
+    installCourse: async (input, now) => {
+      const i = CourseInstall.parse(input);
+      return InstallResult.parse({ status: await value("install_course",
+        i.id, i.course, i.source, i.url, i.bundleSha256, i.commit, i.contentSha256, i.title, i.format, now) });
+    },
 
     removeInstalledCourse: async (course, now) => RemovalResult.parse({ status: await value("remove_installed_course", course, now) }),
 
