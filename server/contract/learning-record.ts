@@ -878,11 +878,22 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     expect(await r.installedCourses()).toEqual([current(again, at(3000))]);
   });
 
+  // The model trims a title; a record that kept it padded would hold a row the model then refuses to read.
+  t("installs: a padded title is stored trimmed, and the install still lists and resends as a duplicate", async (r) => {
+    for (const [k, padded] of ["  Bells  ", "\tBells\n", "\u00a0Bells\u00a0"].entries()) {
+      const course = `padded-${k}`;
+      const i = gitInstall({ course, title: padded });
+      expect(await r.installCourse(i, at(0))).toEqual({ status: "installed" });
+      expect(await r.installCourse(i, at(1000))).toEqual({ status: "duplicate" });
+      expect((await r.installedCourses()).find((x) => x.course === course)).toEqual(current({ ...i, title: "Bells" }, at(0)));
+    }
+  });
+
   t("installs: a malformed install is refused and stores nothing", async (r) => {
     for (const bad of [
       gitInstall({ course: "Not A Name" }), gitInstall({ course: "api" }), gitInstall({ url: "http://example.com/c.git" }),
       gitInstall({ commit: hex(39, "a") }), gitInstall({ commit: hex(40, "A") }), gitInstall({ contentSha256: hex(63, "c") }),
-      gitInstall({ title: "" }), gitInstall({ format: 0 }), bundleInstall({ bundleSha256: hex(64, "g") }),
+      gitInstall({ title: "" }), gitInstall({ title: "\t" }), gitInstall({ title: "\u00a0" }), gitInstall({ title: " \n " }), gitInstall({ format: 0 }), bundleInstall({ bundleSha256: hex(64, "g") }),
       { ...gitInstall(), bundleSha256: hex(64, "b") } as unknown as CourseInstall,
       { ...bundleInstall(), url: "https://example.com/c.git" } as unknown as CourseInstall,
       { ...gitInstall(), source: "authored" } as unknown as CourseInstall,
