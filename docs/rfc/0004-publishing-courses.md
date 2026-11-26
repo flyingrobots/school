@@ -2,17 +2,22 @@
 title: "RFC 4: Publishing courses"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-22
-updated: 2026-11-22
-version: 0.1.0
-status: "Proposal, awaiting the maintainer's decision. Answers flyingrobots/school#24. Builds on flyingrobots/school at commit df27689."
+updated: 2026-11-26
+version: 0.2.0
+status: "Decided, 2026-11-26: option C, the Library, with every open question answered as recommended. Decided by an agent under the maintainer's delegated authority; the maintainer may overturn it. Answers flyingrobots/school#24. Builds on flyingrobots/school at commit df27689."
 ---
 
 # RFC 4: Publishing courses
 
 > **How to read this.** **Built** means it exists at commit `df27689`. **Proposed** means this RFC
-> asks for it. **Open** means it needs the maintainer's decision. Nothing here is decided. How
+> asks for it. **Open** meant it needed the maintainer's decision; §9 records the decision. How
 > School works today is in the [architecture reference](../topics/architecture/README.md); this
 > RFC describes only what would change.
+
+> **Decided, 2026-11-26.** Option C, named **the Library**. Every open question in §8 is answered
+> as recommended, with two refinements: the manifest (step 1) is optional and additive, and
+> installing from a repository URL (step 3) belongs to flyingrobots/school#188. The decision, the
+> refinements and the work they filed are in [§9](#9-decision).
 
 ## Executive Summary
 
@@ -50,6 +55,7 @@ network posture does not change.
 6. [Out of scope](#6-out-of-scope)
 7. [Risks](#7-risks)
 8. [Open questions](#8-open-questions)
+9. [Decision](#9-decision)
 
 ## 1. The problem and who it serves
 
@@ -304,3 +310,45 @@ In short: two School changes, one course prepared, one index, one generated site
 
 In short: the maintainer decides the option, the name, when the first course goes public, and how
 open listing is. The rest has a recommendation that holds until someone objects.
+
+## 9. Decision
+
+Decided on 2026-11-26 by an agent under the maintainer's delegated authority for that run. The
+decision record, with each option's pros, cons and why it was rejected, was delivered to Reader's
+inbox (receipt `8f0453a2-a1c6-47af-8a27-cf05c4503970`). The maintainer may overturn any part.
+
+| Question | Decision |
+| --- | --- |
+| Q1, the option | **C**: an index repository and a static catalog generated from it |
+| Q2, the name | **The Library** |
+| Q3, `school-aion` public | After steps 1 and 4, and only when the maintainer makes it public |
+| Q4, license for our course content | Apache-2.0; a Creative Commons exception stays the maintainer's call |
+| Q5, who may list | The maintainer's own courses first, until step 2 has been used for real |
+| Q6, hosting | GitHub Pages from the index repository; no domain yet |
+| Q7, signed commits | Optional at first; required before strangers' courses are listed |
+| Q8, browse inside School | Not at first |
+
+Three refinements to §4 and §5:
+
+1. **Step 1 is additive.** The new `course.json` keys are optional, and School refuses only
+   invalid values, never a course that lacks them. Requiring them would break every existing
+   course. The index's CI requires them for a listing.
+2. **Step 3 belongs to flyingrobots/school#188**, which designs installing from a repository URL
+   and from an uploaded bundle together, on top of steps 1 and 2.
+3. **Step 2 sandboxes rather than strips.** Lesson block HTML is already sanitised when shown
+   (`web/src/components/lesson.tsx`), so an untrusted course keeps that path. What §4.4 and step 2
+   leave open is every file served from the course: flyingrobots/school#210 serves those with
+   `Content-Security-Policy: sandbox` and `nosniff`, so they cannot run script as School. Stripping
+   all raw HTML would lose formatting the sanitiser already makes safe. Where §4.4 and step 2 say
+   "sanitised Markdown with raw HTML stripped", read this refinement instead.
+
+| Step | Issue |
+| --- | --- |
+| 1, the manifest | flyingrobots/school#209 |
+| 2, untrusted courses | flyingrobots/school#210 |
+| 3, install from a repository | flyingrobots/school#188 |
+| 4 to 7, outside School | flyingrobots/school#211, blocked until the maintainer creates the index repository and decides when `school-aion` goes public |
+| 8, documentation | Part of each step's definition of done |
+
+In short: the Library is decided, School's two prerequisites are filed, and everything outside
+School waits on the maintainer.
