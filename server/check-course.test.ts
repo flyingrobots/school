@@ -2,9 +2,10 @@
 // every line it prints validates against its published schema (server/schemas/check/).
 // docs/topics/course-format/test-plan.md lists these cases by ID.
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Ajv2020 from "ajv/dist/2020";
 import { publishedIn, type Line } from "./testing/schemas.ts";
 
 const CHECK = join(import.meta.dir, "check-course.ts");
@@ -44,9 +45,9 @@ describe("school check", () => {
     expect(r.code).toBe(0);
     const { out, err } = lines(r);
     expect(err).toEqual([]);
-    expect(out.map((l) => l._schema.id)).toEqual(["school.check.start", "school.check.done"]);
+    expect(out.map((l) => l._schema.id)).toEqual(["school.check.start", "school.check.manifest", "school.check.done"]);
     expect(out[0]).toMatchObject({ folder: dir });
-    expect(out[1]).toMatchObject({ ok: true, folder: dir, title: "Bells", quizzes: 2, explains: 1, lessons: [
+    expect(out[2]).toMatchObject({ ok: true, folder: dir, title: "Bells", quizzes: 2, explains: 1, lessons: [
       { file: "0001-a.json", id: "a", title: "Lesson a", quizzes: 1, explains: 1 },
       { file: "0002-b.json", id: "b", title: "Lesson b", quizzes: 2, explains: 0 },
     ] });
@@ -55,7 +56,9 @@ describe("school check", () => {
   test("CHECK-2: a folder with no lessons and no course.json is a valid, empty course", async () => {
     const r = await run([course({})]);
     expect(r.code).toBe(0);
-    expect(lines(r).out.at(-1)).toMatchObject({ title: null, summary: null, author: null, license: null, format: null, lessons: [], quizzes: 0, explains: 0 });
+    const { out } = lines(r);
+    expect(out.at(-2)).toMatchObject({ event: "manifest", summary: null, author: null, license: null, format: null });
+    expect(out.at(-1)).toMatchObject({ title: null, lessons: [], quizzes: 0, explains: 0 });
   });
 
   const invalid: [string, Parameters<typeof course>[0], string | null, string][] = [
@@ -105,10 +108,24 @@ describe("school check", () => {
 
   const manifest = { title: "Bells", summary: " Ring the changes. ", author: "A Ringer", license: "MIT OR Apache-2.0", format: 1 };
 
-  test("CHECK-8: a course's summary, author, license and format are on the done line, trimmed", async () => {
+  test("CHECK-8: a course's summary, author, license and format are on the manifest line, trimmed", async () => {
     const r = await run([course({ course: JSON.stringify(manifest), lessons: { "0001.json": page("a", [quiz("q")]) } })]);
     expect(r.code).toBe(0);
-    expect(lines(r).out.at(-1)).toMatchObject({ title: "Bells", summary: "Ring the changes.", author: "A Ringer", license: "MIT OR Apache-2.0", format: 1 });
+    const { out } = lines(r);
+    expect(out.map((l) => l._schema.id)).toEqual(["school.check.start", "school.check.manifest", "school.check.done"]);
+    expect(out[1]).toMatchObject({ _schema: { id: "school.check.manifest", version: "1.0.0" }, kind: "school.check", event: "manifest",
+      summary: "Ring the changes.", author: "A Ringer", license: "MIT OR Apache-2.0", format: 1 });
+  });
+
+  test("CHECK-10: the done line is still school.check.done 1.0.0, valid against the schema main published, and carries no manifest key", async () => {
+    const r = await run([course({ course: JSON.stringify(manifest), lessons: { "0001.json": page("a", [quiz("q")]) } })]);
+    const done = lines(r).out.at(-1)!;
+    expect(done._schema).toEqual({ id: "school.check.done", version: "1.0.0" });
+    const main = JSON.parse(readFileSync(join(import.meta.dir, "testing", "fixtures", "school.check.done.1.0.0.schema.json"), "utf8"));
+    const validate = new Ajv2020({ strict: true }).compile(main);
+    expect(validate(done), JSON.stringify(validate.errors)).toBe(true);
+    for (const k of ["summary", "author", "license", "format"]) expect(done).not.toHaveProperty(k);
+    expect(JSON.stringify(schemas.published.find((p) => p.id === "school.check.done")!.schema)).toBe(JSON.stringify(main));
   });
 
   test("CHECK-9: --human names the course's author, license and format", async () => {

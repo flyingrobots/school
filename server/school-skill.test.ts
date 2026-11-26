@@ -38,9 +38,10 @@ describe("the school skill", () => {
     const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
     expect(stderr).toBe("");
     expect(code).toBe(0);
-    const done = JSON.parse(stdout.trim().split("\n").at(-1)!);
+    const out = stdout.trim().split("\n").map((l) => JSON.parse(l));
+    const done = out.at(-1);
     expect(done.title).toEqual(expect.any(String));
-    expect(done).toMatchObject({ summary: expect.any(String), author: expect.any(String), license: expect.any(String), format: 1 });
+    expect(out.find((l) => l.event === "manifest")).toMatchObject({ summary: expect.any(String), author: expect.any(String), license: expect.any(String), format: 1 });
     expect(done.lessons.length).toBeGreaterThanOrEqual(2);
   });
 
