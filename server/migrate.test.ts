@@ -234,7 +234,7 @@ describe.skipIf(URL_ === undefined)("the migrate command on a real Postgres thro
       expect({ code: r.code, stderr: r.stderr }).toEqual({ code: 0, stderr: "" });
       const out = validated(r.stdout);
       expect(out.map((l) => l.event)).toEqual(["start", "renamed", "done"]);
-      expect(out[1]).toMatchObject({ from: "course", to: "aion", rows: { encounters: 0, views: 2, decision_notes: 0 } });
+      expect(out[1]).toMatchObject({ from: "course", to: "aion", rows: { encounters: 0, views: 2, decision_notes: 0, course_installs: 0, course_removals: 0 } });
       expect(await db.unsafe("SELECT course, count(*)::int AS n FROM school.views GROUP BY 1 ORDER BY 1")).toEqual([
         { course: "aion", n: 2 }, { course: "bells", n: 1 }]);
       expect(await db.unsafe("SELECT rolcanlogin AS l FROM pg_roles WHERE rolname = 'school_app'")).toEqual([{ l: false }]);

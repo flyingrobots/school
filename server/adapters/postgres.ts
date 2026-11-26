@@ -129,6 +129,11 @@ export function postgresRecord(sql: Sql): LearningRecord {
       await value("choose_time_zone", zone, now);
     },
 
+    installCourse: async () => { throw new Error("not implemented"); },
+    removeInstalledCourse: async () => { throw new Error("not implemented"); },
+    chooseCourseTrust: async () => { throw new Error("not implemented"); },
+    installedCourses: async () => { throw new Error("not implemented"); },
+
     saveExplanation: async (s, now) =>
       SaveResult.parse({ status: await value("save_explanation", s.submissionId, s.encounterId, s.blockId, s.text, s.ms, now) }),
 

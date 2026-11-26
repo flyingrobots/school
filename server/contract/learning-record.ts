@@ -3,7 +3,7 @@
 // It speaks only through the port; storage-level rules (append-only triggers, privileges) are
 // tested beside each adapter, since how they are enforced is the adapter's business.
 import { expect, test } from "bun:test";
-import { ExposureKind, type Block, type DecisionNoteInput, type GradingRecord } from "../core/model.ts";
+import { ExposureKind, type Block, type CourseInstall, type DecisionNoteInput, type GradingRecord, type InstalledCourse } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
 
 /**
@@ -38,6 +38,32 @@ const succeeded = (submissionId: string): GradingRecord => ({
     fidelity: { verdict: "meets", note: "" }, completeness: { verdict: "partly", note: "" }, accessibility: { verdict: "meets", note: "" },
   },
 });
+
+// Installs (RFC 7 §7). A hash here is any lowercase hex of the right length: the record checks shapes, not content.
+const hex = (n: number, c: string) => c.repeat(n);
+const gitInstall = (o: Partial<Extract<CourseInstall, { source: "git" }>> = {}): CourseInstall => ({
+  id: uuid(), course: "bells", source: "git", url: "https://github.com/flyingrobots/school-bells.git", bundleSha256: null,
+  commit: hex(40, "a"), contentSha256: hex(64, "c"), title: "Bells", format: 1, ...o,
+});
+const bundleInstall = (o: Partial<Extract<CourseInstall, { source: "bundle" }>> = {}): CourseInstall => ({
+  id: uuid(), course: "bells", source: "bundle", url: null, bundleSha256: hex(64, "b"),
+  commit: hex(64, "d"), contentSha256: hex(64, "e"), title: "Bells", format: null, ...o,
+});
+const current = (i: CourseInstall, now: string, trusted = false): InstalledCourse => ({ ...i, at: now, trusted });
+
+/** A small seeded generator (mulberry32), so a fuzz case replays from its seed. */
+function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+/** CI's fixed seed; SCHOOL_TEST_SEED replays or explores another. */
+const FUZZ_SEED = Number(process.env.SCHOOL_TEST_SEED ?? 232);
 
 /**
  * Register the contract's tests for one adapter. `make` returns a fresh, empty record each time.
@@ -758,5 +784,153 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     // Nothing was opened, so the next open is a new encounter, not a resumed one.
     expect((await r.openLessonEncounter({ course: "c", lesson: "l2", lessonPage: l2, page: l2, now: at(2), aidTracking: 1, notes: [] })).encounter.resumed).toBe(false);
     expect(await r.lastStudied()).toEqual({ course: "c", lesson: "l2", at: at(2) });
+  });
+
+  // ---- Installed courses (RFC 7 §7; flyingrobots/school#232) ----------------------------------
+
+  t("installs: nothing is installed at first", async (r) => {
+    expect(await r.installedCourses()).toEqual([]);
+  });
+
+  t("installs: an install from a repository is recorded and read back as its name's current install, untrusted", async (r) => {
+    const i = gitInstall();
+    expect(await r.installCourse(i, at(0))).toEqual({ status: "installed" });
+    expect(await r.installedCourses()).toEqual([current(i, at(0))]);
+  });
+
+  t("installs: an install from a bundle keeps the bundle's SHA-256 and no URL", async (r) => {
+    const i = bundleInstall();
+    expect(await r.installCourse(i, at(0))).toEqual({ status: "installed" });
+    expect(await r.installedCourses()).toEqual([current(i, at(0))]);
+  });
+
+  t("installs: a resent install is a duplicate, and its id with another install is a conflict; the first stands", async (r) => {
+    const i = gitInstall();
+    await r.installCourse(i, at(0));
+    expect(await r.installCourse(i, at(1000))).toEqual({ status: "duplicate" });
+    expect(await r.installCourse({ ...i, commit: hex(40, "f") }, at(2000))).toEqual({ status: "conflict" });
+    expect(await r.installCourse({ ...i, course: "other" }, at(3000))).toEqual({ status: "conflict" });
+    expect(await r.installedCourses()).toEqual([current(i, at(0))]);
+  });
+
+  t("installs: a later install under the same name is an update and becomes current; the earlier is not listed", async (r) => {
+    const first = gitInstall();
+    const second = gitInstall({ commit: hex(40, "b") });
+    await r.installCourse(first, at(0));
+    expect(await r.installCourse(second, at(1000))).toEqual({ status: "updated" });
+    expect(await r.installedCourses()).toEqual([current(second, at(1000))]);
+  });
+
+  t("installs: each name has its own current install, listed by name", async (r) => {
+    const bells = gitInstall();
+    const aion = bundleInstall({ course: "aion", title: "Aion" });
+    await r.installCourse(bells, at(0));
+    await r.installCourse(aion, at(1000));
+    expect(await r.installedCourses()).toEqual([current(aion, at(1000)), current(bells, at(0))]);
+  });
+
+  t("installs: a trust choice is kept per install, and the latest wins", async (r) => {
+    const i = gitInstall();
+    await r.installCourse(i, at(0));
+    expect(await r.chooseCourseTrust(i.id, true, at(1000))).toEqual({ status: "stored" });
+    expect(await r.installedCourses()).toEqual([current(i, at(0), true)]);
+    expect(await r.chooseCourseTrust(i.id, false, at(2000))).toEqual({ status: "stored" });
+    expect(await r.installedCourses()).toEqual([current(i, at(0), false)]);
+  });
+
+  t("installs: a trust choice for no install is rejected", async (r) => {
+    expect(await r.chooseCourseTrust(uuid(), true, at(0))).toEqual({ status: "rejected" });
+  });
+
+  t("installs: an update starts untrusted, whatever the learner chose for the install it replaces", async (r) => {
+    const first = gitInstall();
+    const second = gitInstall({ commit: hex(40, "b") });
+    await r.installCourse(first, at(0));
+    await r.chooseCourseTrust(first.id, true, at(1000));
+    await r.installCourse(second, at(2000));
+    expect(await r.installedCourses()).toEqual([current(second, at(2000))]);
+  });
+
+  t("installs: a removal ends the name's current install, and leaves its progress as it was", async (r) => {
+    const i = gitInstall();
+    await r.installCourse(i, at(0));
+    const e = await r.openEncounter({ course: "bells", lesson: "l1", aidTracking: null, page: lesson("l1", [quiz("q1")]), now: at(1000) });
+    await r.submit({ submissionId: uuid(), encounterId: e.id, blockId: "q1", choiceId: "right", ms: 1 }, at(2000));
+    expect(await r.removeInstalledCourse("bells", at(3000))).toEqual({ status: "removed" });
+    expect(await r.installedCourses()).toEqual([]);
+    expect(await r.lessonProgress("bells")).toEqual({ l1: ["q1"] });
+  });
+
+  t("installs: removing a name with no current install is refused, never installed or already removed", async (r) => {
+    expect(await r.removeInstalledCourse("bells", at(0))).toEqual({ status: "not-installed" });
+    await r.installCourse(gitInstall(), at(1000));
+    await r.removeInstalledCourse("bells", at(2000));
+    expect(await r.removeInstalledCourse("bells", at(3000))).toEqual({ status: "not-installed" });
+  });
+
+  t("installs: a name installed, removed and installed again is current with its new install, untrusted", async (r) => {
+    const first = gitInstall();
+    const again = gitInstall({ commit: hex(40, "b") });
+    await r.installCourse(first, at(0));
+    await r.chooseCourseTrust(first.id, true, at(1000));
+    await r.removeInstalledCourse("bells", at(2000));
+    expect(await r.installCourse(again, at(3000))).toEqual({ status: "installed" });
+    expect(await r.installedCourses()).toEqual([current(again, at(3000))]);
+  });
+
+  t("installs: a malformed install is refused and stores nothing", async (r) => {
+    for (const bad of [
+      gitInstall({ course: "Not A Name" }), gitInstall({ course: "api" }), gitInstall({ url: "http://example.com/c.git" }),
+      gitInstall({ commit: hex(39, "a") }), gitInstall({ commit: hex(40, "A") }), gitInstall({ contentSha256: hex(63, "c") }),
+      gitInstall({ title: "" }), gitInstall({ format: 0 }), bundleInstall({ bundleSha256: hex(64, "g") }),
+      { ...gitInstall(), bundleSha256: hex(64, "b") } as unknown as CourseInstall,
+      { ...bundleInstall(), url: "https://example.com/c.git" } as unknown as CourseInstall,
+      { ...gitInstall(), source: "authored" } as unknown as CourseInstall,
+    ]) await expect(r.installCourse(bad, at(0)), JSON.stringify(bad)).rejects.toThrow();
+    expect(await r.installedCourses()).toEqual([]);
+  });
+
+  // Generated: random install, update, remove and trust sequences over three names, against a model
+  // that holds each name's current install. Oracle: RFC 7 §7, a name's current install is its latest
+  // install with no later removal, trusted by its own latest trust choice.
+  t("installs: under any sequence of installs, removals and trust choices, each name has at most one current install, the model's", async (r) => {
+    const seed = FUZZ_SEED;
+    const random = seeded(seed);
+    const replay = `replay: SCHOOL_TEST_SEED=${seed} bun test server/adapters/postgres.test.ts -t "installs: under any sequence"`;
+    const names = ["bells", "aion", "c-3"] as const;
+    const model = new Map<string, InstalledCourse>();
+    const ids: string[] = [];
+    const kinds = { install: 0, update: 0, remove: 0, refused: 0, trust: 0 };
+    for (let step = 0; step < 60; step++) {
+      const name = names[Math.floor(random() * names.length)]!;
+      const now = at(step * 1000);
+      const roll = random();
+      if (roll < 0.45) {
+        const i = random() < 0.5
+          ? gitInstall({ course: name, commit: Math.floor(random() * 2 ** 32).toString(16).padStart(40, "0") })
+          : bundleInstall({ course: name, bundleSha256: Math.floor(random() * 2 ** 32).toString(16).padStart(64, "0") });
+        const expected = model.has(name) ? "updated" : "installed";
+        kinds[expected === "updated" ? "update" : "install"]++;
+        expect({ step, ...(await r.installCourse(i, now)) }, replay).toEqual({ step, status: expected });
+        model.set(name, current(i, now));
+        ids.push(i.id);
+      } else if (roll < 0.75) {
+        const expected = model.has(name) ? "removed" : "not-installed";
+        kinds[expected === "removed" ? "remove" : "refused"]++;
+        expect({ step, ...(await r.removeInstalledCourse(name, now)) }, replay).toEqual({ step, status: expected });
+        model.delete(name);
+      } else if (ids.length > 0) {
+        const id = ids[Math.floor(random() * ids.length)]!;
+        const trusted = random() < 0.5;
+        kinds.trust++;
+        expect({ step, ...(await r.chooseCourseTrust(id, trusted, now)) }, replay).toEqual({ step, status: "stored" });
+        for (const [n, c] of model) if (c.id === id) model.set(n, { ...c, trusted });
+      }
+      const listed = await r.installedCourses();
+      expect(new Set(listed.map((c) => c.course)).size, replay).toBe(listed.length);
+      expect({ step, listed }, replay).toEqual({ step, listed: [...model.values()].sort((a, b) => (a.course < b.course ? -1 : 1)) });
+    }
+    // Witnesses: the fixed seed reaches every kind of step.
+    for (const [kind, n] of Object.entries(kinds)) expect(`${kind}: ${n > 0}`, replay).toBe(`${kind}: true`);
   });
 }
