@@ -1,7 +1,7 @@
 # A course's folder
 
-Reference: what School reads from a course's folder, the one `SCHOOL_COURSES` (or `SCHOOL_COURSE`)
-names. School reads the folder and never writes to it ([ADR 6](../../adr/0006-separate-framework-lessons-and-learner-state.md)).
+Reference: what School reads from a course's folder, the one `SCHOOL_COURSES` (or `SCHOOL_COURSE`,
+or `SCHOOL_UNTRUSTED_COURSES` for [an untrusted course](#trusted-and-untrusted-courses)) names. School reads the folder and never writes to it ([ADR 6](../../adr/0006-separate-framework-lessons-and-learner-state.md)).
 
 | Path | Required | Holds | Read |
 | --- | --- | --- | --- |
@@ -92,6 +92,29 @@ For a folder holding several courses, point `SCHOOL_LIBRARY_DIR` at the folder a
 `SCHOOL_COURSES=bells=/library/bells,chess=/library/chess`. Without `SCHOOL_LIBRARY_DIR`, `/library`
 is the course folder again, and nothing reads it unless `SCHOOL_COURSES` says so. Run `./school up`
 again after changing either line.
+
+## Trusted and untrusted courses
+
+A course from someone else can be served in safe mode, so its HTML cannot act as School. Name it in `SCHOOL_UNTRUSTED_COURSES` instead of `SCHOOL_COURSES`; the syntax is the same `name=path` pairs:
+
+```sh
+SCHOOL_COURSES=bells=/library/bells
+SCHOOL_UNTRUSTED_COURSES=guest=/library/guest
+```
+
+_Listing 1. Two courses in `server/.env` (illustrative): `bells` is trusted, `guest` is in safe mode. Compose passes `SCHOOL_UNTRUSTED_COURSES` to the server as it does `SCHOOL_COURSES`._
+
+A course in `SCHOOL_COURSES` or `SCHOOL_COURSE` is trusted, as it always was. An untrusted course is read from the same folder layout and works the same way, with three differences:
+
+| What | For an untrusted course |
+| --- | --- |
+| Its reference documents and every other file under `reference/` | Served with `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`: a page opened from it runs no script and cannot use School's API. An SVG file is served as `image/svg+xml` under the same sandbox |
+| `GET /api/courses` and `GET /api/courses/:course` | `trusted: false` (a trusted course gives `trusted: true`); the course and lesson JSON carry the same two headers |
+| The course page | A note: "This course is shown in safe mode: its pages can’t run scripts." ([the course page](../course-page/README.md)) |
+
+Lesson blocks are unchanged: their HTML is sanitised for every course, trusted or not ([lesson blocks](blocks.md)). A name in both lists, or a folder that is, contains or sits inside a trusted course's, stops the server at start with exit code 2, since the trusted course would serve the same files unsandboxed. The headers and their reasons are in [trust and known defects](../architecture/README.md#trust-and-known-defects).
+
+The choice is the operator's, never the course's: nothing in a course's folder can mark it trusted.
 
 ## `course.json`
 

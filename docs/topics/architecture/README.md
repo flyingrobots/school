@@ -78,13 +78,13 @@ JSON API.
 
 | Method | Path | Does |
 | --- | --- | --- |
-| GET | `/api/courses` | Lists installed courses, each with its `name` (the slug in addresses) and `title` ([a course's folder](../course-format/README.md)), with lesson and reference counts, and each course's `quizzes` and `answeredCorrectly`; the counts are `null` for a course whose lessons cannot be read |
+| GET | `/api/courses` | Lists installed courses, each with its `name` (the slug in addresses), `title` ([a course's folder](../course-format/README.md)) and `trusted` (false for a course in [safe mode](#trust-and-known-defects)), with lesson and reference counts, and each course's `quizzes` and `answeredCorrectly`; the counts are `null` for a course whose lessons cannot be read |
 | GET | `/api/resume` | What to study now, from where the learner left off: `continue`, `next`, `start`, `finished` or `nothing` ([the home page](../home-page/README.md)) |
 | GET | `/api/feedback` | The newest succeeded grading: its course, lesson, the prompt it answered and the findings; `null` before any |
 | GET | `/api/review?tz=` | The questions due for review now, across courses, each with its lesson, question and reason ([due review](../due-review/README.md)); the reason names its day in `tz` |
 | GET | `/api/activity?days=14&tz=` | Each course's study days in the last `days` (1 to 60), and how many questions come back on each day ahead, as days in `tz` |
 | GET | `/api/showcase` | What's ahead: every lesson with a quiz not yet answered correctly, with its hook ([a course's folder](../course-format/README.md#a-lessons-hook)) |
-| GET | `/api/courses/:c` | One course: its `name` and `title`, lessons with correct-quiz counts, reference documents. Lessons that cannot be read are `lessons: null` with the reason in `lessonsError`, still a 200 with the reference documents |
+| GET | `/api/courses/:c` | One course: its `name`, `title` and `trusted`, lessons with correct-quiz counts, reference documents. Lessons that cannot be read are `lessons: null` with the reason in `lessonsError`, still a 200 with the reference documents |
 | GET | `/api/courses/:c/lessons/:id` | One lesson; `?view=web` opens or resumes an encounter, `?view=slides` records nothing. `?aid=1` declares that the client records every exposure it shows, so the encounter is opened with aid tracking 1; absent, it is untracked and its aid unknown. Any other `aid` value is refused (400). `?tz=` is the zone a review reason names its day in |
 | POST | `/api/answer` | Records a quiz answer |
 | POST | `/api/explanation` | Saves an explanation, before any grading |
@@ -101,7 +101,7 @@ JSON API.
 | GET | `/api/speak/:id/segments/:n` | One segment's WAV, with byte ranges |
 | POST | `/api/speak/:id/cancel` | Stops that reading at the daemon |
 | GET, PUT | `/api/settings/time-zone` | The time zone the learner chose, `{zone}`, or `null` for automatic; a PUT appends a choice (an IANA zone or `null`; anything else is 400) |
-| GET | `/courses/:c/reference/*`, `/<mount>/*` | Files, contained in their folder after resolving symlinks |
+| GET | `/courses/:c/reference/*`, `/<mount>/*` | Files, contained in their folder after resolving symlinks. An untrusted course's are sandboxed ([trust](#trust-and-known-defects)) |
 
 `tz` (flyingrobots/school#178) is the learner's IANA time zone, which the web app sends from the browser on every request whose answer names a day: `/api/activity`, `/api/review` and a lesson opened in the web view. A zone chosen in Settings (`/api/settings/time-zone`, flyingrobots/school#181) wins over `tz`. Without either, the server uses its own zone, which is UTC under Docker. A `tz` that is not a zone is refused (400).
 
@@ -552,8 +552,20 @@ is currently broken.
 | School trusts | Consequence |
 | --- | --- |
 | Everyone who can reach it | No login: anyone on the tailnet or localhost can use the API, including settings |
-| Installed courses | Course HTML renders on School's origin with School's authority. RFC 1 decided installed courses are trusted code. |
+| Trusted courses (`SCHOOL_COURSES`, `SCHOOL_COURSE`) | Their files render on School's origin with School's authority, which includes the settings API and the bridge that runs the learner's agents. RFC 1 decided installed courses are trusted code. |
+| Untrusted courses (`SCHOOL_UNTRUSTED_COURSES`) | Not trusted with School's authority: they are served in safe mode, and their files cannot run script on School's origin (below) |
 | Configured agents | They run with the learner's account on the host, under their own commands' limits |
+
+An untrusted course is served in safe mode (flyingrobots/school#210, RFC 4 step 2). Every response that carries its bytes, its reference files of any type and its course and lesson JSON, has two headers a trusted course's responses do not:
+
+| Header | Effect |
+| --- | --- |
+| `Content-Security-Policy: sandbox` | No `allow-*` token, so a document opened from the course, HTML or SVG, runs no script and has an opaque origin: it cannot call School's API or read its storage |
+| `X-Content-Type-Options: nosniff` | The browser takes the bytes as the type School names (`image/svg+xml` for SVG, never HTML), not as a type it guesses |
+
+Lesson blocks keep the path every course's take: prose, card, quote and aside HTML goes through the markdown item's sanitiser (Streamdown: `rehype-sanitize` and `rehype-harden`), and a hook's SVG figure through `safeFigure` (`web/src/lib/figure.ts`), which keeps only drawing. `web/test/sanitise.test.tsx` runs 35 cross-site-scripting payloads through each block kind and 6 hostile figures through `safeFigure`, and finds no script, handler or script URL left. The course page shows a note that the course is in safe mode ([the course page](../course-page/README.md)).
+
+A course is trusted or untrusted, never both: the server refuses to start (exit 2) when a name is in `SCHOOL_COURSES` or `SCHOOL_COURSE` and in `SCHOOL_UNTRUSTED_COURSES`, or when an untrusted course's folder is, contains or sits inside a trusted course's, since the trusted course would serve the same bytes unsandboxed. A sandboxed document still loads what it links to, such as images from other sites, and still shows what it says; safe mode stops it acting as School, not showing content.
 
 | Defect | Effect | Issue |
 | --- | --- | --- |
@@ -566,6 +578,7 @@ is currently broken.
 | Variable | Program | Meaning | Default |
 | --- | --- | --- | --- |
 | `SCHOOL_COURSES` | Server | `name=path` pairs, one per course | none |
+| `SCHOOL_UNTRUSTED_COURSES` | Server | `name=path` pairs, one per course served in safe mode: its files are sandboxed ([trust](#trust-and-known-defects)). A name or folder also trusted is refused | none |
 | `SCHOOL_COURSE` | Server | One unnamed course, named after its folder | none; `/course` under compose, set there by `SCHOOL_COMPOSE_COURSE`, which may be empty |
 | `SCHOOL_STATE` | Server | Learner state; must not be inside a course | `state/` |
 | `SCHOOL_DATABASE_URL` | Server | The record: `postgres://school_app:password@host:port/db` (`Bun.SQL`; `school_app`'s own login, refused if it fails [the login check](#the-login-check)) or `pglite:<dir>` (PGlite on disk, not inside a course) | none: required |

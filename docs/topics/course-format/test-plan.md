@@ -1,6 +1,6 @@
 # Course format test plan
 
-The contract ledger for [a course's folder](README.md): the course title (flyingrobots/school#143), a lesson's hook (flyingrobots/school#164), [lesson blocks](blocks.md) (flyingrobots/school#196) `school check` (flyingrobots/school#197) and the `school` skill (flyingrobots/school#193).
+The contract ledger for [a course's folder](README.md): the course title (flyingrobots/school#143), a lesson's hook (flyingrobots/school#164), [lesson blocks](blocks.md) (flyingrobots/school#196) `school check` (flyingrobots/school#197), the `school` skill (flyingrobots/school#193) and untrusted courses (flyingrobots/school#210).
 Every case runs in `bun test`. The server cases call the loader and start the real School process
 on PGlite over course folders the test writes; the browser cases drive Chrome through
 playwright-core against the Vite dev server, with `/api` answered by that real server.
@@ -70,3 +70,22 @@ Every case runs the program as a process, and every line it prints is validated 
 | SKILL-2 | Example served | `school check` on `example/` exits 0 with a title and at least two lessons | implemented | `SKILL-2: its worked example is a course School would serve` |
 | SKILL-3 | Example covers the format | The example shows all nine block types and a `ref` | implemented | `SKILL-3: the example shows every block type and a ref` |
 | SKILL-4 | Example's voice | Every explain prompt in the example is a question | implemented | `SKILL-4: every explain prompt in the example is a question` |
+
+## Untrusted courses (flyingrobots/school#210)
+
+The server cases start the real School on PGlite with one course in `SCHOOL_COURSES` and one in `SCHOOL_UNTRUSTED_COURSES`, each holding the same hostile files. The block cases render in happy-dom.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| TRUST-1 | Every route sandboxed | Each route that serves an untrusted course's bytes (reference HTML, nested HTML, an encoded nested path, SVG, JS, CSS, text, the course JSON, the lesson JSON in both views) answers 200 with `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff` | implemented | `server/untrusted.test.ts`: `an untrusted course > %s is sandboxed and never sniffed` |
+| TRUST-2 | Exact policy | The reference page is served as written, as `text/html`, with the policy exactly `sandbox` (no `allow-scripts`, no `allow-same-origin`) | implemented | `an untrusted course > its reference page carries exactly the sandbox policy, with no allow-scripts or allow-same-origin` |
+| TRUST-3 | SVG with script | Served as `image/svg+xml` with both headers | implemented | `an untrusted course > an SVG with script is served as SVG under the same sandbox, never as HTML` |
+| TRUST-4 | Path tricks | A symlink out of `reference/` and encoded `..` paths are 404 and leak nothing | implemented | `an untrusted course > a symlink out of its reference folder is still refused`; `an untrusted course > a path that climbs out of its reference folder (%s) is still refused` |
+| TRUST-5 | Trusted unchanged | The same routes for a trusted course carry neither header | implemented | `a trusted course > %s is served as before, with neither header` |
+| TRUST-6 | API | `GET /api/courses` and `GET /api/courses/:course` give `trusted`, false for the untrusted course and true for the trusted one | implemented | `the course API reports trust > GET /api/courses gives each course's trusted`; `the course API reports trust > GET /api/courses/%s gives trusted: %p` |
+| TRUST-7 | Configuration | `SCHOOL_UNTRUSTED_COURSES` registers untrusted courses; a course from `SCHOOL_COURSES` or `SCHOOL_COURSE` stays trusted; names and learner state follow `SCHOOL_COURSES`' rules | implemented | `server/config.test.ts`: `SCHOOL_UNTRUSTED_COURSES registers courses that are not trusted, beside trusted ones`; `a course from SCHOOL_COURSE or SCHOOL_COURSES stays trusted when nothing marks it`; `SCHOOL_UNTRUSTED_COURSES follows SCHOOL_COURSES' rules for names and learner state` |
+| TRUST-8 | Both trusted and untrusted | A name in both lists, one folder under two names, or an untrusted folder inside or around a trusted one is refused; at start, exit 2 naming both variables, creating nothing | implemented | `server/config.test.ts`: `a name both trusted and untrusted is refused, naming both variables`; `one folder both trusted and untrusted, under two names, is refused`; `an untrusted folder %s is refused, since the trusted course would serve its files unsandboxed`; `server/startup.test.ts`: `a course both trusted and untrusted stops startup, naming both variables` |
+| TRUST-9 | Compose | Compose passes `SCHOOL_UNTRUSTED_COURSES` through, empty by default | implemented | `server/docker.test.ts`: `compose passes SCHOOL_UNTRUSTED_COURSES through, empty by default (flyingrobots/school#210)` |
+| TRUST-10 | Hostile blocks inert | 35 cross-site-scripting payloads (a `<script>`, an `onerror=`, a `javascript:` link and OWASP filter-evasion variants) through each of prose, card, quote and aside leave no element that runs or loads a document, no `on*` or `srcdoc` attribute, no script URL, and fire no callback. Calibrated: with the sanitiser replaced by raw `innerHTML`, 120 of 140 cases fail | implemented | `web/test/sanitise.test.tsx`: `a %s block renders %s inert` |
+| TRUST-11 | Sanitiser keeps formatting | Bold, emphasis and a list survive, so TRUST-10 cannot pass by dropping everything | implemented | `a block keeps the formatting the sanitiser allows` |
+| TRUST-12 | Hostile figures | 6 SVG figures with script, handlers, `foreignObject`, links, animation, `use` and `image` keep only their drawing through `safeFigure` | implemented | `a figure keeps only its drawing from %s` |
