@@ -315,7 +315,7 @@ function Today({
   review: Load<ReviewItem[]>
   retryFeedback: () => void
   retryReview: () => void
-  answerAt: (item: ReviewItem) => string
+  answerAt: ((item: ReviewItem) => string) | null
 }) {
   const quiet =
     feedback.kind === "ready" &&
@@ -354,7 +354,10 @@ function Today({
       {feedback.kind === "ready" && feedback.data && (
         <FeedbackCard feedback={feedback.data} />
       )}
-      {review.kind === "loading" && (
+      {(review.kind === "loading" ||
+        (review.kind === "ready" &&
+          review.data.length > 0 &&
+          answerAt === null)) && (
         <Skeleton className="h-32 w-full rounded-xl" />
       )}
       {review.kind === "failed" && (
@@ -364,7 +367,7 @@ function Today({
           retry={retryReview}
         />
       )}
-      {review.kind === "ready" && review.data.length > 0 && (
+      {review.kind === "ready" && review.data.length > 0 && answerAt && (
         <div className="flex flex-col gap-3">
           <h3 className={`${heading} text-xl`}>Ready for another look</h3>
           <ReviewList items={review.data} answerAt={answerAt} />
@@ -409,7 +412,7 @@ function Day({ mark }: { mark: Exclude<Mark, { kind: "today" }> }) {
 function SinceLastTime({
   answerAt,
 }: {
-  answerAt: (item: ReviewItem) => string
+  answerAt: ((item: ReviewItem) => string) | null
 }) {
   const [feedback, retryFeedback] = useJson("/api/feedback", FeedbackJson)
   const [review, retryReview] = useJson(`/api/review?${tzParam()}`, ReviewJson)
@@ -523,14 +526,19 @@ export function HomePage() {
     )
 
   // A question comes back at the top of another lesson in its course: the next one ahead there.
-  const answerAt = (r: ReviewItem) => {
-    const there = ahead.find(
-      (a) => a.course === r.course && a.lesson.id !== r.lesson?.id
-    )
-    return there
-      ? lessonHref(there.course, there.lesson.id)
-      : `/courses/${r.course}`
-  }
+  // Until what's ahead has loaded that lesson is unknown, so there is no link yet
+  // (flyingrobots/school#205); if it fails, the course page stands in.
+  const answerAt =
+    showcase.kind === "loading"
+      ? null
+      : (r: ReviewItem) => {
+          const there = ahead.find(
+            (a) => a.course === r.course && a.lesson.id !== r.lesson?.id
+          )
+          return there
+            ? lessonHref(there.course, there.lesson.id)
+            : `/courses/${r.course}`
+        }
 
   useGSAP(
     () => {

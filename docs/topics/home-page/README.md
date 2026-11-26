@@ -59,7 +59,7 @@ buttons as everywhere in the shell. Key hints are hidden on touch screens.
 | --- | --- | --- |
 | Hero and carousel | A Spinner, "Finding what's next", and a Skeleton | "What's ahead could not be loaded", with the reason when given, and **Try again** |
 | Feedback | A Skeleton | "Your feedback could not be loaded" and **Try again** |
-| Review | A Skeleton | "Questions to review could not be loaded" and **Try again** |
+| Review | A Skeleton, also while what's ahead loads, since each Answer opens a lesson from it (flyingrobots/school#205) | "Questions to review could not be loaded" and **Try again** |
 | Timeline | A Skeleton | "Your timeline could not be loaded" and **Try again** |
 
 When `GET /api/showcase` answers with nothing, the page says "Nothing ahead right now".
