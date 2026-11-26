@@ -534,6 +534,31 @@ describe("states", () => {
     await close(c)
   })
 
+  test("while what's ahead loads, no question ready for another look has an Answer link yet, then it opens the next lesson", async () => {
+    const c = await context()
+    let release!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    await c.route(/\/api\/showcase$/, async (route) => {
+      await held
+      await route.fallback()
+    })
+    const p = await c.newPage()
+    const review = p.waitForResponse((r) => /\/api\/review(\?|$)/.test(r.url()))
+    await p.goto(base + "/")
+    await review
+    await main(p).locator("[data-feedback]").waitFor()
+    expect(await main(p).locator("[data-review] a").count()).toBe(0)
+    release()
+    const answer = main(p)
+      .locator("[data-review=q1]")
+      .getByRole("link", { name: /Answer/ })
+    await answer.waitFor()
+    expect(await answer.getAttribute("href")).toBe(
+      "/courses/astro/lessons/tides"
+    )
+    await close(c)
+  })
+
   test("what's ahead failing is reported with Try again, and the rest of the page still loads", async () => {
     const c = await context()
     let fail = true
