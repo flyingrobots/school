@@ -148,6 +148,7 @@ export function usageOf(v: unknown): Usage | null {
 export type StreamLine =
   | { kind: "delta"; text: string }
   | { kind: "result"; isError: boolean; text: string | null; usage: Usage | null }
+  | { kind: "restart" } // an `api_retry` line, or a `message_start` event: a request begun again
   | { kind: "other" };
 
 /**
@@ -165,10 +166,12 @@ export function claudeStreamLine(line: string): StreamLine {
     return { kind: "other" };
   }
   if (typeof o !== "object" || o === null) return { kind: "other" };
-  const l = o as { type?: unknown; event?: { type?: unknown; delta?: { type?: unknown; text?: unknown } }; is_error?: unknown; result?: unknown; usage?: unknown };
+  const l = o as { type?: unknown; subtype?: unknown; event?: { type?: unknown; delta?: { type?: unknown; text?: unknown } }; is_error?: unknown; result?: unknown; usage?: unknown };
   if (l.type === "stream_event" && l.event?.type === "content_block_delta" && l.event.delta?.type === "text_delta" && typeof l.event.delta.text === "string") {
     return { kind: "delta", text: l.event.delta.text };
   }
+  if (l.type === "system" && l.subtype === "api_retry") return { kind: "restart" };
+  if (l.type === "stream_event" && l.event?.type === "message_start") return { kind: "restart" };
   if (l.type === "result") return { kind: "result", isError: l.is_error === true, text: typeof l.result === "string" ? l.result : null, usage: usageOf(l.usage) };
   return { kind: "other" };
 }

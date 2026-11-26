@@ -3,8 +3,8 @@ title: "School's architecture"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-22
 updated: 2026-11-26
-version: 1.5.0
-status: "Living reference. Describes flyingrobots/school at commit a959505, with the record on Postgres since flyingrobots/school#47 and SQLite deleted by flyingrobots/school#49; proposals are in RFCs 2 and 3."
+version: 1.5.1
+status: "Living reference. Describes flyingrobots/school as read at commit a959505, plus the bridge's `POST /ask` (flyingrobots/school#226), with the record on Postgres since flyingrobots/school#47 and SQLite deleted by flyingrobots/school#49; proposals are in RFCs 2 and 3."
 ---
 
 # School's architecture
@@ -12,7 +12,7 @@ status: "Living reference. Describes flyingrobots/school at commit a959505, with
 This page is a reference for how School is built **today**. It describes nothing that is only
 proposed; for that, read [RFC 2](../../rfc/0002-lessons-written-for-each-learner.md) and
 [RFC 3](../../rfc/0003-postgres-functions-and-generated-types.md). Terms are defined in the
-[glossary](../../glossary.md). Every claim was read from the code at commit `a959505`.
+[glossary](../../glossary.md). Every claim was read from the code at commit `a959505`, except the bridge's `POST /ask` paragraph, which was read from `bridge/ask.ts` on the branch of flyingrobots/school#226.
 
 ## Contents
 
@@ -498,8 +498,13 @@ counts), `error` and every attempt. Its agents are a separate `ask` list in the 
 behind a grading. An agent with output `claude-stream-json` (Claude Code's
 `--output-format stream-json --include-partial-messages --verbose`) streams; any other answers as
 one delta when it exits. The next agent is tried only before the first delta; after it, a failure
-ends the reply as failed, so an answer never changes voice partway through. A caller that hangs up
-stops the agent. The cases are in the [test plan](test-plan.md#asking-the-bridge-a-question).
+ends the reply as failed, so an answer never changes voice partway through. That includes Claude
+Code retrying its request after the first delta (an `api_retry` line or a second `message_start`),
+which would stream the answer again: the agent is killed and the reply fails; a retry before any
+delta is ignored. A caller that hangs up stops the agent, and `agent` in the end line is null
+unless the caller received some of that agent's words. After a kill the bridge waits 500 ms for
+the agent's pipes to close, then stops reading them, so a child that left the process group cannot
+hold the queue. The cases are in the [test plan](test-plan.md#asking-the-bridge-a-question).
 
 The bridge also reads aloud: it hands text the server built to the AI-TTS daemon on the host's
 Unix socket, for synthesis only, and serves the audio back for the browser to play

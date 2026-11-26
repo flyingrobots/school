@@ -23,6 +23,7 @@ export type AskJob = { prompt: string; deadlineMs?: number; signal?: AbortSignal
 // A streamed answer repeats its text in the stream's framing, the final message and the result
 // line, so the cap is larger than a grading's 1 MiB.
 const MAX_OUTPUT = 8 * 1024 * 1024;
+const PIPE_GRACE_MS = 500;
 const GONE = "the caller went away";
 
 /** Try each enabled ask agent in order, passing its answer on through `onDelta` as it is written. */
@@ -40,19 +41,24 @@ export async function runAsk(cfg: AskConfig, job: AskJob, onDelta: (text: string
     const { attempt, usage } = await askAgent(agent, job, Math.min(agent.timeoutMs, left), onDelta);
     attempts.push(attempt);
     if (attempt.status === "succeeded") return { status: "succeeded", agent: agent.name, usage, attempts };
-    // After the first delta, or once the caller has gone, no other agent is tried.
-    if (attempt.deltas > 0 || job.signal?.aborted) return { status: "failed", agent: agent.name, error: attempt.error ?? "failed", attempts };
+    // After the first delta, or once the caller has gone, no other agent is tried. The reply names
+    // the agent only if the caller received some of its words.
+    if (attempt.deltas > 0 || job.signal?.aborted) return { status: "failed", agent: attempt.deltas > 0 ? agent.name : null, error: attempt.error ?? "failed", attempts };
   }
   return { status: "failed", agent: null, error: attempts.length === 0 ? "no ask agent is enabled" : "every ask agent failed", attempts };
 }
 
 /** Read `stream` line by line, calling `onLine` for each as it arrives; the whole text if `keep`. */
-async function readLines(stream: ReadableStream<Uint8Array>, onLine: (line: string) => void, keep: boolean, onOverflow: () => void): Promise<string> {
+async function readLines(stream: ReadableStream<Uint8Array>, onLine: (line: string) => void, keep: boolean, onOverflow: () => void, readers: ReadableStreamDefaultReader<Uint8Array>[]): Promise<string> {
   const decoder = new TextDecoder();
   let held = "";
   let all = "";
   let size = 0;
-  for await (const chunk of stream) {
+  const reader = stream.getReader();
+  readers.push(reader);
+  for (;;) {
+    const { done, value: chunk } = await reader.read();
+    if (done) break;
     size += chunk.length;
     if (size > MAX_OUTPUT) { onOverflow(); break; }
     const text = decoder.decode(chunk, { stream: true });
@@ -105,7 +111,12 @@ async function askAgent(agent: Agent, job: AskJob, timeoutMs: number, onDelta: (
       // A child the agent forks just as the signal lands can miss it, still in the group, and hold
       // the pipes open until the timeout: sweep the group until they close.
       sweep ??= setInterval(hit, 50);
+      grace ??= setTimeout(() => { for (const r of readers) r.cancel().catch(() => {}); }, PIPE_GRACE_MS);
     };
+    // A child that left the group holds the pipes open however often the group is killed. Once
+    // the kill has had this long to close them, stop reading, so the caller is not kept waiting.
+    const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+    let grace: ReturnType<typeof setTimeout> | null = null;
     const timer = setTimeout(() => kill(`timed out after ${Math.round(timeoutMs / 1000)} s`), timeoutMs);
     const gone = () => kill(GONE);
     job.signal?.addEventListener("abort", gone);
@@ -114,13 +125,17 @@ async function askAgent(agent: Agent, job: AskJob, timeoutMs: number, onDelta: (
       if (!streaming || why !== null) return;
       const l = claudeStreamLine(line);
       if (l.kind === "delta") pass(l.text);
+      // Claude Code retrying its request streams the answer again from its start. Before any delta
+      // that is harmless; after one, the learner would see the answer twice, so the reply fails.
+      else if (l.kind === "restart") { if (deltas > 0) kill("the agent started the answer again after its first delta"); }
       else if (l.kind === "result") result = l;
     };
     const [stdout] = await Promise.all([
-      readLines(proc.stdout, onLine, !streaming, () => kill("produced more than 8 MiB of output")),
-      readLines(proc.stderr, () => {}, false, () => kill("produced more than 8 MiB of error output")),
+      readLines(proc.stdout, onLine, !streaming, () => kill("produced more than 8 MiB of output"), readers),
+      readLines(proc.stderr, () => {}, false, () => kill("produced more than 8 MiB of error output"), readers),
     ]);
     if (sweep !== null) clearInterval(sweep);
+    if (grace !== null) clearTimeout(grace);
     const exitCode = await proc.exited;
     clearTimeout(timer);
     job.signal?.removeEventListener("abort", gone);
