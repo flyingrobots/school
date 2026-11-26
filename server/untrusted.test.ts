@@ -139,6 +139,12 @@ describe("the course API reports trust", () => {
 
 // A mount is served with no sandbox, so no mount route may reach an untrusted course's files.
 describe("a mount", () => {
+  // The positive control for the climb cases: the mount does serve its own folder.
+  test("beside an untrusted course serves its own files", async () => {
+    const res = await fetch(`${base}/lib/secret.html`);
+    expect([res.status, await res.text()]).toEqual([200, "TOP SECRET"]);
+  });
+
   test.each(["..%2Fguest%2Freference%2Fpage.html", "%2E%2E%2Fguest%2Freference%2Fpage.html"])(
     "beside an untrusted course cannot climb into it (/lib/%s)", async (trick) => {
       const res = await fetch(`${base}/lib/${trick}`);

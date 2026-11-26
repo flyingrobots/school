@@ -323,3 +323,43 @@ test("a trusted course's figure stays inline SVG, coloured by the page's own var
     fill: host.querySelector("[data-figure] svg circle")?.getAttribute("fill"),
   }).toEqual({ images: 0, fill: "var(--primary)" })
 })
+
+// A figure is a JSON string, which may hold a lone surrogate ("\ud800"); encodeURIComponent throws
+// URIError on one, which would take the whole home page down. Oracle: WHATWG Infra, "scalar value
+// string": a lone surrogate becomes U+FFFD REPLACEMENT CHARACTER, as String.prototype.toWellFormed does.
+const { figureImage } = await import("@/lib/figure")
+test.each([
+  ["high", "\ud800"],
+  ["low", "\udc00"],
+])(
+  "a figure with a lone %s surrogate becomes an image with U+FFFD in its place",
+  (_, lone) => {
+    const src = figureImage(
+      `<svg viewBox="0 0 10 10"><text>a${lone}b</text></svg>`,
+      () => ""
+    )
+    const text = new DOMParser()
+      .parseFromString(
+        decodeURIComponent((src ?? "").slice("data:image/svg+xml,".length)),
+        "image/svg+xml"
+      )
+      .querySelector("text")?.textContent
+    expect(text).toBe("a�b")
+  }
+)
+
+test.each([
+  ["high", "\ud800"],
+  ["low", "\udc00"],
+])(
+  "an untrusted course's figure with a lone %s surrogate still renders as an image",
+  async (_, lone) => {
+    const host = await render(
+      <HookFigure
+        svg={`<svg viewBox="0 0 10 10"><text>a${lone}b</text></svg>`}
+        trusted={false}
+      />
+    )
+    expect(host.querySelectorAll("[data-figure] img").length).toBe(1)
+  }
+)
