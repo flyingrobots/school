@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startSchool, timeout, type Started } from "./testing/processes.ts";
+import { NotStarted, startSchool, timeout, type Started } from "./testing/processes.ts";
 
 const root = mkdtempSync(join(tmpdir(), "school-untrusted-"));
 let base = "";
@@ -18,9 +18,14 @@ let server: Started | null = null;
 
 const HOSTILE_HTML = "<!doctype html><title>Hostile</title><script>fetch('/api/settings/bridge')</script><p>hi</p>";
 const HOSTILE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(2)</script><circle r="4"/></svg>';
+const FIGURE = '<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="var(--primary)"/></svg>';
 const lesson = (id: string) => JSON.stringify({
   type: "page", id, title: "One", subtitle: "",
-  children: [{ type: "prose", id: "p1", html: "<img src=x onerror=alert(1)><a href=\"javascript:alert(2)\">x</a>" }],
+  hook: { question: "Why?", teaser: "Because.", figure: FIGURE },
+  children: [
+    { type: "prose", id: "p1", html: "<img src=x onerror=alert(1)><a href=\"javascript:alert(2)\">x</a>" },
+    { type: "quiz", id: "q1", q: "Which?", why: "Because.", choices: [{ id: "a", text: "A", correct: true }, { id: "b", text: "B", correct: false }] },
+  ],
 });
 
 /** A course folder holding one lesson and the same reference files as every other. */
@@ -48,6 +53,8 @@ beforeAll(async () => {
     ...process.env,
     SCHOOL_COURSES: `own=${trusted}`,
     SCHOOL_UNTRUSTED_COURSES: `guest=${untrusted}`,
+    // A mount beside the courses, not over one: a mount is served with no sandbox.
+    SCHOOL_MOUNTS: `lib=${join(root, "outside")}`,
     SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`, SCHOOL_WEB: join(root, "no-web"), HOST: "127.0.0.1",
   });
   base = server.url;
@@ -127,5 +134,39 @@ describe("the course API reports trust", () => {
 
   test.each([["guest", false], ["own", true]] as const)("GET /api/courses/%s gives trusted: %p", async (name, trusted) => {
     expect(((await (await fetch(`${base}/api/courses/${name}`)).json()) as { trusted: unknown }).trusted).toBe(trusted);
+  });
+});
+
+// A mount is served with no sandbox, so no mount route may reach an untrusted course's files.
+describe("a mount", () => {
+  test.each(["..%2Fguest%2Freference%2Fpage.html", "%2E%2E%2Fguest%2Freference%2Fpage.html"])(
+    "beside an untrusted course cannot climb into it (/lib/%s)", async (trick) => {
+      const res = await fetch(`${base}/lib/${trick}`);
+      // Refused by the mount, the path falls through to the web app, unbuilt here (503).
+      expect({ ok: res.ok, hostile: (await res.text()).includes("Hostile") }).toEqual({ ok: false, hostile: false });
+    });
+
+  test("over an untrusted course stops the server before it serves /lib/guest/reference/page.html", async () => {
+    // Either it refuses with exit 2, or the outcome shows what it served unsandboxed.
+    const outcome = await startSchool({
+      ...process.env,
+      SCHOOL_UNTRUSTED_COURSES: `guest=${join(root, "guest")}`,
+      SCHOOL_MOUNTS: `lib=${root}`,
+      SCHOOL_STATE: join(root, "state-mount"), SCHOOL_DATABASE_URL: `pglite:${join(root, "record-mount")}`, SCHOOL_WEB: join(root, "no-web"), HOST: "127.0.0.1",
+    }).then(async (s) => {
+      const res = await fetch(s.url + "/lib/guest/reference/page.html");
+      const served = { status: res.status, csp: res.headers.get("content-security-policy"), body: (await res.text()).slice(0, 30) };
+      s.proc.kill();
+      await s.proc.exited;
+      return { served };
+    }, (e: unknown) => ({ refused: e instanceof NotStarted ? e.exitCode : String(e) }));
+    expect(outcome).toEqual({ refused: 2 });
+  }, timeout(1));
+});
+
+describe("the showcase reports trust", () => {
+  test("GET /api/showcase gives each lesson's course trusted, so the page can draw an untrusted figure as an image", async () => {
+    const ahead = (await (await fetch(base + "/api/showcase")).json()) as { course: string; trusted: unknown; figure: unknown }[];
+    expect(ahead.map((a) => [a.course, a.trusted, a.figure])).toEqual([["guest", false, FIGURE], ["own", true, FIGURE]]);
   });
 });

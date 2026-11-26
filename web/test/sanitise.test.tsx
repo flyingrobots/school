@@ -189,3 +189,137 @@ test.each([
     ].length,
   }).toEqual({ svg: "svg", hazards: [], dropped: 0 })
 })
+
+// Mutation XSS (flyingrobots/school#210, #273). safeFigure parses with scripting off and the page
+// reparses with scripting on, where <noscript>, <noembed>, <noframes>, <xmp> and <style> hold raw
+// text. A serialiser that leaves < and > unescaped in attributes (happy-dom's, Chrome's before
+// 2025) then turns an attribute into live markup. Oracle: the figure that comes back, inserted the
+// way the page inserts it, holds no element whose content the HTML parser reads as raw text or
+// differently with scripting on (HTML, "parsing HTML fragments" and "the rules for parsing tokens
+// in HTML content"), no hazard, and nothing ran. happy-dom's parser puts every element of an <svg>
+// in the SVG namespace, so the check is by name, not namespace.
+const RAW_TEXT = new Set([
+  "noscript",
+  "noembed",
+  "noframes",
+  "xmp",
+  "style",
+  "iframe",
+  "plaintext",
+  "textarea",
+  "script",
+])
+const MUTATIONS = [
+  ["noscript", "title"],
+  ["noscript", "desc"],
+  ["noembed", "title"],
+  ["noframes", "title"],
+  ["xmp", "title"],
+  ["style", "title"],
+].map(
+  ([raw, point]) =>
+    `<svg><${point}><${raw}><p title="</${raw}><img src=x onerror=pwn()>"></p></${raw}></${point}><circle r="1"/></svg>`
+)
+
+test.each(MUTATIONS)(
+  "a figure cannot mutate into script through %s",
+  async (svg) => {
+    fired = 0
+    const box = document.createElement("div")
+    document.body.appendChild(box)
+    box.innerHTML = safeFigure(svg) ?? ""
+    await act(async () => new Promise((r) => setTimeout(r, 0)))
+    expect({
+      svg: box.firstElementChild?.localName,
+      rawText: [...box.querySelectorAll("*")]
+        .map((e) => e.localName)
+        .filter((n) => RAW_TEXT.has(n)),
+      hazards: hazards(box),
+      fired,
+    }).toEqual({ svg: "svg", rawText: [], hazards: [], fired: 0 })
+  }
+)
+
+// UI redress: a figure styled to cover the page could pose as School. No style or class survives,
+// on the root or any shape; School's own figures colour themselves with presentation attributes.
+test("a figure keeps no style or class that could lay it over the page", () => {
+  const box = document.createElement("div")
+  box.innerHTML =
+    safeFigure(
+      '<svg xmlns="http://www.w3.org/2000/svg" style="position:fixed;inset:0;width:100vw;height:100vh;z-index:99999" class="fixed inset-0 z-50"><rect style="fill:red" class="fixed" width="1"/><text y="20">Sign in again</text></svg>'
+    ) ?? ""
+  expect(
+    [...box.querySelectorAll("*")].flatMap((e) =>
+      [...e.attributes]
+        .filter((a) => a.name === "style" || a.name === "class")
+        .map((a) => `<${e.localName} ${a.name}>`)
+    )
+  ).toEqual([])
+})
+
+// An untrusted course's figure is drawn as an image (flyingrobots/school#210, #273): an <img>
+// never runs script, whatever its SVG holds. A trusted course's stays inline, as before.
+const { HookFigure } = await import("@/components/hook-figure")
+const HOOK =
+  '<svg viewBox="0 0 10 10" onload="pwn()"><circle data-dot cx="5" cy="5" r="4" fill="var(--primary)"/><script>pwn()</script></svg>'
+
+/** The SVG an <img src="data:image/svg+xml,…"> shows, parsed as the browser does: as XML. */
+function imageSvg(host: HTMLElement): Document | null {
+  const src = host.querySelector("img")?.getAttribute("src") ?? ""
+  const prefix = "data:image/svg+xml,"
+  if (!src.startsWith(prefix)) return null
+  return new DOMParser().parseFromString(
+    decodeURIComponent(src.slice(prefix.length)),
+    "image/svg+xml"
+  )
+}
+
+test("an untrusted course's figure is an image, with no inline SVG on the page", async () => {
+  const host = await render(<HookFigure svg={HOOK} trusted={false} />)
+  const drawn = imageSvg(host)
+  expect({
+    inline: host.querySelectorAll("svg").length,
+    images: host.querySelectorAll("[data-figure] img").length,
+    dot: drawn?.querySelectorAll("circle").length ?? 0,
+  }).toEqual({ inline: 0, images: 1, dot: 1 })
+})
+
+test("an untrusted course's figure takes the theme's colours, since an image cannot read the page's", async () => {
+  document.documentElement.style.setProperty("--primary", "rgb(1, 2, 3)")
+  try {
+    const host = await render(<HookFigure svg={HOOK} trusted={false} />)
+    expect(imageSvg(host)?.querySelector("circle")?.getAttribute("fill")).toBe(
+      "rgb(1, 2, 3)"
+    )
+  } finally {
+    document.documentElement.style.removeProperty("--primary")
+  }
+})
+
+test("an untrusted course's figure follows a switch to the dark theme", async () => {
+  const sheet = document.createElement("style")
+  sheet.textContent =
+    ":root { --primary: rgb(0, 0, 1) } .dark { --primary: rgb(9, 9, 9) }"
+  document.head.appendChild(sheet)
+  try {
+    const host = await render(<HookFigure svg={HOOK} trusted={false} />)
+    await act(async () => {
+      document.documentElement.classList.add("dark")
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(imageSvg(host)?.querySelector("circle")?.getAttribute("fill")).toBe(
+      "rgb(9, 9, 9)"
+    )
+  } finally {
+    document.documentElement.classList.remove("dark")
+    sheet.remove()
+  }
+})
+
+test("a trusted course's figure stays inline SVG, coloured by the page's own variables", async () => {
+  const host = await render(<HookFigure svg={HOOK} trusted />)
+  expect({
+    images: host.querySelectorAll("img").length,
+    fill: host.querySelector("[data-figure] svg circle")?.getAttribute("fill"),
+  }).toEqual({ images: 0, fill: "var(--primary)" })
+})

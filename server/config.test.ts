@@ -234,3 +234,42 @@ test("SCHOOL_UNTRUSTED_COURSES follows SCHOOL_COURSES' rules for names and learn
   expect(() => parseConfig({ SCHOOL_UNTRUSTED_COURSES: "guest=/courses/guest", SCHOOL_STATE: "/courses/guest/state" }, FRAMEWORK))
     .toThrow(/must live outside the course/);
 });
+
+// A mount or the web app's folder is served with no sandbox, so neither may reach an untrusted
+// course's files (flyingrobots/school#210). Each is compared with every untrusted course on real
+// paths, both ways round, and the refusal names both variables and both folders.
+test.each([
+  ["is the untrusted folder", "lib=/lib/guest"],
+  ["contains the untrusted folder", "lib=/lib"],
+  ["sits inside the untrusted folder", "lib=/lib/guest/reference"],
+])("a SCHOOL_MOUNTS folder that %s is refused", (_, mounts) => {
+  expect(() => parseConfig({ SCHOOL_UNTRUSTED_COURSES: "guest=/lib/guest", SCHOOL_MOUNTS: mounts, SCHOOL_STATE: "/var/school" }, FRAMEWORK))
+    .toThrow(/SCHOOL_MOUNTS mount "lib" \(\/lib[^)]*\) overlaps untrusted course "guest" \(\/lib\/guest\) from SCHOOL_UNTRUSTED_COURSES/);
+});
+
+test.each([
+  ["is the untrusted folder", "/lib/guest"],
+  ["contains the untrusted folder", "/lib"],
+  ["sits inside the untrusted folder", "/lib/guest/reference"],
+])("a SCHOOL_WEB folder that %s is refused", (_, web) => {
+  expect(() => parseConfig({ SCHOOL_UNTRUSTED_COURSES: "guest=/lib/guest", SCHOOL_WEB: web, SCHOOL_STATE: "/var/school" }, FRAMEWORK))
+    .toThrow(/SCHOOL_WEB \(\/lib[^)]*\) overlaps untrusted course "guest" \(\/lib\/guest\) from SCHOOL_UNTRUSTED_COURSES/);
+});
+
+test("a mount reaching an untrusted course through a symlink is refused, since paths are compared resolved", () => {
+  const { mkdirSync, symlinkSync } = require("node:fs") as typeof import("node:fs");
+  const { root, done } = scratch();
+  try {
+    mkdirSync(join(root, "guest", "reference"), { recursive: true });
+    symlinkSync(join(root, "guest"), join(root, "alias"));
+    expect(() => parseConfig({ SCHOOL_UNTRUSTED_COURSES: `guest=${join(root, "guest")}`, SCHOOL_MOUNTS: `lib=${join(root, "alias")}`, SCHOOL_STATE: join(root, "state") }, FRAMEWORK))
+      .toThrow(/SCHOOL_MOUNTS mount "lib" .* overlaps untrusted course "guest"/);
+  } finally {
+    done();
+  }
+});
+
+test("a mount and a web folder beside an untrusted course, not over it, are accepted", () => {
+  const c = parseConfig({ SCHOOL_UNTRUSTED_COURSES: "guest=/lib/guest", SCHOOL_MOUNTS: "docs=/lib/docs", SCHOOL_WEB: "/lib/web", SCHOOL_STATE: "/var/school" }, FRAMEWORK);
+  expect([mountTable(c), c.web]).toEqual([{ docs: "/lib/docs" }, "/lib/web"]);
+});

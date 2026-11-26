@@ -218,3 +218,15 @@ test("a course both trusted and untrusted stops startup, naming both variables",
   expect(r.err).toContain('"c" is in both SCHOOL_COURSES and SCHOOL_UNTRUSTED_COURSES');
   expect(existsSync(join(root, "state", "db"))).toBe(false);
 }), timeout(1));
+
+// flyingrobots/school#210: a mount or web folder over an untrusted course would serve its files
+// with no sandbox, so it stops startup with exit 2, naming both variables and both folders.
+test.each([
+  ["SCHOOL_MOUNTS", (root: string) => ({ SCHOOL_MOUNTS: `lib=${root}` }), (root: string) => `SCHOOL_MOUNTS mount "lib" (${root})`],
+  ["SCHOOL_WEB", (root: string) => ({ SCHOOL_WEB: root }), (root: string) => `SCHOOL_WEB (${root})`],
+])("%s holding an untrusted course stops startup, naming both variables and folders", (_, env, named) => inRoot(async (root) => {
+  const r = await boot({ ...env(root), SCHOOL_UNTRUSTED_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "state", "db")}` });
+  expect([r.up, r.code]).toEqual([false, 2]);
+  expect(r.err).toContain(`${named(root)} overlaps untrusted course "c" (${join(root, "course")}) from SCHOOL_UNTRUSTED_COURSES`);
+  expect(existsSync(join(root, "state", "db"))).toBe(false);
+}), timeout(1));
