@@ -54,8 +54,9 @@ import { Textarea } from "@/components/ui/textarea"
 // Behaviour (field and label, textarea and its submit keys, buttons, disclosures, shortcuts) is
 // ui-sdk's; the look is stock shadcn parts passed as `render`, or shadcn's own classes.
 // A saved explanation can be revised: the learner writes again, starting from the saved text, and
-// saves a new explanation. `onModelShown` and `onSourceOpened` say when the model answer is shown
-// and when a source is opened, once per showing, so a page can record the help it gave.
+// saves a new explanation. `onModelShown`, `onFeedbackShown` and `onSourceOpened` say when the
+// model answer is shown, when a succeeded grading's findings are shown, and when a source is
+// opened, once per showing, so a page can record the help it gave.
 // An explanation the page keeps to send later (an outbox) is `queued`: it shows as not sent yet,
 // with a spinner, and the model answer stays hidden until the server has stored it.
 // ExplainReadOnly shows only the prompt, as a slides view does: nothing to write or save, and
@@ -234,6 +235,7 @@ export function ExplainView({
   onGrade,
   onRevise,
   onModelShown,
+  onFeedbackShown,
   onSourceOpened,
 }: ExplainContent & {
   state: ExplainState
@@ -248,6 +250,8 @@ export function ExplainView({
   onRevise?: () => void
   /** Called once each time the model answer is shown. */
   onModelShown?: () => void
+  /** Called once each time a succeeded grading's findings are shown; never for a failed grading. */
+  onFeedbackShown?: () => void
   /** Called once each time a source is opened, with its id. */
   onSourceOpened?: (sourceId: string) => void
 }) {
@@ -277,6 +281,7 @@ export function ExplainView({
   const gradeHint = useShortcutHint(GRADE_KEYS)
   const reviseHint = useShortcutHint(REVISE_KEYS)
   useShowing(!writing, onModelShown)
+  useShowing(state.status === "graded", onFeedbackShown)
   const opened = React.useRef<string[]>([])
   const revisable = onRevise !== undefined && !writing
 
@@ -656,6 +661,7 @@ export function Explain({
   saved,
   pending,
   onModelShown,
+  onFeedbackShown,
   onSourceOpened,
   ...content
 }: ExplainContent & {
@@ -676,6 +682,8 @@ export function Explain({
   pending?: ExplainPending | null
   /** Called once each time the model answer is shown: when an explanation is saved, or first renders saved. */
   onModelShown?: () => void
+  /** Called once each time a succeeded grading is shown: when a grading succeeds, or first renders graded. */
+  onFeedbackShown?: () => void
   /** Called once each time a source is opened, with its id. */
   onSourceOpened?: (sourceId: string) => void
 }) {
@@ -783,6 +791,7 @@ export function Explain({
       onGrade={grade}
       onRevise={revise}
       onModelShown={onModelShown}
+      onFeedbackShown={onFeedbackShown}
       onSourceOpened={onSourceOpened}
     />
   )
