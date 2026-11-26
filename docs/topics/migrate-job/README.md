@@ -46,7 +46,7 @@ bun migrate.ts --help | --schema [--human]
 | --- | --- |
 | `--help`, `-h` | Prints a `help` line, then a `schema` line for every message type; exit 0. Reads no setting, touches no database |
 | `--schema` | Prints a `schema` line for every message type; exit 0. Reads no setting, touches no database |
-| `--rename-course <from>=<to>` | After the migrations, renames course `<from>` to `<to>` in the record and prints a `renamed` line (below) |
+| `--rename-course <from>=<to>` | After the migrations, renames course `<from>` to `<to>` in the record and prints a `renamed` line and a `renamed_installs` line (below) |
 | `--human`, `--humanize` | Prose instead of JSON Lines. With `--help`, the prose names the message types rather than printing their schemas; `--schema --human` prints each schema indented |
 
 Any other argument, or `--rename-course` without one `<from>=<to>` pair or given twice, is an
@@ -60,7 +60,7 @@ Any other argument, or `--rename-course` without one `<from>=<to>` pair or given
 
 ## Message types
 
-All at version `1.0.0` except `renamed`, at `1.1.0`, which added the install and removal counts. The files in `server/schemas/` are the authority; `bun migrate.ts --schema`
+All at version `1.0.0`. The files in `server/schemas/` are the authority; `bun migrate.ts --schema`
 prints them.
 
 | `_schema.id` | `event` | Stream | Fields beyond the envelope | When |
@@ -69,7 +69,8 @@ prints them.
 | `school.migrate.schema` | `schema` | stdout | `id`, `version`, `schema` (the published file) | `--schema`, and `--help` after its help line |
 | `school.migrate.start` | `start` | stdout | `where`, `role` | Settings accepted, before connecting |
 | `school.migrate.applied` | `applied` | stdout | `version`, `name` | Each migration, once committed |
-| `school.migrate.renamed` | `renamed` | stdout | `from`, `to`, `rows` (`encounters`, `views`, `decision_notes`, `course_installs`, `course_removals`) | `--rename-course`, once the rename commits |
+| `school.migrate.renamed` | `renamed` | stdout | `from`, `to`, `rows` (`encounters`, `views`, `decision_notes`) | `--rename-course`, once the rename commits |
+| `school.migrate.renamed.installs` | `renamed_installs` | stdout | `course_installs`, `course_removals` | `--rename-course`, right after `renamed` |
 | `school.migrate.done` | `done` | stdout | `ok: true`, `where`, `applied` (versions, in order), `role` | Last line of a good run |
 | `school.migrate.captured` | `captured` | either | `stream`, `text` | A library printed something |
 | `school.migrate.error.usage` | `error` | stderr | `error: "usage"`, `code: 2`, `message` | Unknown argument |
@@ -139,7 +140,8 @@ name it started with. From `server/`:
 1. Stop School, leaving the database up: `../school compose stop school`.
 2. Take a backup and copy it out (docs/workflows/backup-and-restore, steps 2 and 3).
 3. Rename: `../school compose run --rm migrate bun migrate.ts --rename-course course=aion`. It
-   prints `start`, `renamed` with the rows moved per table, then `done`.
+   prints `start`, `renamed` with the rows moved per table, `renamed_installs` with the install and
+   removal rows moved (a message of its own, so `renamed` is the 1.0.0 line it always was), then `done`.
 4. Name the course in `server/.env`: `SCHOOL_COMPOSE_COURSE=` (empty) and
    `SCHOOL_COURSES=aion=/course,...` with any other courses.
 5. Start School again: `../school up`.
