@@ -131,7 +131,10 @@ function hazards(el: Element): string[] {
       if (name === "srcdoc") found.push(`<${tag} srcdoc>`)
       if (URL_ATTRS.has(name)) {
         // Browsers ignore ASCII whitespace and controls inside a scheme.
-        const url = a.value.replace(/[\u0000- ]/g, "").toLowerCase()
+        const url = [...a.value]
+          .filter((ch) => ch.charCodeAt(0) > 0x20)
+          .join("")
+          .toLowerCase()
         if (/^(javascript|vbscript|data:text\/html)/.test(url))
           found.push(`<${tag} ${name}="${a.value}">`)
       }

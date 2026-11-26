@@ -213,6 +213,20 @@ async function serveMount(pathname: string): Promise<Response> {
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(body, { status, headers });
 
+/**
+ * An untrusted course's response, sandboxed (flyingrobots/school#210). `sandbox` with no allow-*
+ * token gives a document an opaque origin and no script, so a course's HTML or SVG opened in a tab
+ * cannot read School's API or act as School; `nosniff` stops the browser reading the bytes as a
+ * type that would run. Applied to every response that carries the course's bytes: its reference
+ * files and its course and lesson JSON. A trusted course's responses are left exactly as they were.
+ */
+function contained(c: Course, res: Response): Response {
+  if (c.trusted) return res;
+  res.headers.set("content-security-policy", "sandbox");
+  res.headers.set("x-content-type-options", "nosniff");
+  return res;
+}
+
 type View = "web" | "slides";
 const isView = (v: string | null): v is View => v === "web" || v === "slides";
 const summary = (p: Block | undefined) => (p === undefined || p.type !== "page" ? null : { id: p.id, title: p.title, subtitle: p.subtitle });
@@ -225,11 +239,12 @@ const summary = (p: Block | undefined) => (p === undefined || p.type !== "page" 
 async function courseJson(c: Course): Promise<Response> {
   const { library, error } = lessons(c);
   const reference = referenceDocs(c);
-  if (library === null) return json({ name: c.name, title: titleOf(c), reference, lessons: null, lessonsError: error?.message ?? "the lessons could not be loaded" });
+  if (library === null) return json({ name: c.name, title: titleOf(c), trusted: c.trusted, reference, lessons: null, lessonsError: error?.message ?? "the lessons could not be loaded" });
   const done = await school.lessonProgress(c.name);
   return json({
     name: c.name,
     title: titleOf(c),
+    trusted: c.trusted,
     reference,
     lessons: library.pages.map((p) => {
       const ids = quizIds(p);
@@ -264,7 +279,7 @@ async function coursesJson(): Promise<Response> {
     const o = await outline(c);
     const quizCount = o === null ? null : o.lessons.reduce((n, l) => n + l.quizzes.length, 0);
     const correct = o === null ? null : o.lessons.reduce((n, l) => n + l.quizzes.filter((q) => o.progress[l.id]?.includes(q.id)).length, 0);
-    return { name: c.name, title: titleOf(c), lessons: o === null ? null : o.lessons.length, reference: referenceDocs(c).length, quizzes: quizCount, answeredCorrectly: correct };
+    return { name: c.name, title: titleOf(c), trusted: c.trusted, lessons: o === null ? null : o.lessons.length, reference: referenceDocs(c).length, quizzes: quizCount, answeredCorrectly: correct };
   })));
 }
 
@@ -644,21 +659,22 @@ const http = Bun.serve({
     if (api !== null) {
       const c = course(config, api[1]!);
       if (c === null) return json({ error: "no such course" }, 404);
-      if (api[2] === undefined) return courseJson(c);
+      if (api[2] === undefined) return contained(c, await courseJson(c));
       const aid = aidParam(url.searchParams);
       if (aid === null) return json({ status: "invalid", error: `aid must be a known capture version: ${AID_CAPTURE_VERSIONS.join(", ")}` }, 400);
       const tz = await zoneParam(url.searchParams);
       if (tz === null) return json(BAD_ZONE, 400);
-      return lessonJson(c, api[2], url.searchParams.get("view"), aid.aid, tz);
+      return contained(c, await lessonJson(c, api[2], url.searchParams.get("view"), aid.aid, tz));
     }
     if (pathname.startsWith("/api/")) return json({ error: "not found" }, 404);
 
-    // A course's reference documents are course-authored files, served as they are.
+    // A course's reference documents are course-authored files, served as they are; an
+    // untrusted course's, sandboxed.
     const ref = /^\/courses\/([a-z0-9][a-z0-9-]*)\/reference\/(.+)$/.exec(pathname);
     if (ref !== null) {
       const c = course(config, ref[1]!);
       const dir = c === null ? null : referenceDir(c);
-      return dir === null ? notFound() : serveFrom(dir, [ref[2]!]);
+      return c === null || dir === null ? notFound() : contained(c, await serveFrom(dir, [ref[2]!]));
     }
 
     const mounted = await serveMount(pathname);

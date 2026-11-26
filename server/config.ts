@@ -14,6 +14,11 @@ export type Config = {
   framework: string;
   /** Registered courses by name, served at `/courses/<name>`. Each holds `lessons/` and `reference/`. */
   courses: Record<string, string>;
+  /**
+   * The names in `courses` that came from SCHOOL_UNTRUSTED_COURSES (flyingrobots/school#210):
+   * their files are served sandboxed, so they cannot run script on School's origin.
+   */
+  untrusted: string[];
   /** Directory for this learner's private state. Never inside a course. */
   state: string;
   /**
@@ -135,6 +140,7 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
   // SCHOOL_COURSES registers many; SCHOOL_COURSE stays accepted as a single unnamed course,
   // named after its directory, so a one-course setup needs no extra ceremony.
   const courses = parsePairs(env.SCHOOL_COURSES, cwd, "SCHOOL_COURSES");
+  let single: string | undefined;
   if (env.SCHOOL_COURSE !== undefined && env.SCHOOL_COURSE !== "") {
     const path = abs(env.SCHOOL_COURSE, cwd);
     const name = basename(path).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
@@ -142,7 +148,24 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     if ((RESERVED as readonly string[]).includes(name)) throw new ConfigError(`SCHOOL_COURSE name ${JSON.stringify(name)} is reserved; use SCHOOL_COURSES to name it`);
     if (name in courses) throw new ConfigError(`SCHOOL_COURSE name ${JSON.stringify(name)} collides with SCHOOL_COURSES`);
     courses[name] = path;
+    single = name;
   }
+  // SCHOOL_UNTRUSTED_COURSES (flyingrobots/school#210): the same name=path pairs, for courses
+  // whose files must not run as School. A course is one or the other: a name in both lists, or a
+  // folder that is, contains or sits inside a trusted course's, is refused, because the trusted
+  // course would serve the same bytes unsandboxed.
+  const untrusted = parsePairs(env.SCHOOL_UNTRUSTED_COURSES, cwd, "SCHOOL_UNTRUSTED_COURSES");
+  for (const [name, path] of Object.entries(untrusted)) {
+    if (name in courses) {
+      throw new ConfigError(`course ${JSON.stringify(name)} is in both ${name === single ? "SCHOOL_COURSE" : "SCHOOL_COURSES"} and SCHOOL_UNTRUSTED_COURSES; a course is trusted or untrusted, not both`);
+    }
+    for (const [other, root] of Object.entries(courses)) {
+      if (within(path, root) || within(root, path)) {
+        throw new ConfigError(`untrusted course ${JSON.stringify(name)} (${path}) overlaps trusted course ${JSON.stringify(other)} (${root}); a folder is trusted or untrusted, not both`);
+      }
+    }
+  }
+  Object.assign(courses, untrusted);
   const state = abs(env.SCHOOL_STATE ?? join(framework, "state"), cwd);
 
   const dbPath = env.DB_PATH === undefined || env.DB_PATH === "" ? join(state, "progress.db") : abs(env.DB_PATH, cwd);
@@ -170,6 +193,7 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
   return {
     framework,
     courses,
+    untrusted: Object.keys(untrusted).sort(),
     state,
     dbPath,
     database,
@@ -191,8 +215,7 @@ export type Course = { name: string; root: string; lessons: string; reference: s
 export function course(config: Config, name: string): Course | null {
   const root = config.courses[name];
   if (root === undefined) return null;
-  // Not implemented yet (flyingrobots/school#210): every course is still trusted.
-  return { name, root, lessons: join(root, "lessons"), reference: join(root, "reference"), trusted: true };
+  return { name, root, lessons: join(root, "lessons"), reference: join(root, "reference"), trusted: !config.untrusted.includes(name) };
 }
 
 export function courseNames(config: Config): string[] {
