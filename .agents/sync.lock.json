@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "files": {},
+  "links": {
+    ".claude/skills/school": "../../.agents/skills/school"
+  }
+}
