@@ -5,16 +5,18 @@
 //   expression := and ("OR" and)*        "OR" binds loosest, then "AND", then "WITH"
 //   and        := term ("AND" term)*
 //   term       := "(" expression ")" | license ("WITH" exception)?
+//   exception  := a listed exception id
 //   license    := a listed id, optionally followed by "+" | LicenseRef-<id> | DocumentRef-<id>:LicenseRef-<id>
 //
-// Operators are matched with their case; license ids without it, as the specification says. An
-// exception id is checked for its form only, since School carries no list of exceptions.
+// Operators are matched with their case; license and exception ids without it, as the specification
+// says. An exception is a listed id (server/spdx-exception-ids.ts); a LicenseRef- is not one.
+import { EXCEPTION_IDS } from "./spdx-exception-ids.ts";
 import { DEPRECATED_LICENSE_IDS, LICENSE_IDS } from "./spdx-license-ids.ts";
 
 const listed = new Set([...LICENSE_IDS, ...DEPRECATED_LICENSE_IDS].map((id) => id.toLowerCase()));
 const ID = /^[A-Za-z0-9.-]+$/;
 const REF = /^(DocumentRef-[A-Za-z0-9.-]+:)?LicenseRef-[A-Za-z0-9.-]+$/;
-const EXCEPTION = /^(DocumentRef-[A-Za-z0-9.-]+:)?(AdditionRef-)?[A-Za-z0-9.-]+$/;
+const exceptions = new Set(EXCEPTION_IDS.map((id) => id.toLowerCase()));
 const OPERATORS = new Set(["AND", "OR", "WITH"]);
 
 /** Why `expression` is not an SPDX license expression, or null when it is one. */
@@ -47,8 +49,10 @@ export function spdxProblem(expression: string): string | null {
     if (problem !== null || peek() !== "WITH") return problem;
     at++;
     const t = peek();
-    if (t === undefined || !EXCEPTION.test(t) || OPERATORS.has(t)) return `expected an exception after WITH, found ${found()}`;
+    if (t === undefined || OPERATORS.has(t) || t === "(" || t === ")") return `expected an exception after WITH, found ${found()}`;
     at++;
+    if (!ID.test(t)) return `${JSON.stringify(t)} is not an exception id`;
+    if (!exceptions.has(t.toLowerCase())) return `unknown exception ${JSON.stringify(t)}; it is not on the SPDX exceptions list`;
     return null;
   }
   function chain(operator: string, next: () => string | null): string | null {
