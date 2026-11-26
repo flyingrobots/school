@@ -7,6 +7,7 @@
 //
 // Output is JSON Lines on stdout and stderr alike, each line naming its schema in
 // server/schemas/check/ (flyingrobots/school#120's rules, as for the migrate job): `start`, then
+// `manifest` (what course.json declares beyond its title; --human lists it after the lessons instead), then
 // `done` with the lessons it found, or one `error` line on stderr. The loader stops at the first
 // problem, so that is the one reported. `--human` prints prose instead. Exit codes: 0 School would
 // serve the course, 1 it would refuse it (or the check failed), 2 a bad argument or no such folder.
@@ -18,7 +19,7 @@ import { jsonLines, loadSchemas } from "./jsonl.ts";
 
 const KIND = "school.check";
 const schemas = loadSchemas(join(import.meta.dir, "schemas", "check"));
-const ids = { help: `${KIND}.help`, schema: `${KIND}.schema`, start: `${KIND}.start`, done: `${KIND}.done`,
+const ids = { help: `${KIND}.help`, schema: `${KIND}.schema`, start: `${KIND}.start`, manifest: `${KIND}.manifest`, done: `${KIND}.done`,
   invalid: `${KIND}.error.invalid`, usage: `${KIND}.error.usage`, failed: `${KIND}.error.failed` };
 
 const USAGE = "bun check-course.ts <folder> [--human] | --help | --schema";
@@ -39,12 +40,15 @@ type Lesson = { file: string; id: string; title: string; quizzes: number; explai
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-/** The done line's summary, author, license and format as prose lines, leaving out those the course does not declare. */
+/** The manifest's summary, author, license and format as prose lines, leaving out those the course does not declare. */
 function manifestLines(l: { summary: string | null; author: string | null; license: string | null; format: number | null }): string[] {
   const parts = [l.author === null ? null : `by ${l.author}`, l.license === null ? null : `license ${l.license}`, l.format === null ? null : `format ${l.format}`];
   const declared = parts.filter((p) => p !== null);
   return [...(l.summary === null ? [] : [`summary: ${l.summary}`]), ...(declared.length === 0 ? [] : [declared.join("; ")])];
 }
+
+/** What course.json declared, held for --human, which prints it after the lessons rather than as a line of its own. */
+let declared = { summary: null, author: null, license: null, format: null } as Parameters<typeof manifestLines>[0];
 
 function prose(l: Record<string, any>): string {
   switch (l._schema.id) {
@@ -59,7 +63,7 @@ function prose(l: Record<string, any>): string {
     case ids.done:
       return [`ok: ${l.title ?? "(no title declared)"}, ${plural(l.lessons.length, "lesson")}, ${plural(l.quizzes, "quiz", "quizzes")}, ${plural(l.explains, "explain block")}`,
         ...l.lessons.map((x: Lesson) => `  ${x.file}  ${x.title}  (${plural(x.quizzes, "quiz", "quizzes")}, ${plural(x.explains, "explain block")})`),
-        ...manifestLines({ summary: l.summary, author: l.author, license: l.license, format: l.format })].join("\n");
+        ...manifestLines(declared)].join("\n");
     default: return `error (${l.error})${l.file ? ` in ${l.file}` : ""}: ${l.message}`;
   }
 }
@@ -113,7 +117,9 @@ try {
     file: files[i]!, id: p.id, title: p.type === "page" ? p.title : p.id, quizzes: quizIds(p).size, explains: explainIds(p).size,
   }));
   const all = [...library.byId.values()];
-  out.emit("stdout", ids.done, { event: "done", ok: true, folder, title, summary, author, license, format, lessons,
+  declared = { summary, author, license, format };
+  if (!human) out.emit("stdout", ids.manifest, { event: "manifest", ...declared });
+  out.emit("stdout", ids.done, { event: "done", ok: true, folder, title, lessons,
     quizzes: all.filter((b) => b.type === "quiz").length, explains: all.filter((b) => b.type === "explain").length });
   process.exit(0);
 } catch (e) {
