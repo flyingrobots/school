@@ -13,12 +13,13 @@ const CourseFile = z.strictObject({
   title: z.string().trim().min(1, "must not be empty"),
 });
 
-export type CourseFile = { title: string | null };
+export type CourseFile = { title: string | null; summary: string | null; author: string | null; license: string | null; format: number | null };
+const NOT_YET = { summary: null, author: null, license: null, format: null }; // flyingrobots/school#209: not implemented yet
 
 /** The course at `root`'s declaration, or `{ title: null }` when it has no course.json. Throws CourseFileError when it is malformed. */
 export function readCourseFile(root: string): CourseFile {
   const path = join(root, "course.json");
-  if (!existsSync(path)) return { title: null };
+  if (!existsSync(path)) return { title: null, ...NOT_YET };
   let json: unknown;
   try {
     json = JSON.parse(readFileSync(path, "utf8"));
@@ -30,5 +31,5 @@ export function readCourseFile(root: string): CourseFile {
     const why = parsed.error.issues.map((i) => (i.path.length > 0 ? `"${i.path.join(".")}" ${i.message}` : i.message)).join("; ");
     throw new CourseFileError(`${path} is not a course file: ${why}. It must be an object such as {"title": "My Course"}`);
   }
-  return { title: parsed.data.title };
+  return { title: parsed.data.title, ...NOT_YET };
 }

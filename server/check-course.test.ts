@@ -55,12 +55,16 @@ describe("school check", () => {
   test("CHECK-2: a folder with no lessons and no course.json is a valid, empty course", async () => {
     const r = await run([course({})]);
     expect(r.code).toBe(0);
-    expect(lines(r).out.at(-1)).toMatchObject({ title: null, lessons: [], quizzes: 0, explains: 0 });
+    expect(lines(r).out.at(-1)).toMatchObject({ title: null, summary: null, author: null, license: null, format: null, lessons: [], quizzes: 0, explains: 0 });
   });
 
   const invalid: [string, Parameters<typeof course>[0], string | null, string][] = [
     ["a malformed course.json", { course: "{ nope" }, "course.json", "not valid JSON"],
     ["a course.json with an unknown key", { course: JSON.stringify({ title: "T", colour: "red" }) }, "course.json", "not a course file"],
+    ["a course.json with a whitespace-only summary", { course: JSON.stringify({ title: "T", summary: "  " }) }, "course.json", '"summary"'],
+    ["a course.json whose author is not a string", { course: JSON.stringify({ title: "T", author: 7 }) }, "course.json", '"author"'],
+    ["a course.json with an unknown SPDX id", { course: JSON.stringify({ title: "T", license: "Frobnicate-1.0" }) }, "course.json", "Frobnicate-1.0"],
+    ["a course.json in format 2", { course: JSON.stringify({ title: "T", format: 2 }) }, "course.json", '"format" is 2'],
     ["a lesson that is not JSON", { lessons: { "0001.json": "{" } }, "0001.json", "invalid JSON"],
     ["a duplicate block id", { lessons: { "0001.json": page("a", [quiz("q")]), "0002.json": page("b", [quiz("q")]) } }, "0002.json", "duplicate block id"],
     ["two correct choices", { lessons: { "0001.json": page("a", [quiz("q", [true, true])]) } }, "0001.json", "exactly one choice must be correct"],
@@ -95,6 +99,23 @@ describe("school check", () => {
     const s = await run(["--schema"]);
     expect(s.code).toBe(0);
     expect(lines(s).out.map((l) => l.id).sort()).toEqual([...schemas.ids].sort());
+  });
+
+  const manifest = { title: "Bells", summary: " Ring the changes. ", author: "A Ringer", license: "MIT OR Apache-2.0", format: 1 };
+
+  test("CHECK-8: a course's summary, author, license and format are on the done line, trimmed", async () => {
+    const r = await run([course({ course: JSON.stringify(manifest), lessons: { "0001.json": page("a", [quiz("q")]) } })]);
+    expect(r.code).toBe(0);
+    expect(lines(r).out.at(-1)).toMatchObject({ title: "Bells", summary: "Ring the changes.", author: "A Ringer", license: "MIT OR Apache-2.0", format: 1 });
+  });
+
+  test("CHECK-9: --human names the course's author, license and format", async () => {
+    const r = await run(["--human", course({ course: JSON.stringify(manifest), lessons: { "0001.json": page("a", [quiz("q")]) } })]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("Ring the changes.");
+    expect(r.stdout).toContain("A Ringer");
+    expect(r.stdout).toContain("MIT OR Apache-2.0");
+    expect(r.stdout).toContain("format 1");
   });
 
   test("CHECK-6: --human prints prose, not JSON", async () => {
