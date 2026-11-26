@@ -61,6 +61,12 @@ export function safeFigure(markup: string): string | null {
   return cleaned(markup)?.outerHTML ?? null
 }
 
+// A lone surrogate, which a JSON string may hold and encodeURIComponent throws on. Each becomes
+// U+FFFD, as String.prototype.toWellFormed does (ES2024; this project's lib is ES2023).
+const LONE_SURROGATE =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g
+const wellFormed = (s: string) => s.replace(LONE_SURROGATE, "\uFFFD")
+
 const VAR = /var\(\s*(--[\w-]+)\s*(?:,([^)]*))?\)/g
 
 /**
@@ -88,6 +94,6 @@ export function figureImage(
   // The serialiser declares the SVG namespace itself, so the image parses as SVG.
   return (
     "data:image/svg+xml," +
-    encodeURIComponent(new XMLSerializer().serializeToString(svg))
+    encodeURIComponent(wellFormed(new XMLSerializer().serializeToString(svg)))
   )
 }
