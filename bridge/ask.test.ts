@@ -142,12 +142,13 @@ test("an overall deadline stops the list rather than running past it", async () 
   expect(reached("second-ran")).toBe(false);
 });
 
+// The agent's timeout is far longer than the test's own limit, so an agent left running fails the test.
 test("a caller that goes away stops the agent, and the reply ends as failed", async () => {
-  const cfg = ask([{ name: "claude", steps: [{ delta: "Start " }, { hang: true }] }]);
+  const cfg = ask([{ name: "claude", steps: [{ delta: "Start " }, { hang: true }] }], 600);
   const gone = new AbortController();
   const r = await runAsk(cfg, { prompt: "p", signal: gone.signal }, () => gone.abort());
   expect(r).toMatchObject({ status: "failed", agent: "claude", error: "the caller went away" });
-});
+}, 15_000);
 
 test("a caller already gone runs no agent", async () => {
   const cfg = ask([{ name: "claude", steps: [{ mark: "ran" }, { result: "x" }] }]);
@@ -240,4 +241,13 @@ test("the ask list is optional, its own timeout defaults to 90 s, and it is chec
   expect(() => loadConfig({ agents: grader, ask: { timeout_seconds: 0, agents: grader } })).toThrow(/ask: timeout_seconds/);
   expect(() => loadConfig({ agents: grader, ask: { agents: [{ name: "x", command: "a" }, { name: "x", command: "b" }] } })).toThrow(/ask agent "x" is listed twice/);
   expect(() => loadConfig({ agents: grader, ask: { agents: [{ name: "x", command: "a", output: "telepathy" }] } })).toThrow(/claude-stream-json/);
+});
+
+test("the example configuration loads, its first ask agent streaming", () => {
+  const example = loadConfig(JSON.parse(readFileSync(join(import.meta.dir, "bridge.example.json"), "utf8")));
+  expect(example.ask?.timeoutMs).toBe(90_000);
+  expect(example.ask?.agents.map((a) => [a.name, a.output])).toEqual([["claude", "claude-stream-json"], ["codex", "text"]]);
+  // Claude Code 2.1.323 refuses --output-format stream-json under -p without --verbose, and streams
+  // deltas only with --include-partial-messages.
+  expect(example.ask?.agents[0]!.argv).toEqual(expect.arrayContaining(["--output-format", "stream-json", "--include-partial-messages", "--verbose", "-p", "{prompt}"]));
 });

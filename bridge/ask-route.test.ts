@@ -93,7 +93,7 @@ test("POST /ask streams each delta to the caller as NDJSON before the agent exit
 
 test("a grading in progress does not delay a question", async () => {
   // The grading agent says it has started, then waits until the test lets it finish.
-  await start([grader("slow", `: > "${gates}/grading"; while [ ! -e "${gates}/finish-grading" ]; do sleep 0.01; done; echo '{"ok": true}'`)],
+  await start([grader("slow", `: > "${gates}/grading"; while [ ! -e "${gates}/finish-grading" ]; do [ -d "${gates}" ] || exit 1; sleep 0.01; done; echo '{"ok": true}'`)],
     [{ name: "claude", steps: [{ delta: "Answered." }, { result: "Answered." }] }]);
   const grading = post("/run", { prompt: "grade this", schema });
   await waitFor("grading");

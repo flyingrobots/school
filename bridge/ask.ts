@@ -97,9 +97,14 @@ async function askAgent(agent: Agent, job: AskJob, timeoutMs: number, onDelta: (
       stdin: usesPlaceholder(agent.argv, "{prompt}") ? "ignore" : new TextEncoder().encode(job.prompt),
     });
     let why: string | null = null;
+    let sweep: ReturnType<typeof setInterval> | null = null;
+    const hit = () => { try { process.kill(-proc.pid, "SIGKILL"); } catch {} };
     const kill = (reason: string) => {
       why ??= reason;
-      try { process.kill(-proc.pid, "SIGKILL"); } catch {}
+      hit();
+      // A child the agent forks just as the signal lands can miss it, still in the group, and hold
+      // the pipes open until the timeout: sweep the group until they close.
+      sweep ??= setInterval(hit, 50);
     };
     const timer = setTimeout(() => kill(`timed out after ${Math.round(timeoutMs / 1000)} s`), timeoutMs);
     const gone = () => kill(GONE);
@@ -115,6 +120,7 @@ async function askAgent(agent: Agent, job: AskJob, timeoutMs: number, onDelta: (
       readLines(proc.stdout, onLine, !streaming, () => kill("produced more than 8 MiB of output")),
       readLines(proc.stderr, () => {}, false, () => kill("produced more than 8 MiB of error output")),
     ]);
+    if (sweep !== null) clearInterval(sweep);
     const exitCode = await proc.exited;
     clearTimeout(timer);
     job.signal?.removeEventListener("abort", gone);

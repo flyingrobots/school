@@ -41,7 +41,8 @@ function shell(step: Step): string {
   }
   if ("line" in step) return `printf '%s\\n' ${quote(step.line)}`;
   if ("stderr" in step) return `printf '%s\\n' ${quote(step.stderr)} >&2`;
-  if ("gate" in step) return `while [ ! -e "$1/${step.gate}" ]; do sleep 0.01; done`;
+  // A gate whose folder is gone (the test has ended) ends the agent, so none is left looping.
+  if ("gate" in step) return `while [ ! -e "$1/${step.gate}" ]; do [ -d "$1" ] || exit 1; sleep 0.01; done`;
   if ("mark" in step) return `: > "$1/${step.mark}"`;
   if ("echoPrompt" in step) {
     // The prompt is written back as one delta; the tests' prompts hold no character JSON escapes.
