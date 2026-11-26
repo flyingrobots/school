@@ -328,13 +328,19 @@ inbox (receipt `8f0453a2-a1c6-47af-8a27-cf05c4503970`). The maintainer may overt
 | Q7, signed commits | Optional at first; required before strangers' courses are listed |
 | Q8, browse inside School | Not at first |
 
-Two refinements to §5:
+Three refinements to §4 and §5:
 
 1. **Step 1 is additive.** The new `course.json` keys are optional, and School refuses only
    invalid values, never a course that lacks them. Requiring them would break every existing
    course. The index's CI requires them for a listing.
 2. **Step 3 belongs to flyingrobots/school#188**, which designs installing from a repository URL
    and from an uploaded bundle together, on top of steps 1 and 2.
+3. **Step 2 sandboxes rather than strips.** Lesson block HTML is already sanitised when shown
+   (`web/src/components/lesson.tsx`), so an untrusted course keeps that path. What §4.4 and step 2
+   leave open is every file served from the course: flyingrobots/school#210 serves those with
+   `Content-Security-Policy: sandbox` and `nosniff`, so they cannot run script as School. Stripping
+   all raw HTML would lose formatting the sanitiser already makes safe. Where §4.4 and step 2 say
+   "sanitised Markdown with raw HTML stripped", read this refinement instead.
 
 | Step | Issue |
 | --- | --- |
