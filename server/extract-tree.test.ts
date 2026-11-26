@@ -241,7 +241,7 @@ describe("extracting a commit's tree", () => {
     expect(existsSync(s.into)).toBe(false);
   });
 
-  test("the default limits are RFC 7 Table 6.2's", () => {
+  test("EXTRACT-14: the default limits are RFC 7 Table 6.2's", () => {
     const MiB = 1024 * 1024;
     expect(DEFAULT_LIMITS).toEqual({ files: 2000, fileBytes: 8 * MiB, totalBytes: 64 * MiB, pathBytes: 255, depth: 8, gitMs: 60_000 });
   });
