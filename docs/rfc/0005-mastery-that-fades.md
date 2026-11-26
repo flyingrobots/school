@@ -3,13 +3,13 @@ title: "RFC 5: Mastery that fades"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-26
 updated: 2026-11-26
-version: 0.1.0
-status: "Proposal, awaiting the maintainer's decision. Answers flyingrobots/school#192. Builds on flyingrobots/school at commit 2f18da4."
+version: 0.2.0
+status: "Decided, 2026-11-26: a growing half-life, every open question answered as recommended. Decided by an agent under the maintainer's delegated authority; the maintainer may overturn it. Answers flyingrobots/school#192. Builds on flyingrobots/school at commit 2f18da4."
 ---
 
 # RFC 5: Mastery that fades
 
-> **How to read this.** **Built** means it exists at commit `2f18da4`. **Proposed** means this RFC asks for it. **Open** means it needs the maintainer's decision. Nothing here is decided. How due review works today is in the [due review reference](../topics/due-review/README.md); this RFC describes only what would change.
+> **How to read this.** **Built** means it exists at commit `2f18da4`. **Proposed** means this RFC asks for it. **Open** means it needs the maintainer's decision. The decision is recorded at the end of this RFC. How due review works today is in the [due review reference](../topics/due-review/README.md); this RFC describes only what would change.
 
 ## Executive Summary
 
@@ -39,6 +39,7 @@ In short: one read-only function derives a fading measure from the record, due r
 7. [Risks](#7-risks)
 8. [Open questions](#8-open-questions)
 9. [References](#9-references)
+10. [Decision](#10-decision)
 
 ## 1. The problem and who it serves
 
@@ -388,3 +389,21 @@ The models in §3 are described from these sources. They were cited from memory 
 [^5]: Open Spaced Repetition, "The Algorithm," fsrs4anki wiki. [Online]. Available: https://github.com/open-spaced-repetition/fsrs4anki/wiki/The-Algorithm. FSRS's model of difficulty, stability and retrievability in Option D.
 
 These sources describe flashcard models; none was tested against School's record, which is the point of §8 Q9.
+
+## 10. Decision
+
+Decided on 2026-11-26 by an agent under the maintainer's delegated authority for that run. The decision record, with each option's pros, cons and why it was rejected, was delivered to Reader's inbox (receipt `f7950f09-4846-4b86-81ba-4c4557a5291c`). The maintainer may overturn any part.
+
+Every recommendation in Table 0.1 and §8 is accepted as written: a growing half-life, the aid rules of §4.2, words never numbers, and one added due-review rule ranked last. The constants stay at 1 day and 2.5 until real study gives evidence. FSRS is reconsidered after step 7.
+
+| Step | Issue |
+| --- | --- |
+| 1, `school.mastery` | flyingrobots/school#217 |
+| 2, `school.mastery_rollup` | flyingrobots/school#218 |
+| 3, the faded due-review rule | flyingrobots/school#219 |
+| 4, the course API counts | flyingrobots/school#220 |
+| 5, the course page words | flyingrobots/school#221 |
+| 6, the home timeline | flyingrobots/school#222 |
+| 7, the learner gate | flyingrobots/school#223, blocked on real study |
+
+In short: RFC 5 is decided as written, and its seven steps are filed.
