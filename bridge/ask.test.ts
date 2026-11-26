@@ -251,3 +251,71 @@ test("the example configuration loads, its first ask agent streaming", () => {
   // deltas only with --include-partial-messages.
   expect(example.ask?.agents[0]!.argv).toEqual(expect.arrayContaining(["--output-format", "stream-json", "--include-partial-messages", "--verbose", "-p", "{prompt}"]));
 });
+
+// Claude Code retries a failed request mid-stream: an `api_retry` line, then a new message that
+// streams the answer again. Passing both on would give the learner the answer twice; RFC 6
+// Table 5.4 ends a reply as failed after its first delta, so a retry that follows one is a failure.
+test("a retry after the first delta ends the reply as failed and the agent is killed", async () => {
+  const cfg = ask([
+    { name: "first", steps: [{ delta: "ONE " }, { retry: true }, { messageStart: true }, { delta: "ONE again " }, { mark: "kept-going" }, { hang: true }], timeout_seconds: 600 },
+    { name: "second", steps: [{ mark: "second-ran" }, { result: "x" }] },
+  ], 600);
+  const deltas: string[] = [];
+  const r = await runAsk(cfg, { prompt: "p" }, (t) => deltas.push(t));
+  expect(deltas).toEqual(["ONE "]);
+  expect(r).toMatchObject({ status: "failed", agent: "first", error: "the agent started the answer again after its first delta" });
+  expect(r.attempts).toHaveLength(1);
+  expect(reached("second-ran")).toBe(false);
+}, 15_000);
+
+test("a second message_start alone, after a delta, also ends the reply as failed", async () => {
+  const cfg = ask([{ name: "first", steps: [{ delta: "ONE " }, { messageStart: true }, { delta: "ONE again " }, { result: "ONE ONE again " }] }]);
+  const deltas: string[] = [];
+  const r = await runAsk(cfg, { prompt: "p" }, (t) => deltas.push(t));
+  expect(deltas).toEqual(["ONE "]);
+  expect(r).toMatchObject({ status: "failed", agent: "first", error: "the agent started the answer again after its first delta" });
+});
+
+test("a retry before any delta is harmless: the answer that follows is passed on whole", async () => {
+  const cfg = ask([{ name: "first", steps: [{ retry: true }, { messageStart: true }, { delta: "Only " }, { delta: "once." }, { result: "Only once." }] }]);
+  const deltas: string[] = [];
+  const r = await runAsk(cfg, { prompt: "p" }, (t) => deltas.push(t));
+  expect(deltas).toEqual(["Only ", "once."]);
+  expect(r).toMatchObject({ status: "succeeded", agent: "first" });
+});
+
+test("a stream recorded from Claude Code 2.1.323 retrying mid-stream fails after the first answer's deltas", async () => {
+  const fixture = join(import.meta.dir, "testing", "fixtures", "claude-retry-stream.jsonl");
+  const cfg = ask([{ name: "claude", command: `/bin/cat ${fixture}` }]);
+  const deltas: string[] = [];
+  const r = await runAsk(cfg, { prompt: "p" }, (t) => deltas.push(t));
+  expect(deltas.join("")).toBe("ONE(1) TWO(1) ");
+  expect(r).toMatchObject({ status: "failed", agent: "claude", error: "the agent started the answer again after its first delta" });
+});
+
+// `setsid` puts a child outside the agent's process group, so a kill of the group misses it while
+// it holds the pipes. The bridge must stop waiting for them, or the queue's one slot never frees.
+test("a child that escaped the process group and holds the pipes does not keep the reply waiting", async () => {
+  const pidFile = join(gates, "escaped.pid");
+  const script = join(import.meta.dir, "testing", "escaping-agent.ts");
+  const cfg = ask([{ name: "escapes", command: `${process.execPath} ${script} ${pidFile}` }], 600);
+  // The agent writes its pid file before its delta, so the child exists when the caller goes.
+  const gone = new AbortController();
+  let t0 = 0;
+  try {
+    const r = await runAsk(cfg, { prompt: "p", signal: gone.signal }, () => { t0 = Date.now(); gone.abort(); });
+    expect(r).toMatchObject({ status: "failed", agent: "escapes", error: "the caller went away" });
+    expect(Date.now() - t0).toBeLessThan(5_000);
+  } finally {
+    try { process.kill(Number(readFileSync(pidFile, "utf8")), "SIGKILL"); } catch {}
+  }
+}, 30_000);
+
+test("a caller that hangs up before any delta is told of no agent", async () => {
+  const cfg = ask([{ name: "claude", steps: [{ gate: "never" }, { delta: "late" }, { result: "late" }] }], 600);
+  const gone = new AbortController();
+  setTimeout(() => gone.abort(), 300);
+  const r = await runAsk(cfg, { prompt: "p", signal: gone.signal }, () => {});
+  expect(r).toMatchObject({ status: "failed", agent: null, error: "the caller went away" });
+  expect(r.attempts[0]).toMatchObject({ agent: "claude", deltas: 0 });
+}, 15_000);

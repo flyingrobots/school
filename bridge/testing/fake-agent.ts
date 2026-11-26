@@ -19,6 +19,8 @@ export type Step =
   | { gate: string } // wait until <gate folder>/<name> exists
   | { mark: string } // create <gate folder>/<name>
   | { echoPrompt: true } // the prompt, as one text delta
+  | { retry: true } // Claude Code's `api_retry` system line, printed when it starts the request again
+  | { messageStart: true } // another `message_start` event, which a retried request begins with
   | { hang: true } // sleep until killed
   | { exit: number };
 
@@ -39,6 +41,8 @@ function shell(step: Step): string {
         usage: step.usage ?? USAGE, total_cost_usd: 0.001, session_id: "fake" }),
     ].join("\n");
   }
+  if ("retry" in step) return out({ type: "system", subtype: "api_retry", attempt: 1, max_retries: 10, retry_delay_ms: 500, error_status: null, error: "unknown", session_id: "fake" });
+  if ("messageStart" in step) return event({ type: "message_start", message: { role: "assistant", content: [] } });
   if ("line" in step) return `printf '%s\\n' ${quote(step.line)}`;
   if ("stderr" in step) return `printf '%s\\n' ${quote(step.stderr)} >&2`;
   // A gate whose folder is gone (the test has ended) ends the agent, so none is left looping.
