@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "school.check.done/1.0.0",
+  "$id": "school.check.done/1.1.0",
   "title": "Done",
   "description": "On stdout, last, before exit 0: the course loaded as School would serve it.",
   "type": "object",
@@ -13,7 +13,7 @@
           "const": "school.check.done"
         },
         "version": {
-          "const": "1.0.0"
+          "const": "1.1.0"
         }
       },
       "required": [
@@ -51,6 +51,38 @@
         "null"
       ],
       "description": "course.json's title, or null when the course declares none."
+    },
+    "summary": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "course.json's summary, trimmed, or null when the course declares none."
+    },
+    "author": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "course.json's author, trimmed, or null when the course declares none."
+    },
+    "license": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "course.json's license, an SPDX license expression as declared (trimmed), or null when the course declares none."
+    },
+    "format": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "description": "The course format course.json declares, or null when it declares none. School plays only the format it was built for, so a course that loads has none or that one."
     },
     "lessons": {
       "type": "array",
@@ -104,6 +136,10 @@
     "ok",
     "folder",
     "title",
+    "summary",
+    "author",
+    "license",
+    "format",
     "lessons",
     "quizzes",
     "explains"

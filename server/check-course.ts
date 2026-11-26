@@ -39,6 +39,13 @@ type Lesson = { file: string; id: string; title: string; quizzes: number; explai
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/** The done line's author, license and format, as a prose line naming those the course declares; none when it declares none. */
+function manifestLine(l: { author: string | null; license: string | null; format: number | null }): string[] {
+  const parts = [l.author === null ? null : `by ${l.author}`, l.license === null ? null : `license ${l.license}`, l.format === null ? null : `format ${l.format}`];
+  const declared = parts.filter((p) => p !== null);
+  return declared.length === 0 ? [] : [`  ${declared.join("; ")}`];
+}
+
 function prose(l: Record<string, any>): string {
   switch (l._schema.id) {
     case ids.help:
@@ -51,6 +58,8 @@ function prose(l: Record<string, any>): string {
     case ids.start: return `checking ${l.folder}`;
     case ids.done:
       return [`ok: ${l.title ?? "(no title declared)"}, ${plural(l.lessons.length, "lesson")}, ${plural(l.quizzes, "quiz", "quizzes")}, ${plural(l.explains, "explain block")}`,
+        ...(l.summary === null ? [] : [`  ${l.summary}`]),
+        ...manifestLine({ author: l.author, license: l.license, format: l.format }),
         ...l.lessons.map((x: Lesson) => `  ${x.file}  ${x.title}  (${plural(x.quizzes, "quiz", "quizzes")}, ${plural(x.explains, "explain block")})`)].join("\n");
     default: return `error (${l.error})${l.file ? ` in ${l.file}` : ""}: ${l.message}`;
   }
@@ -99,13 +108,13 @@ const lessonsDir = join(folder, "lessons");
 // The same files, in the same order, that loadLibrary reads.
 const files = existsSync(lessonsDir) ? readdirSync(lessonsDir).filter((f) => f.endsWith(".json")).sort() : [];
 try {
-  const { title } = readCourseFile(folder);
+  const { title, summary, author, license, format } = readCourseFile(folder);
   const library = loadLibrary(lessonsDir);
   const lessons: Lesson[] = library.pages.map((p, i) => ({
     file: files[i]!, id: p.id, title: p.type === "page" ? p.title : p.id, quizzes: quizIds(p).size, explains: explainIds(p).size,
   }));
   const all = [...library.byId.values()];
-  out.emit("stdout", ids.done, { event: "done", ok: true, folder, title, lessons,
+  out.emit("stdout", ids.done, { event: "done", ok: true, folder, title, summary, author, license, format, lessons,
     quizzes: all.filter((b) => b.type === "quiz").length, explains: all.filter((b) => b.type === "explain").length });
   process.exit(0);
 } catch (e) {
