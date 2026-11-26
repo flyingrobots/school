@@ -185,12 +185,14 @@ export function mountTable(config: Config): Record<string, string> {
   return { ...config.mounts };
 }
 
-export type Course = { name: string; root: string; lessons: string; reference: string };
+/** `trusted` is false for a course from SCHOOL_UNTRUSTED_COURSES (flyingrobots/school#210). */
+export type Course = { name: string; root: string; lessons: string; reference: string; trusted: boolean };
 
 export function course(config: Config, name: string): Course | null {
   const root = config.courses[name];
   if (root === undefined) return null;
-  return { name, root, lessons: join(root, "lessons"), reference: join(root, "reference") };
+  // Not implemented yet (flyingrobots/school#210): every course is still trusted.
+  return { name, root, lessons: join(root, "lessons"), reference: join(root, "reference"), trusted: true };
 }
 
 export function courseNames(config: Config): string[] {

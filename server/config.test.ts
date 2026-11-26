@@ -194,3 +194,43 @@ test("a first run with no state directory yet is accepted", () => {
     done();
   }
 });
+
+// Untrusted courses (flyingrobots/school#210). SCHOOL_UNTRUSTED_COURSES takes the same name=path
+// pairs as SCHOOL_COURSES; a course is trusted or untrusted, never both.
+test("SCHOOL_UNTRUSTED_COURSES registers courses that are not trusted, beside trusted ones", () => {
+  const c = parseConfig({ SCHOOL_COURSES: "own=/courses/own", SCHOOL_UNTRUSTED_COURSES: "guest=/courses/guest", SCHOOL_STATE: "/var/school" }, FRAMEWORK);
+  expect(courseNames(c)).toEqual(["guest", "own"]);
+  expect(course(c, "guest")).toEqual({ name: "guest", root: "/courses/guest", lessons: "/courses/guest/lessons", reference: "/courses/guest/reference", trusted: false });
+  expect(course(c, "own")?.trusted).toBe(true);
+});
+
+test("a course from SCHOOL_COURSE or SCHOOL_COURSES stays trusted when nothing marks it", () => {
+  expect(course(parseConfig({ SCHOOL_COURSE: "/courses/own", SCHOOL_STATE: "/var/school" }, FRAMEWORK), "own")?.trusted).toBe(true);
+  expect(course(parseConfig({ SCHOOL_COURSES: "own=/courses/own", SCHOOL_STATE: "/var/school" }, FRAMEWORK), "own")?.trusted).toBe(true);
+});
+
+test("a name both trusted and untrusted is refused, naming both variables", () => {
+  expect(() => parseConfig({ SCHOOL_COURSES: "dual=/courses/a", SCHOOL_UNTRUSTED_COURSES: "dual=/courses/b", SCHOOL_STATE: "/var/school" }, FRAMEWORK))
+    .toThrow(/"dual" is in both SCHOOL_COURSES and SCHOOL_UNTRUSTED_COURSES/);
+  expect(() => parseConfig({ SCHOOL_COURSE: "/courses/dual", SCHOOL_UNTRUSTED_COURSES: "dual=/courses/b", SCHOOL_STATE: "/var/school" }, FRAMEWORK))
+    .toThrow(/"dual" is in both SCHOOL_COURSE and SCHOOL_UNTRUSTED_COURSES/);
+});
+
+test("one folder both trusted and untrusted, under two names, is refused", () => {
+  expect(() => parseConfig({ SCHOOL_COURSES: "own=/courses/same", SCHOOL_UNTRUSTED_COURSES: "guest=/courses/same/", SCHOOL_STATE: "/var/school" }, FRAMEWORK))
+    .toThrow(/untrusted course "guest" \(\/courses\/same\) overlaps trusted course "own" \(\/courses\/same\)/);
+});
+
+test.each([
+  ["inside a trusted one", "own=/courses/own", "guest=/courses/own/reference/guest"],
+  ["around a trusted one", "own=/courses/guest/own", "guest=/courses/guest"],
+])("an untrusted folder %s is refused, since the trusted course would serve its files unsandboxed", (_, trusted, untrusted) => {
+  expect(() => parseConfig({ SCHOOL_COURSES: trusted, SCHOOL_UNTRUSTED_COURSES: untrusted, SCHOOL_STATE: "/var/school" }, FRAMEWORK))
+    .toThrow(/overlaps trusted course "own"/);
+});
+
+test("SCHOOL_UNTRUSTED_COURSES follows SCHOOL_COURSES' rules for names and learner state", () => {
+  expect(() => parseConfig({ SCHOOL_UNTRUSTED_COURSES: "api=/x", SCHOOL_STATE: "/var/school" }, FRAMEWORK)).toThrow(/SCHOOL_UNTRUSTED_COURSES name "api" is reserved/);
+  expect(() => parseConfig({ SCHOOL_UNTRUSTED_COURSES: "guest=/courses/guest", SCHOOL_STATE: "/courses/guest/state" }, FRAMEWORK))
+    .toThrow(/must live outside the course/);
+});

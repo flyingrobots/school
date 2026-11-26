@@ -209,3 +209,12 @@ test("a progress.db that is not a SQLite database stops startup rather than bein
   expect(r.err).toContain(join(root, "state", "progress.db"));
   expect(existsSync(join(root, "state", "db"))).toBe(false);
 }), timeout(1));
+
+// flyingrobots/school#210: a course both trusted and untrusted is a configuration error, refused
+// before anything is served or created.
+test("a course both trusted and untrusted stops startup, naming both variables", () => inRoot(async (root) => {
+  const r = await boot({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_UNTRUSTED_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "state", "db")}` });
+  expect([r.up, r.code]).toEqual([false, 2]);
+  expect(r.err).toContain('"c" is in both SCHOOL_COURSES and SCHOOL_UNTRUSTED_COURSES');
+  expect(existsSync(join(root, "state", "db"))).toBe(false);
+}), timeout(1));
