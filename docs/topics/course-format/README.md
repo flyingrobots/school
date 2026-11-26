@@ -181,7 +181,7 @@ optional picture. The home page shows hooks for the lessons still ahead (`GET /a
 | `teaser` | yes | One line that makes the question worth answering |
 | `figure` | no | SVG markup, kept to drawing; an untrusted course's is drawn as an image ([trusted and untrusted courses](#trusted-and-untrusted-courses)) |
 
-A figure follows the light and dark themes when it is coloured with the theme's CSS variables:
+A figure loses its `style` and `class` attributes and any `<style>` element before it is shown, so colour it with presentation attributes such as `fill="var(--primary)"` and `stroke="var(--chart-1)"`. A figure follows the light and dark themes when it is coloured with the theme's CSS variables:
 `var(--primary)`, `var(--chart-1)` to `var(--chart-5)`, `var(--foreground)`,
 `var(--muted-foreground)` and `var(--background)`. A hook missing its question or teaser, or with a
 figure that is not a string, stops the lesson set from loading, like any other malformed block.

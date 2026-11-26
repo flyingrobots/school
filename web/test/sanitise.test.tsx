@@ -196,8 +196,10 @@ test.each([
 // 2025) then turns an attribute into live markup. Oracle: the figure that comes back, inserted the
 // way the page inserts it, holds no element whose content the HTML parser reads as raw text or
 // differently with scripting on (HTML, "parsing HTML fragments" and "the rules for parsing tokens
-// in HTML content"), no hazard, and nothing ran. happy-dom's parser puts every element of an <svg>
-// in the SVG namespace, so the check is by name, not namespace.
+// in HTML content"), and no hazard. That no raw-text element survives is the evidence: happy-dom
+// never runs an <img onerror>, so `fired` staying 0 proves nothing here (Chrome was checked by
+// hand). happy-dom's parser puts every element of an <svg> in the SVG namespace, so the check is
+// by name, not namespace.
 const RAW_TEXT = new Set([
   "noscript",
   "noembed",
