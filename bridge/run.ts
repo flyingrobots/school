@@ -23,37 +23,53 @@ export class BridgeConfigError extends Error {}
 
 /** Parse and check a configuration object (the parsed bridge.json). Throws BridgeConfigError. */
 export function loadConfig(raw: unknown): BridgeConfig {
-  const fail = (m: string): never => { throw new BridgeConfigError(m); };
   if (typeof raw !== "object" || raw === null) fail("the configuration must be a JSON object");
   const o = raw as Record<string, unknown>;
-  const seconds = (v: unknown, where: string) => {
-    const n = v === undefined ? 180 : v;
-    if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > 900) fail(`${where}timeout_seconds must be an integer from 1 to 900`);
-    return (n as number) * 1000;
-  };
-  const timeoutMs = seconds(o.timeout_seconds, "");
-  if (!Array.isArray(o.agents) || o.agents.length === 0) fail("list at least one agent under \"agents\"");
+  const timeoutMs = seconds(o.timeout_seconds, 180, "");
+  const agents = agentList(o.agents, timeoutMs, "agents", "agent");
+  let ask: AskConfig | null = null;
+  if (o.ask !== undefined) {
+    if (typeof o.ask !== "object" || o.ask === null || Array.isArray(o.ask)) fail('"ask" must be an object, like { "timeout_seconds": 90, "agents": [...] }');
+    const a = o.ask as Record<string, unknown>;
+    const askTimeout = seconds(a.timeout_seconds, 90, "ask: ");
+    ask = { timeoutMs: askTimeout, agents: agentList(a.agents, askTimeout, "ask", "ask agent") };
+  }
+  return { timeoutMs, agents, ask };
+}
+
+const fail = (m: string): never => { throw new BridgeConfigError(m); };
+
+/** A timeout in seconds, from 1 to 900, as milliseconds; `fallback` when it is not given. */
+function seconds(v: unknown, fallback: number, where: string): number {
+  const n = v === undefined ? fallback : v;
+  if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > 900) fail(`${where}timeout_seconds must be an integer from 1 to 900`);
+  return (n as number) * 1000;
+}
+
+/** One list of agents, the grading list or the ask list, each name used once. */
+function agentList(list: unknown, timeoutMs: number, where: "agents" | "ask", what: string): Agent[] {
+  const under = where === "agents" ? '"agents"' : '"ask"';
+  if (!Array.isArray(list) || list.length === 0) fail(`list at least one agent under ${under}`);
   const seen = new Set<string>();
-  const agents = (o.agents as unknown[]).map((a, i): Agent => {
-    if (typeof a !== "object" || a === null) fail(`agent ${i + 1} must be an object`);
+  return (list as unknown[]).map((a, i): Agent => {
+    if (typeof a !== "object" || a === null) fail(`${what} ${i + 1} must be an object`);
     const x = a as Record<string, unknown>;
-    if (typeof x.name !== "string" || x.name === "") fail(`agent ${i + 1} needs a "name"`);
+    if (typeof x.name !== "string" || x.name === "") fail(`${what} ${i + 1} needs a "name"`);
     const name = x.name as string;
-    if (seen.has(name)) fail(`agent "${name}" is listed twice`);
+    if (seen.has(name)) fail(`${what} "${name}" is listed twice`);
     seen.add(name);
-    if (typeof x.command !== "string") fail(`agent "${name}" needs a "command", like: claude -p {prompt}`);
+    if (typeof x.command !== "string") fail(`${what} "${name}" needs a "command", like: claude -p {prompt}`);
     let argv: string[] = [];
     try {
       argv = splitCommand(x.command as string);
     } catch (e) {
-      fail(`agent "${name}": ${e instanceof TemplateError ? e.message : String(e)}`);
+      fail(`${what} "${name}": ${e instanceof TemplateError ? e.message : String(e)}`);
     }
     const output = (x.output ?? "text") as OutputKind;
-    if (!OUTPUTS.includes(output)) fail(`agent "${name}": output must be one of ${OUTPUTS.join(", ")}`);
-    const ownTimeout = x.timeout_seconds === undefined ? timeoutMs : seconds(x.timeout_seconds, `agent "${name}": `);
+    if (!OUTPUTS.includes(output)) fail(`${what} "${name}": output must be one of ${OUTPUTS.join(", ")}`);
+    const ownTimeout = x.timeout_seconds === undefined ? timeoutMs : seconds(x.timeout_seconds, 0, `${what} "${name}": `);
     return { name, argv, output, timeoutMs: ownTimeout, enabled: x.enabled !== false };
   });
-  return { timeoutMs, agents, ask: null };
 }
 
 export type Attempt = {
@@ -89,13 +105,66 @@ export function extractJson(text: string): unknown {
 }
 
 /** The agent's final answer text, by the output kind its configuration declares. */
-function answerText(kind: OutputKind, stdout: string): string {
+export function answerText(kind: OutputKind, stdout: string): string {
   if (kind === "text") return stdout;
+  if (kind === "claude-stream-json") {
+    // The stream's last `result` line carries the final message, as `--output-format json` does.
+    const result = stdout.split("\n").map(claudeStreamLine).findLast((l) => l.kind === "result");
+    if (result?.kind !== "result") throw new Error("claude-stream-json output had no result line");
+    if (result.isError) throw new Error("the CLI reported an error");
+    if (result.text === null) throw new Error("claude-stream-json output had no result string");
+    return result.text;
+  }
   // `claude -p --output-format json`: one object whose `result` is the final message.
   const o = JSON.parse(stdout) as { result?: unknown; is_error?: boolean };
   if (o.is_error === true) throw new Error("the CLI reported an error");
   if (typeof o.result !== "string") throw new Error("claude-json output had no result string");
   return o.result;
+}
+
+/** An answer's token counts, as the CLI reported them; a count it left out is null. */
+export type Usage = {
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_creation_input_tokens: number | null;
+  cache_read_input_tokens: number | null;
+};
+
+/** The token counts in a Claude Code result's `usage`, or null when it has none. */
+export function usageOf(v: unknown): Usage | null {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
+  const u = v as Record<string, unknown>;
+  const count = (k: string) => (Number.isInteger(u[k]) && (u[k] as number) >= 0 ? (u[k] as number) : null);
+  return { input_tokens: count("input_tokens"), output_tokens: count("output_tokens"),
+    cache_creation_input_tokens: count("cache_creation_input_tokens"), cache_read_input_tokens: count("cache_read_input_tokens") };
+}
+
+export type StreamLine =
+  | { kind: "delta"; text: string }
+  | { kind: "result"; isError: boolean; text: string | null; usage: Usage | null }
+  | { kind: "other" };
+
+/**
+ * One line of `claude -p --output-format stream-json --include-partial-messages --verbose`
+ * (checked against Claude Code 2.1.323): a text delta is a `stream_event` line whose `event` is
+ * the API's `content_block_delta` with a `text_delta`; the last line is `result`, with `is_error`,
+ * the final `result` text and `usage`. Everything else, thinking deltas and lines that are not
+ * JSON included, is `other`.
+ */
+export function claudeStreamLine(line: string): StreamLine {
+  let o: unknown;
+  try {
+    o = JSON.parse(line);
+  } catch {
+    return { kind: "other" };
+  }
+  if (typeof o !== "object" || o === null) return { kind: "other" };
+  const l = o as { type?: unknown; event?: { type?: unknown; delta?: { type?: unknown; text?: unknown } }; is_error?: unknown; result?: unknown; usage?: unknown };
+  if (l.type === "stream_event" && l.event?.type === "content_block_delta" && l.event.delta?.type === "text_delta" && typeof l.event.delta.text === "string") {
+    return { kind: "delta", text: l.event.delta.text };
+  }
+  if (l.type === "result") return { kind: "result", isError: l.is_error === true, text: typeof l.result === "string" ? l.result : null, usage: usageOf(l.usage) };
+  return { kind: "other" };
 }
 
 async function readCapped(stream: ReadableStream<Uint8Array>, onOverflow: () => void): Promise<string> {
