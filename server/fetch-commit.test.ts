@@ -233,7 +233,14 @@ describe("fetchCommit: refusals from the server, with staging deleted", () => {
   });
 
   test("FETCH-15: a redirect is not followed", async () => {
-    const redirect = server((req) => Response.redirect(`https://${HOST}:${good.port}${new URL(req.url).pathname}${new URL(req.url).search}`, 302));
+    // Every request is redirected to /moved/ on the same host and port, which the pin covers, and
+    // /moved/ serves the repository: a git that followed the redirect would fetch the commit.
+    const backend = gitBackend(repos, home);
+    const redirect = server((req) => {
+      const u = new URL(req.url);
+      if (u.pathname.startsWith("/moved/")) return backend(new Request(`${u.origin}${u.pathname.slice(6)}${u.search}`, req));
+      return Response.redirect(`${u.origin}/moved${u.pathname}${u.search}`, 302);
+    });
     const r = request({ url: `https://${HOST}:${redirect.port}/course.git`, commit: second, network: network(redirect.port!) });
     expect(await fetchCommit(r)).toMatchObject({ ok: false, refusal: { reason: "git-failed" } });
     expect(existsSync(r.staging)).toBe(false);

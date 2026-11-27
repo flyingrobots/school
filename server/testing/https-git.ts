@@ -25,7 +25,7 @@ export function git(home: string, args: string[], input?: Uint8Array | string): 
 /** A bare repository built with plumbing, so every commit is exactly the files given. */
 export class TestRepo {
   constructor(readonly dir: string, readonly home: string) {
-    git(home, ["init", "--quiet", "--bare", "--template=", dir]);
+    git(home, ["init", "--quiet", "--bare", "--template=", "--initial-branch=main", dir]);
   }
 
   private g(args: string[], input?: Uint8Array | string) {
