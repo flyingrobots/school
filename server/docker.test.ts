@@ -78,7 +78,7 @@ test("no module but the startup refusal and its test reads SQLite", () => {
 // flyingrobots/school#91: under compose the server holds only school_app's credentials. The one-shot
 // `migrate` service holds the superuser's, runs the migrations and exits; the server waits for it.
 type Service = { build?: string; pull_policy?: string; command?: string[]; restart?: string; depends_on?: Record<string, { condition: string }>; environment?: Record<string, string>; secrets?: unknown[]; volumes?: string[] };
-const compose = Bun.YAML.parse(readFileSync(join(dir, "compose.yaml"), "utf8")) as { services: Record<string, Service> };
+const compose = Bun.YAML.parse(readFileSync(join(dir, "compose.yaml"), "utf8")) as { services: Record<string, Service>; volumes?: Record<string, unknown> };
 
 test("compose runs the migrate job once, as the superuser, before the server, and the server logs in as school_app only", () => {
   const { migrate, school, postgres } = compose.services;
@@ -129,6 +129,28 @@ test("compose can serve more courses from an optional library mount (flyingrobot
 
 test("compose passes SCHOOL_UNTRUSTED_COURSES through, empty by default (flyingrobots/school#210)", () => {
   expect(compose.services.school?.environment?.SCHOOL_UNTRUSTED_COURSES).toBe("${SCHOOL_UNTRUSTED_COURSES:-}");
+});
+
+// RFC 7 §5.1 and §6 (flyingrobots/school#233): installing fetches a course with git, into the course
+// store, a named volume at /store that the server's user must be able to write.
+test("the image has git, and the CA certificates an https fetch needs", () => {
+  const installs = [...dockerfile.matchAll(/^RUN apt-get update && apt-get install --yes --no-install-recommends ([^&\n]+) && rm -rf \/var\/lib\/apt\/lists\/\*$/gm)].flatMap((m) => m[1]!.trim().split(/\s+/));
+  expect(installs).toContain("git");
+  expect(installs).toContain("ca-certificates");
+});
+
+test("the image makes /store owned by the server's user, so a new course-store volume is writable", () => {
+  // Docker fills an empty named volume from the image's folder at its mount point, owner included.
+  expect(dockerfile).toMatch(/^RUN install --directory --owner=school --group=school --mode=0755 \/store$/m);
+  expect(dockerfile.indexOf("useradd")).toBeLessThan(dockerfile.indexOf("/store"));
+});
+
+test("compose mounts the course-store volume at /store and points SCHOOL_COURSE_STORE at it through SCHOOL_COMPOSE_COURSE_STORE, which .env may set empty and a host export never reaches", () => {
+  const school = compose.services.school;
+  expect(school?.volumes).toContain("course-store:/store");
+  expect(Object.keys(compose.volumes ?? {})).toContain("course-store");
+  // `-`, not `:-`: unset means /store, and an empty value in .env means no store, so installing is off.
+  expect(school?.environment?.SCHOOL_COURSE_STORE).toBe("${SCHOOL_COMPOSE_COURSE_STORE-/store}");
 });
 
 test("the image ships the migrate command", () => {

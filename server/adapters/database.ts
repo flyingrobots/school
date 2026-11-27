@@ -124,6 +124,7 @@ type Login = {
  */
 export const GRANTED_FUNCTIONS: readonly string[] = [
   "school.choice_decision_notes(text,text,text)",
+  "school.choose_course_trust(uuid,boolean,timestamp with time zone)",
   "school.choose_time_zone(text,timestamp with time zone)",
   "school.due_review(text,jsonb,timestamp with time zone,bigint,integer)",
   "school.encounter_answers(uuid)",
@@ -131,6 +132,8 @@ export const GRANTED_FUNCTIONS: readonly string[] = [
   "school.encounter_evidence(uuid)",
   "school.encounter_explanations(uuid)",
   "school.explanation(uuid)",
+  "school.install_course(uuid,text,text,text,text,text,text,text,integer,timestamp with time zone)",
+  "school.installed_courses()",
   "school.last_studied()",
   "school.latest_feedback()",
   "school.lesson_progress(text)",
@@ -140,6 +143,7 @@ export const GRANTED_FUNCTIONS: readonly string[] = [
   "school.record_exposure(uuid,uuid,text,text,timestamp with time zone)",
   "school.record_grading(uuid,text,text,text,text,text,jsonb,text,jsonb,text,timestamp with time zone)",
   "school.record_view(text,text,timestamp with time zone)",
+  "school.remove_installed_course(text,timestamp with time zone)",
   "school.save_explanation(uuid,uuid,text,text,bigint,timestamp with time zone)",
   "school.study_days(timestamp with time zone,timestamp with time zone,text)",
   "school.submission_aid(uuid)",

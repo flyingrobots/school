@@ -123,6 +123,10 @@ Practical notes for anyone — human or agent — changing the framework.
 - `server/compose.yaml` names no course. Its paths come from a gitignored `server/.env`; copy
   `server/compose.example.env` to start one. It runs Postgres (`postgres:18.7`, pinned by digest)
   with its data in the named volume `postgres`; `docker compose down -v` deletes the record.
+  The named volume `course-store` is mounted at `/store` for `SCHOOL_COURSE_STORE` (RFC 7 §5.1), set from the compose-only `SCHOOL_COMPOSE_COURSE_STORE` so a host export never reaches the container. The
+  image installs `git` and `ca-certificates` from Ubuntu's archive for fetching courses, and makes
+  `/store` owned by `school`, since Docker copies that owner into a new, empty named volume;
+  `server/docker.test.ts` checks both in the Dockerfile.
 - The `backup` service in `server/compose.yaml` runs `server/backup/backup.sh` on the database's image
   (same digest: bump both together, and the CI service's too). Its tests
   (`server/backup/backup.test.ts`) run the script, `pg_restore` and `server/backup/verify.sql` in that
@@ -175,9 +179,9 @@ Practical notes for anyone — human or agent — changing the framework.
   exits 0 when they match (flyingrobots/school#203).
 - A course's `license` in `course.json` is checked against the SPDX License List copied into
   `server/spdx-license-ids.ts` from `spdx-license-ids` 3.0.24 and the exceptions list copied into
-  `server/spdx-exception-ids.ts` from `spdx-exceptions` 2.5.0 (both CC0-1.0), not dependencies
-  (ADR 2). A license or exception SPDX adds later is refused until the files are refreshed. Both are
-  generated and record the release they came from (`LICENSE_IDS_RELEASE`, `EXCEPTION_IDS_RELEASE`:
+  `server/spdx-exception-ids.ts` from `spdx-exceptions` 2.5.0 (CC0-1.0 and CC-BY-3.0, the latter
+  attributed in `NOTICE`), not dependencies (ADR 2). A license or exception SPDX adds later is
+  refused until the files are refreshed. Both are generated and record the release they came from (`LICENSE_IDS_RELEASE`, `EXCEPTION_IDS_RELEASE`:
   package, version and the day npm published it). To refresh, run `bun server/scripts/refresh-spdx.ts`
   (it needs npm and the network, fetches into a scratch directory under `$TMPDIR`, and writes only those
   two files; `--license-ids <version>` and `--exceptions <version>` pin a release, and the versions the

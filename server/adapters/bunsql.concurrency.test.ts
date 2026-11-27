@@ -13,7 +13,7 @@
 // Bun.SQL tests it needs SCHOOL_TEST_POSTGRES_URL and skips without it; CI provides one, and its
 // gate (server/testing/postgres-gate.ts) fails the build if any test here skipped or failed.
 import { describe, expect, test } from "bun:test";
-import type { Block, SubmitResult } from "../core/model.ts";
+import type { Block, CourseInstall, SubmitResult } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
 import { scratchPostgres, TEST_POSTGRES_URL as URL_ } from "../testing/postgres.ts";
 import { APP } from "./database.ts";
@@ -112,6 +112,26 @@ async function answers(admin: Pool, encounterId: string) {
 const open = (r: LearningRecord, lesson: string) => r.openEncounter({ course: "c", lesson, page, now: NOW, aidTracking: 1 });
 const submit = (r: LearningRecord, submissionId: string, encounterId: string, choiceId: string) =>
   () => r.submit({ submissionId, encounterId, blockId: "q1", choiceId, ms: 1 }, NOW);
+
+// Installs (RFC 7 §7, flyingrobots/school#232): install_course and remove_installed_course serialise
+// on an advisory lock per course name, then read what the lock holder committed. The status each
+// caller is told must be the one its place in `seq` order calls for.
+const hex = (n: number, c: string) => c.repeat(n);
+const install = (course: string, o: Partial<Extract<CourseInstall, { source: "git" }>> = {}): CourseInstall => ({
+  id: uuid(), course, source: "git", url: "https://github.com/flyingrobots/school-bells.git", bundleSha256: null,
+  commit: hex(40, "a"), contentSha256: hex(64, "c"), title: "Bells", format: 1, ...o,
+});
+type Told = { status: string };
+const doInstall = (r: LearningRecord, i: CourseInstall) => (): Promise<Told> => r.installCourse(i, NOW);
+const doRemove = (r: LearningRecord, course: string) => (): Promise<Told> => r.removeInstalledCourse(course, NOW);
+
+/** One name's installs and removals in `seq` order: what the lock holder wrote first comes first. */
+async function history(admin: Pool, course: string) {
+  return [...await admin.unsafe(
+    `SELECT seq, 'install' AS kind, id::text AS id FROM school.course_installs WHERE course = $1
+     UNION ALL SELECT seq, 'removal', id::text FROM school.course_removals WHERE course = $1
+     ORDER BY seq`, [course])] as { seq: string | bigint; kind: "install" | "removal"; id: string }[];
+}
 
 describe.skipIf(URL_ === undefined)("Bun.SQL concurrency on a real Postgres (SCHOOL_TEST_POSTGRES_URL)", () => {
   test(`two first answers to one block at once: exactly one is first try, the other stored as not first (${REPS} times)`, async () => {
@@ -240,6 +260,90 @@ describe.skipIf(URL_ === undefined)("Bun.SQL concurrency on a real Postgres (SCH
     }
   }, SLOW);
 
+  test(`two installs of one name at once: one is installed, the other updated, in seq order, and one is current (${REPS} times)`, async () => {
+    const s = await setup(2);
+    for (let i = 0; i < REPS; i++) {
+      const course = `bells-${i}`;
+      // Alternate a name with no install and one that already has one.
+      const before = i % 2 === 1;
+      if (before) await s.record.installCourse(install(course), NOW);
+      const [a, b] = [install(course, { commit: hex(40, "b") }), install(course, { commit: hex(40, "c") })];
+      const { results, waiting } = await race(s, "school.course_installs", "install_course", [doInstall(s.record, a), doInstall(s.record, b)]);
+      expect(waiting.size).toBe(2);
+      const told = values(results);
+      const status = new Map([[a.id, told[0]!.status], [b.id, told[1]!.status]]);
+      const rows = (await history(s.admin, course)).filter((x) => x.id === a.id || x.id === b.id);
+      expect(rows).toHaveLength(2);
+      expect(rows.map((x) => status.get(x.id))).toEqual(before ? ["updated", "updated"] : ["installed", "updated"]);
+      const listed = await s.record.installedCourses();
+      expect(listed.filter((x) => x.course === course).map((x) => x.id)).toEqual([rows[1]!.id]);
+    }
+  }, SLOW);
+
+  test(`20 installs of one name at once: one installed, 19 updated, one current (${REPS} times)`, async () => {
+    const s = await setup(20);
+    for (let i = 0; i < REPS; i++) {
+      const course = `bells-${i}`;
+      const all = Array.from({ length: 20 }, () => install(course));
+      const { results, waiting } = await race(s, "school.course_installs", "install_course", all.map((x) => doInstall(s.record, x)));
+      expect(waiting.size).toBe(20);
+      const told = values(results);
+      const status = new Map(all.map((x, k) => [x.id, told[k]!.status]));
+      const rows = await history(s.admin, course);
+      expect(rows).toHaveLength(20);
+      expect(rows.map((x) => status.get(x.id))).toEqual(["installed", ...Array(19).fill("updated")]);
+      expect((await s.record.installedCourses()).filter((x) => x.course === course).map((x) => x.id)).toEqual([rows[19]!.id]);
+    }
+  }, SLOW);
+
+  test(`the same install twice at once: one row, one told installed and the other duplicate (${REPS} times)`, async () => {
+    const s = await setup(2);
+    for (let i = 0; i < REPS; i++) {
+      const course = `bells-${i}`;
+      const one = install(course);
+      const { results, waiting } = await race(s, "school.course_installs", "install_course", [doInstall(s.record, one), doInstall(s.record, one)]);
+      expect(waiting.size).toBe(2);
+      expect(values(results).map((x) => x.status).sort()).toEqual(["duplicate", "installed"]);
+      expect((await history(s.admin, course)).map((x) => x.id)).toEqual([one.id]);
+    }
+  }, SLOW);
+
+  test(`two removals of one name at once: one removed, the other not installed, one removal row (${REPS} times)`, async () => {
+    const s = await setup(2);
+    for (let i = 0; i < REPS; i++) {
+      const course = `bells-${i}`;
+      await s.record.installCourse(install(course), NOW);
+      const { results, waiting } = await race(s, "school.course_installs", "remove_installed_course",
+        [doRemove(s.record, course), doRemove(s.record, course)]);
+      expect(waiting.size).toBe(2);
+      expect(values(results).map((x) => x.status).sort()).toEqual(["not-installed", "removed"]);
+      expect((await history(s.admin, course)).map((x) => x.kind)).toEqual(["install", "removal"]);
+      expect((await s.record.installedCourses()).filter((x) => x.course === course)).toEqual([]);
+    }
+  }, SLOW);
+
+  test(`an install and a removal of one name at once: each status and what is current follow seq order (${REPS} times)`, async () => {
+    const s = await setup(2);
+    for (let i = 0; i < REPS; i++) {
+      const course = `bells-${i}`;
+      await s.record.installCourse(install(course), NOW);
+      const next = install(course, { commit: hex(40, "b") });
+      // `%_course` matches both functions: the gate waits for both calls.
+      const { results, waiting } = await race(s, "school.course_installs", "%_course",
+        [doInstall(s.record, next), doRemove(s.record, course)]);
+      expect(waiting.size).toBe(2);
+      const [installed, removed] = values(results);
+      const rows = await history(s.admin, course);
+      expect(rows).toHaveLength(3);
+      const removalFirst = rows[1]!.kind === "removal";
+      // Either way the name had a current install when each ran, so the removal removes one.
+      expect(removed!.status).toBe("removed");
+      expect(installed!.status).toBe(removalFirst ? "installed" : "updated");
+      const listed = (await s.record.installedCourses()).filter((x) => x.course === course).map((x) => x.id);
+      expect(listed).toEqual(removalFirst ? [next.id] : []);
+    }
+  }, SLOW);
+
   // F-8 of the review of flyingrobots/school#45: open_encounter and record_grading serialise on an
   // advisory lock and then read what the lock holder committed. That needs a snapshot taken after
   // the lock, which READ COMMITTED gives each statement; under REPEATABLE READ the transaction's
@@ -268,6 +372,17 @@ describe.skipIf(URL_ === undefined)("Bun.SQL concurrency on a real Postgres (SCH
       await expect(rr.openLessonEncounter({ course: "c", lesson: "l", lessonPage: page, page, now: NOW, aidTracking: 1, notes: [] }))
         .rejects.toThrow(/READ COMMITTED/);
       expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.encounters"))[0].n).toBe(0);
+    }, SLOW);
+
+    test("install_course and remove_installed_course refuse to run under it, and store nothing", async () => {
+      const s = await setup(2);
+      const rr = postgresRecord(repeatableRead(s.pool));
+      await expect(rr.installCourse(install("bells"), NOW)).rejects.toThrow(/READ COMMITTED/);
+      expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.course_installs"))[0].n).toBe(0);
+      await s.record.installCourse(install("bells"), NOW);
+      await expect(rr.removeInstalledCourse("bells", NOW)).rejects.toThrow(/READ COMMITTED/);
+      expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.course_removals"))[0].n).toBe(0);
+      expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.course_installs"))[0].n).toBe(1);
     }, SLOW);
 
     test("the adapter runs every request READ COMMITTED even when the database defaults to REPEATABLE READ", async () => {
