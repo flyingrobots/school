@@ -101,6 +101,14 @@ const findings = {
   accessibility: { verdict: "partly" as const, note: "Mostly plain." },
 }
 
+// Every seed below is relative to Date.now() ("two days ago", "an hour ago"), and a day is named in
+// the learner's zone. Run the servers and the browser in a fixed-offset zone where it is about
+// midday now, so "an hour ago" is always today (flyingrobots/school#293). Etc/GMT signs are inverted.
+const NOON = (() => {
+  const h = 12 - new Date().getUTCHours()
+  return h === 0 ? "Etc/UTC" : `Etc/GMT${h > 0 ? "-" : "+"}${Math.abs(h)}`
+})()
+
 beforeAll(
   async () => {
     root = mkdtempSync(join(tmpdir(), "school-home-page-"))
@@ -224,6 +232,7 @@ beforeAll(
     await seed(join(root, "everywhere", "record"), true)
     const env = (state: string) => ({
       ...process.env,
+      TZ: NOON,
       HOST: "127.0.0.1",
       SCHOOL_STATE: join(root, state),
       SCHOOL_WEB: join(root, "no-web"),
@@ -265,7 +274,11 @@ async function context(
   viewport = { width: 1280, height: 900 },
   reducedMotion: "reduce" | "no-preference" = "reduce"
 ): Promise<BrowserContext> {
-  const c = await browser.newContext({ viewport, reducedMotion })
+  const c = await browser.newContext({
+    viewport,
+    reducedMotion,
+    timezoneId: NOON,
+  })
   await c.route(/\/api\//, async (route) => {
     const u = new URL(route.request().url())
     await route.fulfill({
