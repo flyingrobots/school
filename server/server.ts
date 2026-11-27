@@ -652,7 +652,7 @@ async function installJson(req: Request): Promise<Response> {
   try {
     answer = await install(await readJson(req));
   } catch (e) {
-    // Not a refusal: the store or the record failed, and nothing was installed.
+    // Not a refusal: the store or the record failed, and any folder the install moved is deleted.
     console.error(`school: install failed: ${e instanceof Error ? e.message : String(e)}`);
     return json({ status: "failed", error: "School could not install this course; the reason is in School's log" }, 500);
   }
