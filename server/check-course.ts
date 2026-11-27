@@ -36,7 +36,7 @@ const EXIT = [
   { code: 2, meaning: "No folder, more than one, an unknown argument, or a folder that does not exist. Nothing was checked." },
 ];
 
-type Lesson = { file: string; id: string; title: string; quizzes: number; explains: number };
+export type Lesson = { file: string; id: string; title: string; quizzes: number; explains: number };
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -68,64 +68,78 @@ function prose(l: Record<string, any>): string {
   }
 }
 
-const args = process.argv.slice(2);
-const human = args.includes("--human") || args.includes("--humanize");
-const out = jsonLines({ kind: KIND, schemas, human, prose });
-process.on("uncaughtException", out.crashHandler(ids.failed, { error: "failed", code: 1 }));
-process.on("unhandledRejection", out.crashHandler(ids.failed, { error: "failed", code: 1 }));
+/** What `school check` reports for a folder: what the `done` line says and course.json declares, or the first refusal. */
+export type CourseCheck =
+  | { ok: true; folder: string; title: string | null; lessons: Lesson[]; quizzes: number; explains: number;
+      manifest: { summary: string | null; author: string | null; license: string | null; format: number | null } }
+  | { ok: false; folder: string; file: string | null; message: string };
 
-function usage(message: string): never {
-  out.emit("stderr", ids.usage, { event: "error", error: "usage", code: 2, message: `${message}; usage: ${USAGE}` });
-  process.exit(2);
+export function checkCourse(_folder: string): CourseCheck {
+  throw new Error("not implemented");
 }
 
-const FLAGS = ["--help", "-h", "--schema", "--human", "--humanize"];
-const printSchemas = () => {
-  for (const s of schemas.values()) out.emit("stdout", ids.schema, { event: "schema", id: s.id, version: s.version, schema: s.schema });
-};
-const unknown = args.filter((a) => a.startsWith("-") && !FLAGS.includes(a));
-if (unknown.length > 0) usage(`unknown argument${unknown.length === 1 ? "" : "s"} ${unknown.join(" ")}`);
-if (args.includes("--help") || args.includes("-h")) {
-  out.emit("stdout", ids.help, { event: "help", command: "check", usage: USAGE, summary: SUMMARY, options: OPTIONS, exit: EXIT, output: [...schemas.keys()] });
-  if (!human) printSchemas();
-  process.exit(0);
-}
-if (args.includes("--schema")) {
-  printSchemas();
-  process.exit(0);
-}
-const folders = args.filter((a) => !a.startsWith("-"));
-if (folders.length !== 1) usage(folders.length === 0 ? "no course folder given" : "give one course folder");
-const folder = resolve(folders[0]!);
-if (!existsSync(folder) || !statSync(folder).isDirectory()) usage(`${folder} is not a folder`);
+if (import.meta.main) main();
 
-/** Distinct explain blocks a page shows, counting one reused through `ref` once. */
-function explainIds(b: Block, into = new Set<string>()): Set<string> {
-  if (b.type === "explain") into.add(b.id);
-  if (b.type === "page" || b.type === "section") for (const c of b.children) explainIds(c, into);
-  return into;
-}
+function main() {
+  const args = process.argv.slice(2);
+  const human = args.includes("--human") || args.includes("--humanize");
+  const out = jsonLines({ kind: KIND, schemas, human, prose });
+  process.on("uncaughtException", out.crashHandler(ids.failed, { error: "failed", code: 1 }));
+  process.on("unhandledRejection", out.crashHandler(ids.failed, { error: "failed", code: 1 }));
 
-out.emit("stdout", ids.start, { event: "start", folder });
-const lessonsDir = join(folder, "lessons");
-// The same files, in the same order, that loadLibrary reads.
-const files = existsSync(lessonsDir) ? readdirSync(lessonsDir).filter((f) => f.endsWith(".json")).sort() : [];
-try {
-  const { title, summary, author, license, format } = readCourseFile(folder);
-  const library = loadLibrary(lessonsDir);
-  const lessons: Lesson[] = library.pages.map((p, i) => ({
-    file: files[i]!, id: p.id, title: p.type === "page" ? p.title : p.id, quizzes: quizIds(p).size, explains: explainIds(p).size,
-  }));
-  const all = [...library.byId.values()];
-  declared = { summary, author, license, format };
-  if (!human) out.emit("stdout", ids.manifest, { event: "manifest", ...declared });
-  out.emit("stdout", ids.done, { event: "done", ok: true, folder, title, lessons,
-    quizzes: all.filter((b) => b.type === "quiz").length, explains: all.filter((b) => b.type === "explain").length });
-  process.exit(0);
-} catch (e) {
-  if (!(e instanceof BlockError) && !(e instanceof CourseFileError)) throw e;
-  // A lesson's problem starts with its file name; one that spans files (an unknown ref, a cycle) names none.
-  const file = e instanceof CourseFileError ? "course.json" : files.find((f) => e.message.startsWith(`${f}:`) || e.message.startsWith(`${f} >`)) ?? null;
-  out.emit("stderr", ids.invalid, { event: "error", error: "invalid", code: 1, file, message: e.message });
-  process.exit(1);
+  function usage(message: string): never {
+    out.emit("stderr", ids.usage, { event: "error", error: "usage", code: 2, message: `${message}; usage: ${USAGE}` });
+    process.exit(2);
+  }
+
+  const FLAGS = ["--help", "-h", "--schema", "--human", "--humanize"];
+  const printSchemas = () => {
+    for (const s of schemas.values()) out.emit("stdout", ids.schema, { event: "schema", id: s.id, version: s.version, schema: s.schema });
+  };
+  const unknown = args.filter((a) => a.startsWith("-") && !FLAGS.includes(a));
+  if (unknown.length > 0) usage(`unknown argument${unknown.length === 1 ? "" : "s"} ${unknown.join(" ")}`);
+  if (args.includes("--help") || args.includes("-h")) {
+    out.emit("stdout", ids.help, { event: "help", command: "check", usage: USAGE, summary: SUMMARY, options: OPTIONS, exit: EXIT, output: [...schemas.keys()] });
+    if (!human) printSchemas();
+    process.exit(0);
+  }
+  if (args.includes("--schema")) {
+    printSchemas();
+    process.exit(0);
+  }
+  const folders = args.filter((a) => !a.startsWith("-"));
+  if (folders.length !== 1) usage(folders.length === 0 ? "no course folder given" : "give one course folder");
+  const folder = resolve(folders[0]!);
+  if (!existsSync(folder) || !statSync(folder).isDirectory()) usage(`${folder} is not a folder`);
+
+  /** Distinct explain blocks a page shows, counting one reused through `ref` once. */
+  function explainIds(b: Block, into = new Set<string>()): Set<string> {
+    if (b.type === "explain") into.add(b.id);
+    if (b.type === "page" || b.type === "section") for (const c of b.children) explainIds(c, into);
+    return into;
+  }
+
+  out.emit("stdout", ids.start, { event: "start", folder });
+  const lessonsDir = join(folder, "lessons");
+  // The same files, in the same order, that loadLibrary reads.
+  const files = existsSync(lessonsDir) ? readdirSync(lessonsDir).filter((f) => f.endsWith(".json")).sort() : [];
+  try {
+    const { title, summary, author, license, format } = readCourseFile(folder);
+    const library = loadLibrary(lessonsDir);
+    const lessons: Lesson[] = library.pages.map((p, i) => ({
+      file: files[i]!, id: p.id, title: p.type === "page" ? p.title : p.id, quizzes: quizIds(p).size, explains: explainIds(p).size,
+    }));
+    const all = [...library.byId.values()];
+    declared = { summary, author, license, format };
+    if (!human) out.emit("stdout", ids.manifest, { event: "manifest", ...declared });
+    out.emit("stdout", ids.done, { event: "done", ok: true, folder, title, lessons,
+      quizzes: all.filter((b) => b.type === "quiz").length, explains: all.filter((b) => b.type === "explain").length });
+    process.exit(0);
+  } catch (e) {
+    if (!(e instanceof BlockError) && !(e instanceof CourseFileError)) throw e;
+    // A lesson's problem starts with its file name; one that spans files (an unknown ref, a cycle) names none.
+    const file = e instanceof CourseFileError ? "course.json" : files.find((f) => e.message.startsWith(`${f}:`) || e.message.startsWith(`${f} >`)) ?? null;
+    out.emit("stderr", ids.invalid, { event: "error", error: "invalid", code: 1, file, message: e.message });
+    process.exit(1);
+  }
 }
