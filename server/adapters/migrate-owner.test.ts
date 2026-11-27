@@ -78,7 +78,7 @@ describe.skipIf(URL_ === undefined)("Bun.SQL: the bootstrap forces school_owner'
       const admin = track(new Bun.SQL(URL_!, { max: 1 }));
       let db: string | undefined;
       try {
-        await admin.unsafe(`CREATE ROLE ${owner} NOLOGIN ${attribute}`);
+        await admin.unsafe(`CREATE ROLE ${owner} ${attribute}`);
         db = await runBootstrap(bootstrap);
         expect((await read(admin, owner)).attributes, `after an owner made ${attribute}`).toEqual(NONE);
       } finally {
