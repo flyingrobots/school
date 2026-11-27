@@ -1,6 +1,6 @@
 # Mastery
 
-Reference: how well School holds each quiz to be known at a given time, as a stability and a strength (RFC 5 §4.1, §4.2; flyingrobots/school#217), and how a lesson's or a course's quizzes roll up into four states (RFC 5 §4.5; flyingrobots/school#218).
+Reference: how well School holds each quiz to be known at a given time, as a stability and a strength (RFC 5 §4.1, §4.2; flyingrobots/school#217), how a lesson's or a course's quizzes roll up into four states (RFC 5 §4.5; flyingrobots/school#218), and how that chooses an explanation's pitch (RFC 8 §4.1, §4.2; flyingrobots/school#249).
 
 A quiz answered cleanly last month is not held as surely as one answered cleanly this morning, and each clean answer given after a delay makes it last longer. `school.mastery` measures that for each quiz, from the append-only record, every time it is asked; nothing it returns is stored. It exists as the database function and the `LearningRecord.mastery` port method, and `school.mastery_rollup` counts it per lesson or per course ([Rolling up to lessons and courses](#rolling-up-to-lessons-and-courses)). Due review reads it to bring back a settled quiz whose strength is below one half ([faded quizzes](../due-review/README.md#faded-quizzes), migration 0014); no page or API reads either function directly yet.
 
@@ -104,3 +104,34 @@ _Listing 2. The row for a lesson of four quizzes at day 2: one never answered, o
 The port method is `LearningRecord.masteryRollup({ course, groups, now, delayMs })`, parsed with the `MasteryRollupQuery` and `MasteryRollup` schemas in `server/core/model.ts`. `server/schema/school.graphql` describes `MasteryRollup` and the rest of `MasteryRollupQuery` for Wesley; `groups`, a map from key to blocks, has no GraphQL form, so `server/schema/check.ts` compares the query without it.
 
 In short: one function counts any group of quizzes into four states that always sum to the group, and a mean strength in which a quiz not started counts 0.
+
+## Pitching an explanation
+
+Explain more, when it is built (RFC 8), writes an explanation pitched to how well the learner holds the quizzes a block is about. The core chooses that pitch from the rollup; no route calls it yet. It reads only the record's answers, keeps nothing between requests, and is tested in `server/core/explain-pitch.test.ts`.
+
+A block's **scope** is the quizzes it is about, read from the lesson as served in the encounter's snapshot (`explainScope`, `server/core/explain-pitch.ts`):
+
+| Block | Its scope |
+| --- | --- |
+| A section | The quizzes among its descendants, nested sections included |
+| A quiz | That quiz |
+| Any other block in a section, such as an explain block | The quizzes of the nearest section that holds it |
+| A section with no quiz, a block in one, or a block outside any section | The lesson's quizzes, marked `from: "lesson"` |
+| An id the lesson does not hold | None: `explainScope` answers null |
+
+_Table 5. The scope of each block (RFC 8 Table 4.1). RFC 8 names sections, quizzes and explain blocks; any other block is scoped as an explain block is._
+
+The **pitch** is the weakest state present in the scope's counts, checked in this order (`choosePitch`):
+
+| Pitch | When the scope has |
+| --- | --- |
+| `deeper` | Any quiz still settling |
+| `first` | Any quiz not started yet, none settling; or no quiz at all |
+| `refresh` | Any quiz ready for another look, none settling or not started |
+| `onward` | Every quiz holding |
+
+_Table 6. The four pitches, weakest first (RFC 8 Table 4.2). The `Pitch` schema in `server/core/model.ts` lists the four names._
+
+`School.explainPitch(course, page, courseQuizzes, blockId)` (`server/core/school.ts`) finds the block's scope in `page`, then calls `masteryRollup` once with three groups, `scope`, `lesson` (every quiz in `page`) and `course` (`courseQuizzes`), at the clock's now and due review's delay, `REVIEW_DELAY_MS`. It answers the pitch chosen from `scope`, the time it read at, the scope, and the three groups' rows. A block the page does not hold answers null, and the record is not asked.
+
+In short: a block's scope is its quizzes, or its section's, or the lesson's; its pitch is the weakest state among them, read from one rollup at the server's clock.

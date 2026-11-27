@@ -189,7 +189,7 @@ section names each piece as it is in the code.
 | --- | --- | --- |
 | Model | `server/core/model.ts` | Zod schemas for every value that crosses a port or the HTTP API |
 | Ports | `server/core/ports.ts` | `LearningRecord` (the record), `Grader` (an explanation to findings or a failure) and `Clock` |
-| Use cases | `server/core/school.ts` | `createSchool`: open a lesson, submit an answer, save, grade and read explanations, record views and exposures, read aid |
+| Use cases | `server/core/school.ts` | `createSchool`: open a lesson, submit an answer, save, grade and read explanations, record views and exposures, read aid, choose an explanation's pitch from mastery (`server/core/explain-pitch.ts`, [mastery](../mastery/README.md#pitching-an-explanation)) |
 | HTTP adapter and composition root | `server/server.ts` | Parses each request with the model, calls one use case, and wires the core to its adapters; it also reads the course folders itself (`server/blocks.ts`), which are not behind a port |
 | Postgres adapter | `server/adapters/postgres.ts` | `LearningRecord` as one call of a `school.*` function per method, every result parsed by the model |
 | `Sql` port and its drivers | `server/adapters/sql.ts`, `pglite.ts`, `bunsql.ts` | One `query(text, params)`; PGlite in process, or `Bun.SQL` on a pool |
