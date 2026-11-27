@@ -41,13 +41,43 @@ async function populated(): Promise<PGlite> {
   return db;
 }
 
+const INSTALL_TABLES = ["course_installs", "course_removals"] as const;
+const install = async (db: PGlite, course: string, ms: number) => {
+  const id = crypto.randomUUID();
+  await db.query("SELECT school.install_course($1, $2, 'git', 'https://example.com/c.git', NULL, $3, $4, 'C', 1, $5)",
+    [id, course, "a".repeat(40), "c".repeat(64), at(ms)]);
+  return id;
+};
+
+/**
+ * `populated()` plus installs (RFC 7 §7): `course` installed, trusted, removed and installed again,
+ * trusted again; `bells` installed once. Returns the current install of `course`.
+ */
+async function withInstalls(): Promise<{ db: PGlite; current: string }> {
+  const db = await populated();
+  const current = await as(db, "school_app", async () => {
+    const first = await install(db, "course", 200);
+    await db.query("SELECT school.choose_course_trust($1, true, $2)", [first, at(201)]);
+    await db.query("SELECT school.remove_installed_course('course', $1)", [at(202)]);
+    const again = await install(db, "course", 203);
+    await db.query("SELECT school.choose_course_trust($1, true, $2)", [again, at(204)]);
+    await install(db, "bells", 205);
+    return again;
+  });
+  return { db, current };
+}
+
+const installed = (db: PGlite) => as(db, "school_app", async () =>
+  (await db.query<{ id: string; course: string; trusted: boolean }>("SELECT id, course, trusted FROM school.installed_courses()")).rows);
+
 /** Each table's rows per course, and every row of every record table, as the owner sees them. */
 async function snapshot(db: PGlite) {
   return as(db, "school_owner", async () => {
     const perCourse: Record<string, unknown[]> = {};
     for (const t of TABLES) perCourse[t] = (await db.query(`SELECT course, count(*)::int AS n FROM school.${t} GROUP BY 1 ORDER BY 1`)).rows;
     const all: Record<string, unknown[]> = {};
-    for (const t of ["snapshots", "encounters", "answers", "explanations", "gradings", "views", "exposures", "decision_notes"]) {
+    for (const t of ["snapshots", "encounters", "answers", "explanations", "gradings", "views", "exposures", "decision_notes", "time_zone_choices",
+      ...INSTALL_TABLES, "course_trust_choices"]) {
       all[t] = (await db.query(`SELECT * FROM school.${t} ORDER BY seq`)).rows;
     }
     return { perCourse, all };
@@ -64,7 +94,8 @@ describe("renameCourse", () => {
     const db = await populated();
     const before = await snapshot(db);
     const triggers = await enabled(db);
-    expect(await renameCourse(db, "course", "aion")).toEqual({ from: "course", to: "aion", rows: { encounters: 1, views: 1, decision_notes: 1 } });
+    expect(await renameCourse(db, "course", "aion")).toEqual({ from: "course", to: "aion",
+      rows: { encounters: 1, views: 1, decision_notes: 1, course_installs: 0, course_removals: 0 } });
     const after = await snapshot(db);
     for (const t of TABLES) {
       expect(after.perCourse[t]).toEqual([{ course: "aion", n: 1 }, { course: "bells", n: 1 }]);
@@ -72,8 +103,50 @@ describe("renameCourse", () => {
       expect(strip(after.all[t]!)).toEqual(strip(before.all[t]!));
     }
     for (const t of ["snapshots", "answers", "explanations", "gradings", "exposures"]) expect(after.all[t]).toEqual(before.all[t]);
-    expect(triggers.length).toBe(18); // two per record table: append-only, and no truncate
+    expect(triggers.length).toBe(24); // two per record table: append-only, and no truncate
     expect(await enabled(db)).toEqual(triggers);
+  }, SLOW);
+
+  // RFC 7 §5.2, step 5 (flyingrobots/school#232): an installed course's name is in its install rows.
+  test("moves a course's install and removal rows to the new name, and nothing else", async () => {
+    const { db, current } = await withInstalls();
+    const before = await snapshot(db);
+    expect((await renameCourse(db, "course", "aion")).rows).toEqual({ encounters: 1, views: 1, decision_notes: 1, course_installs: 2, course_removals: 1 });
+    const after = await snapshot(db);
+    const courses = (rows: unknown[]) => rows.map((r) => (r as { course: string }).course);
+    expect(courses(after.all.course_installs!)).toEqual(["aion", "aion", "bells"]);
+    expect(courses(after.all.course_removals!)).toEqual(["aion"]);
+    for (const t of INSTALL_TABLES) {
+      const strip = (rows: unknown[]) => rows.map((r) => ({ ...(r as object), course: undefined }));
+      expect(strip(after.all[t]!)).toEqual(strip(before.all[t]!));
+    }
+    expect(after.all.course_trust_choices).toEqual(before.all.course_trust_choices);
+    expect(await installed(db)).toEqual([{ id: current, course: "aion", trusted: true }, expect.objectContaining({ course: "bells" })]);
+  }, SLOW);
+
+  test("renames a course that is installed but has no progress yet", async () => {
+    const db = new PGlite();
+    await migrate(db);
+    await as(db, "school_app", () => install(db, "course", 0));
+    expect((await renameCourse(db, "course", "aion")).rows).toEqual({ encounters: 0, views: 0, decision_notes: 0, course_installs: 1, course_removals: 0 });
+    expect((await installed(db)).map((c) => c.course)).toEqual(["aion"]);
+  }, SLOW);
+
+  test("refuses to rename onto a name with install rows, changing nothing", async () => {
+    const db = new PGlite();
+    await migrate(db);
+    await as(db, "school_app", async () => { await install(db, "course", 0); await install(db, "bells", 1); });
+    const before = await snapshot(db);
+    expect(await error(renameCourse(db, "course", "bells"))).toBe('the record already has course "bells"; renaming "course" to it would merge two courses');
+    expect(await snapshot(db)).toEqual(before);
+  }, SLOW);
+
+  test("afterwards the install tables are append-only again", async () => {
+    const { db } = await withInstalls();
+    await renameCourse(db, "course", "aion");
+    await as(db, "school_owner", async () => {
+      for (const t of INSTALL_TABLES) expect(await error(db.exec(`UPDATE school.${t} SET course = 'x'`))).toBe(`${t} are append-only`);
+    });
   }, SLOW);
 
   test("leaves school_app unable to log in until the next migrate run, and a refusal leaves its login as it was", async () => {
