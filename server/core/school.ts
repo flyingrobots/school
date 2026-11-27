@@ -1,6 +1,6 @@
 // School's use cases (RFC 3, §4). Each takes values already parsed at the edge, talks only to
 // ports, and returns plain data for the driving adapter to serialise.
-import type { Aid, AidTracking, Block, Contradiction, CourseProgress, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureKind, ExposureResult, Grading, GradingRecord, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, MasteryRollup, Pitch, Recorded, RecordedExposureKind, ReviewNote, ReviewReason, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
+import type { Aid, AidTracking, Block, Contradiction, CourseInstall, CourseProgress, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureKind, ExposureResult, Grading, GradingRecord, InstallResult, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, MasteryRollup, Pitch, Recorded, RecordedExposureKind, ReviewNote, ReviewReason, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
 import type { Clock, Grader, LearningRecord } from "./ports.ts";
 import { choosePitch, explainScope, quizIdsIn, type ExplainScope } from "./explain-pitch.ts";
 
@@ -112,6 +112,8 @@ export interface School {
   chooseTimeZone(zone: string | null): Promise<void>;
   /** Each name's current install (RFC 7 §7), by name: what the course list serves beside the configured courses. */
   installedCourses(): Promise<InstalledCourse[]>;
+  /** Record an install (RFC 7 §7) at the clock's now; it becomes its name's current install, untrusted. */
+  installCourse(i: CourseInstall): Promise<InstallResult>;
   /** The quizzes among `blocks` due for review now, each with its reason in words. */
   /** `tz`: the zone the reason names its day in; the server's when absent. */
   dueNow(course: string, blocks: readonly string[], tz?: string): Promise<{ item: DueItem; reason: string }[]>;
@@ -199,6 +201,7 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
     lastStudied: () => record.lastStudied(),
     timeZone: () => record.timeZone(),
     installedCourses: () => record.installedCourses(),
+    installCourse: (i) => record.installCourse(i, clock.now()),
     chooseTimeZone: (zone) => record.chooseTimeZone(zone, clock.now()),
     async latestFeedback() {
       const f = await record.latestFeedback();

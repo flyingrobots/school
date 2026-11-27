@@ -20,6 +20,7 @@ import { agentOrder, agentTest } from "./agents.ts";
 import { authoringStatus } from "./skill.ts";
 import { feedbackSpeech, lessonSpeech, SEGMENT, SpeakRequest, toSpeech, UTTERANCE } from "./speak.ts";
 import { PREVIEW_TTL_MS, previewInstall, sweepStaging, type PreviewAnswer } from "./install-preview.ts";
+import { courseInstaller, sweepCourses, type InstallAnswer, type InstallReason } from "./install-course.ts";
 
 let config;
 let bridgeCfg;
@@ -147,6 +148,9 @@ try {
   await database.close();
   process.exit(2);
 }
+// A folder in the store's courses/ that is no current install's (RFC 7 §5.1): an earlier version,
+// or one a crash left between moving it there and recording it. Deleted before anything is served.
+if (STORE !== null) sweepCourses(STORE, new Set((await school.installedCourses()).map((c) => c.id)));
 for (const l of first.listed) if (l.kind === "unavailable") console.error(`school: course ${JSON.stringify(l.course.name)} is listed but not served: ${l.course.reason}`);
 
 // Static files come only from configured mounts; lesson sources and state are never served raw.
@@ -627,6 +631,35 @@ async function installPreviewJson(req: Request): Promise<Response> {
   return json(answer, PREVIEW_STATUS[answer.status], { "cache-control": "no-store" });
 }
 
+const INSTALL_STATUS: Record<InstallReason, number> = {
+  "bad-name": 422, "name-taken": 409, "unknown-preview": 404, expired: 410, changed: 409, "over-limit": 422, "invalid-course": 422, "not-recorded": 409,
+};
+const install = STORE === null ? null : courseInstaller({
+  store: STORE, configured: configured.map((c) => c.name), installedNames: () => school.installedNames(),
+  record: (i) => school.installCourse(i), now: () => Date.now(), newId: () => crypto.randomUUID(),
+});
+
+/**
+ * POST /api/installs (RFC 7 task 8, flyingrobots/school#238): install a staged preview under a name
+ * (server/install-course.ts). It writes the course store and the record, so like the preview it
+ * answers only School's own pages (RFC 7 §8). The course is served, untrusted, from the next request.
+ */
+async function installJson(req: Request): Promise<Response> {
+  const site = req.headers.get("sec-fetch-site");
+  if (site !== null && site !== "same-origin") return json({ status: "forbidden", error: "only School's own pages may install a course" }, 403);
+  if (install === null) return json({ status: "unavailable", error: NO_STORE }, 503);
+  let answer: InstallAnswer;
+  try {
+    answer = await install(await readJson(req));
+  } catch (e) {
+    // Not a refusal: the store or the record failed, and nothing was installed.
+    console.error(`school: install failed: ${e instanceof Error ? e.message : String(e)}`);
+    return json({ status: "failed", error: "School could not install this course; the reason is in School's log" }, 500);
+  }
+  const status = answer.status === "installed" ? 201 : answer.status === "invalid" ? 400 : INSTALL_STATUS[answer.reason];
+  return json(answer, status, { "cache-control": "no-store" });
+}
+
 async function readJson(req: Request): Promise<unknown> {
   try {
     return await req.json();
@@ -738,6 +771,7 @@ const http = Bun.serve({
     }
     if (req.method === "POST" && pathname === "/api/speak") return speakJson(await readJson(req));
     if (req.method === "POST" && pathname === "/api/installs/preview") return installPreviewJson(req);
+    if (req.method === "POST" && pathname === "/api/installs") return installJson(req);
     const cancel = /^\/api\/speak\/([^/]+)\/cancel$/.exec(pathname);
     if (req.method === "POST" && cancel !== null) {
       if (!UTTERANCE.test(cancel[1]!)) return json({ status: "invalid", error: "not an utterance id" }, 400);

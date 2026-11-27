@@ -208,7 +208,7 @@ describe("installPreviewed: the name", () => {
       .toEqual({ got: { status: "refused", reason: "name-taken", message: expect.any(String) }, current: first.status === "installed" ? first.install : "", courses: [first.status === "installed" ? first.install : ""] });
   });
 
-  test.each(["Binary", "api", "-binary", "", "bin ary", "a".repeat(300)])("INSTALL-10: the name %j is refused as a bad name, and nothing is moved", async (name) => {
+  test.each(["Binary", "api", "-binary", "", "bin ary"])("INSTALL-10: the name %j is refused as a bad name, and nothing is moved", async (name) => {
     const store = newStore();
     const preview = await stage(store);
     const got = await installPreviewed({ preview, name }, sources(store));
@@ -236,6 +236,7 @@ describe("installPreviewed: the preview", () => {
     ["a preview id that is a path", { preview: "../../etc", name: "binary" }],
     ["a preview id that is not a UUID", { preview: "left-behind", name: "binary" }],
     ["no name", { preview: "22222222-2222-4222-8222-222222222222" }],
+    ["a name longer than 255 characters", { preview: "22222222-2222-4222-8222-222222222222", name: "a".repeat(256) }],
     ["a field besides preview and name", { preview: "22222222-2222-4222-8222-222222222222", name: "binary", url: "https://example.com/x.git" }],
     ["not an object", ["22222222-2222-4222-8222-222222222222", "binary"]],
   ])("INSTALL-13: a body with %s is invalid", async (_, body) => {

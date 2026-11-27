@@ -13,6 +13,7 @@ import { join, relative } from "node:path";
 import { postgresRecord } from "./adapters/postgres.ts";
 import { pgliteSql } from "./adapters/pglite.ts";
 import { checkCourse } from "./check-course.ts";
+import { contentDigest } from "./course-registry.ts";
 import { migrate } from "./db/migrate.ts";
 import type { Network } from "./fetch-commit.ts";
 import { PREVIEW_TTL_MS, previewInstall, suggestName, sweepStaging, type PreviewSources } from "./install-preview.ts";
@@ -85,6 +86,11 @@ function sources(o: Partial<PreviewSources> = {}): PreviewSources {
     now: () => T0, newId: () => `00000000-0000-4000-8000-${String(++id).padStart(12, "0")}`, ...o,
   };
 }
+/** The content digest of `folder` (RFC 7 §7), which the install compares with what it moves (flyingrobots/school#238). */
+const digestOf = (folder: string) => {
+  const d = contentDigest(folder);
+  return d.ok ? d.digest : d.message;
+};
 const preview = (body: unknown, s: PreviewSources) => previewInstall(body, s, { network: network() });
 
 /** Every file and folder under `dir`, relative and sorted; empty for a folder that does not exist. */
@@ -130,7 +136,7 @@ describe("previewInstall: a good course", () => {
       `staging/${id}/course/reference`, `staging/${id}/course/reference/glossary.html`, `staging/${id}/preview.json`,
     ]);
     expect(JSON.parse(readFileSync(join(s.store, "staging", id, "preview.json"), "utf8")))
-      .toEqual({ url: url("counting-in-binary.git"), commit: good, expires: new Date(T0 + PREVIEW_TTL_MS).toISOString() });
+      .toEqual({ url: url("counting-in-binary.git"), commit: good, expires: new Date(T0 + PREVIEW_TTL_MS).toISOString(), contentSha256: digestOf(join(s.store, "staging", id, "course")) });
   });
 });
 

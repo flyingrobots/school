@@ -10,8 +10,9 @@
 //
 // A refusal at any stage deletes the preview's folder and answers the stage, the reason, the tree
 // path or file it concerns, and the stage's own sentence. A course that passes is kept as
-// `course/` beside `preview.json` (the URL, the full commit and when the preview expires) for the
-// install (RFC 7 task 8, `POST /api/installs {preview, name}`) to move into `courses/`; until then
+// `course/` beside `preview.json` (the URL, the full commit, when the preview expires and the
+// content digest of `course/`) for the install (server/install-course.ts, RFC 7 task 8) to move
+// into `courses/`; until then
 // nothing outside `staging/` is written, and the record is only read. A preview that is never
 // confirmed is deleted once it expires, an hour after it was made (`sweepStaging`), and every
 // preview is deleted when School starts.
@@ -29,6 +30,7 @@ import { join, sep } from "node:path";
 import { z } from "zod";
 import { checkCourse, type Lesson } from "./check-course.ts";
 import { NAME, RESERVED } from "./config.ts";
+import { contentDigest } from "./course-registry.ts";
 import type { CourseProgress } from "./core/model.ts";
 import { extractCommit } from "./extract-tree.ts";
 import { fetchCommit, type FetchTesting } from "./fetch-commit.ts";
@@ -68,8 +70,15 @@ export type PreviewAnswer =
 /** The body, exactly: two strings, and no other field. Lengths are bounded here; fetchCommit checks the rest. */
 const PreviewRequest = z.object({ url: z.string().max(4096), commit: z.string().max(512) }).strict();
 
-/** What `preview.json` holds beside a kept preview's `course/`. */
-const PreviewFile = z.object({ url: z.string(), commit: z.string(), expires: z.iso.datetime() });
+/**
+ * What `preview.json` holds beside a kept preview's `course/`: the URL, the full commit, when the
+ * preview expires, and the content digest of `course/` as checked (RFC 7 §7), which the install
+ * compares with the folder it moves, so files changed after the check are never installed.
+ */
+export const PreviewFile = z.object({ url: z.string(), commit: z.string(), expires: z.iso.datetime(), contentSha256: z.string().regex(/^[0-9a-f]{64}$/) });
+export type PreviewFile = z.infer<typeof PreviewFile>;
+/** All the sweep reads of preview.json: when it expires. */
+const Expiry = z.object({ expires: z.iso.datetime() });
 
 /** Lowercased, every run of other characters one hyphen, no hyphen at either end (RFC 7 §5.2 step 1). */
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -100,7 +109,7 @@ export function suggestName(url: string, title: string | null): string {
 function expiresAt(folder: string): number {
   try {
     const file = join(folder, "preview.json");
-    if (lstatSync(file).isFile()) return Date.parse(PreviewFile.parse(JSON.parse(readFileSync(file, "utf8"))).expires);
+    if (lstatSync(file).isFile()) return Date.parse(Expiry.parse(JSON.parse(readFileSync(file, "utf8"))).expires);
   } catch {
     // No preview.json, or not one School wrote: fall back to the folder's age.
   }
@@ -148,7 +157,7 @@ export async function previewInstall(body: unknown, sources: PreviewSources, tes
   const course = join(folder, "course");
   // A stage's sentence may name a file by its path in the store; it is answered relative to the course.
   const plain = (message: string) => message.replaceAll(course + sep, "").replaceAll(folder + sep, "").replaceAll(course, ".").replaceAll(folder, ".");
-  let kept = false;
+  let staged = false;
   try {
     const fetched = await fetchCommit({ url, commit: asked, staging: folder }, testing);
     if (!fetched.ok) return { status: "refused", stage: "fetch", reason: fetched.refusal.reason, path: null, message: plain(fetched.refusal.message) };
@@ -163,14 +172,18 @@ export async function previewInstall(body: unknown, sources: PreviewSources, tes
     const held = await sources.progress(suggested);
     const progress = held.encounters + held.answers + held.explanations + held.views > 0 ? held : null;
     const expires = new Date(now + PREVIEW_TTL_MS).toISOString();
-    writeFileSync(join(folder, "preview.json"), JSON.stringify({ url, commit: fetched.commit, expires }), { flag: "wx", mode: 0o644 });
-    kept = true;
+    // The extraction wrote only regular files and folders, so the folder has a digest.
+    const digest = contentDigest(course);
+    if (!digest.ok) throw new Error(`the extracted course has no content digest: ${digest.message}`);
+    const kept: PreviewFile = { url, commit: fetched.commit, expires, contentSha256: digest.digest };
+    writeFileSync(join(folder, "preview.json"), JSON.stringify(kept), { flag: "wx", mode: 0o644 });
+    staged = true;
     return {
       status: "ok", preview: id, expires, url, commit: fetched.commit,
       course: { title: check.title, ...check.manifest, lessons: check.lessons, quizzes: check.quizzes, explains: check.explains },
       name: { suggested, taken, progress },
     };
   } finally {
-    if (!kept) rmSync(folder, { recursive: true, force: true });
+    if (!staged) rmSync(folder, { recursive: true, force: true });
   }
 }
