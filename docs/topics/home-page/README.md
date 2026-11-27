@@ -35,7 +35,8 @@ others, and checks every reply with Zod (`web/src/lib/home-api.ts`) before showi
    - **First**, the timeline, as wide as the page and drawn at that width so its labels stay one size (`GET /api/activity?days=14`): a lane per course, a dot per
      [study day](../../glossary.md#study-day) (a day with a quiz answered or an explanation saved; a
      visit alone is not one) in the last 14 days, and a ring per day questions come back in the next 14, larger for
-     more. A course with neither says "not started yet". The heading counts the days studied in
+     more, including a quiz on the day it fades. Each lane's heading says in words how the course's quizzes are holding
+     today ([below](#how-each-course-is-holding)). The heading counts the days studied in
      words. Every mark is a button: a past day opens "You studied on <day>" below it, in the letter's place, a
      ring opens how many questions come back that day and why. Today opens the letter again.
    - **Below it**, today's letter: the newest feedback (`GET /api/feedback`), titled "Your
@@ -44,9 +45,51 @@ others, and checks every reply with Zod (`web/src/lib/home-api.ts`) before showi
      **Write a new draft**, linking to the explanation in its lesson, and **Read aloud** (`R`),
      which reads the feedback aloud ([reading aloud](../reading-aloud/README.md)). Then **Ready for another
      look** (`GET /api/review`): each question with its course and lesson, the day it was
-     answered, an ⓘ button that answers "Why am I being asked this?" on hover or tap, and
+     answered, an ⓘ button that answers "Why am I being asked this?" on hover or tap (questions that took a second go or a little help, and ones found from memory a while ago, to see how they feel now), and
      **Answer**, which opens the next lesson ahead in its course, where the question comes back.
      When there is neither, it says "Nothing new since you were last here".
+
+## How each course is holding
+
+Each lane names its course, then says how its quizzes are holding today, one Badge (the registry's,
+`secondary`) per state that has any, in the words of [mastery](../mastery/README.md#rolling-up-to-lessons-and-courses)
+(RFC 5 §4.7, §4.8; flyingrobots/school#222). The heading wraps on a narrow screen, and the lane
+grows to fit it.
+
+| `mastery` | The lane says |
+| --- | --- |
+| `holding` | "2 of 3 quizzes holding" |
+| `settling` | "1 still settling" |
+| `faded` | "1 ready for another look" |
+| `notStarted`, some quizzes answered | "1 not started yet" |
+| `notStarted`, no quiz answered, no study day and nothing coming back | "Not started yet", alone |
+
+_Table 1. The words for each count. "Not started yet" alone is for a course with no study day and
+nothing coming back, and with no quiz answered or no quizzes at all. A course with a study day and
+no quiz answered (a lesson with only an explanation, say) says "3 not started yet" like any other
+state; a course with no quizzes and a study day or a return says nothing._
+
+The counts come from `GET /api/activity`: for each course, `quizzes` and `mastery`, read from
+`school.mastery_rollup` with one group holding every quiz the course serves, at the server's clock
+and with due review's twenty-hour delay, so they agree with **Ready for another look**. They are
+never a percentage, and the rollup's mean strength is not in the response.
+
+```json
+{"course": "geo", "courseTitle": "Geology", "trusted": true, "studied": ["2026-11-24", "2026-11-25", "2026-11-27"],
+ "due": [{"day": "2026-11-30", "items": 1}], "quizzes": 3,
+ "mastery": {"notStarted": 1, "settling": 0, "holding": 1, "faded": 1}}
+```
+
+_Listing 1. One course of `courses` on 27 November: one quiz faded, one holding that has faded by
+30 November, one never answered, as `server/activity-mastery.test.ts` reads it._
+
+A faded quiz needs nothing of its own on the timeline: the rings ask [due review](../due-review/README.md#faded-quizzes)
+at each day ahead, at that day's time, so a quiz comes back on the day its strength falls below
+one half. One that has faded already is in today's review, not a ring. Nothing is kept in browser
+storage: the page asks the server, which asks the database.
+
+In short: each lane says how many of its course's quizzes are holding, settling, ready for another
+look or not started, today, and each ring ahead includes the quizzes that fade that day.
 
 ## Keys
 
@@ -79,6 +122,6 @@ The page is `web/src/pages/home.tsx`, with `web/src/components/home-letter.tsx` 
 review) and `web/src/components/home-timeline.tsx`, composed of stock shadcn components (Card,
 Carousel, Badge, Button, Item, Popover, Alert, Empty, Skeleton, Spinner, Kbd). The server side is
 `showcaseJson`, `feedbackJson`, `reviewJson`, `activityJson` and `resumeJson` in
-`server/server.ts`. [The test plan](test-plan.md) lists every case and its test.
+`server/server.ts`, and `activity` in `server/core/school.ts`. [The test plan](test-plan.md) lists every case and its test.
 
 The page sets the browser title to `School`, through `useDocumentTitle` (see [the app shell](../app-shell/README.md#browser-titles)).
