@@ -2,9 +2,11 @@
 //
 // POST /api/ask takes a question about a passage of a lesson and answers in NDJSON while the agent
 // writes. In order: the passage is checked against the lesson as written, from the block where it
-// begins; the question and its `ai-help` exposure are stored (school.ask), so the record holds the
-// aid before any model is asked; the prompt is built from the lesson as reading aloud says it, so
-// no quiz choice, `why`, model answer, explain source or nest diagram is in it; the bridge's
+// begins; the prompt is built, from the lesson as reading aloud says it, so no quiz choice, `why`,
+// model answer, explain source or nest diagram is in it, and kept within the bridge's cap by
+// dropping the oldest earlier turns (a lesson too long to fit is refused, nothing stored); the
+// question and its `ai-help` exposure are stored (school.ask), so the record holds the aid before
+// any model is asked; the bridge's
 // POST /ask stream is passed on, with the sources block the answer ends with held back; each quote
 // is checked as grading's quote check checks one; and the reply is stored, whether or not the
 // browser is still there to receive it.
@@ -147,8 +149,9 @@ const source = (s: AskSource) => `<source id="${attribute(s.id)}" title="${attri
  * against: the lesson's (lessonSources), and each reference document given whole. Reference
  * documents are given whole while their text stays within REFERENCE_MAX characters; from the first
  * that would pass it, only titles. The passage, the question and the earlier turns are made inert.
+ * The `omitted` oldest earlier turns are left out, and the prompt says so.
  */
-export function askPrompt(i: PromptInput): { prompt: string; sources: AskSource[] } {
+export function askPrompt(i: PromptInput, omitted = 0): { prompt: string; sources: AskSource[] } {
   const lessonPart = lessonSources(i.page);
   const whole: AskSource[] = [];
   const titled: AskSource[] = [];
@@ -165,11 +168,25 @@ export function askPrompt(i: PromptInput): { prompt: string; sources: AskSource[
   if (whole.length > 0) parts.push(`<reference>\n${whole.map(source).join("\n")}\n</reference>`);
   if (titled.length > 0) parts.push(`<reference_titles>\nThe course has these reference documents too, too long to include here:\n${titled.map((r) => `- ${inert(r.title)}`).join("\n")}\n</reference_titles>`);
   if (i.earlier.length > 0) {
-    const turns = i.earlier.map((t) => `<turn>\n<asked>\n${inert(t.question)}\n</asked>\n<answered>\n${t.answer === null ? "(no answer was saved)" : inert(t.answer)}\n</answered>\n</turn>`);
-    parts.push(`<earlier_turns>\n${turns.join("\n")}\n</earlier_turns>`);
+    const left = omitted > 0 ? [`(The ${omitted} oldest earlier turn${omitted === 1 ? " was" : "s were"} left out to keep this within its length limit; the turns below are the most recent.)`] : [];
+    const turns = i.earlier.slice(omitted).map((t) => `<turn>\n<asked>\n${inert(t.question)}\n</asked>\n<answered>\n${t.answer === null ? "(no answer was saved)" : inert(t.answer)}\n</answered>\n</turn>`);
+    parts.push(`<earlier_turns>\n${[...left, ...turns].join("\n")}\n</earlier_turns>`);
   }
   parts.push(`<passage>\n${inert(i.passage)}\n</passage>`, `<question>\n${inert(i.question)}\n</question>`);
   return { prompt: parts.join("\n\n"), sources: [...lessonPart, ...whole] };
+}
+
+/**
+ * The prompt within `max` characters, or null when the lesson, the passage and the question alone
+ * do not fit. Earlier turns that would pass it are dropped oldest first, whole turns, and the
+ * prompt says some were left out.
+ */
+export function fitPrompt(i: PromptInput, max = BRIDGE_MAX_PROMPT): { prompt: string; sources: AskSource[] } | null {
+  for (let omitted = 0; omitted <= i.earlier.length; omitted++) {
+    const built = askPrompt(i, omitted);
+    if (built.prompt.length <= max) return built;
+  }
+  return null;
 }
 
 // ---- The sources block --------------------------------------------------------------------------------
@@ -312,6 +329,9 @@ export async function askRoute(deps: AskDeps, body: unknown): Promise<Response> 
   const found = await deps.lesson(course, lesson);
   if ("status" in found) return json({ status: found.status === 403 ? "refused" : "not found", error: found.error }, found.status);
 
+  // The conversation as the record holds it now: the passage a later question shares, and the turns before this one.
+  const existing = (await deps.school.lessonConversations(course, lesson)).find((x) => x.conversationId === q.conversationId);
+
   // The passage: a first question's, checked against the lesson as written; a later one's, the conversation's.
   let passage: string;
   if (q.passage !== null && q.blockId !== null) {
@@ -320,10 +340,19 @@ export async function askRoute(deps: AskDeps, body: unknown): Promise<Response> 
     }
     passage = q.passage;
   } else {
-    const c = (await deps.school.lessonConversations(course, lesson)).find((x) => x.conversationId === q.conversationId);
-    if (c === undefined) return json({ status: "invalid", error: "There is no such conversation in this lesson; its first question names the passage." }, 400);
-    passage = c.passage;
+    if (existing === undefined) return json({ status: "invalid", error: "There is no such conversation in this lesson; its first question names the passage." }, 400);
+    passage = existing.passage;
   }
+
+  // The prompt before anything is stored, so that a question School cannot send on is never stored.
+  const turns = existing?.questions ?? [];
+  const here = turns.findIndex((x) => x.questionId === q.questionId);
+  const earlier = (here < 0 ? turns : turns.slice(0, here)).map((x) => ({ question: x.text, answer: x.reply?.status === "succeeded" ? x.reply.text : null }));
+  const built = fitPrompt({ page: found.page, references: found.references, passage, question: q.text, earlier });
+  if (built === null) {
+    return json({ status: "too long", error: "This lesson is longer than School can send along with a question just now, so it can't be asked about yet. Would you like to ask about a shorter lesson, or tell the course's author?" }, 400);
+  }
+  const { prompt, sources } = built;
 
   const bridge = deps.bridge();
   if (bridge === null) return json({ status: "no bridge", error: deps.noBridge() }, 503);
@@ -357,8 +386,6 @@ export async function askRoute(deps: AskDeps, body: unknown): Promise<Response> 
     await store(failedReply(error));
     return json({ status: "invalid", error }, 400);
   }
-  const earlier = conversation.questions.slice(0, at).map((x) => ({ question: x.text, answer: x.reply?.status === "succeeded" ? x.reply.text : null }));
-  const { prompt, sources } = askPrompt({ page: found.page, references: found.references, passage, question: q.text, earlier });
 
   let res: Response;
   try {
