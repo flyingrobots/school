@@ -123,7 +123,7 @@ Practical notes for anyone — human or agent — changing the framework.
 - `server/compose.yaml` names no course. Its paths come from a gitignored `server/.env`; copy
   `server/compose.example.env` to start one. It runs Postgres (`postgres:18.7`, pinned by digest)
   with its data in the named volume `postgres`; `docker compose down -v` deletes the record.
-  The named volume `course-store` is mounted at `/store` for `SCHOOL_COURSE_STORE` (RFC 7 §5.1), set from the compose-only `SCHOOL_COMPOSE_COURSE_STORE` so a host export never reaches the container. The
+  The named volume `course-store` is mounted at `/store` for `SCHOOL_COURSE_STORE` (RFC 7 §5.1), set from the compose-only `SCHOOL_COMPOSE_COURSE_STORE` so a host export never reaches the container. Compose also mounts this checkout's `.agents/skills/school` at `/framework/skills/school` and `docs/topics/course-format` and `voice` under `/framework/docs`, read-only, for `SCHOOL_SKILL` (compose-only `SCHOOL_COMPOSE_SKILL`) and `SCHOOL_SKILL_DOCS`: the skill an authoring agent is given, hashed at start (RFC 9 §5.3). Renaming or moving any of those folders needs compose's mounts moved with it. The
   image installs `git` and `ca-certificates` from Ubuntu's archive for fetching courses, and makes
   `/store` owned by `school`, since Docker copies that owner into a new, empty named volume;
   `server/docker.test.ts` checks both in the Dockerfile.

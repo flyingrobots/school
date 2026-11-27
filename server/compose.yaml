@@ -131,6 +131,15 @@ services:
       # renaming it in the record (docs/topics/migrate-job, "Renaming a course"). Its own variable,
       # so a SCHOOL_COURSE exported for running the server on the host never reaches the container.
       SCHOOL_COURSE: ${SCHOOL_COMPOSE_COURSE-/course}
+      # The school skill an authoring agent is given (RFC 9 §5.3), mounted below from this checkout,
+      # so the skill that writes a draft and the check that judges it are one version. At start the
+      # server hashes it, with its references, into one manifest digest. Set SCHOOL_COMPOSE_SKILL
+      # empty in .env to switch authoring off. A compose-only name, like SCHOOL_COMPOSE_COURSE_STORE,
+      # so a SCHOOL_SKILL exported for running the server on the host never reaches the container.
+      # Without the folder School still serves, and reports authoring off with the reason.
+      SCHOOL_SKILL: ${SCHOOL_COMPOSE_SKILL-/framework/skills/school}
+      # The references the skill links, course-format/ and voice/, mounted below. No variable: always the mount.
+      SCHOOL_SKILL_DOCS: /framework/docs
       # Explanation grading through the bridge on the host (bridge/bridge.ts). Optional: without
       # SCHOOL_BRIDGE_URL, explanations are saved but not graded. The token is the one the bridge
       # reads from the same Keychain item.
@@ -144,6 +153,11 @@ services:
     volumes:
       - ../assets:/framework/assets:ro   # the framework supplies its assets and its built web app
       - ../web/dist:/framework/web/dist:ro   # build it first: `npm run build` in web/
+      # The school skill and the references it links, read-only (SCHOOL_SKILL above). The image is
+      # built from server/ alone and cannot reach .agents/ or docs/.
+      - ../.agents/skills/school:/framework/skills/school:ro
+      - ../docs/topics/course-format:/framework/docs/course-format:ro
+      - ../docs/topics/voice:/framework/docs/voice:ro
       - ${SCHOOL_COURSE_DIR:?set SCHOOL_COURSE_DIR to the course repository}:/course:ro
       - ${SCHOOL_STATE_DIR:?set SCHOOL_STATE_DIR to the private learner-state directory}:/state
       - ${SCHOOL_SOURCES_DIR:?set SCHOOL_SOURCES_DIR to the course's source material, or to an empty directory}:/sources:ro
