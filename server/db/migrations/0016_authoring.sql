@@ -109,7 +109,7 @@ RETURN (
 -- Answers 'installed', 'updated', 'duplicate' (this id already holds this same install, whatever its
 -- at) or 'conflict' (it holds another; the first stands), as before. An authored install stores
 -- nothing and answers 'rejected' unless its draft is a `ready` draft, with no decision and no install
--- yet, of a request under this course name based on its parent; then 'stale' unless its parent is
+-- yet, whose commit and content digest it names, of a request under this course name based on its parent; then 'stale' unless its parent is
 -- still the course's current install. A malformed install raises on the table's constraints and
 -- stores nothing.
 DROP FUNCTION school.install_course(uuid, text, text, text, text, text, text, text, integer, timestamptz);
@@ -131,7 +131,7 @@ BEGIN
     IF p_source = 'authored' AND p_parent_install_id IS NOT NULL AND p_draft_id IS NOT NULL THEN
       IF NOT EXISTS (
         SELECT 1 FROM school.authoring_drafts d JOIN school.authoring_requests q ON q.id = d.request_id
-        WHERE d.id = p_draft_id AND d.status = 'ready' AND q.course = p_course AND q.base_install_id = p_parent_install_id
+        WHERE d.id = p_draft_id AND d.status = 'ready' AND d.commit = p_commit AND d.content_sha256 = p_content_sha256 AND q.course = p_course AND q.base_install_id = p_parent_install_id
           AND NOT EXISTS (SELECT 1 FROM school.authoring_decisions x WHERE x.draft_id = d.id)
           AND NOT EXISTS (SELECT 1 FROM school.course_installs c WHERE c.draft_id = d.id)) THEN
         RETURN 'rejected';
@@ -218,7 +218,7 @@ GRANT EXECUTE ON FUNCTION school.request_authoring(uuid, text, uuid, text, text,
 -- Appends one round of a request. Answers 'stored'; 'duplicate' (this id already holds this same
 -- draft, whatever its at); 'conflict' (it holds another; the first stands); or 'rejected', storing
 -- nothing, when no request has that id or the round is not the request's next: round 1 once it has
--- any draft, round 2 unless round 1 was refused and there is no round 2 yet. A malformed draft (a
+-- any draft, round 2 unless round 1 was refused, has no decision and there is no round 2 yet. A malformed draft (a
 -- round other than 1 or 2, fields that do not match its status) raises on the table's constraints.
 CREATE FUNCTION school.record_draft(p_id uuid, p_request uuid, p_round integer, p_status text, p_agent text, p_commit text,
                                     p_content_sha256 text, p_check_message text, p_input_tokens integer, p_output_tokens integer,
@@ -234,7 +234,8 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM school.authoring_drafts x WHERE x.id = p_id) THEN
     IF NOT EXISTS (SELECT 1 FROM school.authoring_requests q WHERE q.id = p_request)
        OR (p_round = 1 AND EXISTS (SELECT 1 FROM school.authoring_drafts x WHERE x.request_id = p_request))
-       OR (p_round = 2 AND NOT (EXISTS (SELECT 1 FROM school.authoring_drafts x WHERE x.request_id = p_request AND x.round = 1 AND x.status = 'refused')
+       OR (p_round = 2 AND NOT (EXISTS (SELECT 1 FROM school.authoring_drafts x WHERE x.request_id = p_request AND x.round = 1 AND x.status = 'refused'
+                                        AND NOT EXISTS (SELECT 1 FROM school.authoring_decisions y WHERE y.draft_id = x.id))
                                 AND NOT EXISTS (SELECT 1 FROM school.authoring_drafts x WHERE x.request_id = p_request AND x.round = 2))) THEN
       RETURN 'rejected';
     END IF;
@@ -261,7 +262,7 @@ GRANT EXECUTE ON FUNCTION school.record_draft(uuid, uuid, integer, text, text, t
 -- answers 'rejected' when no draft has that id; 'already-decided' when the draft has a decision; and,
 -- for an accept: 'not-ready' when the draft is not `ready`; 'rejected' when install_id is not the
 -- draft's own authored install (under its course, on its request's base); 'stale' when that install
--- is no longer the course's current one. A discard is stored whatever the draft's status or base.
+-- is no longer the course's current one. A discard is stored whatever the draft's status or base, but 'rejected' when an install already names the draft.
 -- A malformed decision raises on the table's constraints.
 CREATE FUNCTION school.decide_draft(p_id uuid, p_draft uuid, p_decision text, p_install uuid, p_patch text, p_at timestamptz)
 RETURNS text
@@ -284,6 +285,11 @@ BEGIN
     END IF;
     IF EXISTS (SELECT 1 FROM school.authoring_decisions y WHERE y.draft_id = p_draft) THEN
       RETURN 'already-decided';
+    END IF;
+    -- An install already names the draft: the accept is yet to be recorded, and a discard would
+    -- contradict the install.
+    IF p_decision = 'discarded' AND EXISTS (SELECT 1 FROM school.course_installs c WHERE c.draft_id = p_draft) THEN
+      RETURN 'rejected';
     END IF;
     -- An accept with no install is malformed: the insert raises on authoring_decisions_accepted.
     IF p_decision = 'accepted' AND p_install IS NOT NULL THEN

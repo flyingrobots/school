@@ -1674,6 +1674,15 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     expect((await r.courseAuthoring("bells"))[0]!.drafts[0]!.decision).toBeNull();
   });
 
+  t("authoring: a failed draft may be discarded (an extension beyond RFC 9 Figure 5.2, for the 14-day sweep)", async (r) => {
+    const { req } = await requested(r);
+    const d = failedDraft(req);
+    await r.recordDraft(d, at(2000));
+    const decision = discard(d);
+    expect(await r.decideDraft(decision, at(3000))).toEqual({ status: "stored" });
+    expect((await r.courseAuthoring("bells"))[0]!.drafts[0]!.decision).toEqual(recordedDecision(decision, at(3000)));
+  });
+
   t("authoring: a draft whose base is stale can still be discarded", async (r) => {
     const { req } = await requested(r);
     const d = readyDraft(req);
