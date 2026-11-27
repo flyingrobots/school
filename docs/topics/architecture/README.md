@@ -137,8 +137,12 @@ The server serves configured and installed courses together, under one set of na
   ([a course's folder](../course-format/README.md#an-installed-courses-folder)). Then, on every
   request, it checks that the folder still exists. A folder that is missing, holds other files, or
   holds anything but regular files and folders is still listed, with `lessons: null` and its reason
-  in `lessonsError`, and none of its files are served. With no `SCHOOL_COURSE_STORE`, every install
-  is listed this way. The start logs each such course to stderr.
+  in `lessonsError`, and none of its files are served. So is a folder the file system cannot read
+  (an unreadable subfolder, or one that vanishes while it is read): only that install is affected,
+  every other course is still served, and the failure is not remembered, so the install is served
+  again once its folder is fixed. A reason names the install by id and says what failed; it never
+  holds an absolute path of the course store. With no `SCHOOL_COURSE_STORE`, every install is
+  listed this way. The start logs each such course to stderr.
 - **A name both configured and installed** stops the start with exit code 2. The message names the
   configured folder and the install id. If such a row is written while School runs, School logs
   it to stderr once and the configured course keeps the name.
