@@ -370,7 +370,9 @@ async function authorRoute(req: Request, server: Server<unknown>): Promise<Respo
         step: (s) => send({ type: "step", tool: s.tool, path: s.path }),
         heartbeat: () => send({ type: "heartbeat" }),
       })).then(finish, (e: unknown) => {
-        log("error", { message: messageOf(e) });
+        // An error's message may name a path in the working folder, which the agent chose: log its kind alone.
+        const code = (e as NodeJS.ErrnoException | null)?.code;
+        log("error", { message: `a draft failed: ${e instanceof Error ? e.name : typeof e}${typeof code === "string" ? ` (${code})` : ""}` });
         finish({ status: "failed", agent: null, error: "the bridge failed on this draft; its log has the reason", guideSha256: null, attempts: [] });
       });
     },

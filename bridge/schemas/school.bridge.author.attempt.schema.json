@@ -66,7 +66,7 @@
         "string",
         "null"
       ],
-      "description": "Why the attempt failed or its draft was refused; null when it succeeded. A refusal names the path under course/ it concerns."
+      "description": "Why the attempt failed, or for a refused draft the refusal's reason alone (as `refusal` in bridge.author.end); null when it succeeded. Never a path."
     },
     "steps": {
       "type": "integer",

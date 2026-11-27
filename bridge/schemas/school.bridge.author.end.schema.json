@@ -83,6 +83,7 @@
         "total-too-large",
         "path-too-long",
         "too-deep",
+        "unreadable",
         null
       ],
       "description": "Why the draft was refused; null unless it was."

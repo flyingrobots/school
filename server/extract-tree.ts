@@ -103,7 +103,7 @@ function unsafeName(name: string): string | null {
  * Upper-casing first applies the full case mappings that `toLowerCase` alone lacks (s and ſ, σ and ς,
  * ss and ß, ff and ﬀ, μ and µ, K and the Kelvin sign).
  */
-const folded = (path: string) => path.normalize("NFC").toUpperCase().toLowerCase().normalize("NFC");
+export const folded = (path: string) => path.normalize("NFC").toUpperCase().toLowerCase().normalize("NFC");
 
 /** What School installs: course.json, a lesson file directly in lessons/, anything in reference/. */
 const installed = (path: string) =>

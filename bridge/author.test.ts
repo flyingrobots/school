@@ -383,7 +383,7 @@ test("an entry the walk cannot read, a folder or a file, refuses the draft as un
     ["mkdir -p course/lessons/locked/inner && printf x > course/lessons/locked/inner/a.json && chmod 000 course/lessons/locked", "lessons/locked"],
     ["chmod 400 course/reference", "reference/notes.md"], // its names can be listed but not looked up
     ["chmod 000 course/reference/notes.md", "reference/notes.md"],
-    ["chmod 000 course", "course.json"],
+    ["chmod 000 course", "OBJECTIVES.md"], // the first name the walk looks up
     ["chmod 000 .", null],
   ];
   for (const [sh, path] of cases) {

@@ -8,12 +8,14 @@
 //
 // Two of Table 5.2's layers of confinement are here. Layer 1: every path sent is checked before
 // anything is written (`entries`): none is absolute, holds `..`, `.`, an empty part, a backslash
-// or a NUL, names a file twice (in any case) or as both a file and a folder, or passes RFC 7's
-// limits. Layer 4: once the agent has exited and its process group is killed, `course/` is walked
-// with `lstat`, never following a link, and only regular files under `course.json`, `lessons/`,
-// `reference/`, `OBJECTIVES.md` and `RESOURCES.md` come back, within RFC 7 Table 6.2's limits
-// (`DEFAULT_LIMITS`). A symlink, anything but a regular file or folder, or a limit passed refuses
-// the whole draft; anything outside those names, in `course/` or out of it, is not returned. The
+// or a NUL, names a file twice (under the extractor's full case folding, as APFS does) or as both a
+// file and a folder, or passes RFC 7's limits, and no guide path holds a line break. Layer 4: once
+// the agent has exited and its process group is killed, `course/` is walked with `lstat`, never
+// following a link, and only regular files under `course.json`, `lessons/`, `reference/`,
+// `OBJECTIVES.md` and `RESOURCES.md` come back, within RFC 7 Table 6.2's limits (`DEFAULT_LIMITS`).
+// A symlink, anything but a regular file or folder, an entry that cannot be read, or a limit
+// passed refuses the whole draft; anything outside those names, in `course/` or out of it, is not
+// returned. The working folder is deleted even when the agent locked part of it. The
 // server checks the result again with RFC 7's extractor. Layers 2 and 3, the agent's own tool
 // allowlist and deny rules, are the learner's command (RFC 9 task 4).
 //
@@ -25,11 +27,11 @@
 // already used, and a tool use the stream repeats is one step, so retries need no handling here.
 // The next agent is tried only before the first step: once the author has seen one agent at work,
 // its failure ends the request. Nothing here logs; the caller logs the attempts, which hold no
-// prompt and no file.
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+// prompt, no file and no path: a refused attempt's error is the refusal's reason alone.
+import { chmodSync, closeSync, constants, fstatSync, lchmodSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { DEFAULT_LIMITS, type Limits } from "../server/extract-tree.ts";
+import { DEFAULT_LIMITS, folded, type Limits } from "../server/extract-tree.ts";
 import { folderManifest, manifestDigest } from "../server/skill.ts";
 import { readLines } from "./ask.ts";
 import { answerText, claudeStreamLine, usageOf, type Agent, type AuthorConfig, type Usage } from "./run.ts";
@@ -43,9 +45,10 @@ export type AuthorLimits = Pick<Limits, "files" | "fileBytes" | "totalBytes" | "
 export class AuthorInputError extends Error {}
 /** One tool the agent used: its name and the path it gave, relative to the folder when under it. */
 export type AuthorStep = { tool: string; path: string | null };
-export type RefusalReason = "no-course" | "symlink" | "not-regular" | "too-many-files" | "file-too-large" | "total-too-large" | "path-too-long" | "too-deep";
+export type RefusalReason = "no-course" | "symlink" | "not-regular" | "too-many-files" | "file-too-large" | "total-too-large" | "path-too-long" | "too-deep" | "unreadable";
 /** Why a draft was not returned: the reason, the path under `course/` it concerns (or null), and a sentence. */
 export type Refusal = { reason: RefusalReason; path: string | null; message: string };
+/** One agent's attempt. `error` says why it failed; for a refused draft it is the refusal's reason alone, never a path. */
 export type AuthorAttempt = { agent: string; status: "succeeded" | "failed" | "skipped" | "refused"; error: string | null; exitCode: number | null; ms: number; steps: number };
 export type AuthorResult =
   | { status: "succeeded"; agent: string; usage: Usage | null; files: CourseFile[]; bytes: number; guideSha256: string; attempts: AuthorAttempt[] }
@@ -61,10 +64,23 @@ const PIPE_GRACE_MS = 500;
 const GONE = "the caller went away";
 const RETURNED_FILES = ["OBJECTIVES.md", "RESOURCES.md", "course.json"];
 const RETURNED_FOLDERS = ["lessons", "reference"];
-const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-const fold = (p: string) => p.normalize("NFC").toLowerCase();
+
+/**
+ * Padded standard base64: a multiple of four characters from A-Z, a-z, 0-9, + and /, with `=` only
+ * as the last one or two. One pass, in linear time: a regular expression gives up on input of a few
+ * MiB (flyingrobots/school#334 F1), and a file may be 8 MiB.
+ */
+function isBase64(s: string): boolean {
+  if (s.length % 4 !== 0) return false;
+  const pad = s.endsWith("==") ? 2 : s.endsWith("=") ? 1 : 0;
+  for (let i = 0; i < s.length - pad; i++) {
+    const c = s.charCodeAt(i);
+    if (!((c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 43 || c === 47)) return false;
+  }
+  return true;
+}
 
 /**
  * Layer 1: the request's `files` or `guide`, a list of `{ path, base64 }`, as files to write under
@@ -87,6 +103,8 @@ export function entries(list: unknown, where: "files" | "guide", limits: Partial
     if (path === "") refuse("is empty");
     if (path.startsWith("/")) refuse("is absolute");
     if (path.includes("\\")) refuse("holds a \\");
+    // server/skill.ts's manifest has one line a file, so it cannot name a file whose name holds one.
+    if (where === "guide" && /[\n\r]/.test(path)) refuse("holds a line break, which the guide's manifest cannot hold");
     const parts = path.split("/");
     for (const p of parts) {
       if (p === "") refuse("has an empty part");
@@ -94,11 +112,12 @@ export function entries(list: unknown, where: "files" | "guide", limits: Partial
     }
     if (Buffer.byteLength(path) > l.pathBytes) refuse(`is longer than ${l.pathBytes} bytes`);
     if (parts.length - 1 > l.depth) refuse(`is more than ${l.depth} folders deep`);
-    if (typeof item.base64 !== "string" || !BASE64.test(item.base64)) refuse("needs its content as base64");
-    const key = fold(path);
+    if (typeof item.base64 !== "string" || !isBase64(item.base64)) refuse("needs its content as base64");
+    // The extractor's full case folding: an APFS volume holds s and ſ, or σ and ς, as one name.
+    const key = folded(path);
     if (files.has(key)) refuse("is named twice");
     files.add(key);
-    for (let i = 1; i < parts.length; i++) folders.add(fold(parts.slice(0, i).join("/")));
+    for (let i = 1; i < parts.length; i++) folders.add(folded(parts.slice(0, i).join("/")));
     const bytes = new Uint8Array(Buffer.from(item.base64 as string, "base64"));
     if (bytes.length > l.fileBytes) refuse(`is larger than ${l.fileBytes} bytes`);
     total += bytes.length;
@@ -259,11 +278,34 @@ async function draft(agent: Agent, job: AuthorJob, timeoutMs: number, limits: Au
       }
     }
     const c = collect(join(work, "course"), limits);
-    if (!c.ok) return { attempt: { ...base, status: "refused", error: c.refusal.message }, guide, outcome: { kind: "refused", refusal: c.refusal, usage } };
+    if (!c.ok) return { attempt: { ...base, status: "refused", error: c.refusal.reason }, guide, outcome: { kind: "refused", refusal: c.refusal, usage } };
     return { attempt: { ...base, status: "succeeded", error: null }, guide, outcome: { kind: "files", files: c.files, bytes: c.bytes, usage } };
   } finally {
-    rmSync(work, { recursive: true, force: true });
+    remove(work);
   }
+}
+
+/** Delete the working folder, first giving back what the agent took away: a folder it locked (chmod 000) is not left behind. */
+function remove(work: string): void {
+  try {
+    rmSync(work, { recursive: true, force: true });
+    return;
+  } catch {}
+  unlock(work);
+  rmSync(work, { recursive: true, force: true });
+}
+
+/**
+ * Make `path` and every folder under it the owner's to list, enter and change, never following a
+ * link. lchmod (macOS) changes a link that replaced a folder since the lstat, not its target; where
+ * there is none (Linux), only a process that left the agent's group could make that swap.
+ */
+function unlock(path: string): void {
+  try {
+    if (!lstatSync(path).isDirectory()) return;
+    (typeof lchmodSync === "function" ? lchmodSync : chmodSync)(path, 0o700);
+    for (const name of readdirSync(path)) unlock(join(path, name));
+  } catch {}
 }
 
 type Collected = { ok: true; files: CourseFile[]; bytes: number } | { ok: false; refusal: Refusal };
@@ -271,32 +313,43 @@ type Collected = { ok: true; files: CourseFile[]; bytes: number } | { ok: false;
 /** Layer 4: the regular course files under `course`, never following a link, within `limits`. */
 function collect(course: string, limits: AuthorLimits): Collected {
   const refused = (reason: RefusalReason, path: string | null, message: string): Collected => ({ ok: false, refusal: { reason, path, message } });
+  const code = (e: unknown) => (e as NodeJS.ErrnoException).code;
   let top;
   try {
     top = lstatSync(course);
-  } catch {
+  } catch (e) {
+    if (code(e) !== "ENOENT") return refused("unreadable", null, "the draft's course/ could not be read");
     return refused("no-course", null, "the draft has no course/ folder");
   }
   if (!top.isDirectory()) return refused("no-course", null, "the draft's course/ is not a folder");
   const files: CourseFile[] = [];
   let bytes = 0;
   let folders = 0;
+  /** The entry's lstat, null when there is none, or "unreadable" when it cannot be looked up. */
   const lstat = (path: string) => {
     try {
       return lstatSync(path);
-    } catch {
-      return null;
+    } catch (e) {
+      return code(e) === "ENOENT" ? null : "unreadable";
     }
   };
+  const unreadable = (rel: string) => refused("unreadable", rel, `the draft's ${rel} could not be read`);
   /** A refusal, or null once `rel` has been read or walked. */
   const visit = (rel: string, mustBe: "file" | "folder" | "either"): Collected | null => {
     const abs = join(course, rel);
     const s = lstat(abs);
     if (s === null) return null;
+    if (s === "unreadable") return unreadable(rel);
     if (s.isSymbolicLink()) return refused("symlink", rel, `the draft's ${rel} is a symlink; School takes back only regular files`);
     if (s.isDirectory() && mustBe !== "file") {
       if (++folders > limits.files * limits.depth) return refused("too-many-files", null, `the draft has more than ${limits.files * limits.depth} folders`);
-      for (const name of readdirSync(abs)) {
+      let names: string[];
+      try {
+        names = readdirSync(abs);
+      } catch {
+        return unreadable(rel);
+      }
+      for (const name of names) {
         const r = visit(`${rel}/${name}`, "either");
         if (r !== null) return r;
       }
@@ -310,8 +363,9 @@ function collect(course: string, limits: AuthorLimits): Collected {
     let fd: number;
     try {
       fd = openSync(abs, constants.O_RDONLY | constants.O_NOFOLLOW);
-    } catch {
-      return refused("symlink", rel, `the draft's ${rel} could not be opened as a regular file`);
+    } catch (e) {
+      if (code(e) === "ELOOP") return refused("symlink", rel, `the draft's ${rel} could not be opened as a regular file`);
+      return unreadable(rel);
     }
     try {
       const f = fstatSync(fd);
