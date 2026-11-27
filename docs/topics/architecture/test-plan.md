@@ -10,6 +10,7 @@ The cases run the bridge as a real process.
 | --- | --- | --- | --- | --- |
 | BRIDGE-OUT-1 | Logs | Every stdout line parses as JSON with a string `kind`; no line contains the prompt | implemented | `bridge/bridge.test.ts`: `logs are JSON Lines and never contain the prompt` |
 | BRIDGE-OUT-2 | Port taken | With the port held by another socket: every line on stdout and stderr parses as JSON with a string `kind`; exactly one `bridge.error`, last on stdout, naming `host:port` and carrying `host` and `port`; no token in the output; exit 2 | implemented | `bridge/bridge.test.ts`: `a bridge whose port is taken writes one bridge.error line naming it, nothing but JSON Lines, and exits 2` |
+| BRIDGE-OUT-3 | A hostile key | A grading answer with a key the schema does not allow, named `The learner wrote: ...`: its `bridge.attempt` error is `unexpected key at $` and no line holds the key. In the validator: a key inside an array item is `unexpected key at $.items[1]`; keys named like inherited members (`constructor`, `__proto__`) are unexpected too; 500 random keys (seed 289, `SCHOOL_TEST_SEED` to replay) never appear in the problem | implemented | `bridge/bridge.test.ts`: `a grading answer with a hostile unexpected key logs an attempt error that quotes none of it`; `bridge/schema.test.ts` (flyingrobots/school#289) |
 
 ## Asking the bridge a question
 

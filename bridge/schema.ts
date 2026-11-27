@@ -5,7 +5,7 @@
 
 export type Schema = Readonly<Record<string, unknown>>;
 
-/** null when `value` matches `schema`, otherwise the first problem, with its path. */
+/** null when `value` matches `schema`, otherwise the first problem, with its path. A path holds only the schema's own keys. */
 export function validate(value: unknown, schema: Schema, path = "$"): string | null {
   const type = schema.type;
   switch (type) {
@@ -14,9 +14,12 @@ export function validate(value: unknown, schema: Schema, path = "$"): string | n
       const props = (schema.properties ?? {}) as Record<string, Schema>;
       for (const k of (schema.required ?? []) as string[]) if (!(k in value)) return `${path}.${k} is missing`;
       for (const [k, v] of Object.entries(value)) {
-        const sub = props[k];
+        // The answer's keys are the model's choice and its problems are logged, so a key the
+        // schema does not declare is reported by where it is, never by its text (flyingrobots/school#289). Only the
+        // schema's own keys are looked up, so `constructor` finds nothing inherited.
+        const sub = Object.hasOwn(props, k) ? props[k] : undefined;
         if (sub === undefined) {
-          if (schema.additionalProperties === false) return `${path}.${k} is not allowed`;
+          if (schema.additionalProperties === false) return `unexpected key at ${path}`;
           continue;
         }
         const e = validate(v, sub, `${path}.${k}`);
