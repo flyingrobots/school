@@ -123,6 +123,10 @@ Practical notes for anyone — human or agent — changing the framework.
 - `server/compose.yaml` names no course. Its paths come from a gitignored `server/.env`; copy
   `server/compose.example.env` to start one. It runs Postgres (`postgres:18.7`, pinned by digest)
   with its data in the named volume `postgres`; `docker compose down -v` deletes the record.
+  The named volume `course-store` is mounted at `/store` for `SCHOOL_COURSE_STORE` (RFC 7 §5.1). The
+  image installs `git` and `ca-certificates` from Ubuntu's archive for fetching courses, and makes
+  `/store` owned by `school`, since Docker copies that owner into a new, empty named volume;
+  `server/docker.test.ts` checks both in the Dockerfile.
 - The `backup` service in `server/compose.yaml` runs `server/backup/backup.sh` on the database's image
   (same digest: bump both together, and the CI service's too). Its tests
   (`server/backup/backup.test.ts`) run the script, `pg_restore` and `server/backup/verify.sql` in that
