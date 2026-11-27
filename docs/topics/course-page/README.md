@@ -11,6 +11,7 @@ and reads one endpoint, `GET /api/courses/:course`.
   sidebar's course list, or the name from the address.
 - A **Reference** button to `/courses/:course/reference` (the [reference page](../reference-page/README.md)), only when the course has reference
   documents. It is shown even when the course's lessons cannot be read.
+- For an untrusted course (`trusted: false`; [trusted and untrusted courses](../course-format/README.md#trusted-and-untrusted-courses)), a note under the heading, **Shown in safe mode**: "This course is shown in safe mode: its pages can’t run scripts. Its lessons and quizzes work as usual." It is the registry's Alert in its default variant, the card's colours in light and dark, with the role `note` rather than `alert`, since nothing is wrong. A trusted course shows no note.
 - Every lesson, in the server's order, as a link to `/courses/:course/lessons/:lesson`. Each shows
   its title, its subtitle when it has one, and its progress in words:
 

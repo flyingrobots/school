@@ -78,13 +78,13 @@ JSON API.
 
 | Method | Path | Does |
 | --- | --- | --- |
-| GET | `/api/courses` | Lists installed courses, each with its `name` (the slug in addresses), `title`, and `summary`, `author`, `license` and `format`, each null when the course does not declare it ([a course's folder](../course-format/README.md)), with lesson and reference counts, and each course's `quizzes` and `answeredCorrectly`; the counts are `null` for a course whose lessons cannot be read |
+| GET | `/api/courses` | Lists installed courses, each with its `name` (the slug in addresses), `title`, `trusted` (false for a course in [safe mode](#trust-and-known-defects)), and `summary`, `author`, `license` and `format`, each null when the course does not declare it ([a course's folder](../course-format/README.md)), with lesson and reference counts, and each course's `quizzes` and `answeredCorrectly`; the counts are `null` for a course whose lessons cannot be read |
 | GET | `/api/resume` | What to study now, from where the learner left off: `continue`, `next`, `start`, `finished` or `nothing` ([the home page](../home-page/README.md)) |
 | GET | `/api/feedback` | The newest succeeded grading: its course, lesson, the prompt it answered and the findings; `null` before any |
 | GET | `/api/review?tz=` | The questions due for review now, across courses, each with its lesson, question and reason ([due review](../due-review/README.md)); the reason names its day in `tz` |
 | GET | `/api/activity?days=14&tz=` | Each course's study days in the last `days` (1 to 60), and how many questions come back on each day ahead, as days in `tz` |
 | GET | `/api/showcase` | What's ahead: every lesson with a quiz not yet answered correctly, with its hook ([a course's folder](../course-format/README.md#a-lessons-hook)) |
-| GET | `/api/courses/:c` | One course: its `name`, `title`, `summary`, `author`, `license` and `format` (null when not declared), lessons with correct-quiz counts, reference documents. Lessons that cannot be read are `lessons: null` with the reason in `lessonsError`, still a 200 with the reference documents |
+| GET | `/api/courses/:c` | One course: its `name`, `title`, `trusted`, `summary`, `author`, `license` and `format` (null when not declared), lessons with correct-quiz counts, reference documents. Lessons that cannot be read are `lessons: null` with the reason in `lessonsError`, still a 200 with the reference documents |
 | GET | `/api/courses/:c/lessons/:id` | One lesson; `?view=web` opens or resumes an encounter, `?view=slides` records nothing. `?aid=1` declares that the client records every exposure it shows, so the encounter is opened with aid tracking 1; absent, it is untracked and its aid unknown. Any other `aid` value is refused (400). `?tz=` is the zone a review reason names its day in |
 | POST | `/api/answer` | Records a quiz answer |
 | POST | `/api/explanation` | Saves an explanation, before any grading |
@@ -101,7 +101,8 @@ JSON API.
 | GET | `/api/speak/:id/segments/:n` | One segment's WAV, with byte ranges |
 | POST | `/api/speak/:id/cancel` | Stops that reading at the daemon |
 | GET, PUT | `/api/settings/time-zone` | The time zone the learner chose, `{zone}`, or `null` for automatic; a PUT appends a choice (an IANA zone or `null`; anything else is 400) |
-| GET | `/courses/:c/reference/*`, `/<mount>/*` | Files, contained in their folder after resolving symlinks |
+| GET | `/courses/:c/reference/*` | A course's reference files, contained in its folder after resolving symlinks. An untrusted course's are sandboxed ([trust](#trust-and-known-defects)) |
+| GET | `/<mount>/*` | A mount's files, contained in its folder after resolving symlinks. Never sandboxed, so no mount may reach an untrusted course's folder: startup refuses one that does ([trust](#trust-and-known-defects)) |
 
 `tz` (flyingrobots/school#178) is the learner's IANA time zone, which the web app sends from the browser on every request whose answer names a day: `/api/activity`, `/api/review` and a lesson opened in the web view. A zone chosen in Settings (`/api/settings/time-zone`, flyingrobots/school#181) wins over `tz`. Without either, the server uses its own zone, which is UTC under Docker. A `tz` that is not a zone is refused (400).
 
@@ -176,7 +177,8 @@ contract suite holds every driver under it to the same behaviour.
 
 The record is Postgres, built by the numbered migrations in `server/db/migrations/` (`0001_init.sql`,
 `0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_read_committed.sql`,
-`0006_due_review.sql`, `0007_since_last_here.sql`, `0008_study_days.sql`, `0009_time_zone_choices.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
+`0006_due_review.sql`, `0007_since_last_here.sql`, `0008_study_days.sql`, `0009_time_zone_choices.sql`,
+`0010_course_installs.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -214,7 +216,7 @@ connection, in the record's database. The server refuses to start if any of thes
 | 4 | Owns no schema (schema `school` included), relation, function, type or database | the owner's login, objects it created |
 | 5 | Outside `pg_catalog` and `information_schema`: no privilege on any table, view, materialized view or foreign table (`SELECT` to `MAINTAIN`), no `USAGE`, `SELECT` or `UPDATE` on any sequence, no column privilege | table, column, sequence and `MAINTAIN` grants |
 | 6 | In `pg_catalog` and `information_schema`: no write privilege on any relation (except `UPDATE` on `pg_settings`, which Postgres grants `PUBLIC` and which is `SET`), and no `SELECT` on the relations Postgres withholds from an ordinary role (`RESTRICTED_RELATIONS`: `pg_authid`, `pg_statistic`, `pg_shadow` and 20 more) | catalog grants to it or to `PUBLIC` |
-| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 18 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
+| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 26 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
 | 8 | No privilege granted to it by name on any relation, column, function (but the granted ones), schema (but `USAGE` on `school`), database, type, language, large object, foreign-data wrapper, foreign server or tablespace; no parameter privilege (`pg_parameter_acl`) granted to it or to `PUBLIC` | direct grants, `GRANT SET ON PARAMETER` |
 | 9 | No default privileges (`pg_default_acl`) granting to it or to `PUBLIC`, and none set by it | future grants |
 | 10 | No `CREATE` on any schema; no `CREATE` or `TEMPORARY` on the record's database | creating objects there |
@@ -297,6 +299,18 @@ Migration 0009 (flyingrobots/school#181) adds `time_zone_choices`, append-only l
 table: each time zone the learner chooses in Settings, `NULL` for automatic, the newest by `seq` in
 force. `school.choose_time_zone(zone, at)` appends one and `school.time_zone()` reads the zone in
 force; the port's `chooseTimeZone` and `timeZone`.
+Migration 0010 (RFC 7 §7, flyingrobots/school#232) records installed courses in three more
+append-only tables: `course_installs` (each install under the name the learner chose, with its
+source, `git` with an `https://` URL or `bundle` with the bundle's SHA-256, its commit, the SHA-256
+of its files' manifest, and its title and format), `course_removals`, and `course_trust_choices`
+(per install, so an update starts untrusted). `school.install_course(...)` answers `installed`,
+`updated` (the name had a current install), `duplicate` or `conflict`;
+`school.remove_installed_course(course, at)` answers `removed`, or `not-installed` and stores
+nothing; `school.choose_course_trust(install_id, trusted, at)` answers `stored`, or `rejected` for no
+such install; `school.installed_courses()` lists each name's latest install with no later removal,
+and its latest trust choice (none is untrusted). They are the port's `installCourse`,
+`removeInstalledCourse`, `chooseCourseTrust` and `installedCourses`. Nothing serves an installed
+course yet: the course list is still read from configuration (RFC 7 §10, task 4).
 `school.latest_feedback()` is the succeeded grading with the highest `seq` and where its explanation
 was written; the port's `latestFeedback`. A failed attempt is never feedback.
 
@@ -370,11 +384,38 @@ erDiagram
         bigint_array evidence "cited seqs, each smaller than seq"
         timestamptz at
     }
+    COURSE_INSTALLS ||--o{ COURSE_TRUST_CHOICES : "is trusted by"
+    COURSE_INSTALLS {
+        bigint seq PK
+        uuid id UK "caller UUID"
+        text course "the name the learner chose"
+        text source "git or bundle"
+        text url "https, set for git"
+        text bundle_sha256 "set for bundle"
+        text commit
+        text content_sha256 "the files' manifest"
+        text title
+        integer format "NULL when undeclared"
+        timestamptz at
+    }
+    COURSE_REMOVALS {
+        bigint seq PK
+        uuid id UK
+        text course
+        timestamptz at
+    }
+    COURSE_TRUST_CHOICES {
+        bigint seq PK
+        uuid id UK
+        uuid install_id FK
+        boolean trusted
+        timestamptz at
+    }
 ```
 
 *Figure 3. The learning record's tables, in schema `school`. Every row takes its `seq` from one
-shared sequence, so "before" and "after" across tables compare `seq`, never `at`. `VIEWS` is
-omitted; it records page views only. `EXPOSURES` is written only by `POST /api/exposure`, which the
+shared sequence, so "before" and "after" across tables compare `seq`, never `at`. `VIEWS` (page
+views) and `TIME_ZONE_CHOICES` (the learner's time zone) are omitted. `EXPOSURES` is written only by `POST /api/exposure`, which the
 lesson page calls for each help it shows.*
 
 | Rule | How it is enforced | What it does not cover |
@@ -552,8 +593,28 @@ is currently broken.
 | School trusts | Consequence |
 | --- | --- |
 | Everyone who can reach it | No login: anyone on the tailnet or localhost can use the API, including settings |
-| Installed courses | Course HTML renders on School's origin with School's authority. RFC 1 decided installed courses are trusted code. |
+| Trusted courses (`SCHOOL_COURSES`, `SCHOOL_COURSE`) | Their files render on School's origin with School's authority, which includes the settings API and the bridge that runs the learner's agents. RFC 1 decided installed courses are trusted code. |
+| Untrusted courses (`SCHOOL_UNTRUSTED_COURSES`) | Not trusted with School's authority: they are served in safe mode, and their files cannot run script on School's origin (below) |
 | Configured agents | They run with the learner's account on the host, under their own commands' limits |
+
+An untrusted course is served in safe mode (flyingrobots/school#210, RFC 4 step 2). Its reference files of any type (`/courses/:c/reference/*`) and its course and lesson JSON (`/api/courses/:c`, `/api/courses/:c/lessons/:l`) carry two headers a trusted course's responses do not:
+
+| Header | Effect |
+| --- | --- |
+| `Content-Security-Policy: sandbox` | No `allow-*` token, so a document opened from the course, HTML or SVG, runs no script, submits no form and has an opaque origin: it cannot read School's API replies or storage, and cannot send the JSON requests every state-changing endpoint requires. Like any web page, it can still make requests that read nothing back, such as a GET from `<img src="/api/...">` |
+| `X-Content-Type-Options: nosniff` | The browser takes the bytes as the type School names (`image/svg+xml` for SVG, never HTML), not as a type it guesses |
+
+Other JSON replies also carry course-written strings without those headers: `/api/showcase`, `/api/resume`, `/api/review`, `/api/feedback` and `/api/activity` hold course and lesson titles, questions, teasers and prompts, and `/api/showcase` holds hook figures. A JSON reply runs nothing when opened, and the web app shows those strings as React text, never parsed as HTML.
+
+Lesson blocks take the same path for every course: prose, card, quote and aside HTML goes through the markdown item's sanitiser (Streamdown: `rehype-sanitize` and `rehype-harden`). A hook's SVG figure goes through `safeFigure` (`web/src/lib/figure.ts`), which keeps only drawing: it drops script, embedded documents, links, animation, `style` elements, the raw-text elements a reparse could turn into markup (`noscript`, `noembed`, `noframes`, `xmp`, `plaintext`, `textarea`), every element outside the SVG namespace, event handlers, `href`s, and the `style` and `class` attributes. A trusted course's figure is then drawn inline. An untrusted course's figure is drawn as an `<img src="data:image/svg+xml,…">`, where nothing runs whatever it holds, with each `var(--token)` replaced by the theme's current value. `/api/showcase` gives each item's `trusted` for this.
+
+`web/test/sanitise.test.tsx` runs 35 cross-site-scripting payloads through each block kind and 13 hostile figures through `safeFigure` (6 mutation-XSS payloads and a page overlay among them), and finds no script, handler, script URL, raw-text element or `style` left. For the mutation-XSS payloads the evidence is that no raw-text element survives: happy-dom never runs an `<img onerror>`, so no callback firing there proves nothing. The payloads were also checked by hand in Chrome, where nothing fired. The course page shows a note that the course is in safe mode ([the course page](../course-page/README.md)).
+
+A course is trusted or untrusted, never both: the server refuses to start (exit 2) when a name is in `SCHOOL_COURSES` or `SCHOOL_COURSE` and in `SCHOOL_UNTRUSTED_COURSES`, or when an untrusted course's folder is, contains or sits inside a trusted course's, since the trusted course would serve the same bytes unsandboxed. It refuses in the same way a `SCHOOL_MOUNTS` or `SCHOOL_WEB` folder that is, contains or sits inside an untrusted course's folder, compared on real paths, naming both variables and both folders: mounts and the web app are never sandboxed.
+
+Realpath cannot see a bind mount. Compose mounts `SCHOOL_COURSE_DIR` at `/course`, which is trusted, and, unless `SCHOOL_LIBRARY_DIR` is set, at `/library` as well, so `/library` is the trusted course under a second name. Every check above is therefore also made by filesystem identity, the `(st_dev, st_ino)` pair stat gives. For each untrusted course folder and each trusted root (a trusted course, a mount, the web folder), School collects the identity of the folder and of every ancestor that exists. It refuses at start (exit 2) when either folder's identity is among the other's, saying the two are the same folder under two names or that one holds the other, and naming both variables and folders. With compose's defaults, `SCHOOL_UNTRUSTED_COURSES=guest=/library` is refused; set `SCHOOL_LIBRARY_DIR` to a folder that does not hold the course. Inodes are read as exact integers (`bigint`), so none is rounded.
+
+This check finds a whole folder mounted twice, not part of one. At a bind mount's root, `..` leads into the container's tree, not the tree the folder came from, so walking ancestors cannot see that a mounted folder is a subfolder of a trusted one. For example, a trusted course's `reference/` bind-mounted at `/library`, with an untrusted course at `/library`, is not detected. Never bind-mount part of a trusted course, a mount or the web folder anywhere an untrusted course lives. A sandboxed document still loads what it links to, such as images from other sites, and still shows what it says; safe mode stops it acting as School, not showing content.
 
 | Defect | Effect | Issue |
 | --- | --- | --- |
@@ -566,16 +627,18 @@ is currently broken.
 | Variable | Program | Meaning | Default |
 | --- | --- | --- | --- |
 | `SCHOOL_COURSES` | Server | `name=path` pairs, one per course | none |
+| `SCHOOL_UNTRUSTED_COURSES` | Server | `name=path` pairs, one per course served in safe mode: its files are sandboxed ([trust](#trust-and-known-defects)). A name or folder also trusted is refused | none |
 | `SCHOOL_COURSE` | Server | One unnamed course, named after its folder | none; `/course` under compose, set there by `SCHOOL_COMPOSE_COURSE`, which may be empty |
 | `SCHOOL_STATE` | Server | Learner state; must not be inside a course | `state/` |
+| `SCHOOL_COURSE_STORE` | Server | The course store (RFC 7 §5.1): the folder installed courses will live in, and nothing else. Nothing installs into it yet. Empty means no store, so installing is off. Refused at start (exit 2, naming both paths) when it is, holds or sits inside a course, `SCHOOL_STATE`, `DB_PATH`, a PGlite record, a mount, `SCHOOL_WEB` or the framework folder (`SCHOOL_ROOT`, which holds the server source), and when the path exists but is not a folder, compared on real paths and by device and inode, as for [untrusted courses](#trust-and-known-defects) | none; `/store` under compose, the named volume `course-store`; compose reads it from `SCHOOL_COMPOSE_COURSE_STORE`, so a host export of `SCHOOL_COURSE_STORE` never reaches the container |
 | `SCHOOL_DATABASE_URL` | Server | The record: `postgres://school_app:password@host:port/db` (`Bun.SQL`; `school_app`'s own login, refused if it fails [the login check](#the-login-check)) or `pglite:<dir>` (PGlite on disk, not inside a course) | none: required |
 | `SCHOOL_DATABASE_PASSWORD`, `SCHOOL_DATABASE_PASSWORD_FILE` | Server | `school_app`'s password, for a `SCHOOL_DATABASE_URL` that names none; the file wins. Compose gives the file | none |
 | `SCHOOL_MIGRATE_URL` | Migrate job | The owner's URL: a role that can create roles, in practice the superuser | none: required |
 | `SCHOOL_MIGRATE_PASSWORD`, `SCHOOL_MIGRATE_PASSWORD_FILE` | Migrate job | The owner's password, for a `SCHOOL_MIGRATE_URL` that names none; the file wins. Compose gives the file | none |
 | `SCHOOL_APP_PASSWORD`, `SCHOOL_APP_PASSWORD_FILE` | Migrate job | The password the job gives `school_app`, at least 20 letters and digits; the same one the server logs in with. The file wins | none: required |
 | `DB_PATH` | Server | The old SQLite record, only read: startup refuses while it holds learner work | `<SCHOOL_STATE>/progress.db` |
-| `SCHOOL_MOUNTS` | Server | `name=path` pairs served read-only | none |
-| `SCHOOL_WEB` | Server | The built web app | `web/dist` |
+| `SCHOOL_MOUNTS` | Server | `name=path` pairs served read-only, never sandboxed; one over an untrusted course's folder is refused | none |
+| `SCHOOL_WEB` | Server | The built web app; a folder over an untrusted course's is refused | `web/dist` |
 | `HOST`, `PORT` | Server | Listen address | `127.0.0.1:4747` |
 | `SCHOOL_ALLOWED_HOSTS` | Server | Host names answered besides `127.0.0.1`, `localhost`, `::1` and `HOST`, comma-separated; the tailnet name | none |
 | `SCHOOL_BRIDGE_URL`, `SCHOOL_BRIDGE_TOKEN` | Server | Override the saved bridge settings; `SCHOOL_BRIDGE_TOKEN_FILE`, which compose gives, wins over the token | none |

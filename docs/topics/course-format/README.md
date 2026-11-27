@@ -1,13 +1,13 @@
 # A course's folder
 
-Reference: what School reads from a course's folder, the one `SCHOOL_COURSES` (or `SCHOOL_COURSE`)
-names. School reads the folder and never writes to it ([ADR 6](../../adr/0006-separate-framework-lessons-and-learner-state.md)).
+Reference: what School reads from a course's folder, the one `SCHOOL_COURSES` (or `SCHOOL_COURSE`,
+or `SCHOOL_UNTRUSTED_COURSES` for [an untrusted course](#trusted-and-untrusted-courses)) names. School reads the folder and never writes to it ([ADR 6](../../adr/0006-separate-framework-lessons-and-learner-state.md)).
 
 | Path | Required | Holds | Read |
 | --- | --- | --- | --- |
 | `course.json` | no | The course's declaration about itself: its title and, optionally, its summary, author, license and course format | Once, when the server starts |
 | `lessons/*.json` | no | The lessons, one block-JSON page per file, in file-name order | On every request, so an edit shows without a restart |
-| `reference/*.html` | no | Reference documents, served read-only at `/courses/:course/reference/<file>` | On every request |
+| `reference/**` | no | Reference documents, and any file beside them, served read-only at `/courses/:course/reference/<path>` | On every request |
 
 Anything else in the folder (`README.md`, `OBJECTIVES.md`, `RESOURCES.md`) is for the course's
 authors and readers; School does not read it.
@@ -56,6 +56,12 @@ A quiz or explain block reused through `ref` counts once. `school.check.done` st
 author, license and format, on lines of their own after the lessons, leaving out any the course
 does not declare.
 
+The checks are also a function for code in `server/`: `checkCourse(folder)` in
+`server/check-course.ts` returns, for a passing course, `ok: true` with the `done` line's fields
+and a `manifest` holding the manifest line's four; for a refused one, `ok: false` with the
+`folder`, `file` and `message` the error line would carry. A folder that does not exist is a
+refusal with `file` null. The program prints its lines from this result.
+
 On 2026-11-25, a one-lesson course in a temporary folder shown as `$DIR`, its quiz with two
 correct choices:
 
@@ -100,6 +106,59 @@ summary: Ring the bells in order.
 license CC-BY-4.0; format 1
 ```
 
+## Extracting a course from a git commit
+
+`extractCommit` in `server/extract-tree.ts` copies a course out of one commit of a bare git repository into a new folder, writing only what School reads and refusing anything that could escape the folder, run code or exhaust the disk. It is the extraction step of installing a course (RFC 7, "Installing courses", §4 and §6, which answers flyingrobots/school#188; this module is flyingrobots/school#235); nothing in School calls it yet, and fetching the commit is a separate step.
+
+```ts
+const result = await extractCommit({ repository: "/staging/abc/repo.git", commit: "<40 or 64 hex digits>", into: "/staging/abc/course" });
+```
+
+_Listing 1. Illustrative call. `into` must not exist and its parent must; `limits` (any of Table 2's fields) and `git` (the executable) are optional._
+
+It reads the tree with `git ls-tree -r -t -l -z` and the files with one `git cat-file --batch`, never checking anything out. git runs with no system or global configuration, `HOME` set to `into`'s parent, `core.hooksPath=/dev/null`, replace objects off and literal pathspecs, so no hook, filter or attribute is ever consulted. Only entries under `course.json`, `lessons/` and `reference/` are listed. Every one of them is checked, and `git fsck --strict` asked about the commit, before anything is written; then the folder is created and each file written with exclusive creation and mode 0644, so an executable file is installed as an ordinary one. Of those entries it writes `course.json`, each `lessons/*.json` directly in `lessons/`, and every file anywhere under `reference/`; the rest (`lessons/notes.md`, `lessons/drafts/`) is skipped. Anything outside the three names, such as a `README.md`, `.github/` or a build script, is never read, written or refused.
+
+On success it answers `{ ok: true, folder, commit, files, bytes }`, each file with its path and size. Otherwise it answers `{ ok: false, refusal: { reason, path, message } }` for the first problem found (every problem is a refusal; nothing is thrown for a commit's content), and `into` does not exist: a refusal found while writing deletes the folder. On 2026-11-26, a commit holding a `README.md` and a three-file course, then a commit whose `reference/passwd.html` is a symlink, with the scratch folder shown as `$STAGING`:
+
+```text
+{"ok":true,"folder":"$STAGING/good","commit":"e6b88299d432d5ed6f7b45ecd7d023f5b2262864","files":[{"path":"course.json","bytes":18},{"path":"lessons/0001-bells.json","bytes":3},{"path":"reference/glossary.html","bytes":12}],"bytes":33}
+{"ok":false,"refusal":{"reason":"symlink","path":"reference/passwd.html","message":"\"reference/passwd.html\" is a symlink; School installs only regular files"}}
+```
+
+_Listing 2. Two results, printed with `JSON.stringify`. The README is not among the files written._
+
+| `reason` | Refused when |
+| --- | --- |
+| `bad-destination` | `into` already exists, or its parent is not a folder |
+| `not-a-commit` | `commit` is not a full lowercase hash, is not in the repository, or names a tree or blob |
+| `unsafe-name` | A name is `.` or `..`, starts with `.git` in any case, holds `\` or a control character (C0, DEL or C1), or is not UTF-8; or git's own check finds a name holding `/` (`fullPathname`, such as a blob `a/b.html` beside a folder `a`) |
+| `case-collision` | Two files, or two folders, are equal after Unicode NFC and full case folding (`ſ` and `s`, `ß` and `ss`, `ς` and `σ`, `ﬀ` and `ff`, `µ` and `μ`, the Kelvin sign and `k`), or one name appears twice in a tree (a blob and a folder included) |
+| `symlink` | An entry is a symlink (mode `120000`), including `course.json` or `lessons` itself |
+| `submodule` | An entry is a submodule (mode `160000`) |
+| `lfs-pointer` | A file begins `version https://git-lfs.github.com/spec/v1`: School does not fetch LFS objects |
+| `too-many-files` | More files than `files`, or more folders than `files × depth`, under the three names |
+| `file-too-large` | An installed file is larger than `fileBytes` |
+| `total-too-large` | The installed files together are larger than `totalBytes` |
+| `path-too-long` | A file's path is longer than `pathBytes` bytes of UTF-8 (a folder's path is not measured) |
+| `too-deep` | A file's path passes through more than `depth` folders (an empty folder's depth is not measured) |
+| `timeout` | A git process ran longer than `gitMs`; it is killed |
+| `git-failed` | git could not read the repository or the tree (an empty name is one: git refuses the tree itself) |
+
+_Table 1. Every refusal. Sizes come from the listing, before any file is read; only the LFS check needs a file's content._
+
+| Limit | Default |
+| --- | --- |
+| `files` | 2,000 |
+| `fileBytes` | 8 MiB |
+| `totalBytes` | 64 MiB |
+| `pathBytes` | 255 |
+| `depth` | 8 folders |
+| `gitMs` | 60,000 ms per git process |
+
+_Table 2. `DEFAULT_LIMITS`, RFC 7 Table 6.2's starting values. A caller may lower or raise any of them._
+
+So a commit's course reaches disk only after every entry School would write has passed every check, and a refused one leaves nothing behind.
+
 ## More than one course under `./school up`
 
 Compose mounts the course in `SCHOOL_COURSE_DIR` at `/course`. School calls that course `course`.
@@ -114,6 +173,30 @@ For a folder holding several courses, point `SCHOOL_LIBRARY_DIR` at the folder a
 `SCHOOL_COURSES=bells=/library/bells,chess=/library/chess`. Without `SCHOOL_LIBRARY_DIR`, `/library`
 is the course folder again, and nothing reads it unless `SCHOOL_COURSES` says so. Run `./school up`
 again after changing either line.
+
+## Trusted and untrusted courses
+
+A course from someone else can be served in safe mode, so its HTML cannot act as School. Name it in `SCHOOL_UNTRUSTED_COURSES` instead of `SCHOOL_COURSES`; the syntax is the same `name=path` pairs:
+
+```sh
+SCHOOL_COURSES=bells=/library/bells
+SCHOOL_UNTRUSTED_COURSES=guest=/library/guest
+```
+
+_Listing 1. Two courses in `server/.env` (illustrative): `bells` is trusted, `guest` is in safe mode. Compose passes `SCHOOL_UNTRUSTED_COURSES` to the server as it does `SCHOOL_COURSES`._
+
+A course in `SCHOOL_COURSES` or `SCHOOL_COURSE` is trusted, as it always was. An untrusted course is read from the same folder layout and works the same way, with four differences:
+
+| What | For an untrusted course |
+| --- | --- |
+| Its reference documents and every other file under `reference/` | Served with `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`: a page opened from it runs no script and cannot use School's API. An SVG file is served as `image/svg+xml` under the same sandbox |
+| `GET /api/courses` and `GET /api/courses/:course` | `trusted: false` (a trusted course gives `trusted: true`); the course and lesson JSON carry the same two headers |
+| Its hook figures on the home page | Drawn as an image, not inline SVG, so nothing in them runs; `GET /api/showcase` gives each item `trusted` |
+| The course page | A note: "This course is shown in safe mode: its pages can’t run scripts." ([the course page](../course-page/README.md)) |
+
+Lesson blocks are unchanged: their HTML is sanitised for every course, trusted or not ([lesson blocks](blocks.md)). A name in both lists, or a folder that is, contains or sits inside a trusted course's, stops the server at start with exit code 2, since the trusted course would serve the same files unsandboxed. So does a `SCHOOL_MOUNTS` or `SCHOOL_WEB` folder that is, contains or sits inside an untrusted course's. The headers and their reasons are in [trust and known defects](../architecture/README.md#trust-and-known-defects).
+
+The choice is the operator's, never the course's: nothing in a course's folder can mark it trusted.
 
 ## `course.json`
 
@@ -225,15 +308,15 @@ optional picture. The home page shows hooks for the lessons still ahead (`GET /a
 | --- | --- | --- |
 | `question` | yes | The question the lesson answers, in [School's voice](../voice/README.md) |
 | `teaser` | yes | One line that makes the question worth answering |
-| `figure` | no | SVG markup, trusted like a prose block's HTML |
+| `figure` | no | SVG markup, kept to drawing; an untrusted course's is drawn as an image ([trusted and untrusted courses](#trusted-and-untrusted-courses)) |
 
-A figure follows the light and dark themes when it is coloured with the theme's CSS variables:
+A figure loses its `style` and `class` attributes and any `<style>` element before it is shown, so colour it with presentation attributes such as `fill="var(--primary)"` and `stroke="var(--chart-1)"`. A figure follows the light and dark themes when it is coloured with the theme's CSS variables:
 `var(--primary)`, `var(--chart-1)` to `var(--chart-5)`, `var(--foreground)`,
 `var(--muted-foreground)` and `var(--background)`. A hook missing its question or teaser, or with a
 figure that is not a string, stops the lesson set from loading, like any other malformed block.
 
 `GET /api/showcase` lists, in course order, every lesson with a quiz not yet answered correctly:
-its course, the course's title, whether the course is started (any of its quizzes answered
+its course, the course's title, whether the course is trusted (`trusted`), whether the course is started (any of its quizzes answered
 correctly), the lesson's id, title, subtitle and place, and its hook. A lesson without a hook
 offers its title as the question and its subtitle as the teaser, with no figure. A lesson with no
 quizzes is left out, as is a course whose lessons can't be read.

@@ -289,3 +289,66 @@ export type ReviewNote = { blockId: string; rule: string; reason: string; eviden
 /** A review item as the lesson page shows it: the block, the rule that chose it, and its reason in words. */
 export const ReviewReason = z.object({ blockId: z.string(), rule: z.string(), reason: z.string() });
 export type ReviewReason = z.infer<typeof ReviewReason>;
+
+// ---- Installed courses (RFC 7 §7; flyingrobots/school#232) -------------------------------------
+
+/**
+ * A course's name, its progress key: a lowercase letter or digit, then lowercase letters, digits and
+ * hyphens, and not one of the names School's own routes use. The same rule as NAME and RESERVED in
+ * server/config.ts, which the core may not import; server/db/course-installs.test.ts holds the two,
+ * and the record's CHECK, to agreement.
+ */
+export const COURSE_NAME = /^[a-z0-9][a-z0-9-]*$/;
+export const RESERVED_COURSE_NAMES = ["assets", "courses", "lessons", "reference", "api"] as const;
+export const CourseName = z.string().regex(COURSE_NAME)
+  .refine((n) => !(RESERVED_COURSE_NAMES as readonly string[]).includes(n), { message: "is reserved and cannot name a course" });
+
+const sha256 = z.string().regex(/^[0-9a-f]{64}$/);
+/** A git commit's full hash: SHA-1 (40 hex) or SHA-256 (64 hex), lowercase. */
+const commitHash = z.string().regex(/^([0-9a-f]{40}|[0-9a-f]{64})$/);
+const installFields = {
+  /** The caller's, so a resend is stored once. It also names the install's folder in the course store. */
+  id: uuid,
+  course: CourseName,
+  commit: commitHash,
+  /** SHA-256 of the installed files' manifest: one line per file, `<sha256 of the file> <path>`, sorted by path. */
+  contentSha256: sha256,
+  title: z.string().trim().min(1),
+  /** The course format version its course.json declares (flyingrobots/school#209), or null when it declares none. */
+  format: z.int().positive().nullable(),
+};
+
+/**
+ * One install to record: a course fetched from a git repository at a commit, or read from an
+ * uploaded git bundle. `url` is set exactly for `git`, and `bundleSha256` exactly for `bundle`.
+ */
+export const CourseInstall = z.discriminatedUnion("source", [
+  z.object({ ...installFields, source: z.literal("git"), url: z.string().regex(/^https:\/\/\S+$/), bundleSha256: z.null() }),
+  z.object({ ...installFields, source: z.literal("bundle"), url: z.null(), bundleSha256: sha256 }),
+]);
+export type CourseInstall = z.infer<typeof CourseInstall>;
+
+/**
+ * `installed`: the name had no current install. `updated`: it had one, and this one replaces it.
+ * `duplicate`: this id already holds this same install. `conflict`: it holds another; the first stands.
+ */
+export const InstallResult = z.object({ status: z.enum(["installed", "updated", "duplicate", "conflict"]) });
+export type InstallResult = z.infer<typeof InstallResult>;
+
+/** `removed`: the course had a current install and now has none. `not-installed`: it had none; nothing was stored. */
+export const RemovalResult = z.object({ status: z.enum(["removed", "not-installed"]) });
+export type RemovalResult = z.infer<typeof RemovalResult>;
+
+/** `stored`: the trust choice was appended. `rejected`: no install has that id; nothing was stored. */
+export const TrustResult = z.object({ status: z.enum(["stored", "rejected"]) });
+export type TrustResult = z.infer<typeof TrustResult>;
+
+/**
+ * A name's current install: its latest install with no later removal, when it was installed, and
+ * whether the learner trusts it, by the latest trust choice for this install (none means untrusted).
+ */
+export const InstalledCourse = z.discriminatedUnion("source", [
+  CourseInstall.options[0].extend({ at: timestamp, trusted: z.boolean() }),
+  CourseInstall.options[1].extend({ at: timestamp, trusted: z.boolean() }),
+]);
+export type InstalledCourse = z.infer<typeof InstalledCourse>;
