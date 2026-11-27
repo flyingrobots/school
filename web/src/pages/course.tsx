@@ -9,6 +9,7 @@ import {
   CheckIcon,
   FileQuestionIcon,
   LibraryIcon,
+  ShieldCheckIcon,
   TriangleAlertIcon,
 } from "lucide-react"
 import { Link, useParams } from "react-router"
@@ -75,6 +76,12 @@ const referenceOf = (state: State): string[] =>
       ? state.reference
       : []
 
+/** Whether School serves the course sandboxed; false until it answers. */
+const untrusted = (state: State): boolean =>
+  state.kind === "ready"
+    ? !state.course.trusted
+    : state.kind === "unreadable" && !state.trusted
+
 const grid =
   "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
 
@@ -132,9 +139,27 @@ export function CoursePage() {
             </Link>
           </Button>
         )}
+        {untrusted(state) && <SafeMode />}
       </div>
       <Body state={state} name={name!} retry={retry} />
     </div>
+  )
+}
+
+/**
+ * The note on an untrusted course (flyingrobots/school#210): School serves its files sandboxed, so
+ * they can't run scripts. Neutral, not a warning: a note, not an alert, in the card's colours.
+ */
+function SafeMode() {
+  return (
+    <Alert role="note" data-trust="untrusted" className="text-base">
+      <ShieldCheckIcon />
+      <AlertTitle className="text-lg">Shown in safe mode</AlertTitle>
+      <AlertDescription className="text-base">
+        This course is shown in safe mode: its pages can’t run scripts. Its
+        lessons and quizzes work as usual.
+      </AlertDescription>
+    </Alert>
   )
 }
 

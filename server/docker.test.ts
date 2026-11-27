@@ -127,6 +127,10 @@ test("compose can serve more courses from an optional library mount (flyingrobot
   expect(dockerfile).toMatch(/SCHOOL_COURSE=\/course/);
 });
 
+test("compose passes SCHOOL_UNTRUSTED_COURSES through, empty by default (flyingrobots/school#210)", () => {
+  expect(compose.services.school?.environment?.SCHOOL_UNTRUSTED_COURSES).toBe("${SCHOOL_UNTRUSTED_COURSES:-}");
+});
+
 test("the image ships the migrate command", () => {
   expect(shipped).toContain("migrate.ts");
 });

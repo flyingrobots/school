@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "school.check.manifest/1.0.0",
+  "title": "Manifest",
+  "description": "On stdout, after start and just before done, on success: what course.json declares about the course beyond its title. Each key is null when the course declares none.",
+  "type": "object",
+  "properties": {
+    "_schema": {
+      "type": "object",
+      "description": "The schema this line follows.",
+      "properties": {
+        "id": {
+          "const": "school.check.manifest"
+        },
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "kind": {
+      "const": "school.check",
+      "description": "The program that printed the line."
+    },
+    "event": {
+      "const": "manifest"
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "One id per invocation, on every line it prints."
+    },
+    "at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "description": "When the line was printed, UTC."
+    },
+    "summary": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "course.json's summary, trimmed, or null when the course declares none."
+    },
+    "author": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "course.json's author, trimmed, or null when the course declares none."
+    },
+    "license": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "description": "course.json's license, an SPDX license expression as declared (trimmed), or null when the course declares none."
+    },
+    "format": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "description": "The course format course.json declares, or null when it declares none. School plays only the format it was built for, so a course that loads has none or that one."
+    }
+  },
+  "required": [
+    "_schema",
+    "kind",
+    "event",
+    "run",
+    "at",
+    "summary",
+    "author",
+    "license",
+    "format"
+  ],
+  "additionalProperties": false
+}

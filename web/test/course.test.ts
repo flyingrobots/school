@@ -111,12 +111,20 @@ beforeAll(
       })
     )
 
+    // guest: an untrusted course (flyingrobots/school#210), with one lesson.
+    mkdirSync(join(root, "guest", "lessons"), { recursive: true })
+    writeFileSync(
+      join(root, "guest", "lessons", "0001.json"),
+      lesson("g1", "Visiting", ["q1"])
+    )
+
     // The helper chooses the port (flyingrobots/school#82).
     school = await startSchool({
       ...process.env,
       SCHOOL_COURSES: ["aion", "empty", "broken"]
         .map((c) => `${c}=${join(root, c)}`)
         .join(","),
+      SCHOOL_UNTRUSTED_COURSES: `guest=${join(root, "guest")}`,
       SCHOOL_STATE: join(root, "state"),
       SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`,
       SCHOOL_WEB: join(root, "no-web"),
@@ -439,5 +447,79 @@ describe("states", () => {
     await lessons(p).first().waitFor()
     expect(await main(p).getByRole("alert").count()).toBe(0)
     await close(c)
+  })
+})
+
+// flyingrobots/school#210: an untrusted course says, in a neutral note, that it is in safe mode.
+// Oracle: the issue's 2b. The note is the registry's Alert, its colours the theme's card tokens in
+// light and in dark, and its words neither alarm nor command.
+describe("an untrusted course", () => {
+  const note = (p: Page) => main(p).locator("[data-slot=alert][data-trust]")
+
+  test("shows a neutral safe-mode note, as the API reports it untrusted", async () => {
+    expect(
+      ((await api("guest")) as unknown as { trusted: boolean }).trusted
+    ).toBe(false)
+    const p = await open("/courses/guest")
+    await lessons(p).first().waitFor()
+    expect([
+      await note(p).count(),
+      await note(p).getAttribute("role"),
+      (await note(p).textContent())?.trim(),
+    ]).toEqual([
+      1,
+      "note",
+      "Shown in safe modeThis course is shown in safe mode: its pages can’t run scripts. Its lessons and quizzes work as usual.",
+    ])
+    await close(p.context())
+  })
+
+  test("a trusted course shows no such note", async () => {
+    const p = await open("/courses/aion")
+    await lessons(p).first().waitFor()
+    expect(await note(p).count()).toBe(0)
+    await close(p.context())
+  })
+
+  test("the note takes the theme's card colours, in light and in dark", async () => {
+    const colours = async (colorScheme: "light" | "dark") => {
+      const c = await browser.newContext({ colorScheme })
+      await c.route(/\/api\//, async (route) => {
+        const u = new URL(route.request().url())
+        await route.fulfill({
+          response: await route.fetch({
+            url: school.url + u.pathname + u.search,
+          }),
+        })
+      })
+      const p = await open("/courses/guest", c)
+      await note(p).waitFor()
+      const got = await note(p).evaluate((el) => {
+        // The tokens as the browser resolves them, through the same property.
+        const probe = document.createElement("div")
+        probe.style.backgroundColor = "var(--card)"
+        probe.style.color = "var(--card-foreground)"
+        document.body.append(probe)
+        const want = getComputedStyle(probe)
+        const have = getComputedStyle(el)
+        const out = {
+          background: [have.backgroundColor, want.backgroundColor],
+          text: [have.color, want.color],
+        }
+        probe.remove()
+        return out
+      })
+      await close(c)
+      return got
+    }
+    const light = await colours("light")
+    const dark = await colours("dark")
+    expect([
+      light.background[0] === light.background[1],
+      light.text[0] === light.text[1],
+      dark.background[0] === dark.background[1],
+      dark.text[0] === dark.text[1],
+      light.background[0] !== dark.background[0],
+    ]).toEqual([true, true, true, true, true])
   })
 })
