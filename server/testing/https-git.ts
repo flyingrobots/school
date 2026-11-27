@@ -69,12 +69,18 @@ export function serveHttps(tls: { cert: string; key: string }, handler: Handler,
   return Bun.serve({ hostname, port: 0, idleTimeout: 0, tls: { cert: Bun.file(tls.cert), key: Bun.file(tls.key) }, fetch: handler });
 }
 
-/**
- * Serves every bare repository under `root` with `git http-backend`. The backend lets a client ask
- * for any object by hash (`uploadpack.allowAnySHA1InWant`), as GitHub does, so a commit that no
- * branch points at any longer can still be fetched by its hash.
- */
-export function gitBackend(root: string, home: string): Handler {
+/** How the test host answers a want for an object no ref advertises. */
+export type Wants = {
+  /**
+   * `true` (the default) lets a client ask for any object by hash (`uploadpack.allowAnySHA1InWant`),
+   * as GitHub does, so a commit no ref points at can still be fetched by its hash. `false` refuses
+   * such a want, as a host with git's stock upload-pack settings does.
+   */
+  anyObject?: boolean;
+};
+
+/** Serves every bare repository under `root` with `git http-backend`, answering wants as `wants` says. */
+export function gitBackend(root: string, home: string, _wants: Wants = {}): Handler {
   return async (req) => {
     const u = new URL(req.url);
     const body = req.method === "POST" ? new Uint8Array(await req.arrayBuffer()) : new Uint8Array(0);
