@@ -66,16 +66,17 @@ fails the case.
 
 ## The owner's attributes
 
-The runner's bootstrap forces `school_owner` back to a `NOLOGIN` role without `SUPERUSER`,
-`CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS` (flyingrobots/school#359); it prints nothing
-new. The real-Postgres cases are in `server/adapters/migrate-owner.test.ts` and run the runner's own
-`BOOTSTRAP` text under role names of their own, which they drop, because `school_owner` is shared by
-every test on the server.
+Every migrate job, one that applies nothing included, forces `school_owner` back to a `NOLOGIN`
+role without `SUPERUSER`, `CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS`, beside its update
+of `school_app` (flyingrobots/school#359); it prints nothing new. The cases are in
+`server/adapters/migrate-owner.test.ts`, on real Postgres. Each runs the job (`migrateRecord`) with
+its optional `owner` set to a role name of the test's own, which it drops, because `school_owner` is
+shared by every test on the server.
 
 | ID | Case | Oracle | Status | Test |
 | --- | --- | --- | --- | --- |
-| MJ-O1 | `SUPERUSER LOGIN` beforehand (real Postgres) | After the bootstrap the owner has none of the six attributes | implemented | `an owner that already exists with SUPERUSER LOGIN leaves the bootstrap with neither, nor any other` |
-| MJ-O2 | Each attribute alone (real Postgres) | An owner made with only `SUPERUSER`, `LOGIN`, `CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS` has none of the six afterwards | implemented | `an owner that already exists with %s alone leaves the bootstrap without it` |
-| MJ-O3 | A correct owner is left alone (real Postgres) | Its attributes and its `pg_authid` row's `xmin` are unchanged, so the row was not rewritten (watched failing with the `ALTER ROLE` made unconditional) | implemented | `an owner that already exists with the right attributes is left as it was: its catalog row is not rewritten` |
-| MJ-O4 | No owner yet (real Postgres) | The bootstrap creates it with none of the six and does not fail | implemented | `with no owner yet, the bootstrap creates it with none of the attributes and does not fail` |
-| MJ-O5 | Through the runner | On PGlite, `migrate()` on a database whose `school_owner` has all six leaves it with none | implemented | `server/db/migrate.test.ts`: `a school_owner that already exists with every attribute the runner forbids has none of them once a file is applied` |
+| MJ-O1 | Already migrated, then `SUPERUSER LOGIN` | On a migrated database whose owner is then made `SUPERUSER LOGIN`, the next job applies nothing and the owner has none of the six attributes | implemented | `on a database already migrated, an owner since made SUPERUSER LOGIN has neither once the next job ends` |
+| MJ-O2 | `SUPERUSER LOGIN` before the first job | After the first job the owner has none of the six | implemented | `an owner that already exists with SUPERUSER LOGIN before the first job has neither, nor any other, once it ends` |
+| MJ-O3 | Each attribute alone | An owner made with only `SUPERUSER`, `LOGIN`, `CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS` has none of the six after a job | implemented | `an owner that already exists with %s alone has it no longer once a job ends` |
+| MJ-O4 | A correct owner is left alone | Its attributes and its `pg_authid` row's `xmin` are unchanged, so the row was not rewritten (watched failing with the attribute condition removed) | implemented | `an owner that already exists with the right attributes is left as it was: its catalog row is not rewritten` |
+| MJ-O5 | No such role | The job succeeds and creates no role of that name | implemented | `with no such owner, the job's check does not fail and creates nothing` |

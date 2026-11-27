@@ -43,18 +43,6 @@ BEGIN
 END
 $$;
 CREATE SCHEMA IF NOT EXISTS school AUTHORIZATION school_owner;
--- school_owner may already exist with more than it needs, made by hand or by an older setup: it is
--- forced back to a NOLOGIN role with none of these, as the migrate job does for school_app
--- (flyingrobots/school#359). Only when one is set, so a correct owner's catalog row is not
--- rewritten and concurrent jobs on other databases do not race to update it.
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'school_owner' AND (rolsuper OR rolcanlogin
-      OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls)) THEN
-    ALTER ROLE school_owner NOLOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS;
-  END IF;
-END
-$$;
 `;
 
 export type Migration = { version: number; name: string; sql: string; checksum: string };

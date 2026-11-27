@@ -37,10 +37,10 @@ Practical notes for anyone — human or agent — changing the framework.
     reaches Postgres or a log, and revokes `CREATE` and `TEMPORARY` on the database from `PUBLIC`.
     No secret lives in the repository or in a migration (flyingrobots/school#91).
   - Both roles are created `NOLOGIN`; the migrate job gives `school_app` `LOGIN` and clears its role
-    settings. A `school_owner` that already exists with `LOGIN`, `SUPERUSER`, `CREATEROLE`,
-    `CREATEDB`, `REPLICATION` or `BYPASSRLS` has them removed by the runner's bootstrap, which runs
-    with each pending file, so only a run that applies a migration corrects it
-    (flyingrobots/school#359). On Postgres the server's `SCHOOL_DATABASE_URL` is `school_app`'s own login, and before
+    settings. Every job, one that applies nothing included, also removes `LOGIN`, `SUPERUSER`,
+    `CREATEROLE`, `CREATEDB`, `REPLICATION` and `BYPASSRLS` from a `school_owner` that has any of
+    them, in the same transaction as `school_app`'s update; a correct owner is left alone
+    (flyingrobots/school#359). The PGlite path, which runs only the runner, does not. On Postgres the server's `SCHOOL_DATABASE_URL` is `school_app`'s own login, and before
     serving it runs the login check (`loginRefusals` in `server/adapters/database.ts`) and refuses to
     start (exit 2, `Refused`) on any failure. The exact checks, what they cannot detect and what
     `school_app` can still do are in docs/topics/architecture/README.md, "The login check". It still

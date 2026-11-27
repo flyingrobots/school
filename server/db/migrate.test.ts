@@ -39,15 +39,6 @@ test("files apply in order, each recorded once; a second run applies nothing", a
   expect(await ledger(db)).toEqual([{ version: 1, name: "0001_a.sql" }, { version: 2, name: "0002_b.sql" }]);
 }, SLOW);
 
-test("a school_owner that already exists with every attribute the runner forbids has none of them once a file is applied", async () => {
-  const db = new PGlite();
-  await db.exec("CREATE ROLE school_owner SUPERUSER LOGIN CREATEROLE CREATEDB REPLICATION BYPASSRLS");
-  await migrate(db, folder({ "0001_a.sql": "CREATE TABLE school.a (id int);" }));
-  const { rows } = await db.query(`SELECT rolsuper, rolcanlogin, rolcreaterole, rolcreatedb, rolreplication, rolbypassrls
-    FROM pg_roles WHERE rolname = 'school_owner'`);
-  expect(rows).toEqual([{ rolsuper: false, rolcanlogin: false, rolcreaterole: false, rolcreatedb: false, rolreplication: false, rolbypassrls: false }]);
-}, SLOW);
-
 test("a failing file leaves nothing of itself behind and is not recorded; earlier files stay applied", async () => {
   const d = folder({ "0001_a.sql": "CREATE TABLE school.a (id int);", "0002_bad.sql": "CREATE TABLE school.half (id int); SELECT no_such_function();" });
   const db = new PGlite();
