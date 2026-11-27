@@ -153,7 +153,20 @@ describe("the flags", () => {
   });
 
   test("hooks always go to /dev/null, whatever configuration the caller adds", () => {
-    expect(gitArguments({ config: ["core.hooksPath=/hostile"] }, ["status"]).slice(0, 2)).toEqual(["-c", "core.hooksPath=/dev/null"]);
+    for (const key of ["core.hooksPath", "core.fsmonitor", "submodule.recurse"]) {
+      expect(() => gitArguments({ config: [`${key}=/hostile`] }, ["status"])).toThrow(GitRunError);
+      expect(() => gitArguments({ config: [`${key.toUpperCase()}=/hostile`] }, ["status"])).toThrow(GitRunError);
+    }
+    const argv = gitArguments({ config: ["a.b=1"] }, ["status"]);
+    expect(argv.filter((a) => a.startsWith("core.hooksPath"))).toEqual(["core.hooksPath=/dev/null"]);
+    expect(argv).toEqual([...BASE_FLAGS, "-c", "a.b=1", "status"]);
+  });
+
+  test("a refused configuration never starts git", async () => {
+    const f = fakeGit();
+    const e = await runGit(spec(f.bin, { config: ["core.hooksPath=/hostile"] }), ["status"]).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(GitRunError);
+    expect(f.calls()).toEqual([]);
   });
 
   test("--git-dir names the repository before the command", async () => {
