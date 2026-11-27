@@ -79,12 +79,20 @@ function abs(value: string, from: string): string {
 }
 
 /**
+ * An empty name-to-path map with no prototype, so a name such as "constructor" or "__proto__" is
+ * only ever its own key (flyingrobots/school#299). Look names up with `Object.hasOwn`, never `in`.
+ */
+function names(): Record<string, string> {
+  return Object.create(null);
+}
+
+/**
  * Parse `name=path` pairs separated by commas, as used by `SCHOOL_COURSES` and
  * `SCHOOL_MOUNTS`. Relative paths resolve against `from`. Names are lowercase, become URL
  * segments, and may not shadow a route the framework owns.
  */
 export function parsePairs(spec: string | undefined, from: string, label: string, reserve = true): Record<string, string> {
-  const out: Record<string, string> = {};
+  const out = names();
   for (const entry of (spec ?? "").split(",")) {
     const text = entry.trim();
     if (text === "") continue;
@@ -94,7 +102,7 @@ export function parsePairs(spec: string | undefined, from: string, label: string
     const path = text.slice(eq + 1).trim();
     if (!NAME.test(name)) throw new ConfigError(`${label} name ${JSON.stringify(name)} must match ${NAME.source}`);
     if (reserve && (RESERVED as readonly string[]).includes(name)) throw new ConfigError(`${label} name ${JSON.stringify(name)} is reserved`);
-    if (name in out) throw new ConfigError(`${label} name ${JSON.stringify(name)} is set twice`);
+    if (Object.hasOwn(out, name)) throw new ConfigError(`${label} name ${JSON.stringify(name)} is set twice`);
     if (path === "") throw new ConfigError(`${label} ${JSON.stringify(name)} has an empty path`);
     out[name] = abs(path, from);
   }
@@ -193,7 +201,7 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     const name = basename(path).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
     if (!NAME.test(name)) throw new ConfigError(`SCHOOL_COURSE directory ${JSON.stringify(basename(path))} does not make a usable course name`);
     if ((RESERVED as readonly string[]).includes(name)) throw new ConfigError(`SCHOOL_COURSE name ${JSON.stringify(name)} is reserved; use SCHOOL_COURSES to name it`);
-    if (name in courses) throw new ConfigError(`SCHOOL_COURSE name ${JSON.stringify(name)} collides with SCHOOL_COURSES`);
+    if (Object.hasOwn(courses, name)) throw new ConfigError(`SCHOOL_COURSE name ${JSON.stringify(name)} collides with SCHOOL_COURSES`);
     courses[name] = path;
     single = name;
   }
@@ -203,7 +211,7 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
   // course would serve the same bytes unsandboxed.
   const untrusted = parsePairs(env.SCHOOL_UNTRUSTED_COURSES, cwd, "SCHOOL_UNTRUSTED_COURSES");
   for (const [name, path] of Object.entries(untrusted)) {
-    if (name in courses) {
+    if (Object.hasOwn(courses, name)) {
       throw new ConfigError(`course ${JSON.stringify(name)} is in both ${name === single ? "SCHOOL_COURSE" : "SCHOOL_COURSES"} and SCHOOL_UNTRUSTED_COURSES; a course is trusted or untrusted, not both`);
     }
     for (const [other, root] of Object.entries(courses)) {
@@ -307,14 +315,14 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
 
 /** Top-level static mounts: the framework's assets plus any configured source material. */
 export function mountTable(config: Config): Record<string, string> {
-  return { ...config.mounts };
+  return Object.assign(names(), config.mounts);
 }
 
 /** `trusted` is false for a course from SCHOOL_UNTRUSTED_COURSES (flyingrobots/school#210). */
 export type Course = { name: string; root: string; lessons: string; reference: string; trusted: boolean };
 
 export function course(config: Config, name: string): Course | null {
-  const root = config.courses[name];
+  const root = Object.hasOwn(config.courses, name) ? config.courses[name] : undefined;
   if (root === undefined) return null;
   return { name, root, lessons: join(root, "lessons"), reference: join(root, "reference"), trusted: !config.untrusted.includes(name) };
 }
