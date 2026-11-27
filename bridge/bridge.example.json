@@ -11,5 +11,20 @@
       "command": "codex exec --skip-git-repo-check --ephemeral --sandbox read-only -o {output_file}",
       "output": "text"
     }
-  ]
+  ],
+  "ask": {
+    "timeout_seconds": 90,
+    "agents": [
+      {
+        "name": "claude",
+        "command": "claude --model claude-sonnet-5-5 --tools \"\" --strict-mcp-config --no-session-persistence --output-format stream-json --include-partial-messages --verbose -p {prompt}",
+        "output": "claude-stream-json"
+      },
+      {
+        "name": "codex",
+        "command": "codex exec --skip-git-repo-check --ephemeral --sandbox read-only -o {output_file}",
+        "output": "text"
+      }
+    ]
+  }
 }

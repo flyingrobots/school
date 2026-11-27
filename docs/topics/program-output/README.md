@@ -2,8 +2,8 @@
 title: "The backup job's, the Postgres gate's and the bridge's output"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-23
-updated: 2026-11-23
-status: "Reference. Describes what server/backup/backup.sh, server/testing/postgres-gate.ts and bridge/bridge.ts print on the default branch (flyingrobots/school#135)."
+updated: 2026-11-26
+status: "Reference. Describes what server/backup/backup.sh, server/testing/postgres-gate.ts and bridge/bridge.ts print on the default branch (flyingrobots/school#135; the bridge's questions, flyingrobots/school#226)."
 ---
 
 # The backup job's, the Postgres gate's and the bridge's output
@@ -163,6 +163,9 @@ SCHOOL_BRIDGE_TOKEN=<shared secret> bun bridge/bridge.ts [--help | --schema] [--
 | `school.bridge.run.start` | `bridge.run.start` | `id` | A `POST /run` accepted |
 | `school.bridge.attempt` | `bridge.attempt` | `id`, `agent`, `status`, `ms`, `exit_code`, `error` | Each agent tried in that run |
 | `school.bridge.run.end` | `bridge.run.end` | `id`, `status`, `agent` | How the run ended |
+| `school.bridge.ask.start` | `bridge.ask.start` | `id` | A `POST /ask` accepted, before any agent runs |
+| `school.bridge.ask.attempt` | `bridge.ask.attempt` | `id`, `agent`, `status` (`succeeded`, `failed` or `skipped`), `ms`, `exit_code`, `error`, `deltas` (how many pieces of the answer it passed on) | After the question, each ask agent tried for it |
+| `school.bridge.ask.end` | `bridge.ask.end` | `id`, `status`, `agent` (whose words the caller received; null if none), `deltas`, `usage` (`input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, each an integer or null; null for an agent whose output kind reports none) | How the question ended |
 | `school.bridge.test` | `bridge.test` | `agent`, `status` | A `POST /test` |
 | `school.bridge.config.saved` | `bridge.config.saved` | `config`, `agents` (names, in order) | An accepted `PUT /config` |
 | `school.bridge.speak.submit` | `bridge.speak.submit` | `id`, `state`, `segments` | A `POST /speak` the daemon accepted ([reading aloud](../reading-aloud/README.md)) |
@@ -170,8 +173,9 @@ SCHOOL_BRIDGE_TOKEN=<shared secret> bun bridge/bridge.ts [--help | --schema] [--
 | `school.bridge.speak.failed` | `bridge.speak.failed` | `op` (`submit`, `get`, `segment` or `cancel`), `status` (`unavailable` or `refused`), `message` | A `/speak` request the daemon could not serve |
 | `school.bridge.error` | `bridge.error` | `message`; for a port it cannot listen on also `host`, `port` and `code` (`EADDRINUSE` for a taken port, else the system's code or null) | A refusal to start, an uncaught throw or rejection, or a request handler's throw (answered 500) |
 
-No line holds a prompt, an answer or text to speak. Before flyingrobots/school#135 the lines had no `_schema`
-and no `run`, and arguments were ignored.
+No line holds a prompt, an answer or text to speak: a question's lines count the answer's pieces
+and tokens, never its words. Before flyingrobots/school#135 the lines had no `_schema` and no
+`run`, and arguments were ignored.
 
 ### What the bridge printed
 
@@ -195,6 +199,31 @@ exit=2
 $ SCHOOL_BRIDGE_TOKEN=short bun bridge/bridge.ts --human
 error: set SCHOOL_BRIDGE_TOKEN to a shared secret of at least 16 characters; the server sends the same one
 exit=2
+```
+
+### What the bridge printed for a question
+
+`bun bridge/bridge.ts` from the repository on 2026-11-26, the token in the environment, with an
+`ask` list of two agents. The first is missing. The second is a script that prints two text
+deltas and a result in Claude Code's stream-json shapes; it is not a real model. The listing
+shows one `POST /ask` with the prompt `What is a passage?`: first the bridge's log, then the NDJSON
+reply the caller received. The temporary folder holding the configuration is shown as `$DIR`;
+nothing else is changed. The log counts the answer's two pieces and its tokens, and holds neither
+the question nor the answer.
+
+```text
+{"_schema":{"id":"school.bridge.start","version":"1.0.0"},"kind":"bridge.start","at":"2026-11-26T23:20:04.349Z","host":"127.0.0.1","port":0,"config":"$DIR/bridge.json","agents":[{"name":"grader","enabled":true,"program":"true"}],"run":"8eb2eadf-f519-40ae-a7a2-b83e60956044"}
+{"_schema":{"id":"school.bridge.listening","version":"1.0.0"},"kind":"bridge.listening","at":"2026-11-26T23:20:04.353Z","host":"127.0.0.1","port":61775,"tokenFrom":"environment","run":"8eb2eadf-f519-40ae-a7a2-b83e60956044"}
+{"_schema":{"id":"school.bridge.ask.start","version":"1.0.0"},"kind":"bridge.ask.start","at":"2026-11-26T23:20:04.455Z","id":"94563c77-f15c-4b6a-a98d-fba48934f91c","run":"8eb2eadf-f519-40ae-a7a2-b83e60956044"}
+{"_schema":{"id":"school.bridge.ask.attempt","version":"1.0.0"},"kind":"bridge.ask.attempt","at":"2026-11-26T23:20:04.864Z","id":"94563c77-f15c-4b6a-a98d-fba48934f91c","agent":"missing","status":"skipped","ms":0,"exit_code":null,"error":"no-such-cli-qqq: not found on PATH","deltas":0,"run":"8eb2eadf-f519-40ae-a7a2-b83e60956044"}
+{"_schema":{"id":"school.bridge.ask.attempt","version":"1.0.0"},"kind":"bridge.ask.attempt","at":"2026-11-26T23:20:04.864Z","id":"94563c77-f15c-4b6a-a98d-fba48934f91c","agent":"claude","status":"succeeded","ms":408,"exit_code":0,"error":null,"deltas":2,"run":"8eb2eadf-f519-40ae-a7a2-b83e60956044"}
+{"_schema":{"id":"school.bridge.ask.end","version":"1.0.0"},"kind":"bridge.ask.end","at":"2026-11-26T23:20:04.864Z","id":"94563c77-f15c-4b6a-a98d-fba48934f91c","status":"succeeded","agent":"claude","deltas":2,"usage":{"input_tokens":12,"output_tokens":9,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"run":"8eb2eadf-f519-40ae-a7a2-b83e60956044"}
+```
+
+```text
+{"type":"delta","text":"A passage "}
+{"type":"delta","text":"is a short piece of a text."}
+{"type":"end","status":"succeeded","agent":"claude","usage":{"input_tokens":12,"output_tokens":9,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"error":null,"attempts":[{"agent":"missing","status":"skipped","ms":0,"exit_code":null,"error":"no-such-cli-qqq: not found on PATH","deltas":0},{"agent":"claude","status":"succeeded","ms":408,"exit_code":0,"error":null,"deltas":2}]}
 ```
 
 ## What the contract cannot cover
