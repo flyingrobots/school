@@ -7,6 +7,7 @@
 // one migrated template, and every database it makes is dropped at the end
 // (server/testing/postgres.ts).
 import { describe, expect, test } from "bun:test";
+import { conversationTables } from "../contract/conversation-tables.ts";
 import { learningRecordContract } from "../contract/learning-record.ts";
 import { appUrl, scratchPostgres, TEST_APP_PASSWORD, TEST_POSTGRES_URL as URL_ } from "../testing/postgres.ts";
 import { APP, FUNCTION_CALL, migrateRecord, openDatabase, redact } from "./database.ts";
@@ -21,6 +22,11 @@ const { database, fresh, track } = scratchPostgres();
 
 describe.skipIf(URL_ === undefined)("Bun.SQL on a real Postgres (SCHOOL_TEST_POSTGRES_URL)", () => {
   learningRecordContract("postgres (Bun.SQL)", async () => postgresRecord((await fresh()).sql));
+  conversationTables("postgres (Bun.SQL)", async () => {
+    const { url, sql } = await fresh();
+    const pool = track(new Bun.SQL(url));
+    return { record: postgresRecord(sql), as: (role) => bunSql(pool, role) };
+  });
 
   // The server no longer migrates a Postgres record: the migrate job does, as the owner, and the
   // server opens it as school_app (flyingrobots/school#91; server/adapters/app-login.test.ts).
