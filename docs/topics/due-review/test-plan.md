@@ -31,6 +31,10 @@ example of §4.3: a clean answer's stability is one day and grows by 2.5 with ea
 delay later, so strength is exactly one half one stability after the refresh, and below it a
 millisecond later. Contract cases are titled `<adapter>: due review: faded...`, on both drivers.
 
+DR-5, DR-6 and DR-H1 used to ask about a clean quiz more than one stability after its answer. With
+this rule, that quiz comes back, so their queries now sit inside one stability. Their expected
+outputs and what each tests are unchanged ([RFC 5 Table 4.6a](../../rfc/0005-mastery-that-fades.md#46-due-review-one-added-rule)).
+
 | ID | Case | Oracle | Status | Test |
 | --- | --- | --- | --- | --- |
 | DR-F-G1 | Golden: RFC 5 §4.3 | A quiz answered cleanly is not due one day on, at exactly one half; 1 ms later it is `due-review/faded`, with `answeredAt` and `lastSeen` its answer, `corrected: false`, `shown: []` and `school.mastery`'s evidence. Answered cleanly then, it returns 2.5 days on, citing both first tries | implemented | `faded, golden (RFC 5 §4.3): a quiz answered cleanly comes back once a whole stability has passed, citing mastery's evidence` |
