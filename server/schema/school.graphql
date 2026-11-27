@@ -103,6 +103,13 @@ type AidRequest {
   submissionId: String!
 }
 
+# Help for a whole encounter, which the server records (RFC 6 §5.1). Its `kind` is left out: the one
+# value, `ai-help`, holds a hyphen, which a GraphQL enum value cannot. check.ts compares the rest.
+type LessonHelp {
+  exposureId: String!
+  encounterId: String!
+}
+
 # ---- What the record answers -------------------------------------------------------------------
 
 enum StoreStatus { stored duplicate conflict rejected }
@@ -321,4 +328,22 @@ type Mastery {
   refreshedAt: String
   settled: Boolean!
   evidence: [Int!]!
+}
+
+# MasteryRollupQuery's groups, an object from a group key to quiz block ids, has no GraphQL form
+# (GraphQL has no map type), so server/schema/check.ts compares the rest.
+type MasteryRollupQuery {
+  course: String!
+  now: String!
+  delayMs: Int!
+}
+
+type MasteryRollup {
+  key: String!
+  quizzes: Int!
+  notStarted: Int!
+  settling: Int!
+  holding: Int!
+  faded: Int!
+  strength: Float
 }

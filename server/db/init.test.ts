@@ -11,8 +11,8 @@ const RECORD_TABLES = ["answers", "course_installs", "course_removals", "course_
 
 /** The functions `school_app` may execute, and nothing else. */
 const APP_FUNCTIONS = [
-  "choice_decision_notes", "choose_course_trust", "choose_time_zone", "due_review", "encounter_answers", "encounter_decision_notes", "encounter_evidence", "encounter_explanations",
-  "explanation", "install_course", "installed_courses", "last_studied", "latest_feedback", "lesson_progress", "mastery", "open_encounter", "open_lesson_encounter", "record_decision_note", "record_exposure", "record_grading",
+  "choice_decision_notes", "choose_course_trust", "choose_time_zone", "course_progress", "due_review", "encounter_answers", "encounter_decision_notes", "encounter_evidence", "encounter_explanations",
+  "explanation", "install_course", "installed_courses", "last_studied", "latest_feedback", "lesson_progress", "mastery", "mastery_rollup", "open_encounter", "open_lesson_encounter", "record_decision_note", "record_exposure", "record_grading", "record_lesson_help",
   "record_view", "remove_installed_course", "save_explanation", "study_days", "submission_aid", "submit", "time_zone",
 ];
 

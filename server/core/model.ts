@@ -86,6 +86,21 @@ export type Exposure = z.infer<typeof Exposure>;
 export const ExposureResult = z.object({ status: z.enum(["stored", "duplicate", "conflict", "rejected"]) });
 export type ExposureResult = z.infer<typeof ExposureResult>;
 
+/**
+ * Help a model wrote for the learner about a lesson, shown in one encounter (RFC 6 §5.1): one
+ * exposure for the whole encounter, with no block, recorded by the server and never by the page.
+ */
+export const LessonHelpKind = z.enum(["ai-help"]);
+export type LessonHelpKind = z.infer<typeof LessonHelpKind>;
+
+/** Help for a whole encounter. `exposureId` names it once, as an exposure's does. */
+export const LessonHelp = z.object({ exposureId: uuid, encounterId: uuid, kind: LessonHelpKind });
+export type LessonHelp = z.infer<typeof LessonHelp>;
+
+/** Every kind of exposure the record holds: the page's, and the server's help for a whole encounter. */
+export const RecordedExposureKind = z.enum([...ExposureKind.options, ...LessonHelpKind.options]);
+export type RecordedExposureKind = z.infer<typeof RecordedExposureKind>;
+
 /** Whether a submission was aided: derived from exposures by the record's order, never stored (RFC 2 §3). */
 export const Aid = z.enum(["aided", "no-recorded-aid", "unknown"]);
 export type Aid = z.infer<typeof Aid>;
@@ -248,9 +263,10 @@ export type DecisionNoteResult = z.infer<typeof DecisionNoteResult>;
 
 /**
  * Why a block came back: its latest weak first try was wrong; right, but after help shown for it in
- * that encounter; or right while School was not recording help, so its aid is unknown.
+ * that encounter; or right while School was not recording help, so its aid is unknown. Or, ranked
+ * after those three, it had settled and its mastery has faded below one half (RFC 5 §4.6).
  */
-export const ReviewRule = z.enum(["due-review/wrong-first-try", "due-review/aided-first-try", "due-review/unknown-aid"]);
+export const ReviewRule = z.enum(["due-review/wrong-first-try", "due-review/aided-first-try", "due-review/unknown-aid", "due-review/faded"]);
 export type ReviewRule = z.infer<typeof ReviewRule>;
 
 /**
@@ -277,7 +293,7 @@ export const DueItem = z.object({
   rule: ReviewRule,
   answeredAt: timestamp,
   corrected: z.boolean(),
-  shown: z.array(ExposureKind),
+  shown: z.array(RecordedExposureKind),
   lastSeen: timestamp,
   evidence: z.array(Seq).min(1).max(100),
 });
@@ -321,6 +337,37 @@ export const Mastery = z.object({
   evidence: z.array(Seq).max(100),
 });
 export type Mastery = z.infer<typeof Mastery>;
+
+/**
+ * What to ask the rollup (RFC 5 §4.5): the course, groups from a key (a lesson, or the whole
+ * course) to quiz block ids, and the time and delay as for the measure. A block may sit in more than
+ * one group, and counts in each.
+ */
+export const MasteryRollupQuery = z.object({
+  course: z.string().min(1).max(200),
+  groups: z.record(z.string().min(1).max(200), z.array(blockId).max(10_000)),
+  now: timestamp,
+  delayMs: ms,
+});
+export type MasteryRollupQuery = z.infer<typeof MasteryRollupQuery>;
+
+/**
+ * How one group of quizzes is held at the query's time (RFC 5 Table 4.5). `quizzes` is the number
+ * of distinct blocks in the group, and the four counts partition them: never answered, answered but
+ * not settled, settled with strength one half or more, settled with strength below one half.
+ * `strength` is the mean strength over the group, a quiz not started counting 0, and null for an
+ * empty group; it is for ranking, never for display.
+ */
+export const MasteryRollup = z.object({
+  key: z.string(),
+  quizzes: z.int().nonnegative(),
+  notStarted: z.int().nonnegative(),
+  settling: z.int().nonnegative(),
+  holding: z.int().nonnegative(),
+  faded: z.int().nonnegative(),
+  strength: z.number().min(0).max(1).nullable(),
+});
+export type MasteryRollup = z.infer<typeof MasteryRollup>;
 
 // ---- Installed courses (RFC 7 §7; flyingrobots/school#232) -------------------------------------
 
@@ -384,3 +431,13 @@ export const InstalledCourse = z.discriminatedUnion("source", [
   CourseInstall.options[1].extend({ at: timestamp, trusted: z.boolean() }),
 ]);
 export type InstalledCourse = z.infer<typeof InstalledCourse>;
+
+/**
+ * What the record already holds under a course name (RFC 7 §5.2, flyingrobots/school#237): its
+ * encounters, the quiz answers and explanations given in them, and its recorded views. A name with
+ * all four zero has no progress; any other is progress an install under that name would continue.
+ */
+export const CourseProgress = z.object({
+  encounters: z.int().nonnegative(), answers: z.int().nonnegative(), explanations: z.int().nonnegative(), views: z.int().nonnegative(),
+});
+export type CourseProgress = z.infer<typeof CourseProgress>;

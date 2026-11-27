@@ -35,6 +35,30 @@ movement) and `↵` opens the focused one. A GSAP timeline brings the heading an
 in, animating opacity and position only (never visibility, so `j` reaches a lesson while it fades
 in), unless the viewer prefers reduced motion.
 
+## Each lesson's mastery
+
+`GET /api/courses/:course` also gives each lesson `mastery`, how its quizzes are holding now (RFC 5 §4.5; flyingrobots/school#220). The page does not show it yet; RFC 5 step 5 puts it in words on each lesson's card.
+
+| Field | Counts the lesson's quizzes that are | The learner will read it as |
+| --- | --- | --- |
+| `notStarted` | Never answered in this course | Not started yet |
+| `settling` | Answered, but due review's weak rules still hold them | Still settling |
+| `holding` | Settled, at half strength or more | Holding |
+| `faded` | Settled, below half strength | Ready for another look |
+
+_Table 1. The four counts in `mastery`, as [mastery](../mastery/README.md#rolling-up-to-lessons-and-courses) defines them. They partition the lesson's quizzes, so they sum to its `quizzes`._
+
+```json
+{"id": "l1", "title": "Orbits", "subtitle": "Round and round", "quizzes": 4, "answeredCorrectly": 2,
+ "mastery": {"notStarted": 1, "settling": 1, "holding": 1, "faded": 1}}
+```
+
+_Listing 1. One lesson of `lessons`, with one quiz in each state, as `server/course-mastery.test.ts` reads it._
+
+The server reads the counts from `school.mastery_rollup`, one group per lesson, at its own clock and with the twenty-hour delay due review uses (`REVIEW_DELAY_MS`), so they agree with the review a lesson opens with. Nothing the client sends moves that clock. A lesson with no quizzes has zero in every state. The counts are never a percentage or a score, and the rollup's mean strength is not in the response. Every other field is as before; a course whose lessons cannot be read still has `lessons: null`, and an untrusted course's response keeps its safe-mode headers.
+
+In short: each lesson says how many of its quizzes are not started, settling, holding or faded, now, by the server's clock.
+
 ## States
 
 | When | The page shows |

@@ -78,6 +78,15 @@ test("opening a lesson passes the client's aid capture version, or null, to the 
   ]);
 });
 
+test("mastery is read at the clock's now with due review's delay, one group per key (RFC 5 §4.5)", async () => {
+  const asked: unknown[] = [];
+  const row = { key: "l1", quizzes: 1, notStarted: 1, settling: 0, holding: 0, faded: 0, strength: 0 };
+  const record = { masteryRollup: async (q: unknown) => (asked.push(q), [row]) } as unknown as LearningRecord;
+  const school = createSchool({ record, grader: grader({ status: "failed", error: "x" }), clock });
+  expect(await school.masteryNow("c", { l1: ["q1"], l2: [] })).toEqual([row]);
+  expect(asked).toEqual([{ course: "c", groups: { l1: ["q1"], l2: [] }, now: NOW, delayMs: REVIEW_DELAY_MS }]);
+});
+
 describe("due review on opening a lesson (RFC 2 §5; flyingrobots/school#32)", () => {
   const quiz = (id: string): Block => ({ type: "quiz", id, q: `${id}?`, why: ".", choices: [{ id: "a", text: "A", correct: true }] });
   const item = (blockId: string, o: Partial<DueItem> = {}): DueItem => ({
@@ -146,11 +155,28 @@ describe("due review on opening a lesson (RFC 2 §5; flyingrobots/school#32)", (
     const all = [
       item("q", { shown: ["feedback"] }), item("q"), item("q", { corrected: false }),
       item("q", { rule: "due-review/aided-first-try", shown: ["hint"] }), item("q", { rule: "due-review/unknown-aid" }),
+      item("q", { rule: "due-review/faded", corrected: false }),
     ].map((item) => reviewReason(item));
-    for (const reason of all) expect(reason).not.toMatch(/wrong|fail|mistake|incorrect/i);
+    for (const reason of all) expect(reason).not.toMatch(/wrong|fail|mistake|incorrect|forgot|attempt/i);
     for (const reason of [reviewReason(item("q")), reviewReason(item("q", { rule: "due-review/unknown-aid" }))]) {
       expect(reason).not.toMatch(/[0-9]+ ?%|score|points?\b/i); // results in words, never scores
     }
+  });
+
+  test("a faded quiz's reason recalls the day it was found from memory and asks how it feels now (RFC 5 §4.7; flyingrobots/school#219)", () => {
+    // Oracle: RFC 5 §4.7, which gives this sentence for an answer on 21 November.
+    const faded = item("q", { rule: "due-review/faded", answeredAt: "2026-11-21T12:00:00.000Z", corrected: false, shown: [] });
+    expect(reviewReason(faded, "UTC")).toBe("On 21 November, you found this one from memory. Some time has passed: how does it feel now?");
+    expect(reviewReason(faded, "UTC")).not.toMatch(/[0-9]+ ?%|score|points?\b|strength|half/i); // in words, never the measure
+  });
+
+  test("help for the whole encounter is named as asking about the lesson (RFC 6 §5.1, Table 5.2; flyingrobots/school#224)", () => {
+    // Oracle: RFC 6 Table 5.2, row 6, which gives this sentence.
+    const answeredAt = "2026-11-21T12:00:00.000Z";
+    expect(reviewReason(item("q", { rule: "due-review/aided-first-try", answeredAt, corrected: false, shown: ["ai-help"] }), "UTC"))
+      .toBe("On 21 November, asking about the lesson helped you find this one. It's back so you can answer it from memory.");
+    expect(reviewReason(item("q", { shown: ["ai-help", "hint"] })))
+      .toBe("On 20 November, asking about the lesson and a hint helped you find this one. It's back so you can answer it from memory.");
   });
 });
 
