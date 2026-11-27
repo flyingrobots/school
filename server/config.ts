@@ -27,6 +27,13 @@ export type Config = {
    */
   store: string | null;
   /**
+   * The school skill's folder, from SCHOOL_SKILL (RFC 9 §5.3, flyingrobots/school#257): what an
+   * authoring agent is given as its instructions. Null when SCHOOL_SKILL is empty: authoring is then off.
+   */
+  skill: string | null;
+  /** The folder holding the references the skill links, `course-format/` and `voice/`, from SCHOOL_SKILL_DOCS. */
+  skillDocs: string;
+  /**
    * The SQLite progress.db of the server before Postgres. Never written now: startup only reads it,
    * to refuse to start while it holds learner work (RFC 3 v0.4.0 §3.3; server/legacy.ts).
    */
@@ -296,6 +303,8 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     untrusted: Object.keys(untrusted).sort(),
     state,
     store,
+    skill: null,
+    skillDocs: "",
     dbPath,
     database,
     web,
