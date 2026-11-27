@@ -176,6 +176,20 @@ export function claudeStreamLine(line: string): StreamLine {
   return { kind: "other" };
 }
 
+/**
+ * The process group of every agent running now, gradings and questions alike. Each agent leads a
+ * group of its own (spawned detached), so a signal that stops the bridge never reaches it: the
+ * bridge kills these groups itself before it exits (flyingrobots/school#286).
+ */
+const live = new Set<number>();
+export const agentStarted = (pid: number) => { live.add(pid); };
+export const agentEnded = (pid: number) => { live.delete(pid); };
+/** SIGKILL every live agent's process group, now. */
+export function killAgents(): void {
+  for (const pid of live) try { process.kill(-pid, "SIGKILL"); } catch {}
+  live.clear();
+}
+
 async function readCapped(stream: ReadableStream<Uint8Array>, onOverflow: () => void): Promise<string> {
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -199,12 +213,14 @@ async function runAgent(agent: Agent, job: Job, timeoutMs: number): Promise<Atte
   const onStdin = !usesPlaceholder(agent.argv, "{prompt}");
   const argv = expand(agent.argv, { "{prompt}": job.prompt, "{output_file}": outputFile });
   argv[0] = resolved;
+  let pid: number | null = null;
   try {
     // detached: the agent leads its own process group, so a timeout can kill everything it started.
     const proc = Bun.spawn(argv, {
       cwd: work, detached: true, stdout: "pipe", stderr: "pipe",
       stdin: onStdin ? new TextEncoder().encode(job.prompt) : "ignore",
     });
+    agentStarted(pid = proc.pid);
     let why: string | null = null;
     const kill = (reason: string) => {
       why ??= reason;
@@ -232,6 +248,7 @@ async function runAgent(agent: Agent, job: Job, timeoutMs: number): Promise<Atte
     if (invalid !== null) return { ...base, status: "failed", error: `the answer did not match the schema: ${invalid}` };
     return { ...base, status: "succeeded", output } as Attempt & { output: unknown };
   } finally {
+    if (pid !== null) agentEnded(pid);
     rmSync(work, { recursive: true, force: true });
   }
 }

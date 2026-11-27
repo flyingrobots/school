@@ -54,3 +54,16 @@ ask list in the test's process; the `bridge/ask-route.test.ts` cases run the bri
 | STORE-11 | A path that exists but is a file | Refused, naming the path | implemented | `server/config.test.ts`: `a store path that exists but is a file, not a folder, is refused, naming it` |
 
 _Table 2. The course store's cases. STORE-9 reads the Dockerfile; no test builds the image._
+
+## Stopping the bridge (flyingrobots/school#286)
+
+Each agent leads its own process group, so the signal that stops the bridge never reaches it. The
+cases in `bridge/stop.test.ts` run the bridge as a real process with fake agents that start
+background children and hang; an agent process counts as left if `ps` shows it running, not a
+zombie, 2 s after the bridge exits.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| STOP-1 | Golden | One hanging grading agent and its child: after SIGTERM, and after SIGINT, neither is left | implemented | `SIGTERM with one hanging grading agent: no agent process is left once the bridge exits`; the same for SIGINT |
+| STOP-2 | Nothing running | SIGTERM or SIGINT with no agent running: exit 0, "stopped" ([the bridge's exit codes](../program-output/README.md#the-bridge)) | implemented | `SIGTERM with no agent running: the bridge exits 0`; the same for SIGINT |
+| STOP-3 | Many agents | A hanging grading and a hanging question at once, each agent with three children: none of the 8 processes is left | implemented | `SIGTERM with a hanging grading and a hanging question, each agent with three children: no agent process is left` |
