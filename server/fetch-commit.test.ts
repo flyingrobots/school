@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
-import { fetchCommit, isPublicAddress, type FetchRequest, type Network } from "./fetch-commit.ts";
+import { fetchCommit, isPublicAddress, type FetchRequest, type FetchTesting, type Network } from "./fetch-commit.ts";
 import { certificate, configFile, git, gitBackend, serveHttps, TestRepo } from "./testing/https-git.ts";
 
 // `.test` is reserved (RFC 6761) and never resolves, so a fetch from it can only reach the test
@@ -69,7 +69,11 @@ beforeAll(() => {
   url = (repo) => `https://${HOST}:${good.port}/${repo}`;
 });
 
-const request = (o: Partial<FetchRequest> & { commit: string }): FetchRequest => ({ url: url("course.git"), staging: staging(), network: network(good.port!), ...o });
+/** A case: the request, with the test seams beside it. */
+type Case = FetchRequest & FetchTesting;
+const request = (o: Partial<Case> & { commit: string }): Case => ({ url: url("course.git"), staging: staging(), network: network(good.port!), ...o });
+/** Fetches a case: its URL, commit and staging folder as the request, its git, network and limits as the seams. */
+const fetchCase = ({ git: bin, network: net, limits, ...req }: Case) => fetchCommit(req, { git: bin, network: net, limits });
 
 /** The commits the fetched repository holds, by listing every object reachable from the commit. */
 const commitsIn = (repository: string, commit: string) => git(home, ["--git-dir", repository, "rev-list", commit]).split("\n");
@@ -77,7 +81,7 @@ const commitsIn = (repository: string, commit: string) => git(home, ["--git-dir"
 describe("fetchCommit: a good fetch", () => {
   test("FETCH-1: a full hash is fetched as given, alone, into a bare repository in staging", async () => {
     const r = request({ commit: second });
-    const got = await fetchCommit(r);
+    const got = await fetchCase(r);
     expect(got).toEqual({ ok: true, repository: join(r.staging, "repo.git"), commit: second });
     // Oracle: RFC 7 §6, `git fetch --depth=1` into `git init --bare`: one commit, no working tree.
     expect(git(home, ["--git-dir", join(r.staging, "repo.git"), "rev-parse", "--is-bare-repository"])).toBe("true");
@@ -86,7 +90,7 @@ describe("fetchCommit: a good fetch", () => {
 
   test("FETCH-2: a commit no branch points at is fetched by its hash", async () => {
     const r = request({ commit: first });
-    expect(await fetchCommit(r)).toMatchObject({ ok: true, commit: first });
+    expect(await fetchCase(r)).toMatchObject({ ok: true, commit: first });
     expect(commitsIn(join(r.staging, "repo.git"), first)).toEqual([first]);
   });
 
@@ -98,7 +102,7 @@ describe("fetchCommit: a good fetch", () => {
     ["HEAD, the default branch", "HEAD", () => second],
   ])("FETCH-3: %s resolves to its full hash, which is fetched", async (_what, name, expected) => {
     const r = request({ commit: name });
-    expect(await fetchCommit(r)).toEqual({ ok: true, repository: join(r.staging, "repo.git"), commit: expected() });
+    expect(await fetchCase(r)).toEqual({ ok: true, repository: join(r.staging, "repo.git"), commit: expected() });
   });
 
   test("FETCH-4: a branch force-moved between two fetches resolves to where it points now", async () => {
@@ -106,10 +110,10 @@ describe("fetchCommit: a good fetch", () => {
     const a = moving.commit({ "course.json": '{"title":"A"}\n' }, "a");
     const b = moving.commit({ "course.json": '{"title":"B"}\n' }, "b");
     moving.ref("refs/heads/main", a);
-    const before = await fetchCommit(request({ url: url("moving.git"), commit: "main" }));
+    const before = await fetchCase(request({ url: url("moving.git"), commit: "main" }));
     moving.ref("refs/heads/main", b);
     const r = request({ url: url("moving.git"), commit: "main" });
-    const after = await fetchCommit(r);
+    const after = await fetchCase(r);
     expect([before.ok && before.commit, after.ok && after.commit]).toEqual([a, b]);
     expect(commitsIn(join(r.staging, "repo.git"), b)).toEqual([b]);
   });
@@ -119,14 +123,14 @@ describe("fetchCommit: a good fetch", () => {
     const c = wide.commit({ "course.json": '{"title":"Wide"}\n' }, "wide");
     wide.ref("refs/heads/main", c);
     const r = request({ url: url(`sha256-${n}.git`), commit: name || c });
-    expect(await fetchCommit(r)).toEqual({ ok: true, repository: join(r.staging, "repo.git"), commit: c });
+    expect(await fetchCase(r)).toEqual({ ok: true, repository: join(r.staging, "repo.git"), commit: c });
     expect([c.length, ...commitsIn(join(r.staging, "repo.git"), c)]).toEqual([64, c]);
   });
 
   test("FETCH-5: the pin works for an IPv6 address too", async () => {
     const six = server(gitBackend(repos, home), "::1");
     const r = request({ url: `https://${HOST}:${six.port}/course.git`, commit: "main", network: network(six.port!, "::1") });
-    expect(await fetchCommit(r)).toMatchObject({ ok: true, commit: second });
+    expect(await fetchCase(r)).toMatchObject({ ok: true, commit: second });
   });
 });
 
@@ -137,7 +141,7 @@ describe("fetchCommit: refused URLs, before git runs", () => {
   const NO_DNS: Partial<Network> = { resolve: async () => { throw new Error("these cases make no lookup"); } };
   const refused = (url: string, network: Partial<Network> = NO_DNS) => {
     const r = { url, commit: second, staging: staging(), git: NO_GIT, network };
-    return fetchCommit(r).then((got) => ({ got, staged: existsSync(r.staging) }));
+    return fetchCase(r).then((got) => ({ got, staged: existsSync(r.staging) }));
   };
 
   test.each([
@@ -228,7 +232,7 @@ describe("fetchCommit: refused URLs, before git runs", () => {
     ["a lock file name", "main.lock"],
   ])("FETCH-9: a commit given as %s is refused", async (_what, commit) => {
     const r = request({ commit, git: NO_GIT });
-    expect(await fetchCommit(r)).toMatchObject({ ok: false, refusal: { reason: "bad-commit" } });
+    expect(await fetchCase(r)).toMatchObject({ ok: false, refusal: { reason: "bad-commit" } });
     expect(existsSync(r.staging)).toBe(false);
   });
 });
@@ -236,32 +240,32 @@ describe("fetchCommit: refused URLs, before git runs", () => {
 describe("fetchCommit: refusals from the server, with staging deleted", () => {
   test("FETCH-10: a branch or tag the repository lacks is refused", async () => {
     const r = request({ commit: "nope" });
-    expect(await fetchCommit(r)).toMatchObject({ ok: false, refusal: { reason: "no-such-ref" } });
+    expect(await fetchCase(r)).toMatchObject({ ok: false, refusal: { reason: "no-such-ref" } });
     expect(existsSync(r.staging)).toBe(false);
   });
 
   test("FETCH-11: a name that is both a branch and a tag is refused as ambiguous", async () => {
     const r = request({ commit: "same" });
-    expect(await fetchCommit(r)).toMatchObject({ ok: false, refusal: { reason: "ambiguous-ref" } });
+    expect(await fetchCase(r)).toMatchObject({ ok: false, refusal: { reason: "ambiguous-ref" } });
     expect(existsSync(r.staging)).toBe(false);
   });
 
   test("FETCH-12: a hash the repository lacks is refused", async () => {
     const r = request({ commit: "0123456789abcdef0123456789abcdef01234567" });
-    expect(await fetchCommit(r)).toMatchObject({ ok: false, refusal: { reason: "git-failed" } });
+    expect(await fetchCase(r)).toMatchObject({ ok: false, refusal: { reason: "git-failed" } });
     expect(existsSync(r.staging)).toBe(false);
   });
 
   test("FETCH-13: a fetch over the size limit is stopped and its staging folder deleted", async () => {
     const r = request({ url: url("big.git"), commit: bigCommit, limits: { packBytes: 256 * 1024 } });
-    expect(await fetchCommit(r)).toMatchObject({ ok: false, refusal: { reason: "too-large" } });
+    expect(await fetchCase(r)).toMatchObject({ ok: false, refusal: { reason: "too-large" } });
     expect(existsSync(r.staging)).toBe(false);
   });
 
   test("FETCH-14: a server that never answers is stopped at the time limit and its staging folder deleted", async () => {
     const slow = server(() => new Promise<Response>(() => {}));
     const r = request({ url: `https://${HOST}:${slow.port}/course.git`, commit: second, network: network(slow.port!), limits: { gitMs: 1500 } });
-    expect(await fetchCommit(r)).toMatchObject({ ok: false, refusal: { reason: "timeout" } });
+    expect(await fetchCase(r)).toMatchObject({ ok: false, refusal: { reason: "timeout" } });
     expect(existsSync(r.staging)).toBe(false);
   });
 
@@ -275,7 +279,7 @@ describe("fetchCommit: refusals from the server, with staging deleted", () => {
       return Response.redirect(`${u.origin}/moved${u.pathname}${u.search}`, 302);
     });
     const r = request({ url: `https://${HOST}:${redirect.port}/course.git`, commit: second, network: network(redirect.port!) });
-    expect(await fetchCommit(r)).toMatchObject({ ok: false, refusal: { reason: "git-failed" } });
+    expect(await fetchCase(r)).toMatchObject({ ok: false, refusal: { reason: "git-failed" } });
     expect(existsSync(r.staging)).toBe(false);
   });
 
@@ -283,7 +287,7 @@ describe("fetchCommit: refusals from the server, with staging deleted", () => {
     const r = request({ commit: second });
     mkdirSync(r.staging);
     writeFileSync(join(r.staging, "keep"), "mine");
-    expect(await fetchCommit(r)).toMatchObject({ ok: false, refusal: { reason: "bad-staging" } });
+    expect(await fetchCase(r)).toMatchObject({ ok: false, refusal: { reason: "bad-staging" } });
     expect(existsSync(join(r.staging, "keep"))).toBe(true);
   });
 });
@@ -314,7 +318,7 @@ describe("fetchCommit: git ignores the user's configuration and credentials", ()
     });
     try {
       const r = request({ url: `https://${HOST}:${locked.port}/course.git`, commit: "main", network: network(locked.port!) });
-      expect(await fetchCommit(r)).toMatchObject({ ok: false, refusal: { reason: "git-failed" } });
+      expect(await fetchCase(r)).toMatchObject({ ok: false, refusal: { reason: "git-failed" } });
       expect(existsSync(r.staging)).toBe(false);
     } finally {
       for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
@@ -335,7 +339,7 @@ describe("fetchCommit: git reaches only the host School checked, at the address 
   ])("FETCH-19: %s is looked up by School only, and git uses the pin", async (_what, host, expected, lookedUp) => {
     const lookups: string[] = [];
     const net = { ...network(good.port!), resolve: async (h: string) => { lookups.push(h); return ["127.0.0.1"]; } };
-    const got = await fetchCommit(request({ url: `https://${host}:${good.port}/course.git`, commit: "main", network: net }));
+    const got = await fetchCase(request({ url: `https://${host}:${good.port}/course.git`, commit: "main", network: net }));
     expect({ got, lookups }).toMatchObject({ got: expected, lookups: lookedUp });
     expect(got.ok || !got.refusal.message.includes("resolve host")).toBe(true);
   });
@@ -360,14 +364,14 @@ describe("fetchCommit: git reads no repository around the staging folder", () =>
     const base = `https://${HOST}:${watched.port}/`;
     git(home, ["-C", store, "config", `url.${base}rewritten/.insteadOf`, base]);
     const r = request({ url: `${base}course.git`, commit, staging: join(store, "preview"), network: network(watched.port!) });
-    expect({ got: await fetchCommit(r), seen }).toEqual({ got: { ok: true, repository: join(r.staging, "repo.git"), commit: second }, seen: [] });
+    expect({ got: await fetchCase(r), seen }).toEqual({ got: { ok: true, repository: join(r.staging, "repo.git"), commit: second }, seen: [] });
   });
 });
 
 describe("fetchCommit: the staging folder", () => {
   test("FETCH-21: a relative staging path is refused, and nothing is made", async () => {
     const r = request({ commit: second, staging: relative(process.cwd(), staging()) });
-    expect(await fetchCommit(r)).toMatchObject({ ok: false, refusal: { reason: "bad-staging" } });
+    expect(await fetchCase(r)).toMatchObject({ ok: false, refusal: { reason: "bad-staging" } });
     expect(existsSync(resolve(r.staging))).toBe(false);
   });
 });
@@ -395,7 +399,7 @@ describe("fetchCommit: each protection holds on its own", () => {
       return new Response(stream, { status: res.status, headers: res.headers });
     });
     const r = request({ url: `https://${HOST}:${drip.port}/big.git`, commit: bigCommit, network: network(drip.port!), limits: { packBytes: 256 * 1024, gitMs: 30_000 } });
-    expect(await fetchCommit(r)).toMatchObject({ ok: false, refusal: { reason: "too-large" } });
+    expect(await fetchCase(r)).toMatchObject({ ok: false, refusal: { reason: "too-large" } });
     expect({ stoppedEarly: total > 0 && sent < total, staged: existsSync(r.staging) }).toEqual({ stoppedEarly: true, staged: false });
   }, 20_000);
 
@@ -407,7 +411,7 @@ describe("fetchCommit: each protection holds on its own", () => {
     const fake = join(dir, "git");
     writeFileSync(fake, `#!/bin/sh\nsh -c 'echo $$ > "$0"; exec sleep 30' "${dir}/pid.$$" </dev/null >/dev/null 2>&1 &\nwhile [ ! -s "${dir}/pid.$$" ]; do :; done\nexit 0\n`);
     chmodSync(fake, 0o755);
-    await fetchCommit(request({ commit: second, git: fake }));
+    await fetchCase(request({ commit: second, git: fake }));
     const pids = readdirSync(dir).filter((f) => f.startsWith("pid.")).map((f) => Number(readFileSync(join(dir, f), "utf8")));
     const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
     // A killed child is reaped by init shortly after; allow it two seconds.
@@ -431,7 +435,7 @@ describe("fetchCommit: each protection holds on its own", () => {
     try {
       const at = `http://127.0.0.1:${proxy.port}`;
       const r = request({ commit: second, git: gitWith("proxied", { https_proxy: at, HTTPS_PROXY: at, all_proxy: at, ALL_PROXY: at }) });
-      expect({ got: await fetchCommit(r), hits }).toMatchObject({ got: { ok: true, commit: second }, hits: [] });
+      expect({ got: await fetchCase(r), hits }).toMatchObject({ got: { ok: true, commit: second }, hits: [] });
     } finally {
       proxy.stop(true);
     }
@@ -441,7 +445,7 @@ describe("fetchCommit: each protection holds on its own", () => {
     // Only https is allowed (`protocol.allow=never`), whatever rewrites the URL after School's check.
     const base = `https://${HOST}:${good.port}/`;
     const r = request({ commit: second, git: gitWith("rewritten", { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: `url.file://${repos}/.insteadOf`, GIT_CONFIG_VALUE_0: base }) });
-    expect(await fetchCommit(r)).toMatchObject({ ok: false, refusal: { reason: "git-failed", message: expect.stringContaining("transport 'file' not allowed") } });
+    expect(await fetchCase(r)).toMatchObject({ ok: false, refusal: { reason: "git-failed", message: expect.stringContaining("transport 'file' not allowed") } });
     expect(existsSync(r.staging)).toBe(false);
   });
 
@@ -450,13 +454,13 @@ describe("fetchCommit: each protection holds on its own", () => {
     ["a blob", () => git(home, ["--git-dir", course.dir, "rev-parse", `${second}:course.json`])],
   ])("FETCH-26: the hash of %s, which the server serves, is refused as not a commit", async (_what, hash) => {
     const r = request({ commit: hash() });
-    expect(await fetchCommit(r)).toMatchObject({ ok: false, refusal: { reason: "not-a-commit" } });
+    expect(await fetchCase(r)).toMatchObject({ ok: false, refusal: { reason: "not-a-commit" } });
     expect(existsSync(r.staging)).toBe(false);
   });
 
   test("FETCH-27: the fetched commit is held by refs/heads/course, so nothing prunes it before it is read", async () => {
     const r = request({ commit: first });
-    expect(await fetchCommit(r)).toMatchObject({ ok: true, commit: first });
+    expect(await fetchCase(r)).toMatchObject({ ok: true, commit: first });
     expect(git(home, ["--git-dir", join(r.staging, "repo.git"), "rev-parse", "refs/heads/course"])).toBe(first);
   });
 });

@@ -57,8 +57,8 @@ export type FetchRefusal = { reason: FetchRefusalReason; message: string };
 export type Fetched = { ok: true; repository: string; commit: string } | { ok: false; refusal: FetchRefusal };
 
 /**
- * How the fetch reaches the network. Production uses the defaults; tests replace them to reach a
- * local server on loopback with its own certificate. Nothing in the server passes these.
+ * How the fetch reaches the network. Production uses the defaults; tests replace them, through
+ * `FetchTesting`, to reach a local server on loopback with its own certificate.
  */
 export type Network = {
   /** Every address a host name resolves to. */
@@ -84,10 +84,18 @@ export type FetchRequest = {
   commit: string;
   /** The folder to create and fetch into, as an absolute path. Its parent must exist; it must not. */
   staging: string;
-  limits?: Partial<FetchLimits>;
+};
+
+/**
+ * Test seams, for tests only: never part of a request, never built from a client's input. A
+ * caller that could set these would choose the program that runs, the port, the CA it trusts and
+ * the limits. Nothing in the server passes them; production runs with every default.
+ */
+export type FetchTesting = {
   /** The git executable; `git` from PATH by default. */
   git?: string;
   network?: Partial<Network>;
+  limits?: Partial<FetchLimits>;
 };
 
 const MAX_URL = 2048;
@@ -374,19 +382,21 @@ async function resolveRef(g: Git, repository: string, href: string, name: string
  * Fetches one commit from an https URL into `<staging>/repo.git`, a new bare repository, and
  * answers its full hash; or refuses, with the staging folder deleted (or never made).
  */
-export async function fetchCommit(request: FetchRequest): Promise<Fetched> {
-  const net: Network = { ...DEFAULT_NETWORK, ...request.network };
-  const limits: FetchLimits = { ...DEFAULT_FETCH_LIMITS, ...request.limits };
+export async function fetchCommit(request: FetchRequest, testing: FetchTesting = {}): Promise<Fetched> {
+  // Only these three are read from the request, whatever else it carries.
+  const { url, commit: asked, staging } = request;
+  const net: Network = { ...DEFAULT_NETWORK, ...testing.network };
+  const limits: FetchLimits = { ...DEFAULT_FETCH_LIMITS, ...testing.limits };
   let made = false;
   try {
-    const wanted = checkCommit(request.commit);
-    const target = checkUrl(request.url, net.ports);
+    const wanted = checkCommit(asked);
+    const target = checkUrl(url, net.ports);
     const pinned = await checkAddresses(target, net);
-    if (!isAbsolute(request.staging)) refuse("bad-staging", `the staging folder ${JSON.stringify(request.staging)} is not an absolute path`);
+    if (!isAbsolute(staging)) refuse("bad-staging", `the staging folder ${JSON.stringify(staging)} is not an absolute path`);
     try {
-      mkdirSync(request.staging);
+      mkdirSync(staging);
     } catch (e) {
-      return refuse("bad-staging", `the staging folder ${request.staging} could not be made: ${e instanceof Error ? e.message : String(e)}`);
+      return refuse("bad-staging", `the staging folder ${staging} could not be made: ${e instanceof Error ? e.message : String(e)}`);
     }
     made = true;
     const pin = pinned.map((a) => (a.includes(":") ? `[${a}]` : a)).join(",");
@@ -400,8 +410,8 @@ export async function fetchCommit(request: FetchRequest): Promise<Fetched> {
     ].flatMap((c) => ["-c", c]);
     // Every git command names the repository it uses (`--git-dir`), starts in it, and may not look
     // above the staging folder for another, so no enclosing repository's configuration applies.
-    const repository = join(request.staging, "repo.git");
-    const atStaging: Git = { bin: request.git ?? "git", home: request.staging, cwd: request.staging, ceiling: dirname(request.staging), ms: limits.gitMs, config };
+    const repository = join(staging, "repo.git");
+    const atStaging: Git = { bin: testing.git ?? "git", home: staging, cwd: staging, ceiling: dirname(staging), ms: limits.gitMs, config };
     const g: Git = { ...atStaging, cwd: repository };
     const init = async (format: "sha1" | "sha256") => {
       const r = await run(atStaging, ["init", "--quiet", "--bare", "--template=", `--object-format=${format}`, repository], { maxStdout: 4096 });
@@ -416,7 +426,7 @@ export async function fetchCommit(request: FetchRequest): Promise<Fetched> {
       await init("sha256");
     }
     const tooLarge = () => {
-      if (bytesUnder(request.staging) > limits.packBytes) refuse("too-large", `the repository is larger than ${limits.packBytes} bytes at this commit`);
+      if (bytesUnder(staging) > limits.packBytes) refuse("too-large", `the repository is larger than ${limits.packBytes} bytes at this commit`);
     };
     const fetch = await run(g, ["--git-dir", repository, "fetch", "--quiet", "--depth=1", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", target.href, commit], { maxStdout: 64 * 1024, watch: tooLarge });
     tooLarge();
@@ -428,7 +438,7 @@ export async function fetchCommit(request: FetchRequest): Promise<Fetched> {
     if (ref.code !== 0) failed("update-ref", ref);
     return { ok: true, repository, commit };
   } catch (e) {
-    if (made) rmSync(request.staging, { recursive: true, force: true });
+    if (made) rmSync(staging, { recursive: true, force: true });
     if (e instanceof Refused) return { ok: false, refusal: e.refusal };
     throw e;
   }
