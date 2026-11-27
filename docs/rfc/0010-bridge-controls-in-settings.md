@@ -3,8 +3,8 @@ title: "RFC 10: Bridge controls in Settings"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-27
 updated: 2026-11-27
-version: 1.0.0
-status: "Decided, 2026-11-27, by the maintainer: the bridge is launched by macOS LaunchAgents through a small control agent the server only talks to; Settings gains the bridge's state and output, School's AI-TTS voice, every agent list, and four agents by default; phones get a playback chip and drawer. Absorbs flyingrobots/school#328. Builds on flyingrobots/school at commit 502304a."
+version: 1.1.0
+status: "Decided, 2026-11-27, by the maintainer: the bridge is launched by macOS LaunchAgents through a small control agent the server only talks to; Settings gains the bridge's state and output, School's AI-TTS voice, every agent list, and four agents by default; phones get a playback chip and drawer. Absorbs flyingrobots/school#328. Builds on flyingrobots/school at commit 502304a. v1.1.0 applies the maintainer's review of 2026-11-27."
 ---
 
 # RFC 10: Bridge controls in Settings
@@ -17,8 +17,8 @@ Settings today can reorder and test the grading agents and save the bridge's add
 
 | Decision (2026-11-27) | What this RFC builds |
 | --- | --- |
-| 1. The bridge shows **Live** or **Offline**; when Offline, **Launch** and a read-only output panel | A status badge in the bridge card, **Launch**, and a shadcn `ScrollArea` streaming the bridge's log in monospace; bijou-web replaces the panel once it is published (§5.5, task 12) |
-| 2. Launching uses macOS LaunchAgents, never the server | Two user LaunchAgents, `com.flyingrobots.school.bridge` (`./school bridge run`) and `com.flyingrobots.school.bridge-control`; `./school bridge install` and `uninstall`; the server proxies `/api/settings/bridge/*` behind its existing guards; Linux is Open (§5.1 to §5.4) |
+| 1. The bridge shows **Live**, **Needs attention** or **Offline**; when Offline, **Launch** (or **Restart** for a bridge that has stopped answering) and a read-only output panel | A status badge in the bridge card, **Launch** or **Restart**, and a shadcn `ScrollArea` streaming the bridge's log in monospace; bijou-web replaces the panel once it is published (§5.5, task 12) |
+| 2. Launching uses macOS LaunchAgents, never the server | Two user LaunchAgents, `com.flyingrobots.school.bridge` (`./school bridge run`) and `com.flyingrobots.school.bridge-control`; `./school bridge install`, which generates any missing secret first, and `uninstall`; the server proxies `/api/settings/bridge/*` behind its existing guards; Linux is Open (§5.1 to §5.4) |
 | 3. AI-TTS controls: School's voice and the installed version | The bridge's `GET /speech/info` and `PUT /speech/voice` over `assign_voice` with source `School`; the server's `GET` and `PUT /api/settings/speech`; a **Reading aloud** card (§5.6) |
 | 4. Every agent list is reorderable | The agents card covers grading, ask and author, each with its own order and switches; absorbs flyingrobots/school#328 (§5.7) |
 | 5. Every list defaults to claude, codex, agy, lms-qwen | `bridge.example.json` declares all four in every list; a new `openai` agent kind reaches LM Studio's local server for lms-qwen; Settings shows each agent's kind and, for HTTP agents, whether the endpoint answers (§5.8) |
@@ -26,7 +26,7 @@ Settings today can reorder and test the grading agents and save the bridge's add
 
 _Table 0.1. Each decision and what this RFC builds for it. Every row keeps the server unable to run anything on the host and keeps the record as the only store._
 
-The build is twelve independently mergeable tasks in [§7](#7-order-of-work). In short: launchd starts the bridge, a token-guarded helper on 127.0.0.1 reports and launches it for the server, and Settings shows the state, the output, the voice and every agent list.
+The build is twelve independently mergeable tasks in [§7](#7-order-of-work). In short: launchd starts the bridge, a token-guarded helper on 127.0.0.1 reports, launches and, only when it has stopped answering, restarts it for the server, and Settings shows the state, the output, the voice and every agent list.
 
 ## Contents
 
@@ -85,8 +85,8 @@ The bridge, its token, the AI-TTS client and the Settings agents card all exist;
 | The bridge | `bun bridge/bridge.ts` on 127.0.0.1:4748, every route behind `Bearer <token>` compared in constant time (`authorised`); JSON Lines on stdout scrubbed of the token (`bridge/bridge.ts`) | Started by launchd, its stdout and stderr in a log file |
 | The bridge's token | `SCHOOL_BRIDGE_TOKEN` from the environment, else the Keychain item `./school up` stored (`resolveSecret`, `host/secrets.ts`); the server reads it from `/run/secrets/bridge_token` (`server/compose.yaml`) | Unchanged; `./school bridge run` resolves it and passes it in the child's environment only |
 | The `./school` command | `up`, `down`, `compose`, `import`, `check`, with every effect a dependency for tests (`host/launcher.ts`, `host/school.ts`) | A `bridge` command with `run`, `control`, `install` and `uninstall` |
-| Host secrets | Three in `SECRETS`, the bridge token generated when missing (`host/secrets.ts`) | A fourth, `SCHOOL_BRIDGE_CONTROL_TOKEN`, generated the same way |
-| Bridge status in Settings | `GET /api/settings/status` maps `/health` to `none`, `unreachable`, `unauthorised`, `unconfigured`, `misconfigured` or `ok` ([Settings page](../topics/settings-page/README.md#connection-and-agents)) | Folded into **Live** or **Offline** |
+| Host secrets | Three in `SECRETS`, the bridge token generated when missing (`host/secrets.ts`); `./school up` generates and stores each missing `generate` secret before it starts anything (`host/launcher.ts`) | A fourth, `SCHOOL_BRIDGE_CONTROL_TOKEN`, generated the same way, by `./school bridge install` as well as `up` |
+| Bridge status in Settings | `GET /api/settings/status` maps `/health` to `none`, `unreachable`, `unauthorised`, `unconfigured`, `misconfigured` or `ok` (`bridgeStatus`, `server/settings.ts`; [Settings page](../topics/settings-page/README.md#connection-and-agents)) | Folded into **Live**, **Needs attention** or **Offline** |
 | Agent lists | The bridge's `/health` and `PUT /config` cover the grading list (`agents`) and the ask list (`ask.agents`) (`reorder`, flyingrobots/school#287); the server's `POST /api/settings/agents` and the page handle grading only (`agentOrder`, `server/agents.ts`; `web/src/pages/settings.tsx`) | All three lists through the server and the page |
 | The author list | Decided in RFC 9 §5.1, built by flyingrobots/school#259 (open); not in `bridge/run.ts` at `502304a` | Reorderable like the others once it exists |
 | Agent kinds | Every agent is a command; its `output` is `text`, `claude-json` or `claude-stream-json` (`OUTPUTS`, `bridge/run.ts`). The prompt goes in argv only where a command names `{prompt}`, otherwise on stdin (`usesPlaceholder`); a long argv can fail with `E2BIG` (`spawnFailure`) | An HTTP kind beside the command kind, for a local OpenAI-compatible server |
@@ -111,12 +111,12 @@ Something on the host must start the bridge, and the server must never be that t
 
 | Option | For | Against |
 | --- | --- | --- |
-| **A. User LaunchAgents and a control agent** (chosen) | launchd starts and logs the job; the control agent can only run two fixed `launchctl` commands; the server only sends HTTP | Two plists and a fourth secret |
+| **A. User LaunchAgents and a control agent** (chosen) | launchd starts and logs the job; the control agent can only run three fixed `launchctl` commands; the server only sends HTTP | Two plists and a fourth secret |
 | B. The server spawns the bridge | Nothing new on the host | Impossible from Docker, and from a host-run server it is code execution reachable from the tailnet (C2) |
 | C. The bridge itself as a KeepAlive LaunchAgent, no control agent | One plist | No **Launch** when it crashes in a loop or was stopped on purpose; no output for the page |
 | D. A Docker socket or SSH from the container | Uses existing tools | Hands the container far more power than "start one job" |
 
-_Table 4.1. How the bridge could be started. A control agent that can do two fixed things is the smallest power that gives Settings a Launch button._
+_Table 4.1. How the bridge could be started. A control agent that can do three fixed things is the smallest power that gives Settings a Launch button and a Restart for a hung bridge._
 
 Option A keeps the power to start a process on the host, where launchd already owns it.
 
@@ -208,7 +208,7 @@ In short: the page asks, the server relays, the control agent runs one fixed `la
 
 ### 5.2 The two LaunchAgents
 
-`./school bridge install` writes two plists into `~/Library/LaunchAgents/` and loads each with `launchctl bootstrap gui/<uid> <plist>`; `./school bridge uninstall` runs `launchctl bootout gui/<uid>/<label>` and removes them. Neither plist holds a secret.
+`./school bridge install` first makes sure both tokens exist, then writes two plists into `~/Library/LaunchAgents/` and loads each with `launchctl bootstrap gui/<uid> <plist>`; `./school bridge uninstall` runs `launchctl bootout gui/<uid>/<label>` and removes them. Neither plist holds a secret.
 
 | Key | `com.flyingrobots.school.bridge` | `com.flyingrobots.school.bridge-control` |
 | --- | --- | --- |
@@ -217,79 +217,102 @@ In short: the page asks, the server relays, the control agent runs one fixed `la
 | `RunAtLoad` | `false`: it starts on **Launch** or `launchctl kickstart` (Q3) | `true` |
 | `KeepAlive` | `false`: a bridge that stops stays stopped, so its output can be read | `true` |
 | `StandardOutPath`, `StandardErrorPath` | `~/Library/Logs/School/bridge.log` | `~/Library/Logs/School/bridge-control.log` |
-| `EnvironmentVariables` | `PATH` as the installing shell had it, so the bridge finds `claude`, `codex` and `agy`; `SCHOOL_KEYCHAIN_ACCOUNT` when set. No token | The same. No token |
+| `EnvironmentVariables` | `PATH` as the installing shell had it, so the bridge finds `claude`, `codex` and `agy`; `SCHOOL_KEYCHAIN_ACCOUNT` and `SCHOOL_BRIDGE_PORT` when set. No token | The same, so the control agent probes the port the bridge listens on. No token |
 | `ProcessType` | `Interactive` | `Background` |
 
 _Table 5.1. The two plists. Only paths and labels are written; both tokens are read from the Keychain by the processes the plists start._
 
-`./school bridge run` resolves `SCHOOL_BRIDGE_TOKEN` with `resolveSecret` (`host/secrets.ts`), spawns `bun bridge/bridge.ts` with the token in that child's environment only, passes on `SIGTERM` and `SIGINT`, and exits with the child's code. `./school bridge control` resolves `SCHOOL_BRIDGE_CONTROL_TOKEN` the same way and starts the control agent. Both print the launcher's JSON Lines with schemas (`school.launcher.*`, C9) before handing over. `install` refuses (exit 2) when run as root, when the checkout path or `bun` path holds characters a plist cannot carry unescaped, or when `bootstrap` fails, naming the label and `launchctl`'s exit code. `install` and `uninstall` are idempotent: a loaded job is booted out before it is replaced.
+`./school bridge run` resolves `SCHOOL_BRIDGE_TOKEN` with `resolveSecret` (`host/secrets.ts`), spawns `bun bridge/bridge.ts` with the token in that child's environment only, passes on `SIGTERM` and `SIGINT`, and exits with the child's code. `./school bridge control` resolves `SCHOOL_BRIDGE_CONTROL_TOKEN` the same way and starts the control agent. Both print the launcher's JSON Lines with schemas (`school.launcher.*`, C9) before handing over.
 
-In short: two plists with paths only, one job that runs when asked and one that always runs.
+`install` works in a fixed order. It first resolves `SCHOOL_BRIDGE_TOKEN` and `SCHOOL_BRIDGE_CONTROL_TOKEN` as `./school up` resolves its secrets: the environment, then the Keychain, and when one is in neither, it generates one with `generateSecret` and stores it in the Keychain, reporting `generated` as `up` does (`host/launcher.ts`). It never asks for `SCHOOL_POSTGRES_PASSWORD`, which only `up` needs. Only then does it bootstrap the bridge's plist and, last, the control agent's. The order matters because the control agent's plist has `KeepAlive` true: started before its token exists, it would exit at once and launchd would restart it in a loop. A token that `install` generates reaches the server at its next `./school up`, which passes it as a compose secret; until then Settings shows no working helper and no **Launch**.
+
+`install` refuses (exit 2) when run as root, when the checkout path or `bun` path holds characters a plist cannot carry unescaped, or when `bootstrap` fails, naming the label and `launchctl`'s exit code. `install` and `uninstall` are idempotent: a loaded job is booted out before it is replaced.
+
+In short: two plists with paths only, loaded only once both tokens exist, one job that runs when asked and one that always runs.
 
 ### 5.3 The control agent
 
-The control agent is a Bun process of about a hundred lines (`host/bridge-control.ts`) listening on 127.0.0.1:4749 (`SCHOOL_BRIDGE_CONTROL_PORT`). It has three routes and runs exactly two commands, each with a fixed argv.
+The control agent is a Bun process of about a hundred and fifty lines (`host/bridge-control.ts`) listening on 127.0.0.1:4749 (`SCHOOL_BRIDGE_CONTROL_PORT`). It has four routes and runs exactly three commands, each with a fixed argv: `launchctl print`, `launchctl kickstart` and, for a hung bridge only, `launchctl kickstart -k`.
 
 | Route | Does | Answers |
 | --- | --- | --- |
-| `GET /status` | `launchctl print gui/<uid>/com.flyingrobots.school.bridge`, parsing `state = ` and `pid = ` | `{ job: "running" \| "stopped" \| "not installed", pid: number \| null }`; exit 113 (no such service) is `not installed` |
-| `POST /launch` | When the job is not running, `launchctl kickstart gui/<uid>/com.flyingrobots.school.bridge` (never `-k`, so a running bridge is never killed); one launch at a time, at most one per 10 seconds | `{ status: "started" \| "running" \| "busy" \| "not installed" }` |
+| `GET /status` | `launchctl print gui/<uid>/com.flyingrobots.school.bridge`, parsing the `state = ` and `pid = ` lines in the format task 1's recorded run pins | `{ job: "running" \| "stopped" \| "not installed" \| "unknown", pid: number \| null, silent_seconds: number \| null }`; exit 113 (no such service) is `not installed`; `silent_seconds` is how long the bridge has not answered its probe while the job runs (below) |
+| `POST /launch` | When the job is `stopped`, `launchctl kickstart gui/<uid>/com.flyingrobots.school.bridge` (without `-k`, so a running bridge is never killed) | `{ status: "started" \| "running" \| "busy" \| "not installed" \| "unknown" }` |
+| `POST /restart` | Only when the job is `running` and `silent_seconds` is over 30, `launchctl kickstart -k gui/<uid>/com.flyingrobots.school.bridge`, which kills the hung process and starts it again | `{ status: "restarted" \| "answering" \| "stopped" \| "busy" \| "not installed" \| "unknown" }`; `answering` means the probe heard the bridge within the last 30 seconds, so nothing ran |
 | `GET /log` | `~/Library/Logs/School/bridge.log` as `text/event-stream`: the last 200 lines or 64 KiB, whichever is less, then each new line as it is written; a heartbeat comment every 15 seconds; a file that shrinks is read again from its start | One `data:` event per line, each at most 8 KiB, scrubbed of both tokens; at most four streams at once |
 
-_Table 5.2. The control agent's routes. No route takes a parameter that reaches a command, a path or a label._
+_Table 5.2. The control agent's routes. No route takes a parameter that reaches a command, a path or a label, and `-k` runs only for a job that is running and has been silent for over 30 seconds._
+
+`POST /launch` and `POST /restart` share one lock: one at a time, and at most one of either per 10 seconds, so a second request is `busy`.
+
+**The probe.** While the job is running, the control agent sends `GET /health` to the bridge at `127.0.0.1` on `SCHOOL_BRIDGE_PORT` (4748 by default) every 5 seconds, with a 2-second timeout and no token. Any HTTP answer, a 401 included, counts as answering, because it shows the bridge's event loop is serving requests; only a refused connection or a timeout counts as silent. `silent_seconds` is the time since the last answer, or since the job started when it has not answered yet, and `null` while the job is not running. The control agent therefore never holds the bridge's token, and the 30-second rule rests on its own probe, never on what the server says. A bridge busy grading still answers `/health`, because each agent is a child process the bridge awaits without blocking (`Bun.spawn` in `bridge/run.ts`), so `-k` cannot cut a grading that is making progress.
+
+**Parsing `launchctl print`.** Apple's manual says the output of `launchctl print` "is NOT API in any sense at all" (`man launchctl`, read on macOS on 2026-11-27). So the parser accepts only the format task 1's recorded run pins as a fixture: exactly one `state = <word>` line at the service's top level, `running` or one of the stopped states the fixture lists, and, when running, one `pid = <digits>` line. Anything else, an unknown state word, a missing or repeated line, or a non-zero exit other than 113, is `job: "unknown"`, logged with the macOS version and never guessed at. With `unknown`, `/launch` and `/restart` run nothing and answer `unknown`, and Settings offers neither button.
 
 Every request must carry `Authorization: Bearer <SCHOOL_BRIDGE_CONTROL_TOKEN>`, compared in constant time as the bridge compares its own. A request whose `Host` is not `127.0.0.1:4749`, `localhost:4749` or `host.docker.internal:4749`, or that carries an `Origin` or any `Sec-Fetch-*` header, is refused (403) before the token is checked: School's server sends none of those, and every browser does. Its own output is JSON Lines with schemas (`school.bridge-control.*`), and it never logs a line of the bridge's log. `uid` is `process.getuid()`; the label is a constant.
 
-In short: a token-guarded helper that can report one job, start it, and read one file.
+In short: a token-guarded helper that can report one job, start it, restart it only when it has stopped answering, and read one file, and that does nothing when it cannot read the job's state.
 
 ### 5.4 The server's proxy
 
-The server gains one secret, one address and three routes. Compose mounts `bridge_control_token` from `SCHOOL_BRIDGE_CONTROL_TOKEN` at `/run/secrets/bridge_control_token`, read through `SCHOOL_BRIDGE_CONTROL_TOKEN_FILE`; `SCHOOL_BRIDGE_CONTROL_URL` (for example `http://host.docker.internal:4749`) comes only from the environment, and the token is sent only to it, as the bridge token is sent only to an environment `SCHOOL_BRIDGE_URL`.
+The server gains one secret, one address and four routes. Compose mounts `bridge_control_token` from `SCHOOL_BRIDGE_CONTROL_TOKEN` at `/run/secrets/bridge_control_token`, read through `SCHOOL_BRIDGE_CONTROL_TOKEN_FILE`; `SCHOOL_BRIDGE_CONTROL_URL` (for example `http://host.docker.internal:4749`) comes only from the environment, and the token is sent only to it, as the bridge token is sent only to an environment `SCHOOL_BRIDGE_URL`.
 
 | Route | Guard | Does |
 | --- | --- | --- |
-| `GET /api/settings/bridge/status` | `hostAllowed` | `{ bridge: "live" \| "offline", job, control: "ok" \| "none" \| "unreachable" \| "unauthorised" }`. **Live** means the bridge answered `/health` at all (any connection but `none` and `unreachable`); `job` is the control agent's, or `null` |
+| `GET /api/settings/bridge/status` | `hostAllowed` | `{ bridge: "live" \| "needs attention" \| "offline", connection, job, silent_seconds, control: "ok" \| "none" \| "unreachable" \| "unauthorised" }`, where `connection` is `bridgeStatus`'s value. **Live** means `/health` answered `ok`. **Needs attention** means the bridge answered but is `unauthorised`, `unconfigured` or `misconfigured`. **Offline** means `none` or `unreachable`. `job` and `silent_seconds` are the control agent's, or `null` |
 | `POST /api/settings/bridge/launch` | `hostAllowed`, `guardApi` (JSON body, not cross-site), and `Sec-Fetch-Site: same-origin` when the header is present (RFC 7 §8) | Relays to `POST /launch`; `503` with a neutral reason when there is no control agent |
+| `POST /api/settings/bridge/restart` | The same as `launch` | Relays to `POST /restart`, whose own probe decides; the server adds no condition and cannot widen one |
 | `GET /api/settings/bridge/log` | `hostAllowed`, and when fetch metadata is present, `Sec-Fetch-Site: same-origin` and `Sec-Fetch-Dest: empty`, as `guardLessonOpen` does | Relays the event stream unchanged; the browser opens it with `EventSource` |
 
-_Table 5.3. The server's bridge-control routes. The server holds the control token and relays; it runs nothing._
+_Table 5.3. The server's bridge-control routes. The server holds the control token and relays; it runs nothing, and a bridge that answers but cannot work shows as **Needs attention**, never as **Live**._
 
-The existing `GET /api/settings/status` and `POST /api/settings/agents` stay as they are. In short: three relayed routes, each behind the guards School already uses.
+The existing `GET /api/settings/status` and `POST /api/settings/agents` stay as they are. In short: four relayed routes, each behind the guards School already uses.
 
 ### 5.5 The bridge card
 
-The bridge card gains a status line, **Launch** and an output panel. The page polls `GET /api/settings/bridge/status` every 2 seconds while a launch is in progress, for at most 30 seconds, and otherwise when the learner chooses **Check again**.
+The bridge card gains a status line, **Launch** or **Restart**, and an output panel. It has three states: **Live** when `/health` answers `ok`; **Needs attention** when the bridge answers but refuses the token, has no agents, or cannot read its file; and **Offline** when it does not answer. The page polls `GET /api/settings/bridge/status` every 2 seconds while a launch or restart is in progress, for at most 30 seconds, every 5 seconds while the job is running but silent, and otherwise when the learner chooses **Check again**.
 
 ```mermaid
 stateDiagram-v2
+    state "Needs attention" as Attention
     [*] --> Checking
-    Checking --> Live: the bridge answered /health
+    Checking --> Live: /health answered ok
+    Checking --> Attention: answered unauthorised, unconfigured or misconfigured
     Checking --> Offline: no answer
-    Offline --> Launching: Launch
-    Launching --> Live: answered within 30 s
+    Live --> Checking: Check again
+    Attention --> Checking: Check again
+    Offline --> Launching: Launch, job stopped
+    Offline --> Launching: Restart, job running and silent over 30 s
+    Launching --> Live: answered ok within 30 s
+    Launching --> Attention: answered, not ok
     Launching --> Offline: no answer after 30 s
-    Live --> Offline: Check again finds no answer
     state Offline {
-        [*] --> CanLaunch: control agent ok
-        [*] --> NoHelper: control agent none or unreachable
+        [*] --> CanLaunch: job stopped, control agent ok
+        [*] --> Silent: job running, silent 30 s or less
+        Silent --> CanRestart: silent over 30 s
+        [*] --> NoHelper: control agent none, unreachable or unauthorised, or job unknown
     }
 ```
 
-_Figure 5.2. The bridge card's states. **Launch** appears only when the control agent can act on it._
+_Figure 5.2. The bridge card's states. **Live** means the bridge can work; **Launch** and **Restart** appear only when the control agent can act on them, and **Restart** only for a job that is running but has not answered for over 30 seconds._
 
 | State | The card shows |
 | --- | --- |
 | **Live** | A `Badge` "Live" and today's connection details; a `Collapsible` **Bridge output** holding the panel, closed |
-| **Offline**, control agent ok | A `Badge` "Offline", "The bridge isn't running right now. Would you like to launch it?", **Launch**, and the panel open |
-| **Launching** | **Launch** disabled with a `Spinner`, "Starting the bridge…", the panel following new lines |
+| **Needs attention** | A `Badge` "Needs attention" and today's detail line for that connection (`connectionText` in `web/src/pages/settings.tsx`, such as "The bridge refused the token. Enter the token the bridge was started with, or generate one and restart the bridge with it."); the token and address fields as today; the `Collapsible` **Bridge output**, open. No **Launch**, because the bridge is already running |
+| **Offline**, job stopped, control agent ok | A `Badge` "Offline", "The bridge isn't running right now. Would you like to launch it?", **Launch**, and the panel open |
+| **Offline**, job running, silent 30 s or less | A `Badge` "Offline", "The bridge is running and hasn't answered yet. School will check again in a moment." No button; the panel open |
+| **Offline**, job running, silent over 30 s | A `Badge` "Offline", "The bridge is running but hasn't answered for a while. Would you like to restart it? Anything it is working on stops, and you can ask again after.", **Restart** in place of **Launch**, and the panel open |
+| **Launching** | **Launch** or **Restart** disabled with a `Spinner`, "Starting the bridge…", the panel following new lines |
 | **Offline**, no control agent | "School can start the bridge for you once its helper is installed. Would you like to run `./school bridge install` on the Mac?" No **Launch**; no panel |
+| **Offline**, job `unknown` | "School can't read the bridge's state on this Mac right now, so it won't start or restart it. Would you like to check it from a terminal on the Mac?" No button; the panel open |
 | **Offline** after 30 s | "The bridge hasn't answered yet. Its output below may say why." The panel stays open |
 
 _Table 5.4. What the bridge card shows in each state. Every line is neutral and invites rather than instructs (C8)._
 
 The panel is a shadcn `ScrollArea` holding a `<pre>` in the theme's monospace font, read-only, scrolled to the newest line unless the learner has scrolled up. Each JSON line is shown as it was written; nothing is parsed, coloured by meaning or stored. Closing the page closes the `EventSource`. Task 12 replaces the panel with `@flyingrobots/bijou-web`'s DOM host once that package is published; today it is a private workspace package tested only with in-memory fakes (`~/git/bijou/packages/bijou-web/package.json`).
 
-In short: a badge, a button that appears only when it can work, and a plain read-only view of the log.
+In short: a badge that says **Live** only when the bridge can work, a button that appears only when it can work, and a plain read-only view of the log.
 
 ### 5.6 School's voice
 
@@ -311,6 +334,8 @@ In short: School's voice is the daemon's own assignment for source `School`, and
 ### 5.7 Every agent list in Settings
 
 The agents card shows three sections, **Grading**, **Asking** and **Authoring**, each the existing sortable list with its switches, **Test** and keys. A list the bridge does not declare shows "No <list> agents are declared in <file>" and no list. `POST /api/settings/agents` accepts `{ agents }`, `{ ask: { agents } }`, `{ author: { agents } }` or any mix, passes each to the bridge's `PUT /config`, and the bridge's `reorder` gains the `author` key under the same rule as `ask`: names and `enabled` only (C3). Saving one list never rewrites another, which the bridge already guarantees by leaving out lists the body omits. **Test** names the list as well as the agent. This absorbs flyingrobots/school#328.
+
+An agent whose program is not found keeps today's "Not found" badge, and once the bridge runs under launchd its line also says why that can happen: "Its program was not found on the bridge's computer. The bridge looks on the PATH saved when its helper was installed, so a program installed or moved since then won't show up yet. Would you like to run `./school bridge install` again on the Mac?" The bridge's `found` check reads `Bun.which` against its own `PATH` (`bridge/bridge.ts`), and under launchd that is the `PATH` the plist captured at install (Table 5.1), so running `install` again is what brings a new program into view.
 
 In short: three sections built from the one list component, each saved on its own.
 
@@ -372,15 +397,15 @@ The new attack surface is a process on the host that can start the bridge, a log
 | The control token | Someone with it could start the bridge or read its log | Generated (32 letters and digits, `generateSecret`), stored in the Keychain as `SCHOOL_BRIDGE_CONTROL_TOKEN`, given to the server only as a compose secret file (mode 0400, uid 1000) and to the control agent only in its environment; never in a plist, argv, `.env`, a response or a log line, all of which are scrubbed of it; compared in constant time. It is a separate secret from the bridge token, so a leak of either does not grant the other's routes |
 | The 127.0.0.1 binding | Another machine on the tailnet or LAN reaches the control agent | It listens on 127.0.0.1 only, like the bridge; Docker Desktop reaches it through `host.docker.internal`, verified for the bridge in RFC 1 on 2026-11-22. Other processes of any user on the Mac can connect, which is why every route needs the token |
 | DNS rebinding | A web page in the learner's browser rebinds its name to 127.0.0.1 and calls the control agent or the bridge directly | The page lacks the token; the control agent refuses any `Host` but its three names and any request with `Origin` or `Sec-Fetch-*`, and sends no CORS headers; School itself refuses unknown `Host` headers (`hostAllowed`) |
-| CSRF through the server's proxy | Another site, or a course page, makes the learner's browser call `/api/settings/bridge/launch`, `/log` or `/api/settings/speech` with the server's tokens behind them | Writes need `application/json` (a preflight the server never answers) and are refused cross-site, and `same-origin` is required when `Sec-Fetch-Site` is sent; the log stream needs `same-origin` and `empty` destination when metadata is sent, so an untrusted course page (opaque origin, `cross-site`) cannot read it. A forged **Launch** could at worst start the bridge the learner installed, which is rate-limited |
+| CSRF through the server's proxy | Another site, or a course page, makes the learner's browser call `/api/settings/bridge/launch`, `/restart`, `/log` or `/api/settings/speech` with the server's tokens behind them | Writes need `application/json` (a preflight the server never answers) and are refused cross-site, and `same-origin` is required when `Sec-Fetch-Site` is sent; the log stream needs `same-origin` and `empty` destination when metadata is sent, so an untrusted course page (opaque origin, `cross-site`) cannot read it. A forged **Launch** could at worst start the bridge the learner installed, and a forged **Restart** could at worst restart a bridge that has already been silent for over 30 seconds by the control agent's own probe; both are rate-limited |
 | The log's contents | The panel shows the learner's private work, or a secret | The bridge never logs a prompt or an answer (C6) and scrubs its token; the control agent scrubs both tokens again and caps each line. The log does hold host paths (the checkout, `~/.config/school/bridge.json`, the home folder and so the macOS user name), agent names and programs, and an `error` field can carry a parser's message, which may quote a fragment of an agent's malformed reply. So the log is as private as the record: shown only to School's own pages over the tailnet (C5), never stored by the page |
-| `launchctl`'s scope | The control agent is used to run, stop or load something else | It runs only `launchctl print` and `launchctl kickstart` (without `-k`) against the constant label in `gui/<its own uid>`, the user's own GUI domain; no argv part comes from a request. It runs as the user, never with `sudo`, so it cannot reach the system domain or another user's jobs. Installing and removing jobs (`bootstrap`, `bootout`) happens only in `./school bridge install` and `uninstall` at a terminal |
+| `launchctl`'s scope | The control agent is used to run, stop or load something else, or to kill a working bridge | It runs only `launchctl print`, `launchctl kickstart` and `launchctl kickstart -k` against the constant label in `gui/<its own uid>`, the user's own GUI domain; no argv part comes from a request. `-k` runs only when `print` reports the job running and the control agent's own token-less probe has heard nothing for over 30 seconds, so neither the server nor a forged request can make it kill a bridge that answers. A `print` output it cannot parse is `unknown`, and then it runs nothing (§5.3). It runs as the user, never with `sudo`, so it cannot reach the system domain or another user's jobs. Installing and removing jobs (`bootstrap`, `bootout`) happens only in `./school bridge install` and `uninstall` at a terminal |
 | The voice route | A request changes another client's voice or the Mac's default voice | `source` is the constant `School` in the bridge; the name must be in the daemon's own list, which the daemon checks again; release affects only `School` |
 | The `openai` agent | The bridge is made to send prompts off the machine, or to an internal service | `url` is loopback only, set only in `bridge.json`, with no redirects; a response body is never logged. Any process of the same user listening on that port receives the prompts, as any program on `PATH` named `agy` would; that is the trust the bridge already places in the host |
 
-_Table 6.1. Threats to the bridge controls and their mitigations. The design gives the browser no new power beyond starting one job the learner installed and reading one file._
+_Table 6.1. Threats to the bridge controls and their mitigations. The design gives the browser no new power beyond starting one job the learner installed, restarting it when it has stopped answering, and reading one file._
 
-In short: two separate tokens, loopback only, Host and fetch-metadata checks on both hops, and a helper that can do two fixed things in the learner's own launchd domain.
+In short: two separate tokens, loopback only, Host and fetch-metadata checks on both hops, and a helper that can do three fixed things in the learner's own launchd domain, the third only for a bridge that has stopped answering.
 
 ## 7. Order of work
 
@@ -388,10 +413,10 @@ Each row is one task issue with one observable outcome, independently mergeable.
 
 | # | Task | Depends on | Done when |
 | --- | --- | --- | --- |
-| 1 | **Run the bridge as a LaunchAgent.** `./school bridge run`, `install` and `uninstall` for `com.flyingrobots.school.bridge` (Table 5.1), with schemas (§5.2) | none | Launcher tests with a fake `launchctl` and fake Keychain: the plist holds no token, the child gets it in its environment only, `install` twice is one job; a recorded run on macOS shows `launchctl print` running after `kickstart` and the log at `~/Library/Logs/School/bridge.log` |
-| 2 | **The control agent.** `host/bridge-control.ts`, `./school bridge control`, the fourth secret, its plist added to `install` and `uninstall` (§5.3) | 1 | Tests with a fake `launchctl`: each route's answers; a wrong token, a foreign `Host`, an `Origin` or a `Sec-Fetch-Site` is 403; no argv part comes from a request; the backlog is bounded; a truncated log restarts; both tokens are scrubbed |
-| 3 | **The server relays bridge control.** The compose secret, `SCHOOL_BRIDGE_CONTROL_URL`, and the three routes of Table 5.3 | 2 | HTTP tests with a fake control agent: Live and Offline as defined; a cross-site or non-JSON launch is refused; a cross-site log read is refused; the token is sent only to an environment URL and never appears in a response |
-| 4 | **Live, Offline and Launch in Settings.** The bridge card of §5.5 with the `ScrollArea` panel | 3 | A browser test, light and dark: Offline shows **Launch** and the panel; Launch reaches Live against a fake control agent that starts a real bridge; no helper shows the install line; every string passes the voice test; nothing in browser storage |
+| 1 | **Run the bridge as a LaunchAgent.** `./school bridge run`, `install` and `uninstall` for `com.flyingrobots.school.bridge` (Table 5.1), with schemas (§5.2) | none | Launcher tests with a fake `launchctl` and fake Keychain: the plist holds no token, the child gets it in its environment only, `install` twice is one job; with no bridge token in the Keychain, `install` generates and stores one before `bootstrap` runs; a recorded run on macOS shows `launchctl print` running after `kickstart` and the log at `~/Library/Logs/School/bridge.log`, and commits that run's `launchctl print` output for a running, a stopped and a never-run job, with the macOS version, as the fixture §5.3's parser accepts |
+| 2 | **The control agent.** `host/bridge-control.ts` with its probe, `./school bridge control`, the fourth secret, its plist added to `install` and `uninstall` (§5.2, §5.3) | 1 | Tests with a fake `launchctl` and a fake bridge: each route's answers; `/restart` runs `kickstart -k` only for a running job silent over 30 seconds, and answers `answering` without running anything for a bridge that answered, even with a 401, within 30 seconds; any `print` output unlike task 1's fixture is `unknown`, and then `/launch` and `/restart` run nothing; with no control token in the Keychain, `install` generates and stores it before it bootstraps the control plist; a wrong token, a foreign `Host`, an `Origin` or a `Sec-Fetch-Site` is 403; no argv part comes from a request; the backlog is bounded; a truncated log restarts; both tokens are scrubbed |
+| 3 | **The server relays bridge control.** The compose secret, `SCHOOL_BRIDGE_CONTROL_URL`, and the four routes of Table 5.3 | 2 | HTTP tests with a fake control agent: Live, Needs attention and Offline as defined, with `unauthorised`, `unconfigured` and `misconfigured` each Needs attention; a cross-site or non-JSON launch or restart is refused; a cross-site log read is refused; the token is sent only to an environment URL and never appears in a response |
+| 4 | **Live, Needs attention, Offline, Launch and Restart in Settings.** The bridge card of §5.5 with the `ScrollArea` panel, and the not-found line of §5.7 | 3 | A browser test, light and dark: Offline shows **Launch** and the panel; Launch reaches Live against a fake control agent that starts a real bridge; a refused token shows Needs attention with today's detail line and no **Launch**; a running job silent over 30 seconds shows **Restart** in place of **Launch**, and one silent for less shows neither; a job `unknown` shows neither; no helper shows the install line; an agent whose program is not found suggests running `./school bridge install` again; every string passes the voice test; nothing in browser storage |
 | 5 | **The bridge reports and sets School's voice.** `GET /speech/info` and `PUT /speech/voice` (Table 5.5) | none | Bridge tests with a fake daemon socket: an unknown voice is refused without `assign_voice` being sent; `null` releases, and `not_found` counts as done; source is always `School`; an older daemon is `outdated` |
 | 6 | **The server relays the voice.** `GET` and `PUT /api/settings/speech` | 5 | HTTP tests with a fake bridge: guarded like other writes; a bad name is 400 before the bridge is asked |
 | 7 | **The Reading aloud card.** Version, engine, the voice `Combobox` with **Default**, the neutral lines (§5.6) | 6 | A browser test, light and dark: choosing a voice sends it and shows it after a reload; **Default** releases it; unreachable and older states show their lines |
@@ -412,7 +437,7 @@ These are left out on purpose, so a build issue does not drift into them.
 | Left out | Why |
 | --- | --- |
 | Linux (systemd user units) and Windows | Decided out for now; Open (Q1) |
-| Stopping or restarting the bridge from Settings | Not asked for; a `-k` kickstart could kill a grading mid-run |
+| Stopping the bridge from Settings, or restarting one that answers | Not asked for; a `-k` kickstart could kill a grading mid-run, so **Restart** is offered only for a bridge silent for over 30 seconds (§5.3) |
 | Editing `bridge.json` or an agent's command, URL or model from Settings | C3 |
 | Choosing the AI-TTS engine, speed or default voice | Those belong to every client of the daemon, not to School |
 | Showing the control agent's own log | Its lines say only what it did; `~/Library/Logs/School/bridge-control.log` is there for the maintainer |
@@ -429,6 +454,8 @@ The worst risk would be a browser request that runs something on the host; the d
 | Risk | Mitigation |
 | --- | --- |
 | launchd's minimal `PATH` hides the agents' programs | `install` writes the installing shell's `PATH` into both plists; Settings already shows "program found" per agent |
+| The plist's `PATH` goes stale when a program is installed or moved after `install` | Settings' not-found line suggests running `./school bridge install` again (§5.7), which writes the current `PATH` |
+| A macOS update changes `launchctl print`'s output, which Apple says is not an API | The parser accepts only task 1's pinned fixture and reports anything else as `unknown`, so Settings then offers no **Launch** or **Restart** rather than acting on a guess; a new fixture is one recorded run |
 | The Keychain asks for permission when a launchd job first reads it | The read goes through `security`, the same tool `./school up` uses; task 1's recorded run checks no prompt appears in a fresh login session |
 | The log file grows without bound | Open (Q4), with a recommendation |
 | AI-TTS 0.2.0 is not on AI-TTS's `main` yet | The card says so neutrally; task 5 tests against a fake socket; reading aloud already requires 0.2.0 |
@@ -446,7 +473,7 @@ These are the questions a maintainer decision or a run on `mac-desk` still has t
 
 | # | Question | Recommendation |
 | --- | --- | --- |
-| Q1 | Linux: systemd user units in place of LaunchAgents? | Out of scope now. The control agent's two commands map to `systemctl --user status` and `start`, so a later RFC can add an adapter |
+| Q1 | Linux: systemd user units in place of LaunchAgents? | Out of scope now. The control agent's three commands map to `systemctl --user status`, `start` and `restart`, so a later RFC can add an adapter |
 | Q2 | Should the bridge plist set `KeepAlive` on crash? | No: a crash loop would hide its own output; **Launch** restarts it |
 | Q3 | Should the bridge start at login (`RunAtLoad`)? | No at first, so a fresh login never runs agents unasked; one key to change later |
 | Q4 | How is `bridge.log` kept small? | `./school bridge run` truncates it in place when over 10 MiB before starting the bridge; this relies on launchd opening the file for appending, which task 1 must verify |
@@ -459,6 +486,6 @@ In short: Linux waits, the bridge job stays manual, and two agents are checked w
 
 ## 11. Decision
 
-Decided by the maintainer on 2026-11-27: the six decisions of Table 0.1, as §5 describes them. The tasks of §7 are drafted as issue specifications and not yet filed; this section will list their issue numbers once they are. flyingrobots/school#328 is absorbed by task 10.
+Decided by the maintainer on 2026-11-27: the six decisions of Table 0.1, as §5 describes them. The tasks of §7 are filed as flyingrobots/school#372 to flyingrobots/school#383, task 1 as #372 through task 12 as #383, in order. flyingrobots/school#328 is absorbed by task 10 (flyingrobots/school#381).
 
 In short: the design is decided, and its open points are facts to check on `mac-desk` and Linux, which waits.
