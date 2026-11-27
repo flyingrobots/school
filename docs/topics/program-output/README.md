@@ -2,8 +2,8 @@
 title: "The backup job's, the Postgres gate's and the bridge's output"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-23
-updated: 2026-11-26
-status: "Reference. Describes what server/backup/backup.sh, server/testing/postgres-gate.ts and bridge/bridge.ts print on the default branch (flyingrobots/school#135; the bridge's questions, flyingrobots/school#226)."
+updated: 2026-11-27
+status: "Reference. Describes what server/backup/backup.sh, server/testing/postgres-gate.ts and bridge/bridge.ts print on the default branch (flyingrobots/school#135; the bridge's questions, flyingrobots/school#226; its drafts, flyingrobots/school#259)."
 ---
 
 # The backup job's, the Postgres gate's and the bridge's output
@@ -166,15 +166,19 @@ SCHOOL_BRIDGE_TOKEN=<shared secret> bun bridge/bridge.ts [--help | --schema] [--
 | `school.bridge.ask.start` | `bridge.ask.start` | `id` | A `POST /ask` accepted, before any agent runs |
 | `school.bridge.ask.attempt` | `bridge.ask.attempt` | `id`, `agent`, `status` (`succeeded`, `failed` or `skipped`), `ms`, `exit_code`, `error`, `deltas` (how many pieces of the answer it passed on) | After the question, each ask agent tried for it |
 | `school.bridge.ask.end` | `bridge.ask.end` | `id`, `status`, `agent` (whose words the caller received; null if none), `deltas`, `usage` (`input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, each an integer or null; null for an agent whose output kind reports none) | How the question ended |
+| `school.bridge.author.start` | `bridge.author.start` | `id`, `files` and `guide_files` (how many files the request sent under `course/` and `guide/`) | A `POST /author` accepted, before any agent runs |
+| `school.bridge.author.attempt` | `bridge.author.attempt` | `id`, `agent`, `status` (`succeeded`, `failed`, `skipped` or `refused`), `ms`, `exit_code`, `error` (why it failed; for a refused draft the refusal's reason alone, never a path), `steps` (how many tool uses it passed on) | After the draft, each author agent tried for it |
+| `school.bridge.author.end` | `bridge.author.end` | `id`, `status` (`succeeded`, `refused` or `failed`), `agent`, `steps`, `files` and `bytes` (what came back; null unless it succeeded), `refusal` (the reason, such as `symlink`, `unreadable` or `file-too-large`; null unless refused), `guide_sha256` (the digest of the guide as written into the agent's folder; null when no agent ran), `usage` | How the draft ended |
 | `school.bridge.test` | `bridge.test` | `agent`, `status` | A `POST /test` |
 | `school.bridge.config.saved` | `bridge.config.saved` | `config`, `agents` (names, in order) | An accepted `PUT /config` |
 | `school.bridge.speak.submit` | `bridge.speak.submit` | `id`, `state`, `segments` | A `POST /speak` the daemon accepted ([reading aloud](../reading-aloud/README.md)) |
 | `school.bridge.speak.cancel` | `bridge.speak.cancel` | `id`, `state` | A `POST /speak/:id/cancel` |
 | `school.bridge.speak.failed` | `bridge.speak.failed` | `op` (`submit`, `get`, `segment` or `cancel`), `status` (`unavailable` or `refused`), `message` | A `/speak` request the daemon could not serve |
-| `school.bridge.error` | `bridge.error` | `message`; for a port it cannot listen on also `host`, `port` and `code` (`EADDRINUSE` for a taken port, else the system's code or null) | A refusal to start, an uncaught throw or rejection, or a request handler's throw (answered 500) |
+| `school.bridge.error` | `bridge.error` | `message`; for a port it cannot listen on also `host`, `port` and `code` (`EADDRINUSE` for a taken port, else the system's code or null) | A refusal to start, an uncaught throw or rejection, or a request handler's throw (answered 500). For a draft that throws, `message` names only the error's kind and code, never a path |
 
-No line holds a prompt, an answer or text to speak: a question's lines count the answer's pieces
-and tokens, never its words. Before flyingrobots/school#135 the lines had no `_schema` and no
+No line holds a prompt, an answer, a file or text to speak: a question's lines count the answer's
+pieces and tokens, never its words, and a draft's lines count its steps, files and bytes, never a
+path or a file's content. Before flyingrobots/school#135 the lines had no `_schema` and no
 `run`, and arguments were ignored.
 
 ### What the bridge printed
@@ -224,6 +228,33 @@ the question nor the answer.
 {"type":"delta","text":"A passage "}
 {"type":"delta","text":"is a short piece of a text."}
 {"type":"end","status":"succeeded","agent":"claude","usage":{"input_tokens":12,"output_tokens":9,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"error":null,"attempts":[{"agent":"missing","status":"skipped","ms":0,"exit_code":null,"error":"no-such-cli-qqq: not found on PATH","deltas":0},{"agent":"claude","status":"succeeded","ms":408,"exit_code":0,"error":null,"deltas":2}]}
+```
+
+### What the bridge printed for a draft
+
+`bun bridge/bridge.ts` from the branch of flyingrobots/school#259 on 2026-11-27, the token in the
+environment, with an `author` list of two agents. The first is missing. The second is a script that
+prints three tool uses and a result in Claude Code's stream-json shapes and rewrites
+`course/lessons/01.json`; it is not a real model. The listing shows one `POST /author` with a
+two-file course and a one-file guide: first the bridge's log, then the NDJSON reply the caller
+received. The temporary folder holding the configuration is shown as `$DIR`; nothing else is
+changed. The log counts the steps, files and bytes, and holds neither the prompt, a path nor a file.
+
+```text
+{"_schema":{"id":"school.bridge.start","version":"1.0.0"},"kind":"bridge.start","at":"2026-11-27T05:38:27.239Z","host":"127.0.0.1","port":0,"config":"$DIR/bridge.json","agents":[{"name":"grader","enabled":true,"program":"true"}],"run":"a1029689-cb4b-48e8-b01c-39c504934e2c"}
+{"_schema":{"id":"school.bridge.listening","version":"1.0.0"},"kind":"bridge.listening","at":"2026-11-27T05:38:27.240Z","host":"127.0.0.1","port":55274,"tokenFrom":"environment","run":"a1029689-cb4b-48e8-b01c-39c504934e2c"}
+{"_schema":{"id":"school.bridge.author.start","version":"1.0.0"},"kind":"bridge.author.start","at":"2026-11-27T05:38:27.369Z","id":"10c074a6-b18a-4033-b2ae-20580426fef4","files":2,"guide_files":1,"run":"a1029689-cb4b-48e8-b01c-39c504934e2c"}
+{"_schema":{"id":"school.bridge.author.attempt","version":"1.0.0"},"kind":"bridge.author.attempt","at":"2026-11-27T05:38:27.600Z","id":"10c074a6-b18a-4033-b2ae-20580426fef4","agent":"missing","status":"skipped","ms":0,"exit_code":null,"error":"no-such-cli-qqq: not found on PATH","steps":0,"run":"a1029689-cb4b-48e8-b01c-39c504934e2c"}
+{"_schema":{"id":"school.bridge.author.attempt","version":"1.0.0"},"kind":"bridge.author.attempt","at":"2026-11-27T05:38:27.600Z","id":"10c074a6-b18a-4033-b2ae-20580426fef4","agent":"claude","status":"succeeded","ms":230,"exit_code":0,"error":null,"steps":3,"run":"a1029689-cb4b-48e8-b01c-39c504934e2c"}
+{"_schema":{"id":"school.bridge.author.end","version":"1.0.0"},"kind":"bridge.author.end","at":"2026-11-27T05:38:27.600Z","id":"10c074a6-b18a-4033-b2ae-20580426fef4","status":"succeeded","agent":"claude","steps":3,"files":2,"bytes":61,"refusal":null,"guide_sha256":"2a4e9ea6bdc5709a9976ef0e7f30a47c2be0a81850dbfb79d97c7ccac94f8aa8","usage":{"input_tokens":120,"output_tokens":40,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"run":"a1029689-cb4b-48e8-b01c-39c504934e2c"}
+```
+
+```text
+{"type":"step","tool":"Read","path":"guide/SKILL.md"}
+{"type":"step","tool":"Read","path":"course/lessons/01.json"}
+{"type":"step","tool":"Edit","path":"course/lessons/01.json"}
+{"type":"files","files":[{"path":"course.json","base64":"eyJ0aXRsZSI6IkZpeHR1cmUifQ=="},{"path":"lessons/01.json","base64":"eyJpZCI6Im9uZSIsInRpdGxlIjoiQSBwYXNzYWdlLCByZXZpc2VkIn0K"}]}
+{"type":"end","status":"succeeded","agent":"claude","usage":{"input_tokens":120,"output_tokens":40,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"error":null,"refusal":null,"guide_sha256":"2a4e9ea6bdc5709a9976ef0e7f30a47c2be0a81850dbfb79d97c7ccac94f8aa8","attempts":[{"agent":"missing","status":"skipped","ms":0,"exit_code":null,"error":"no-such-cli-qqq: not found on PATH","steps":0},{"agent":"claude","status":"succeeded","ms":230,"exit_code":0,"error":null,"steps":3}]}
 ```
 
 ## What the contract cannot cover

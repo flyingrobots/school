@@ -21,6 +21,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { BridgeConfigError, loadConfig, runChain, type BridgeConfig } from "./run.ts";
 import { runAsk, type AskResult } from "./ask.ts";
+import { AuthorInputError, entries, runAuthor, type AuthorResult, type CourseFile } from "./author.ts";
 import { keychainStore } from "../host/keychain.ts";
 import { accountFrom, resolveSecret } from "../host/secrets.ts";
 import { lineWriter, loadSchemas } from "../server/jsonl.ts";
@@ -62,6 +63,9 @@ function prose(l: Record<string, any>): string {
     case "bridge.ask.start": return `question ${l.id} started`;
     case "bridge.ask.attempt": return `question ${l.id}: ${l.agent} ${l.status} in ${l.ms} ms, ${l.deltas} deltas${l.error === null ? "" : ` (${l.error})`}`;
     case "bridge.ask.end": return `question ${l.id} ${l.status}${l.agent === null ? "" : ` (${l.agent})`}${l.usage === null ? "" : `, ${l.usage.input_tokens ?? "?"} tokens in, ${l.usage.output_tokens ?? "?"} out`}`;
+    case "bridge.author.start": return `draft ${l.id} started: ${l.files} course files, ${l.guide_files} guide files`;
+    case "bridge.author.attempt": return `draft ${l.id}: ${l.agent} ${l.status} in ${l.ms} ms, ${l.steps} steps${l.error === null ? "" : ` (${l.error})`}`;
+    case "bridge.author.end": return `draft ${l.id} ${l.status}${l.agent === null ? "" : ` (${l.agent})`}${l.files === null ? "" : `, ${l.files} files, ${l.bytes} bytes`}${l.refusal === null ? "" : `, refused: ${l.refusal}`}`;
     case "bridge.speak.submit": return `speech ${l.id} submitted to AI-TTS: ${l.segments ?? "an unknown number of"} segments`;
     case "bridge.speak.cancel": return `speech ${l.id} cancelled (${l.state ?? "no state"})`;
     case "bridge.speak.failed": return `speech ${l.op} ${l.status}: ${l.message}`;
@@ -229,6 +233,8 @@ const queue = () => {
 };
 const serially = queue();
 const askSerially = queue();
+// Drafts have a third queue (RFC 9 Table 5.1): one at a time, and never ahead of a grading or a question.
+const authorSerially = queue();
 
 const MAX_PROMPT = 200_000;
 
@@ -285,6 +291,90 @@ async function askRoute(req: Request, server: Server<unknown>): Promise<Response
           log("error", { message: messageOf(e) });
           finish({ status: "failed", agent: null, error: "the bridge failed on this question; its log has the reason", attempts: [] });
         });
+    },
+    cancel() {
+      caller.abort();
+    },
+  });
+  return new Response(stream, { headers: { "content-type": "application/x-ndjson" } });
+}
+
+const HEARTBEAT_MS = 30_000;
+const base64 = (b: Uint8Array) => Buffer.from(b).toString("base64");
+
+/**
+ * POST /author (RFC 9 Table 5.1): `{ prompt, files, guide, deadline_ms }` in, `files` and `guide`
+ * each a list of `{ path, base64 }` to write under `course/` and `guide/`. NDJSON out: a `step` line
+ * for each tool the agent uses, naming the tool and the path, a `heartbeat` line every 30 seconds,
+ * on success one `files` line with the draft's course files, then one `end` line with the status
+ * (`succeeded`, `refused` or `failed`), the agent, its token counts, the refusal, the digest of the
+ * guide as written and every attempt. A refusal before anything runs is a JSON status, as on /ask.
+ */
+async function authorRoute(req: Request, server: Server<unknown>): Promise<Response> {
+  if (req.method !== "POST") return json({ status: "method not allowed" }, 405);
+  if (!isJsonRequest(req)) return json({ status: "expected application/json" }, 415);
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return json({ status: "invalid", error: "body is not JSON" }, 400);
+  }
+  const b = isObject(body) ? body : {};
+  const { prompt, deadline_ms } = b;
+  if (typeof prompt !== "string" || prompt.length === 0 || prompt.length > MAX_PROMPT) return json({ status: "invalid", error: `prompt must be 1 to ${MAX_PROMPT} characters` }, 400);
+  if (deadline_ms !== undefined && (typeof deadline_ms !== "number" || !Number.isInteger(deadline_ms) || deadline_ms <= 0)) return json({ status: "invalid", error: "deadline_ms must be a positive integer" }, 400);
+  let files: CourseFile[];
+  let guide: CourseFile[];
+  try {
+    files = entries(b.files, "files");
+    guide = entries(b.guide, "guide");
+  } catch (e) {
+    if (e instanceof AuthorInputError) return json({ status: "invalid", error: e.message }, 400);
+    throw e;
+  }
+
+  let failure: string | null = null;
+  let c: BridgeConfig | null = null;
+  try {
+    c = config();
+  } catch (e) {
+    failure = messageOf(e);
+  }
+  if (failure === null && (c === null || c.author === null)) failure = `the bridge has no author agents configured yet; declare an "author" list in ${configPath}`;
+  server.timeout(req, 0);
+  const id = crypto.randomUUID();
+  const caller = new AbortController();
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(out) {
+      const send = (line: Record<string, unknown>) => {
+        try { out.enqueue(encoder.encode(JSON.stringify(line) + "\n")); } catch {} // the caller has gone
+      };
+      const finish = (r: AuthorResult) => {
+        const attempts = r.attempts.map((a) => ({ agent: a.agent, status: a.status, ms: a.ms, exit_code: a.exitCode, error: a.error, steps: a.steps }));
+        for (const a of attempts) log("author.attempt", { id, ...a });
+        const steps = r.attempts.reduce((n, a) => n + a.steps, 0);
+        const usage = r.status === "failed" ? null : r.usage;
+        const refusal = r.status === "refused" ? { reason: r.refusal.reason, path: r.refusal.path } : null;
+        log("author.end", { id, status: r.status, agent: r.agent, steps, files: r.status === "succeeded" ? r.files.length : null,
+          bytes: r.status === "succeeded" ? r.bytes : null, refusal: refusal?.reason ?? null, guide_sha256: r.guideSha256, usage });
+        if (r.status === "succeeded") send({ type: "files", files: r.files.map((f) => ({ path: f.path, base64: base64(f.bytes) })) });
+        send({ type: "end", status: r.status, agent: r.agent, usage, error: r.status === "succeeded" ? null : r.status === "refused" ? r.refusal.message : r.error,
+          refusal, guide_sha256: r.guideSha256, attempts });
+        try { out.close(); } catch {}
+      };
+      log("author.start", { id, files: files.length, guide_files: guide.length });
+      if (failure !== null) return finish({ status: "failed", agent: null, error: failure, guideSha256: null, attempts: [] });
+      const author = c!.author!;
+      authorSerially(() => runAuthor(author, { prompt, files, guide, deadlineMs: deadline_ms, signal: caller.signal, heartbeatMs: HEARTBEAT_MS }, {
+        step: (s) => send({ type: "step", tool: s.tool, path: s.path }),
+        heartbeat: () => send({ type: "heartbeat" }),
+      })).then(finish, (e: unknown) => {
+        // An error's message may name a path in the working folder, which the agent chose: log its kind alone.
+        const code = (e as NodeJS.ErrnoException | null)?.code;
+        log("error", { message: `a draft failed: ${e instanceof Error ? e.name : typeof e}${typeof code === "string" ? ` (${code})` : ""}` });
+        finish({ status: "failed", agent: null, error: "the bridge failed on this draft; its log has the reason", guideSha256: null, attempts: [] });
+      });
     },
     cancel() {
       caller.abort();
@@ -367,6 +457,7 @@ const server = listen({
     const { pathname } = new URL(req.url);
     if (!authorised(req)) return json({ status: "unauthorised" }, 401);
     if (pathname === "/ask") return askRoute(req, server);
+    if (pathname === "/author") return authorRoute(req, server);
     if (req.method === "GET" && pathname === "/health") {
       try {
         const c = config();

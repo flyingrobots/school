@@ -75,6 +75,22 @@ export function guideManifest(skill: string, docs: string): string {
     folder(dir, `the ${name} reference is not at ${dir}: mount the checkout's docs/topics/${name} there, read-only (server/compose.yaml)`);
     all.push(...files(dir, `docs/${name}`));
   }
+  return manifestOf(all);
+}
+
+/**
+ * The manifest of every regular file under `dir`, in the same form as `guideManifest`, its paths
+ * relative to `dir`. The bridge hashes the guide it wrote into an authoring agent's folder with
+ * this, so the digest is of exactly the files that agent was given (flyingrobots/school#313).
+ * Throws GuideError on anything but regular files and folders.
+ */
+export function folderManifest(dir: string): string {
+  folder(dir, `${dir} does not exist`);
+  return manifestOf(files(dir, ""));
+}
+
+/** `<sha256> <path>\n` per [path, absolute path], sorted by path as UTF-8 bytes. */
+function manifestOf(all: [string, string][]): string {
   const lines = all.map(([under, path]): [Buffer, string] => {
     let bytes: Buffer;
     try {
