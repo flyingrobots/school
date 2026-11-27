@@ -120,7 +120,8 @@ stops an ordinary cross-site page from writing.
 
 No endpoint can set an agent's command. `POST /api/settings/agents` forwards only each agent's
 name and on/off switch, and the bridge's `PUT /config` accepts only a reordering of the agents
-its file already declares; commands are written by editing that file on the host.
+its file already declares, in the grading list, the ask list or both; commands are written by
+editing that file on the host.
 
 ### The course list
 
