@@ -12,8 +12,8 @@ import { AID_CAPTURE_VERSIONS, AidQuery, AidRequest, Exposure, ExplanationSubmis
 import type { Grader } from "./core/ports.ts";
 import { createSchool, resumeFrom, type CourseOutline } from "./core/school.ts";
 import { bridgeClient, bridgeStatus, effectiveBridge, loadSettings, saveSettings, settingsFile, toBridge, unpaired, UNPAIRED, validToken, validUrl } from "./settings.ts";
-import { ConfigError, course, courseNames, mountTable, parseConfig, type Course } from "./config.ts";
-import { CourseFileError, readCourseFile, type CourseFile } from "./course-file.ts";
+import { ConfigError, mountTable, parseConfig, type Course } from "./config.ts";
+import { configuredCourses, courseRegistry, RegistryError, type Registry, type ServedCourse, type UnavailableCourse } from "./course-registry.ts";
 import { allowedHosts, hostAllowed } from "./hosts.ts";
 import { withSecretFiles } from "./secrets.ts";
 import { agentOrder, agentTest } from "./agents.ts";
@@ -40,27 +40,19 @@ try {
   }
   throw e;
 }
-const courses = courseNames(config);
-/** Every configured course, in the order the API lists them. */
-const served: Course[] = courses.map((name) => course(config, name)!);
-/** Each course's course.json (flyingrobots/school#143, #209), read once here; a course with none declares nothing. */
-const declarations = new Map<string, CourseFile>();
-for (const c of served) {
-  try {
-    declarations.set(c.name, readCourseFile(c.root));
-  } catch (e) {
-    if (!(e instanceof CourseFileError)) throw e;
-    console.error(`school: course ${JSON.stringify(c.name)}: ${e.message}`);
-    process.exit(2);
-  }
+/**
+ * Every configured course with its course.json (flyingrobots/school#143, #209), read once here; a
+ * course with none declares nothing, and its title is its name. Installed courses join them in the
+ * course list once the record is open (server/course-registry.ts).
+ */
+let configured: ServedCourse[] = [];
+try {
+  configured = configuredCourses(config);
+} catch (e) {
+  if (!(e instanceof RegistryError)) throw e;
+  console.error(`school: ${e.message}`);
+  process.exit(2);
 }
-/** A course's title: its course.json's, else its name. */
-const titleOf = (c: Course): string => declarations.get(c.name)?.title ?? c.name;
-/** What a course declares about itself beyond its title, each null when it does not (flyingrobots/school#209). */
-const manifestOf = (c: Course) => {
-  const d = declarations.get(c.name);
-  return { summary: d?.summary ?? null, author: d?.author ?? null, license: d?.license ?? null, format: d?.format ?? null };
-};
 
 // RFC 3 §3.3: nothing migrates from SQLite. A progress.db holding learner work stops startup
 // here, before Postgres is opened, rather than leaving that history behind an empty record.
@@ -137,6 +129,22 @@ if (STORE !== null) {
 } else {
   console.log("school: no course store (SCHOOL_COURSE_STORE); installing courses is off");
 }
+
+// The course list (RFC 7 §5 and §7; flyingrobots/school#234): the configured courses and the
+// record's current installs, read again from the record by every request that needs it, so an
+// install, removal or trust choice is served without a restart. A name both configured and
+// installed stops the start, like a bad configuration.
+const registry = courseRegistry({ config, configured, installed: () => school.installedCourses(), log: (line) => console.error(`school: ${line}`) });
+let first: Registry;
+try {
+  first = await registry.start();
+} catch (e) {
+  if (!(e instanceof RegistryError)) throw e;
+  console.error(`school: ${e.message}`);
+  await database.close();
+  process.exit(2);
+}
+for (const l of first.listed) if (l.kind === "unavailable") console.error(`school: course ${JSON.stringify(l.course.name)} is listed but not served: ${l.course.reason}`);
 
 // Static files come only from configured mounts; lesson sources and state are never served raw.
 const MOUNTS: Record<string, string> = mountTable(config);
@@ -229,6 +237,24 @@ function guardApi(req: Request): Response | null {
   return null;
 }
 
+/**
+ * The guard on opening a lesson, the one GET that writes to the record: the web view opens or
+ * resumes the learner's encounter (flyingrobots/school#306). Any page in the learner's browser can
+ * make a GET without script or a preflight, such as an untrusted course page's
+ * `<img src="/api/courses/c/lessons/l">`. So when the browser sends fetch metadata, only School's
+ * own `fetch()` is answered: `Sec-Fetch-Site: same-origin` and `Sec-Fetch-Dest: empty`. A sandboxed
+ * page's requests are `cross-site` (its origin is opaque), another port's on this host `same-site`,
+ * an image `image`, a link or a typed address `document`. A request with no metadata, from curl or
+ * a browser too old to send it, is answered as before (Chrome and Edge send it since 2020, Firefox
+ * since 2021, Safari since 16.4 in 2023).
+ */
+function guardLessonOpen(req: Request): Response | null {
+  const site = req.headers.get("sec-fetch-site");
+  const dest = req.headers.get("sec-fetch-dest");
+  if ((site === null || site === "same-origin") && (dest === null || dest === "empty")) return null;
+  return json({ status: "refused", error: "a lesson is opened only by School's own pages" }, 403);
+}
+
 async function serveMount(pathname: string): Promise<Response> {
   const [, top = "", ...rest] = pathname.split("/");
   const base = MOUNTS[top];
@@ -256,7 +282,7 @@ const UNTRUSTED_POLICY = "sandbox; default-src 'none'; img-src 'self' data:; sty
  * every response that carries the course's bytes: its reference files and its course and lesson
  * JSON. A trusted course's responses are left exactly as they were.
  */
-function contained(c: Course, res: Response): Response {
+function contained(c: { trusted: boolean }, res: Response): Response {
   if (c.trusted) return res;
   res.headers.set("content-security-policy", UNTRUSTED_POLICY);
   res.headers.set("x-content-type-options", "nosniff");
@@ -272,16 +298,16 @@ const summary = (p: Block | undefined) => (p === undefined || p.type !== "page" 
  * reference documents. Lessons that cannot be read do not hide the documents
  * (flyingrobots/school#115): `lessons` is then null and `lessonsError` says why, in a 200.
  */
-async function courseJson(c: Course): Promise<Response> {
+async function courseJson(c: ServedCourse): Promise<Response> {
   const { library, error } = lessons(c);
   const reference = referenceDocs(c);
-  if (library === null) return json({ name: c.name, title: titleOf(c), trusted: c.trusted, ...manifestOf(c), reference, lessons: null, lessonsError: error?.message ?? "the lessons could not be loaded" });
+  if (library === null) return json({ name: c.name, title: c.title, trusted: c.trusted, ...c.manifest, reference, lessons: null, lessonsError: error?.message ?? "the lessons could not be loaded" });
   const done = await school.lessonProgress(c.name);
   return json({
     name: c.name,
-    title: titleOf(c),
+    title: c.title,
     trusted: c.trusted,
-    ...manifestOf(c),
+    ...c.manifest,
     reference,
     lessons: library.pages.map((p) => {
       const ids = quizIds(p);
@@ -289,6 +315,13 @@ async function courseJson(c: Course): Promise<Response> {
     }),
   });
 }
+
+/**
+ * An installed course that is listed but not served (RFC 7 §7): the shape of a course whose lessons
+ * cannot be read, with no reference documents, since none of its files are served.
+ */
+const unavailableJson = (u: UnavailableCourse) =>
+  json({ name: u.name, title: u.title, trusted: u.trusted, ...u.manifest, reference: [], lessons: null, lessonsError: u.reason });
 
 /**
  * A course as the home page needs it: each lesson's quizzes in document order, and the quizzes ever
@@ -310,13 +343,23 @@ async function outline(c: Course): Promise<CourseOutline | null> {
   };
 }
 
-/** Every course for the home page: its lesson and reference counts, and its quizzes and how many are answered correctly. */
+/**
+ * Every course for the home page: its lesson and reference counts, and its quizzes and how many are
+ * answered correctly. An installed course listed but not served has null counts, no reference, and
+ * its reason in `lessonsError`.
+ */
 async function coursesJson(): Promise<Response> {
-  return json(await Promise.all(served.map(async (c) => {
+  const { listed } = await registry.current();
+  return json(await Promise.all(listed.map(async (l) => {
+    if (l.kind === "unavailable") {
+      const u = l.course;
+      return { name: u.name, title: u.title, trusted: u.trusted, ...u.manifest, lessons: null, reference: 0, quizzes: null, answeredCorrectly: null, lessonsError: u.reason };
+    }
+    const c = l.course;
     const o = await outline(c);
     const quizCount = o === null ? null : o.lessons.reduce((n, l) => n + l.quizzes.length, 0);
     const correct = o === null ? null : o.lessons.reduce((n, l) => n + l.quizzes.filter((q) => o.progress[l.id]?.includes(q.id)).length, 0);
-    return { name: c.name, title: titleOf(c), trusted: c.trusted, ...manifestOf(c), lessons: o === null ? null : o.lessons.length, reference: referenceDocs(c).length, quizzes: quizCount, answeredCorrectly: correct };
+    return { name: c.name, title: c.title, trusted: c.trusted, ...c.manifest, lessons: o === null ? null : o.lessons.length, reference: referenceDocs(c).length, quizzes: quizCount, answeredCorrectly: correct };
   })));
 }
 
@@ -370,10 +413,11 @@ const lessonOf = (pages: Extract<Block, { type: "page" }>[], blockId: string) =>
 async function feedbackJson(): Promise<Response> {
   const f = await school.latestFeedback();
   if (f === null) return json(null, 200, { "cache-control": "no-store" });
+  const { served } = await registry.current();
   const c = served.find((x) => x.name === f.course);
   const page = c === undefined ? undefined : readablePages(c).find((p) => p.id === f.lesson);
   return json({
-    course: f.course, courseTitle: c === undefined ? f.course : titleOf(c), trusted: c?.trusted ?? false, lesson: { id: f.lesson, title: page?.title ?? f.lesson },
+    course: f.course, courseTitle: c === undefined ? f.course : c.title, trusted: c?.trusted ?? false, lesson: { id: f.lesson, title: page?.title ?? f.lesson },
     blockId: f.blockId, prompt: f.prompt, model: f.model, findings: f.findings, at: f.at,
   }, 200, { "cache-control": "no-store" });
 }
@@ -389,6 +433,7 @@ async function speakJson(body: unknown): Promise<Response> {
   const r = SpeakRequest.safeParse(body);
   if (!r.success) return json({ status: "invalid", error: 'send { "course": ..., "lesson": ... } or { "feedback": true }' }, 400);
   let text: string;
+  const { served } = await registry.current();
   if ("feedback" in r.data) {
     const f = await school.latestFeedback();
     if (f === null) return json({ status: "none", error: "There is no feedback to read yet." }, 404);
@@ -412,11 +457,12 @@ async function speakJson(body: unknown): Promise<Response> {
 async function reviewJson(params: URLSearchParams): Promise<Response> {
   const tz = await zoneParam(params);
   if (tz === null) return json(BAD_ZONE, 400);
+  const { served } = await registry.current();
   const due = await Promise.all(served.map(async (c) => {
     const pages = readablePages(c);
     const quizzesById = new Map(pages.flatMap((p) => quizzes(p).map((q) => [q.id, q] as const)));
     return (await school.dueNow(c.name, [...quizzesById.keys()], tz)).map(({ item, reason }) => ({
-      course: c.name, courseTitle: titleOf(c), trusted: c.trusted, lesson: lessonOf(pages, item.blockId), blockId: item.blockId,
+      course: c.name, courseTitle: c.title, trusted: c.trusted, lesson: lessonOf(pages, item.blockId), blockId: item.blockId,
       question: quizzesById.get(item.blockId)?.q ?? null, answeredAt: item.answeredAt, rule: item.rule, reason,
     }));
   }));
@@ -433,13 +479,14 @@ async function activityJson(params: URLSearchParams): Promise<Response> {
   if (!Number.isInteger(days) || days < 1 || days > 60) return json({ error: "days must be a whole number from 1 to 60" }, 400);
   const tz = await zoneParam(params);
   if (tz === null) return json(BAD_ZONE, 400);
+  const { served } = await registry.current();
   const courses = served.map((c) => ({ name: c.name, blocks: readablePages(c).flatMap((p) => [...quizIds(p)]) }));
   const a = await school.activity(courses, days, tz);
   return json({
     today: a.today, tz, days,
     courses: a.courses.map((x) => {
       const c = served.find((s) => s.name === x.course)!;
-      return { course: x.course, courseTitle: titleOf(c), trusted: c.trusted, studied: x.studied, due: x.due };
+      return { course: x.course, courseTitle: c.title, trusted: c.trusted, studied: x.studied, due: x.due };
     }),
   }, 200, { "cache-control": "no-store" });
 }
@@ -452,6 +499,7 @@ async function activityJson(params: URLSearchParams): Promise<Response> {
  * `trusted`, so the page draws an untrusted course's figure as an image (flyingrobots/school#210).
  */
 async function showcaseJson(): Promise<Response> {
+  const { served } = await registry.current();
   const ahead = await Promise.all(served.map(async (c) => {
     let pages: Block[];
     try {
@@ -468,7 +516,7 @@ async function showcaseJson(): Promise<Response> {
       const ids = [...quizIds(p)];
       if (ids.length === 0 || ids.every((id) => progress[p.id]?.includes(id))) return [];
       return [{
-        course: c.name, courseTitle: titleOf(c), trusted: c.trusted, started,
+        course: c.name, courseTitle: c.title, trusted: c.trusted, started,
         lesson: { id: p.id, title: p.title, subtitle: p.subtitle, position: i + 1, of: pages.length },
         question: p.hook?.question ?? p.title, teaser: p.hook?.teaser ?? p.subtitle, figure: p.hook?.figure ?? null,
       }];
@@ -482,6 +530,7 @@ async function showcaseJson(): Promise<Response> {
  * resumeFrom), with its course's `trusted` when it names one (flyingrobots/school#272).
  */
 async function resumeJson(): Promise<Response> {
+  const { served } = await registry.current();
   const outlines = await Promise.all(served.map(outline));
   const readable = outlines.filter((o): o is CourseOutline => o !== null);
   const r = resumeFrom(await school.lastStudied(), readable);
@@ -557,7 +606,7 @@ async function installPreviewJson(req: Request): Promise<Response> {
   let answer: PreviewAnswer;
   try {
     answer = await previewInstall(await readJson(req), {
-      store: STORE, configured: courses, installedNames: () => school.installedNames(), progress: (c) => school.courseProgress(c),
+      store: STORE, configured: configured.map((c) => c.name), installedNames: () => school.installedNames(), progress: (c) => school.courseProgress(c),
       now: () => Date.now(), newId: () => crypto.randomUUID(),
     });
   } catch (e) {
@@ -741,14 +790,20 @@ const http = Bun.serve({
     if (pathname === "/api/showcase") return showcaseJson();
     const api = /^\/api\/courses\/([a-z0-9][a-z0-9-]*)(?:\/lessons\/([\w-]+))?$/.exec(pathname);
     if (api !== null) {
-      const c = course(config, api[1]!);
-      if (c === null) return json({ error: "no such course" }, 404);
+      const found = (await registry.current()).find(api[1]!);
+      if (found === null) return json({ error: "no such course" }, 404);
+      // An installed course listed but not served answers its reason, and none of its files.
+      if (found.kind === "unavailable") return api[2] === undefined ? contained(found.course, unavailableJson(found.course)) : json({ error: found.course.reason }, 404);
+      const c = found.course;
       if (api[2] === undefined) return contained(c, await courseJson(c));
       const aid = aidParam(url.searchParams);
       if (aid === null) return json({ status: "invalid", error: `aid must be a known capture version: ${AID_CAPTURE_VERSIONS.join(", ")}` }, 400);
       const tz = await zoneParam(url.searchParams);
       if (tz === null) return json(BAD_ZONE, 400);
-      return contained(c, await lessonJson(c, api[2], url.searchParams.get("view"), aid.aid, tz));
+      const view = url.searchParams.get("view");
+      const refused = isView(view) && view !== "web" ? null : guardLessonOpen(req);
+      if (refused !== null) return contained(c, refused);
+      return contained(c, await lessonJson(c, api[2], view, aid.aid, tz));
     }
     if (pathname.startsWith("/api/")) return json({ error: "not found" }, 404);
 
@@ -756,7 +811,8 @@ const http = Bun.serve({
     // untrusted course's, sandboxed.
     const ref = /^\/courses\/([a-z0-9][a-z0-9-]*)\/reference\/(.+)$/.exec(pathname);
     if (ref !== null) {
-      const c = course(config, ref[1]!);
+      const found = (await registry.current()).find(ref[1]!);
+      const c = found?.kind === "served" ? found.course : null;
       const dir = c === null ? null : referenceDir(c);
       return c === null || dir === null ? notFound() : contained(c, await serveFrom(dir, [ref[2]!]));
     }
@@ -780,5 +836,5 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
 }
 
 console.log(`school: answering to ${hosts.join(", ")}`);
-console.log(`school: http://${config.host}:${config.port}  courses=${courses.length > 0 ? courses.join(", ") : "(none)"}  state=${config.state}`);
+console.log(`school: http://${config.host}:${config.port}  courses=${first.listed.length > 0 ? first.listed.map((l) => l.course.name).join(", ") : "(none)"}  state=${config.state}`);
 if (Object.keys(config.mounts).length > 0) console.log(`school: mounts ${Object.keys(config.mounts).map((n) => "/" + n).join(" ")}`);

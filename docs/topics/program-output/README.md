@@ -174,7 +174,9 @@ SCHOOL_BRIDGE_TOKEN=<shared secret> bun bridge/bridge.ts [--help | --schema] [--
 | `school.bridge.error` | `bridge.error` | `message`; for a port it cannot listen on also `host`, `port` and `code` (`EADDRINUSE` for a taken port, else the system's code or null) | A refusal to start, an uncaught throw or rejection, or a request handler's throw (answered 500) |
 
 No line holds a prompt, an answer or text to speak: a question's lines count the answer's pieces
-and tokens, never its words. Before flyingrobots/school#135 the lines had no `_schema` and no
+and tokens, never its words. An answer that does not match its schema is reported by where the
+problem is, such as `unexpected key at $.items[1]`, never by the answer's own keys or values
+(flyingrobots/school#289). Before flyingrobots/school#135 the lines had no `_schema` and no
 `run`, and arguments were ignored.
 
 ### What the bridge printed

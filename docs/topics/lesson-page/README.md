@@ -104,15 +104,18 @@ a block:
 
 | Kind | When the page records it |
 | --- | --- |
-| `feedback` | A quiz shows its explanation ("Why"): after a right answer, or on load for a quiz already answered right |
+| `feedback` (quiz) | A quiz shows its explanation ("Why"): after a right answer, or on load for a quiz already answered right |
 | `model-answer` | An explain block shows its model answer: after an explanation is saved, or on load for one already saved |
-| `feedback` | An explain block shows a succeeded grading's findings: after a grading succeeds, or on load for an explanation already graded. A failed grading is never feedback. It is help for that block alone (RFC 8 §4.6) |
+| `feedback` (explain) | An explain block shows a succeeded grading's findings: after a grading succeeds, or on load for an explanation already graded. A failed grading is never feedback. It is help for that block alone (RFC 8 §4.6) |
 | `reference` | One of an explain block's sources is opened |
 | `hint` | Never: no block type carries a hint yet |
 
 - Each showing is recorded once, under a UUID the page makes, so a resend is stored once. Showing
   the same help again (a reload, the model answer after a revision, or the grading of a revision)
-  is a new showing and a new record. Collapsing and reopening the model answer is not; closing and reopening a source is.
+  is a new showing and a new record. Collapsing and reopening the model answer is not; closing and
+  reopening a source is.
+- `feedback (quiz)` and `feedback (explain)` are one kind in the record, `feedback`, told apart by
+  the block they name.
 - The quiz and explain blocks say when they show help (`onWhyShown`, `onModelShown`,
   `onFeedbackShown`, `onSourceOpened`); `web/src/pages/lesson.tsx` turns each call into one
   exposure.
@@ -200,7 +203,9 @@ exposure that did not reach School" groups check `?aid=1`, one exposure per kind
 order submit, model answer, revision, resends by the same id, and that 400, 409 and 501 are final.
 Its "feedback for an explanation" test reads the record itself, with School stopped: one `feedback`
 exposure to the explain block once a grading succeeds, none for a failed one, a second on reload,
-and none to any other block.
+and none to any other block. Its "feedback for a revision" test does the same for a revised
+explanation: revise, save and a succeeded grading add exactly one `feedback`, and a revision whose
+grading fails adds none.
 
 The outbox is tested in the "the outbox (flyingrobots/school#28)" group, with each context's
 network switched off in its `/api` route and tabs closed and reopened in one browser profile: an

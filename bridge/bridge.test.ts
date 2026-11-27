@@ -170,3 +170,22 @@ test("a bridge whose port is taken writes one bridge.error line naming it, nothi
     holder.stop(true);
   }
 }, timeout(1));
+
+// flyingrobots/school#289: an answer's unexpected key is chosen by the model, and the attempt's
+// error is logged, so the log line names only where the key was.
+test("a grading answer with a hostile unexpected key logs an attempt error that quotes none of it", async () => {
+  const probe = "The learner wrote: SECRET-LEARNER-TEXT";
+  const hostile = join(dir, "hostile");
+  writeFileSync(hostile, `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({ ok: true, [probe]: "x" })}'\n`);
+  chmodSync(hostile, 0o755);
+  writeFileSync(join(dir, "bridge.json"), JSON.stringify({ timeout_seconds: 5, agents: [{ name: "hostile", command: `${hostile} {prompt}` }] }));
+  const r = await (await run({ prompt: "Is it ok?", schema })).json();
+  expect(r.attempts).toEqual([expect.objectContaining({ agent: "hostile", status: "failed", error: "the answer did not match the schema: unexpected key at $" })]);
+  bridge!.proc.kill();
+  const out = (await bridge!.output()).stdout;
+  bridge = null;
+  const attempts = out.trim().split("\n").map((l) => JSON.parse(l)).filter((l) => l.kind === "bridge.attempt");
+  expect(attempts.map((a) => a.error)).toEqual(["the answer did not match the schema: unexpected key at $"]);
+  expect(out).not.toContain("SECRET-LEARNER-TEXT");
+  expect(out).not.toContain("The learner wrote");
+});
