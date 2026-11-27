@@ -53,6 +53,8 @@ the chain returns.
 | KILL-2 | Exits normally | An agent that answers and exits is not timed out, and its answer stands | implemented | `bridge/run.test.ts`: `an agent that answers and exits is not timed out: its answer stands` |
 | KILL-3 | Unrelated group | A process group running beside the killed agent survives the kill and the sweep | implemented | `bridge/run.test.ts`: `the kill reaches only the agent's own process group: another group running beside it survives` |
 | KILL-4 | Under load | Five forking agents killed at once, three rounds: every chain returns and no child is left | implemented | `bridge/run.test.ts`: `five forking agents killed at once, three rounds over: every chain returns and no child is left` |
+| KILL-5 | Kill after the pipes closed | A timeout, or a hang-up, landing after the agent's pipes closed and before it exits starts no sweep (the sweep counter is unchanged), for `POST /run` and `POST /ask` | implemented | `bridge/run.test.ts`: `a kill after the agent's pipes closed starts no sweep`; `bridge/ask.test.ts`: `a hang-up after the ask agent's pipes closed starts no sweep` |
+| KILL-6 | Not a group | `sweepGroup` with 0, 1, a negative, fractional or non-finite number sends no signal (the signal function is injected) | implemented | `bridge/run.test.ts`: `sweepGroup signals no group that is not a real one, and a real one once` |
 
 _Table 1. The agent kill's cases. The ask route uses the same sweep (`sweepGroup` in `bridge/run.ts`)._
 

@@ -211,6 +211,8 @@ export const sweeps = { started: 0 };
  * to another, so a sweep that went on would risk killing a group the agent never started.
  */
 export function sweepGroup(group: number, signal: (group: number) => void = (g) => process.kill(-g, "SIGKILL")): () => void {
+  // 0 is the caller's own group and 1 every process it may signal: neither is an agent's group.
+  if (!Number.isInteger(group) || group <= 1) return () => {};
   sweeps.started++;
   const hit = () => { try { signal(group); } catch {} };
   hit();
@@ -258,8 +260,10 @@ async function runAgent(agent: Agent, job: Job, timeoutMs: number): Promise<Atte
     agentStarted(pid = proc.pid);
     let why: string | null = null;
     const sweep: { stop?: () => void } = {};
+    let done = false; // set once the pipes have closed: the group may be empty, so no sweep starts
     const kill = (reason: string) => {
       why ??= reason;
+      if (done) { proc.kill("SIGKILL"); return; } // the agent itself, still unreaped; not its group
       sweep.stop ??= sweepGroup(proc.pid);
     };
     const timer = setTimeout(() => kill(`timed out after ${Math.round(timeoutMs / 1000)} s`), timeoutMs);
@@ -267,6 +271,7 @@ async function runAgent(agent: Agent, job: Job, timeoutMs: number): Promise<Atte
       readCapped(proc.stdout, () => kill("produced more than 1 MiB of output")),
       readCapped(proc.stderr, () => kill("produced more than 1 MiB of error output")),
     ]);
+    done = true;
     sweep.stop?.();
     const exitCode = await proc.exited;
     clearTimeout(timer);

@@ -111,8 +111,10 @@ async function askAgent(agent: Agent, job: AskJob, timeoutMs: number, onDelta: (
     agentStarted(pid = proc.pid);
     let why: string | null = null;
     const sweep: { stop?: () => void } = {};
+    let done = false; // set once the pipes have closed: the group may be empty, so no sweep starts
     const kill = (reason: string) => {
       why ??= reason;
+      if (done) { proc.kill("SIGKILL"); return; } // the agent itself, still unreaped; not its group
       sweep.stop ??= sweepGroup(proc.pid);
       grace ??= setTimeout(() => { for (const r of readers) r.cancel().catch(() => {}); }, PIPE_GRACE_MS);
     };
@@ -137,6 +139,7 @@ async function askAgent(agent: Agent, job: AskJob, timeoutMs: number, onDelta: (
       readLines(proc.stdout, onLine, !streaming, () => kill("produced more than 8 MiB of output"), readers),
       readLines(proc.stderr, () => {}, false, () => kill("produced more than 8 MiB of error output"), readers),
     ]);
+    done = true;
     sweep.stop?.();
     if (grace !== null) clearTimeout(grace);
     const exitCode = await proc.exited;
