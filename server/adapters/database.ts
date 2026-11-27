@@ -126,6 +126,7 @@ export const GRANTED_FUNCTIONS: readonly string[] = [
   "school.choice_decision_notes(text,text,text)",
   "school.choose_course_trust(uuid,boolean,timestamp with time zone)",
   "school.choose_time_zone(text,timestamp with time zone)",
+  "school.course_progress(text)",
   "school.due_review(text,jsonb,timestamp with time zone,bigint,integer)",
   "school.encounter_answers(uuid)",
   "school.encounter_decision_notes(uuid)",
