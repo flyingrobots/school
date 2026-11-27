@@ -21,6 +21,8 @@ const CourseFile = z.strictObject({
   summary: text().optional(),
   author: text().optional(),
   license: text().superRefine((license, ctx) => {
+    // An empty license has been refused above, as empty; saying what is wrong with its grammar as well would be a second reason.
+    if (license.length === 0) return;
     const problem = spdxProblem(license);
     if (problem !== null) ctx.addIssue({ code: "custom", message: `must be an SPDX license expression, such as "MIT OR Apache-2.0": ${problem}` });
   }).optional(),

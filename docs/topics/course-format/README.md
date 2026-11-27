@@ -189,10 +189,10 @@ A course in `SCHOOL_COURSES` or `SCHOOL_COURSE` is trusted, as it always was. An
 
 | What | For an untrusted course |
 | --- | --- |
-| Its reference documents and every other file under `reference/` | Served with `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`: a page opened from it runs no script and cannot use School's API. An SVG file is served as `image/svg+xml` under the same sandbox |
-| `GET /api/courses` and `GET /api/courses/:course` | `trusted: false` (a trusted course gives `trusted: true`); the course and lesson JSON carry the same two headers |
+| Its reference documents and every other file under `reference/` | Served with `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'` and `X-Content-Type-Options: nosniff`: a page opened from it runs no script, cannot use School's API, and loads nothing from another site. Its own images and stylesheets in `reference/`, `<style>` and `style=` styles, and `data:` images still work; fonts, frames, audio and video do not. An SVG file is served as `image/svg+xml` under the same policy |
+| `GET /api/courses` and `GET /api/courses/:course` | `trusted: false` (a trusted course gives `trusted: true`); the course and lesson JSON carry the same two headers. The replies that mix courses, `/api/showcase`, `/api/review`, `/api/feedback`, `/api/resume` and `/api/activity`, give each item its course's `trusted` |
 | Its hook figures on the home page | Drawn as an image, not inline SVG, so nothing in them runs; `GET /api/showcase` gives each item `trusted` |
-| The course page | A note: "This course is shown in safe mode: its pages can’t run scripts." ([the course page](../course-page/README.md)) |
+| The course page and the sidebar | A note on the course page: "This course is shown in safe mode: its pages can’t run scripts." ([the course page](../course-page/README.md)); a **Safe mode** badge beside the course in the sidebar ([the app shell](../app-shell/README.md#the-sidebars-courses)) |
 
 Lesson blocks are unchanged: their HTML is sanitised for every course, trusted or not ([lesson blocks](blocks.md)). A name in both lists, or a folder that is, contains or sits inside a trusted course's, stops the server at start with exit code 2, since the trusted course would serve the same files unsandboxed. So does a `SCHOOL_MOUNTS` or `SCHOOL_WEB` folder that is, contains or sits inside an untrusted course's. The headers and their reasons are in [trust and known defects](../architecture/README.md#trust-and-known-defects).
 
@@ -218,7 +218,7 @@ has no `course.json`, loads exactly as one did before they existed.
 | `title` | yes | non-empty string | What the pages call the course: the sidebar, Home, the course page and every breadcrumb. Surrounding spaces are trimmed. |
 | `summary` | no | non-empty string | What the course is, in a sentence. Surrounding spaces are trimmed. |
 | `author` | no | non-empty string | Who wrote it. Surrounding spaces are trimmed. |
-| `license` | no | SPDX license expression | The terms a learner, or anyone copying the course, may use it on, such as `MIT`, `MIT OR Apache-2.0` or `GPL-2.0-or-later WITH Classpath-exception-2.0`. Surrounding spaces are trimmed. |
+| `license` | no | SPDX license expression | The terms a learner, or anyone copying the course, may use it on, such as `MIT`, `MIT OR Apache-2.0` or `GPL-2.0-or-later WITH Classpath-exception-2.0`. Surrounding spaces are trimmed. Parentheses nest at most 32 deep; a deeper expression is refused like any other bad one. |
 | `format` | no | positive integer | The course format the course is written in. Today's, and the only one this School plays, is `1`. |
 
 The course's **name**, the `name` in `SCHOOL_COURSES=name=path`, stays its slug: it is what
@@ -228,7 +228,8 @@ called by its name everywhere a title would show.
 `GET /api/courses` and `GET /api/courses/:course` give `name`, the slug; `title`, the course's
 title or, when it declares none, its name; and `summary`, `author`, `license` and `format`, each
 as declared or null when the course does not declare it. `school check` reports the last four on
-its `manifest` line, and the title on `done`.
+its `manifest` line, and the title on `done`. The course page shows the summary, author and
+license under its heading ([the course page](../course-page/README.md)).
 
 ### Licenses
 
@@ -240,10 +241,16 @@ its `manifest` line, and the title on `done`.
   or a `LicenseRef-<name>` for a license of your own.
 - `AND`, `OR` and `WITH` join them, in capitals. `WITH` binds tightest, then `AND`, then `OR`;
   parentheses group. The name after `WITH` is an id on the SPDX exceptions list, matched without
-  regard to case; a `LicenseRef-` is not an exception.
+  regard to case; a `LicenseRef-` is not an exception. A license takes at most one `WITH`, and
+  `WITH` cannot follow a parenthesised group. A `LicenseRef-` takes no `+`.
+
+A refusal names the rule the expression broke: a lowercase `and`, `or` or `with` where an operator
+belongs, at the top level or inside parentheses, is refused as an operator that is not in capitals;
+where a license belongs (`MIT OR and`), the refusal says a license is expected, with no hint about
+capitals; an empty `license` is refused as empty, and so on.
 
 The lists are `server/spdx-license-ids.ts`, copied from the `spdx-license-ids` package (3.0.24,
-CC0-1.0), and `server/spdx-exception-ids.ts`, from `spdx-exceptions` (2.5.0, CC0-1.0), rather than
+CC0-1.0), and `server/spdx-exception-ids.ts`, from `spdx-exceptions` (2.5.0, CC-BY-3.0, attributed in `NOTICE`), rather than
 added as dependencies; a license or exception published after those releases is refused until the
 lists are updated. School has no preference among licenses: any listed id is accepted.
 

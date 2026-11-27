@@ -27,6 +27,13 @@ export type Config = {
    */
   store: string | null;
   /**
+   * The school skill's folder, from SCHOOL_SKILL (RFC 9 §5.3, flyingrobots/school#257): what an
+   * authoring agent is given as its instructions. Null when SCHOOL_SKILL is empty: authoring is then off.
+   */
+  skill: string | null;
+  /** The folder holding the references the skill links, `course-format/` and `voice/`, from SCHOOL_SKILL_DOCS. */
+  skillDocs: string;
+  /**
    * The SQLite progress.db of the server before Postgres. Never written now: startup only reads it,
    * to refuse to start while it holds learner work (RFC 3 v0.4.0 §3.3; server/legacy.ts).
    */
@@ -375,6 +382,12 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     }
   }
 
+  // The school skill an authoring agent is given, and the references it links (RFC 9 §5.3,
+  // flyingrobots/school#257): this checkout's by default; compose mounts them under /framework.
+  // Whether they are there is reported at start (server/skill.ts), never a refusal to start.
+  const skill = env.SCHOOL_SKILL === "" ? null : abs(env.SCHOOL_SKILL ?? join(framework, ".agents", "skills", "school"), cwd);
+  const skillDocs = abs(env.SCHOOL_SKILL_DOCS || join(framework, "docs", "topics"), cwd);
+
   const port = Number(env.PORT ?? 4747);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigError(`PORT ${JSON.stringify(env.PORT)} is not a port`);
 
@@ -384,6 +397,8 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     untrusted: Object.keys(untrusted).sort(),
     state,
     store,
+    skill,
+    skillDocs,
     dbPath,
     database,
     web,

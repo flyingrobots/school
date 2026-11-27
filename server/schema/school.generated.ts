@@ -186,6 +186,22 @@ export interface LatestFeedback {
   at: string;
 }
 
+export interface Mastery {
+  blockId: string;
+  strength: number | null;
+  stabilityMs: number | null;
+  refreshedAt: string | null;
+  settled: boolean;
+  evidence: number[];
+}
+
+export interface MasteryQuery {
+  course: string;
+  blocks: string[];
+  now: string;
+  delayMs: number;
+}
+
 export interface NoteAccepted {
   status: NoteAcceptedStatus;
   note: DecisionNote;

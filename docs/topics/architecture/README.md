@@ -20,6 +20,7 @@ proposed; for that, read [RFC 2](../../rfc/0002-lessons-written-for-each-learner
 | --- | --- |
 | [The three parts](#the-three-parts) | Framework, course, learner state, and the trust between them |
 | [The server](#the-server) | Routes, the write guard, file serving |
+| [The pinned skill](#the-pinned-skill) | The `school` skill an authoring agent is given, its manifest digest, and when authoring is off |
 | [The hexagon](#the-hexagon) | The core, its ports and the adapters that implement them |
 | [The learning record](#the-learning-record) | Tables, rules, encounters, what the rules do and do not guarantee |
 | [The bridge](#the-bridge) | How explanations are graded |
@@ -79,11 +80,11 @@ JSON API.
 | Method | Path | Does |
 | --- | --- | --- |
 | GET | `/api/courses` | Lists installed courses, each with its `name` (the slug in addresses), `title`, `trusted` (false for a course in [safe mode](#trust-and-known-defects)), and `summary`, `author`, `license` and `format`, each null when the course does not declare it ([a course's folder](../course-format/README.md)), with lesson and reference counts, and each course's `quizzes` and `answeredCorrectly`; the counts are `null` for a course whose lessons cannot be read |
-| GET | `/api/resume` | What to study now, from where the learner left off: `continue`, `next`, `start`, `finished` or `nothing` ([the home page](../home-page/README.md)) |
-| GET | `/api/feedback` | The newest succeeded grading: its course, lesson, the prompt it answered and the findings; `null` before any |
-| GET | `/api/review?tz=` | The questions due for review now, across courses, each with its lesson, question and reason ([due review](../due-review/README.md)); the reason names its day in `tz` |
-| GET | `/api/activity?days=14&tz=` | Each course's study days in the last `days` (1 to 60), and how many questions come back on each day ahead, as days in `tz` |
-| GET | `/api/showcase` | What's ahead: every lesson with a quiz not yet answered correctly, with its hook ([a course's folder](../course-format/README.md#a-lessons-hook)) |
+| GET | `/api/resume` | What to study now, from where the learner left off: `continue`, `next`, `start`, `finished` or `nothing` ([the home page](../home-page/README.md)); each but `nothing` names its course and gives its `trusted` |
+| GET | `/api/feedback` | The newest succeeded grading: its course, the course's `trusted`, lesson, the prompt it answered and the findings; `null` before any. A course no longer served gives `trusted: false` |
+| GET | `/api/review?tz=` | The questions due for review now, across courses, each with its course's `trusted`, its lesson, question and reason ([due review](../due-review/README.md)); the reason names its day in `tz` |
+| GET | `/api/activity?days=14&tz=` | Each course's `trusted`, its study days in the last `days` (1 to 60), and how many questions come back on each day ahead, as days in `tz` |
+| GET | `/api/showcase` | What's ahead: every lesson with a quiz not yet answered correctly, with its hook ([a course's folder](../course-format/README.md#a-lessons-hook)) and its course's `trusted` |
 | GET | `/api/courses/:c` | One course: its `name`, `title`, `trusted`, `summary`, `author`, `license` and `format` (null when not declared), lessons with correct-quiz counts, reference documents. Lessons that cannot be read are `lessons: null` with the reason in `lessonsError`, still a 200 with the reference documents |
 | GET | `/api/courses/:c/lessons/:id` | One lesson; `?view=web` opens or resumes an encounter, `?view=slides` records nothing. `?aid=1` declares that the client records every exposure it shows, so the encounter is opened with aid tracking 1; absent, it is untracked and its aid unknown. Any other `aid` value is refused (400). `?tz=` is the zone a review reason names its day in |
 | POST | `/api/answer` | Records a quiz answer |
@@ -93,6 +94,7 @@ JSON API.
 | POST | `/api/exposure` | Records help shown for a block: `{ exposureId, encounterId, blockId, kind }`, kind `hint`, `model-answer`, `feedback` or `reference`. A stored or resent id answers 200 (`stored`, `duplicate`); the id naming something else is a conflict (409); no such encounter, an untracked one, or a block that is not a quiz or explain block in its snapshot is rejected (400) |
 | GET | `/api/aid/:submissionId` | One answer's or explanation's derived aid: `{ submissionId, aid }`, aid `aided`, `no-recorded-aid` or `unknown`. No such submission is 404; an id that is not a UUID is refused (400) |
 | GET | `/api/settings/status` | Whether the bridge answers |
+| GET | `/api/settings/authoring` | Whether authoring is on: `{ authoring: "on", skill: { digest, files } }`, the [pinned skill](#the-pinned-skill)'s manifest digest and file count, or `{ authoring: "off", reason }`. Nothing authors a course yet |
 | GET, POST | `/api/settings/bridge` | The bridge address and token; the token is never returned except once when generated. A new address clears a saved token, and is refused (409) while the token comes from the environment |
 | GET, POST | `/api/settings/agents` | The bridge's agents as its file declares them; a POST only reorders them and switches them on or off |
 | POST | `/api/settings/agents/test` | Runs one declared agent for real |
@@ -122,6 +124,27 @@ its file already declares; commands are written by editing that file on the host
 
 In short: the server is thin. It answers only to its own names, serves files safely, guards
 writes against ordinary cross-site requests, and hands learning-record work to Postgres functions.
+
+## The pinned skill
+
+An authoring agent will be given the `school` skill from this checkout, `.agents/skills/school/`, with the two references it links, `docs/topics/course-format/` and `docs/topics/voice/`, never a copy installed on the host, so the skill that writes a draft and the check that judges it are one version (RFC 9 §5.3, flyingrobots/school#257). The image is built from `server/` alone, so compose mounts the three folders read-only at `/framework/skills/school`, `/framework/docs/course-format` and `/framework/docs/voice`. `SCHOOL_SKILL` and `SCHOOL_SKILL_DOCS` name them; outside compose they default to the checkout's own. Nothing authors a course yet: this is the first step of RFC 9.
+
+At start the server hashes them into one **manifest digest** (`server/skill.ts`), laid out as the agent's `guide/` folder will be: the skill's files at its root and each reference under `docs/<name>/`.
+
+```text
+<sha256 of SKILL.md's bytes> SKILL.md
+<sha256 of README.md's bytes> docs/course-format/README.md
+...
+<sha256 of glossary.html's bytes> example/reference/glossary.html
+```
+
+_Listing 1. The manifest. One line per regular file: the file's SHA-256 in lowercase hex, one space, its path under `guide/` with `/` between parts, and a line feed. Lines are sorted by path as UTF-8 bytes, so `Z` sorts before `a`. The digest is the SHA-256 of the whole text, in lowercase hex._
+
+The server logs `school: authoring on: the school skill's manifest digest is <digest> (<n> files)` and reports the same at `GET /api/settings/authoring`. The digest is computed, not stored: the record will carry it with each authoring request when those exist (RFC 9 §5.5).
+
+Authoring is **off**, and School still serves, when `SCHOOL_SKILL` is empty, the skill folder is missing or is not a folder, it has no `SKILL.md`, a reference folder is missing, or any folder holds a symlink, a special file or a name with a line break. The server then logs `school: authoring off: <reason>`, and the API gives the same reason, naming the path and the checkout folder to mount there.
+
+In short: one skill, from the checkout, mounted read-only and hashed at start; without it, authoring says it is off and why.
 
 ## The hexagon
 
@@ -178,7 +201,7 @@ contract suite holds every driver under it to the same behaviour.
 The record is Postgres, built by the numbered migrations in `server/db/migrations/` (`0001_init.sql`,
 `0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_read_committed.sql`,
 `0006_due_review.sql`, `0007_since_last_here.sql`, `0008_study_days.sql`, `0009_time_zone_choices.sql`,
-`0010_course_installs.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
+`0010_course_installs.sql`, `0011_mastery.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -216,7 +239,7 @@ connection, in the record's database. The server refuses to start if any of thes
 | 4 | Owns no schema (schema `school` included), relation, function, type or database | the owner's login, objects it created |
 | 5 | Outside `pg_catalog` and `information_schema`: no privilege on any table, view, materialized view or foreign table (`SELECT` to `MAINTAIN`), no `USAGE`, `SELECT` or `UPDATE` on any sequence, no column privilege | table, column, sequence and `MAINTAIN` grants |
 | 6 | In `pg_catalog` and `information_schema`: no write privilege on any relation (except `UPDATE` on `pg_settings`, which Postgres grants `PUBLIC` and which is `SET`), and no `SELECT` on the relations Postgres withholds from an ordinary role (`RESTRICTED_RELATIONS`: `pg_authid`, `pg_statistic`, `pg_shadow` and 20 more) | catalog grants to it or to `PUBLIC` |
-| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 26 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
+| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 27 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
 | 8 | No privilege granted to it by name on any relation, column, function (but the granted ones), schema (but `USAGE` on `school`), database, type, language, large object, foreign-data wrapper, foreign server or tablespace; no parameter privilege (`pg_parameter_acl`) granted to it or to `PUBLIC` | direct grants, `GRANT SET ON PARAMETER` |
 | 9 | No default privileges (`pg_default_acl`) granting to it or to `PUBLIC`, and none set by it | future grants |
 | 10 | No `CREATE` on any schema; no `CREATE` or `TEMPORARY` on the record's database | creating objects there |
@@ -311,6 +334,11 @@ such install; `school.installed_courses()` lists each name's latest install with
 and its latest trust choice (none is untrusted). They are the port's `installCourse`,
 `removeInstalledCourse`, `chooseCourseTrust` and `installedCourses`. Nothing serves an installed
 course yet: the course list is still read from configuration (RFC 7 §10, task 4).
+Migration 0011 (RFC 5 §4.1, flyingrobots/school#217) adds `school.mastery(course, blocks, at, delay_ms)`,
+the port's `mastery`: per quiz, its stability and its strength at `at`, read from the record each
+time it is asked and never stored. It reads episodes through `school.quiz_episodes`, the same
+episodes and weaknesses as due review, which only the record's own functions call. The measure is
+in [mastery](../mastery/README.md).
 `school.latest_feedback()` is the succeeded grading with the highest `seq` and where its explanation
 was written; the port's `latestFeedback`. A failed attempt is never feedback.
 
@@ -462,7 +490,7 @@ lesson's latest encounter, its aid tracking is unchanged, and its **opening, lat
 latest explanation** is within six hours. A grading is not the learner's activity and does not
 count.
 
-**Listing 1. The resume rule**
+**Listing 2. The resume rule**
 
 ```sql
   SELECT l.id INTO v_id
@@ -475,7 +503,7 @@ count.
                  (SELECT max(x.at) FROM school.explanations x WHERE x.encounter_id = l.id)) >= p_at - interval '6 hours';
 ```
 
-*Listing 1. The resume rule, inside `school.open_encounter`. Real source code from
+*Listing 2. The resume rule, inside `school.open_encounter`. Real source code from
 flyingrobots/school, `<server/db/migrations/0001_init.sql#L213-L220@eb70a31>`.*
 
 There is no SQLite record. Its code was deleted with
@@ -619,10 +647,10 @@ An untrusted course is served in safe mode (flyingrobots/school#210, RFC 4 step 
 
 | Header | Effect |
 | --- | --- |
-| `Content-Security-Policy: sandbox` | No `allow-*` token, so a document opened from the course, HTML or SVG, runs no script, submits no form and has an opaque origin: it cannot read School's API replies or storage, and cannot send the JSON requests every state-changing endpoint requires. Like any web page, it can still make requests that read nothing back, such as a GET from `<img src="/api/...">` |
+| `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'` | `sandbox` with no `allow-*` token, so a document opened from the course, HTML or SVG, runs no script, submits no form and has an opaque origin: it cannot read School's API replies or storage, and cannot send the JSON requests every state-changing endpoint requires. It can still make requests to School that read nothing back, such as a GET from `<img src="/api/...">`. The fetch directives (flyingrobots/school#271) let it load images and stylesheets only from School itself, inline styles, and `data:` images; anything from another site, and every frame, media file, font or connection, is blocked, so opening the document tells no other site |
 | `X-Content-Type-Options: nosniff` | The browser takes the bytes as the type School names (`image/svg+xml` for SVG, never HTML), not as a type it guesses |
 
-Other JSON replies also carry course-written strings without those headers: `/api/showcase`, `/api/resume`, `/api/review`, `/api/feedback` and `/api/activity` hold course and lesson titles, questions, teasers and prompts, and `/api/showcase` holds hook figures. A JSON reply runs nothing when opened, and the web app shows those strings as React text, never parsed as HTML.
+Other JSON replies also carry course-written strings without those headers: `/api/showcase`, `/api/resume`, `/api/review`, `/api/feedback` and `/api/activity` hold course and lesson titles, questions, teasers and prompts, and `/api/showcase` holds hook figures. Each mixes several courses, so each item that carries a course's text gives that course's `trusted` (flyingrobots/school#272): every item of `/api/showcase` and `/api/review`, each course of `/api/activity`, the `/api/feedback` reply, and an `/api/resume` reply that names a course. An item whose course is no longer served gives `false`. A JSON reply runs nothing when opened, and the web app shows those strings as React text, never parsed as HTML. `web/test/home-untrusted.test.ts` checks that in Chrome: over an untrusted course whose every string holds the cross-site scripting corpus, each place on the home page that shows one (the hero, a lesson still ahead, the feedback, a question ready for another look and its popover, the timeline and a chosen day, the sidebar) shows every payload as plain text, no payload runs, and nothing on the page could run script. With one of them rendered as HTML instead (tried with a question ready for another look), every case fails and the payloads run.
 
 Lesson blocks take the same path for every course: prose, card, quote and aside HTML goes through the markdown item's sanitiser (Streamdown: `rehype-sanitize` and `rehype-harden`). A hook's SVG figure goes through `safeFigure` (`web/src/lib/figure.ts`), which keeps only drawing: it drops script, embedded documents, links, animation, `style` elements, the raw-text elements a reparse could turn into markup (`noscript`, `noembed`, `noframes`, `xmp`, `plaintext`, `textarea`), every element outside the SVG namespace, event handlers, `href`s, and the `style` and `class` attributes. A trusted course's figure is then drawn inline. An untrusted course's figure is drawn as an `<img src="data:image/svg+xml,…">`, where nothing runs whatever it holds, with each `var(--token)` replaced by the theme's current value. `/api/showcase` gives each item's `trusted` for this.
 
@@ -636,7 +664,30 @@ Part of a trusted folder mounted elsewhere is caught too (flyingrobots/school#29
 
 The identity check misses three cases. It cannot see a mount made after School started. It cannot see an untrusted course's file bind-mounted inside a trusted folder, because only folders are walked. It cannot see one of an untrusted course's subfolders bind-mounted inside a trusted folder, because an untrusted course's own subfolders are not walked. Compose's defaults create none of these. Never bind-mount a file or subfolder of an untrusted course into a trusted course, a mount or the web folder.
 
-A sandboxed document still loads what it links to, such as images from other sites, and still shows what it says; safe mode stops it acting as School, not showing content.
+### Fetching a course repository
+
+`fetchCommit` (`server/fetch-commit.ts`, RFC 7 §6) fetches one commit of a course repository into a new bare repository, `<staging>/repo.git`, and answers the commit's full hash. No route calls it yet; the install preview (RFC 7 task 7) will, with a staging folder under the course store. The URL and the server are hostile, so School checks the commit, then the URL, then the host's addresses, then the staging folder, and only then runs git. Table 1 lists the rules in that order, and the first rule broken gives the refusal. Any refusal deletes the staging folder, or never makes it.
+
+| Rule | Refused with |
+| --- | --- |
+| The commit is a full hash (40 or 64 hex digits), or a branch, tag or `HEAD` that is safe to hand to git (no option, range, space, trailing slash or `.lock` name) | `bad-commit` |
+| The URL is 2,048 characters at most | `bad-url` |
+| The URL starts `https://`. `http`, `ssh`, scp-like `host:path`, `git://`, `file://`, `ext::`, a local path or an option is refused before git runs, and git's `protocol.allow=never` allows only `https`, even if something rewrites the URL later | `not-https` |
+| No whitespace, control character or backslash, no query or fragment, and a host | `bad-url` |
+| No user or password (`https://user:token@...`): School stores no secret for a course | `credentials` |
+| Port 443 | `bad-port` |
+| The host is an IP address or a plain host name: letters, digits and hyphens in dot-separated labels of 1 to 63 characters, none starting or ending with a hyphen, 253 characters in all. One trailing dot names the same host and is dropped from the URL, the lookup and the pin alike | `bad-url` |
+| The host resolves, and every address is public. `isPublicAddress` refuses the IANA special-purpose IPv4 ranges (loopback, private, CGNAT `100.64/10`, link-local with the cloud metadata address, multicast, reserved, documentation), and allows IPv6 only in global unicast `2000::/3` outside `2001::/23`, `2001:db8::/32`, `2002::/16` and `3fff::/20`, so IPv4-mapped, NAT64, loopback, unique-local and link-local IPv6 are refused. A literal address is checked as given | `unresolved`, `private-address` |
+| The staging folder is an absolute path, its parent exists, and the folder does not | `bad-staging` |
+| A branch, tag or `HEAD` is resolved once, with `git ls-remote`, to a full hash (an annotated tag to the commit it tags). A name that is both a branch and a tag is refused. A full hash is fetched as given | `no-such-ref`, `ambiguous-ref` |
+| Each git process finishes within 60 seconds. The fetched repository stays within 64 MiB on disk: School measures it every 100 ms while git runs and again when git ends (RFC 7 Table 6.2). Passing either limit kills git's whole process group | `timeout`, `too-large` |
+| git fetches the commit, and the object is a commit, not a tree or blob | `git-failed`, `not-a-commit` |
+
+_Table 1. What `fetchCommit` checks, in the order the code checks it. Every refusal carries a sentence naming what was refused._
+
+git is pinned to the addresses School checked. `http.curloptResolve=HOST:443:ADDRESS[,ADDRESS]` hands them to libcurl, so git never looks the host up again, and a second answer from DNS (rebinding) is never used. Only a plain host name can be pinned this way: libcurl reads a name starting with `-` as "remove this entry", so Table 1 refuses such a name before any lookup. Redirects are not followed (`http.followRedirects=false`), because a redirect could lead to a host or port the pin does not cover. git runs with a fresh environment: no system or global configuration, `HOME` set to the staging folder (so no `.netrc`), `GIT_TERMINAL_PROMPT=0`, no askpass, an empty `credential.helper`, an empty `http.proxy` (which also overrides a proxy in the environment), `core.hooksPath=/dev/null`, `transfer.fsckObjects`, no submodules, and `git init --bare --template=`. The bare repository is made first. Every later git command, `ls-remote` included, names that repository with `--git-dir` and starts in it, and `GIT_CEILING_DIRECTORIES` stops git looking above the staging folder. So a git repository around the course store adds no configuration, such as a header, a URL rewrite or a proxy. The fetch is `git fetch --depth=1 --no-tags --no-recurse-submodules <url> <hash>`, so the repository holds that one commit and nothing is checked out. `refs/heads/course` then points at the commit, so nothing prunes it before it is read. When git exits, School kills its process group, so no helper it started outlives it. A host that will not serve a commit by its hash fails as `git-failed`, with git's own message.
+
+The request names only the URL, the commit and the staging folder. The git program, the network (resolver, address check, ports, CA file) and the limits are a separate second argument, `FetchTesting`. Only tests pass it, to reach a local server, and no route may build it from a client's input.
 
 | Defect | Effect | Issue |
 | --- | --- | --- |
@@ -653,6 +704,8 @@ A sandboxed document still loads what it links to, such as images from other sit
 | `SCHOOL_COURSE` | Server | One unnamed course, named after its folder | none; `/course` under compose, set there by `SCHOOL_COMPOSE_COURSE`, which may be empty |
 | `SCHOOL_STATE` | Server | Learner state; must not be inside a course | `state/` |
 | `SCHOOL_COURSE_STORE` | Server | The course store (RFC 7 §5.1): the folder installed courses will live in, and nothing else. Nothing installs into it yet. Empty means no store, so installing is off. Refused at start (exit 2, naming both paths) when it is, holds or sits inside a course, `SCHOOL_STATE`, `DB_PATH`, a PGlite record, a mount, `SCHOOL_WEB` or the framework folder (`SCHOOL_ROOT`, which holds the server source), and when the path exists but is not a folder, compared on real paths and by device and inode, as for [untrusted courses](#trust-and-known-defects) | none; `/store` under compose, the named volume `course-store`; compose reads it from `SCHOOL_COMPOSE_COURSE_STORE`, so a host export of `SCHOOL_COURSE_STORE` never reaches the container |
+| `SCHOOL_SKILL` | Server | The `school` skill an authoring agent is given ([the pinned skill](#the-pinned-skill)). Empty means none, so authoring is off. Never a refusal to start: a missing or unfit folder turns authoring off with the reason | `<SCHOOL_ROOT>/.agents/skills/school`; `/framework/skills/school` under compose, the checkout's skill mounted read-only; compose reads it from `SCHOOL_COMPOSE_SKILL`, so a host export of `SCHOOL_SKILL` never reaches the container |
+| `SCHOOL_SKILL_DOCS` | Server | The folder holding the references the skill links, `course-format/` and `voice/` | `<SCHOOL_ROOT>/docs/topics`; `/framework/docs` under compose, set there with no variable |
 | `SCHOOL_DATABASE_URL` | Server | The record: `postgres://school_app:password@host:port/db` (`Bun.SQL`; `school_app`'s own login, refused if it fails [the login check](#the-login-check)) or `pglite:<dir>` (PGlite on disk, not inside a course) | none: required |
 | `SCHOOL_DATABASE_PASSWORD`, `SCHOOL_DATABASE_PASSWORD_FILE` | Server | `school_app`'s password, for a `SCHOOL_DATABASE_URL` that names none; the file wins. Compose gives the file | none |
 | `SCHOOL_MIGRATE_URL` | Migrate job | The owner's URL: a role that can create roles, in practice the superuser | none: required |
