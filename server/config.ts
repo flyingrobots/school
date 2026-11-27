@@ -22,6 +22,11 @@ export type Config = {
   /** Directory for this learner's private state. Never inside a course. */
   state: string;
   /**
+   * The course store, from SCHOOL_COURSE_STORE (RFC 7 §5.1, flyingrobots/school#233): the one folder
+   * School may write, for installed courses. Null when unset or empty: installing is then off.
+   */
+  store: string | null;
+  /**
    * The SQLite progress.db of the server before Postgres. Never written now: startup only reads it,
    * to refuse to start while it holds learner work (RFC 3 v0.4.0 §3.3; server/legacy.ts).
    */
@@ -255,6 +260,7 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     courses,
     untrusted: Object.keys(untrusted).sort(),
     state,
+    store: null, // not implemented yet (flyingrobots/school#233)
     dbPath,
     database,
     web,
