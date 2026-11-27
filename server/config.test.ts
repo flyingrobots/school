@@ -2,7 +2,7 @@
 // learner state cannot be placed inside a course.
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { ConfigError, ENTRY_CAP, course, courseNames, mountTable, parseConfig as parseConfigFrom, parseMounts, systemList, systemStat } from "./config.ts";
+import { ConfigError, FILE_CAP, FOLDER_CAP, course, courseNames, mountTable, parseConfig as parseConfigFrom, parseMounts, systemList, systemStat } from "./config.ts";
 
 const FRAMEWORK = "/opt/school";
 
@@ -325,6 +325,8 @@ type Node = Id & { dirs?: string[]; files?: string[] };
 /** A filesystem that knows only `tree`: each entry's identity, and the folders and files each folder holds. */
 const fakeFs = (tree: Record<string, Node>) => ({
   stat: fakeStat(tree),
+  // No entry here is a symlink, so lstat and stat agree.
+  lstat: fakeStat(tree),
   list: (p: string) => {
     const node = tree[p];
     if (node === undefined) throw Object.assign(new Error(`ENOENT: ${p}`), { code: "ENOENT" });
@@ -351,8 +353,9 @@ const PART_TREE: Record<string, Node> = {
 };
 const PART = fakeFs(PART_TREE);
 const ROOTS = { SCHOOL_COURSE: "/mnt/course", SCHOOL_MOUNTS: "papers=/mnt/papers", SCHOOL_WEB: "/mnt/web" };
-const part = (env: Record<string, string>, fs: ReturnType<typeof fakeFs> = PART) =>
-  parseConfigFrom({ SCHOOL_DATABASE_URL: "postgres://db/school", SCHOOL_STATE: "/var/school", ...env }, FRAMEWORK, fs.stat, fs.list);
+type FakeFs = { stat: (p: string) => Id; list: (p: string) => { dirs: string[]; files: string[] }; lstat?: (p: string) => Id };
+const part = (env: Record<string, string>, fs: FakeFs = PART) =>
+  parseConfigFrom({ SCHOOL_DATABASE_URL: "postgres://db/school", SCHOOL_STATE: "/var/school", ...env }, FRAMEWORK, fs.stat, fs.list, fs.lstat ?? fs.stat);
 
 test.each([
   ["a trusted course's subfolder under another name", "/mnt/library", 'trusted course "course" \\(/mnt/course\\) from SCHOOL_COURSE', "/mnt/course/reference"],
@@ -385,14 +388,14 @@ const wide = (n: number) => {
   return fakeFs(tree);
 };
 
-test("a trusted course holding exactly ENTRY_CAP folders is walked and accepted", () => {
-  expect(courseNames(part({ SCHOOL_COURSE: "/mnt/course", SCHOOL_UNTRUSTED_COURSES: "guest=/mnt/other" }, wide(ENTRY_CAP)))).toEqual(["course", "guest"]);
+test("a trusted course holding exactly FOLDER_CAP folders is walked and accepted", () => {
+  expect(courseNames(part({ SCHOOL_COURSE: "/mnt/course", SCHOOL_UNTRUSTED_COURSES: "guest=/mnt/other" }, wide(FOLDER_CAP)))).toEqual(["course", "guest"]);
 });
 
-test("a trusted course holding more than ENTRY_CAP folders is refused when untrusted courses are set, naming it and the cap", () => {
-  expect(() => part({ SCHOOL_COURSE: "/mnt/course", SCHOOL_UNTRUSTED_COURSES: "guest=/mnt/other" }, wide(ENTRY_CAP + 1)))
-    .toThrow(`trusted course "course" (/mnt/course) from SCHOOL_COURSE holds more than ${ENTRY_CAP} folders`);
-  expect(() => part({ SCHOOL_COURSE: "/mnt/course", SCHOOL_UNTRUSTED_COURSES: "guest=/mnt/other" }, wide(ENTRY_CAP + 1)))
+test("a trusted course holding more than FOLDER_CAP folders is refused when untrusted courses are set, naming it and the cap", () => {
+  expect(() => part({ SCHOOL_COURSE: "/mnt/course", SCHOOL_UNTRUSTED_COURSES: "guest=/mnt/other" }, wide(FOLDER_CAP + 1)))
+    .toThrow(`trusted course "course" (/mnt/course) from SCHOOL_COURSE holds more than ${FOLDER_CAP} folders, the folder cap`);
+  expect(() => part({ SCHOOL_COURSE: "/mnt/course", SCHOOL_UNTRUSTED_COURSES: "guest=/mnt/other" }, wide(FOLDER_CAP + 1)))
     .toThrow(/unset SCHOOL_UNTRUSTED_COURSES, or point SCHOOL_COURSE at a folder holding fewer/);
 });
 
@@ -414,12 +417,16 @@ test.each(["ENOENT", "ENOTDIR"])("a trusted subfolder that fails to list with %s
   expect(courseNames(c)).toEqual(["course", "guest"]);
 });
 
-test("a trusted course holding more than ENTRY_CAP folders is accepted when no untrusted course is set, since nothing is walked", () => {
-  expect(courseNames(part({ SCHOOL_COURSE: "/mnt/course" }, wide(ENTRY_CAP + 1)))).toEqual(["course"]);
+test("a trusted course holding more than FOLDER_CAP folders is accepted when no untrusted course is set, since nothing is walked", () => {
+  expect(courseNames(part({ SCHOOL_COURSE: "/mnt/course" }, wide(FOLDER_CAP + 1)))).toEqual(["course"]);
 });
 
-test("ENTRY_CAP is 10,000 entries", () => {
-  expect(ENTRY_CAP).toBe(10_000);
+test("FOLDER_CAP is 10,000 folders, as before files were walked", () => {
+  expect(FOLDER_CAP).toBe(10_000);
+});
+
+test("FILE_CAP is 100,000 files", () => {
+  expect(FILE_CAP).toBe(100_000);
 });
 
 // The real filesystem: School's own list finds real subfolders, and never follows a symlink. The
@@ -617,22 +624,38 @@ const wideGuest = (folders: number, files: number) => {
 };
 const GUEST_ONLY = { SCHOOL_COURSE: "/mnt/course", SCHOOL_UNTRUSTED_COURSES: "guest=/mnt/guest" };
 
-test("an untrusted course holding exactly ENTRY_CAP folders and files is walked and accepted", () => {
-  expect(courseNames(part(GUEST_ONLY, wideGuest(ENTRY_CAP / 2, ENTRY_CAP / 2)))).toEqual(["course", "guest"]);
+// The two caps count apart (flyingrobots/school#315): folders as before files were walked, so no
+// setup that started then is refused for its folders now, and files against a cap of their own.
+test("an untrusted course holding exactly FOLDER_CAP folders and FILE_CAP files is walked and accepted", () => {
+  expect(courseNames(part(GUEST_ONLY, wideGuest(FOLDER_CAP, FILE_CAP)))).toEqual(["course", "guest"]);
 });
 
-test("an untrusted course holding more than ENTRY_CAP folders and files is refused, naming it and the cap", () => {
-  expect(() => part(GUEST_ONLY, wideGuest(ENTRY_CAP / 2, ENTRY_CAP / 2 + 1)))
-    .toThrow(`untrusted course "guest" (/mnt/guest) from SCHOOL_UNTRUSTED_COURSES holds more than ${ENTRY_CAP} folders and files`);
+test.each([
+  ["folders", FOLDER_CAP + 1, 0, `holds more than ${FOLDER_CAP} folders, the folder cap`],
+  ["files", 0, FILE_CAP + 1, `holds more than ${FILE_CAP} files, the file cap`],
+])("an untrusted course holding one more than the cap of %s is refused, naming it, the cap and how to start", (_, folders, files, cap) => {
+  expect(() => part(GUEST_ONLY, wideGuest(folders, files))).toThrow(`untrusted course "guest" (/mnt/guest) from SCHOOL_UNTRUSTED_COURSES ${cap}`);
+  expect(() => part(GUEST_ONLY, wideGuest(folders, files))).toThrow(/To start, remove it from SCHOOL_UNTRUSTED_COURSES, or point it at a folder holding fewer/);
 });
 
-test("a trusted course holding more than ENTRY_CAP folders and files together is refused when untrusted courses are set", () => {
-  const dirs = Array.from({ length: ENTRY_CAP / 2 }, (_, i) => `d${i}`);
-  const files = Array.from({ length: ENTRY_CAP / 2 + 1 }, (_, i) => `f${i}.json`);
-  const tree: Record<string, Node> = { "/": { dev: 1, ino: 2 }, "/mnt/other": { dev: 6, ino: 1 }, "/mnt/course": { dev: 8, ino: 1, dirs, files } };
-  [...dirs, ...files].forEach((n, i) => (tree[`/mnt/course/${n}`] = { dev: 8, ino: i + 2 }));
-  expect(() => part({ SCHOOL_COURSE: "/mnt/course", SCHOOL_UNTRUSTED_COURSES: "guest=/mnt/other" }, fakeFs(tree)))
-    .toThrow(`trusted course "course" (/mnt/course) from SCHOOL_COURSE holds more than ${ENTRY_CAP} folders and files`);
+/** A trusted course at /mnt/course holding `folders` folders and `files` files, all directly under it. */
+const wideCourse = (folders: number, files: number) => {
+  const dirs = Array.from({ length: folders }, (_, i) => `d${i}`);
+  const names = Array.from({ length: files }, (_, i) => `f${i}.json`);
+  const tree: Record<string, Node> = { "/": { dev: 1, ino: 2 }, "/mnt/other": { dev: 6, ino: 1 }, "/mnt/course": { dev: 8, ino: 1, dirs, files: names } };
+  [...dirs, ...names].forEach((n, i) => (tree[`/mnt/course/${n}`] = { dev: 8, ino: i + 2 }));
+  return fakeFs(tree);
+};
+const BESIDE_OTHER = { SCHOOL_COURSE: "/mnt/course", SCHOOL_UNTRUSTED_COURSES: "guest=/mnt/other" };
+
+test("a trusted course holding exactly FOLDER_CAP folders and FILE_CAP files is walked and accepted", () => {
+  expect(courseNames(part(BESIDE_OTHER, wideCourse(FOLDER_CAP, FILE_CAP)))).toEqual(["course", "guest"]);
+});
+
+test("a trusted course holding one more than FILE_CAP files is refused, naming it, the file cap and how to start", () => {
+  expect(() => part(BESIDE_OTHER, wideCourse(0, FILE_CAP + 1)))
+    .toThrow(`trusted course "course" (/mnt/course) from SCHOOL_COURSE holds more than ${FILE_CAP} files, the file cap`);
+  expect(() => part(BESIDE_OTHER, wideCourse(0, FILE_CAP + 1))).toThrow(/To start, unset SCHOOL_UNTRUSTED_COURSES, or point SCHOOL_COURSE at a folder holding fewer/);
 });
 
 // An entry School cannot read is never skipped: an untrusted subfolder it cannot list could hold
@@ -653,7 +676,25 @@ test.each([["an untrusted", "/mnt/guest/notes.json"], ["a trusted", "/mnt/course
     if (p === file) throw Object.assign(new Error(`EACCES: ${p}`), { code: "EACCES" });
     return fs.stat(p);
   };
-  expect(() => part(GUEST, { stat, list: fs.list })).toThrow(`cannot stat ${file}: EACCES`);
+  expect(() => part(GUEST, { stat, lstat: stat, list: fs.list })).toThrow(`cannot stat ${file}: EACCES`);
+});
+
+// A file swapped for a symlink after the walk listed it (flyingrobots/school#315): School reads a
+// listed file's identity with lstat, so it sees the link itself and never what it points at. The
+// fake stat follows the link to its target; the fake lstat gives the link's own identity. Oracle:
+// POSIX lstat, "if path names a symbolic link, lstat() shall return information about the link".
+const swapped = (link: string, target: string) => {
+  const fs = fakeFs({ ...PART_TREE, ...OWN_FILES, ...GUEST_TREE });
+  const stat = (p: string) => fs.stat(p === link ? target : p);
+  const lstat = (p: string) => (p === link ? { dev: 5, ino: 999 } : fs.stat(p));
+  return { stat, lstat, list: fs.list };
+};
+
+test.each([
+  ["an untrusted file, swapped for a symlink to a trusted file", "/mnt/guest/notes.json", "/mnt/course/course.json"],
+  ["a trusted file, swapped for a symlink to an untrusted file", "/mnt/course/lessons/one.json", "/mnt/guest/notes.json"],
+])("%s after it was listed, is read as the link, not followed", (_, link, target) => {
+  expect(courseNames(part(GUEST, swapped(link, target)))).toEqual(["course", "guest"]);
 });
 
 // The real filesystem. A hard link needs no root, so it stands in for a bind mount of a file.

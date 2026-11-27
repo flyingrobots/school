@@ -164,6 +164,12 @@ export type Stat = (path: string) => { dev: number | bigint; ino: number | bigin
 export const systemStat: Stat = (path) => statSync(path, { bigint: true });
 
 /**
+ * School's own lstat, for the files a walk lists (flyingrobots/school#315): it never follows a
+ * symlink, so a file swapped for a link after it was listed gives the link's own identity.
+ */
+export const systemLstat: Stat = (path) => lstatSync(path, { bigint: true });
+
+/**
  * The identity of `p` (null when it does not exist yet) and of every ancestor that exists, as
  * "dev:ino" strings. Two names for one folder, such as one directory bind-mounted twice into a
  * container, resolve to two paths but share an identity (flyingrobots/school#280).
@@ -195,15 +201,21 @@ function identity(at: string, stat: Stat): string | null {
 }
 
 /**
- * The most entries, folders and regular files together, School walks below one course, mount or
- * web folder (flyingrobots/school#298, flyingrobots/school#315). A course holds lessons/ and
- * reference/ and a few folders under them: the example course holds 2 folders and a handful of
- * files, and a course of 2,000 reference files in 100 topics about 2,100 entries. 10,000 is far past
- * any course. Each entry costs one stat and each folder one readdir, so the cap bounds a walk, and
- * a folder that is not a course, such as a home directory or a whole disk, is refused at once
- * instead of walked for minutes.
+ * The most folders School walks below one course, mount or web folder (flyingrobots/school#298).
+ * A course holds lessons/ and reference/ and a few folders under them: the example course holds 2,
+ * and a course of 2,000 reference files in 100 topics about 100. 10,000 is far past any course. Each
+ * folder costs one readdir and one stat, so the cap bounds a walk to about a quarter of a second on
+ * a local SSD, and a folder that is not a course, such as a home directory or a whole disk, is
+ * refused at once instead of walked for minutes.
  */
-export const ENTRY_CAP = 10_000;
+export const FOLDER_CAP = 10_000;
+
+/**
+ * The most regular files School walks below one course, mount or web folder (flyingrobots/school#315).
+ * Counted apart from folders, so a source mount of many files in few folders, accepted while only
+ * folders were walked, is still accepted. Each file costs one lstat, about 1.4 µs on a local SSD.
+ */
+export const FILE_CAP = 100_000;
 
 /**
  * The entries directly inside `dir` that School walks: its folders and its regular files, by name.
@@ -239,7 +251,7 @@ export const systemList: List = (dir) => {
  * mount of an ancestor inside its own tree) is walked once, and a file with two names (a hard link)
  * is kept under the first. An entry School cannot list or stat is refused, not skipped, since what
  * it hides could be an alias; one that is gone, or is no folder, holds nothing. Refused, naming
- * `what` and saying to `remedy`, past ENTRY_CAP entries below the root.
+ * `what` and saying to `remedy`, past FOLDER_CAP entries below the root.
  */
 function tree(root: string, what: string, remedy: string, stat: Stat, list: List): Map<string, string> {
   const found = new Map<string, string>();
@@ -247,8 +259,8 @@ function tree(root: string, what: string, remedy: string, stat: Stat, list: List
   let entries = 0;
   const count = (n: number) => {
     entries += n;
-    if (entries > ENTRY_CAP) {
-      throw new ConfigError(`${what} holds more than ${ENTRY_CAP} folders and files; with SCHOOL_UNTRUSTED_COURSES set, School walks every folder and file of each course, mount and the web folder, to find one that is both trusted and untrusted under two names, and walks at most ${ENTRY_CAP} in each. To start, ${remedy}`);
+    if (entries > FOLDER_CAP) {
+      throw new ConfigError(`${what} holds more than ${FOLDER_CAP} folders and files; with SCHOOL_UNTRUSTED_COURSES set, School walks every folder and file of each course, mount and the web folder, to find one that is both trusted and untrusted under two names, and walks at most ${FOLDER_CAP} in each. To start, ${remedy}`);
     }
   };
   for (let i = 0; i < queue.length; i++) {
@@ -285,7 +297,7 @@ function sameTree(a: string, b: string, stat: Stat): boolean {
  * `stat` is the filesystem's identity and `list` names a folder's subfolders (flyingrobots/school#298);
  * tests give fake ones, since aliases need a bind mount.
  */
-export function parseConfig(env: Record<string, string | undefined>, frameworkDefault: string, stat: Stat = systemStat, list: List = systemList): Config {
+export function parseConfig(env: Record<string, string | undefined>, frameworkDefault: string, stat: Stat = systemStat, list: List = systemList, _lstat: Stat = systemLstat): Config {
   const cwd = process.cwd();
   const framework = abs(env.SCHOOL_ROOT ?? frameworkDefault, cwd);
   // SCHOOL_COURSES registers many; SCHOOL_COURSE stays accepted as a single unnamed course,
