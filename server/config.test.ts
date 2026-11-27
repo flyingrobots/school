@@ -343,6 +343,31 @@ test("a relative SCHOOL_COURSE_STORE inside a relative course is refused, both r
     .toThrow(`SCHOOL_COURSE_STORE (${join(cwd, "own", "store")}) overlaps trusted course "own" (${join(cwd, "own")}) from SCHOOL_COURSES`);
 });
 
+// Two cheap refusals (review of #296): a store that is, holds or sits inside the framework (the
+// server's source is inside it), and a store path that exists but is not a folder.
+test.each([
+  ["is the framework folder", "/opt/school"],
+  ["sits inside the framework folder", "/opt/school/store"],
+  ["sits inside the server's source folder", "/opt/school/server/store"],
+  ["holds the framework folder", "/opt"],
+])("a store that %s is refused, naming both paths", (_, store) => {
+  expect(() => parseConfig({ SCHOOL_COURSE_STORE: store, SCHOOL_STATE: "/srv/state" }, FRAMEWORK))
+    .toThrow(`SCHOOL_COURSE_STORE (${store}) overlaps the framework (/opt/school)`);
+});
+
+test("a store path that exists but is a file, not a folder, is refused, naming it", () => {
+  const { writeFileSync } = require("node:fs") as typeof import("node:fs");
+  const { root, done } = scratch();
+  try {
+    const file = join(root, "store");
+    writeFileSync(file, "not a folder");
+    expect(() => parseConfig({ SCHOOL_COURSE_STORE: file, SCHOOL_STATE: join(root, "state") }, FRAMEWORK))
+      .toThrow(`SCHOOL_COURSE_STORE (${file}) exists but is not a folder`);
+  } finally {
+    done();
+  }
+});
+
 /** Every folder the store must stay apart from, each on its own path under /srv. */
 const PLACED = {
   SCHOOL_COURSES: "own=/srv/own",
