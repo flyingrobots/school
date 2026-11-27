@@ -140,8 +140,9 @@ The server serves configured and installed courses together, under one set of na
 - **An install that is listed but not served.** The first time the list sees an install, it
   computes the folder's content digest and compares it with the record's `content_sha256`
   ([a course's folder](../course-format/README.md#an-installed-courses-folder)). Then, on every
-  request, it checks that the folder still exists. A folder that is missing, holds other files, or
-  holds anything but regular files and folders is still listed, with `lessons: null` and its reason
+  request, it checks that the folder still exists and is unchanged (below). A folder that is
+  missing, holds other files, or holds anything but regular files and folders is still listed,
+  with `lessons: null` and its reason
   in `lessonsError`, and none of its files are served. So is a folder the file system cannot read
   (an unreadable subfolder, or one that vanishes while it is read): only that install is affected,
   every other course is still served, and the failure is not remembered, so the install is served
@@ -151,14 +152,37 @@ The server serves configured and installed courses together, under one set of na
 - **A name both configured and installed** stops the start with exit code 2. The message names the
   configured folder and the install id. If such a row is written while School runs, School logs
   it to stderr once and the configured course keeps the name.
+- **When the record cannot be reached.** A configured course is found by name without reading the
+  record, so its lessons and reference files never wait on `installed_courses()`. If a read of the
+  list cannot reach the record, the configured courses are still served, and each install the list
+  last saw is listed with `lessons: null` and a reason saying the record cannot be reached; none of
+  its files are served until the record answers. The server logs the outage once, and again when
+  the record answers.
 
-The digest is computed once per install, because an install's folder is written once and never
-changed. A file changed while School runs is therefore found at the next start, but a folder
-deleted while School runs is found on the next request. `POST /api/installs` is the only writer
-of `courses/` ([installing a previewed course](#installing-a-previewed-course)). At start, before
-serving, School deletes every entry of `courses/` that is not a current install's folder: the folder
-of an install a later one replaced, or one a crash left between moving it there and recording it.
-A symlink there is removed, never followed, and a `courses/` that is not a real folder is not swept.
+An install's folder is written once and never changed, so its digest is not computed on every
+request (flyingrobots/school#322). Just before computing it, the list takes a **fingerprint** of the
+folder: the device, inode, size, and modification and change times, in nanoseconds, of every file
+and folder in it, the folder itself included. Every request compares the fingerprint, one `lstat`
+per entry and no hashing. A file added, removed or renamed changes its folder's times, so the
+entries already listed are enough. On any difference the list computes the digest again: a folder
+whose digest is still the record's is served, with a new fingerprint, and one whose digest is not is
+listed as not served, trusted or not, with a reason naming the install id. So a file changed while
+School runs is checked at each request, and one put back as it was recorded is served again. The
+check is not a lock: a file can change in the small window between the check and the read, which
+takes write access to the course store. A filesystem with coarse timestamps could also miss a
+change made in the same tick as the one before it.
+
+`POST /api/installs` is the only writer of `courses/`
+([installing a previewed course](#installing-a-previewed-course)). It moves a checked course into
+its install's folder and makes every file read-only before it records the install, so the list
+fingerprints an install's folder only once it is complete. At start, before serving, School deletes
+every entry of `courses/` that is not a current install's folder: the folder of an install a later
+one replaced, or one a crash left between moving it there and recording it. A symlink there is
+removed, never followed, and a `courses/` that is not a real folder is not swept.
+
+A request that fails, most often because the record cannot be reached, answers `503` with
+`{ error }` in JSON, a neutral sentence with no stack trace, and the server logs the error's message
+to stderr.
 
 In short: the server is thin. It answers only to its own names, serves files safely, guards
 writes against ordinary cross-site requests, and hands learning-record work to Postgres functions.

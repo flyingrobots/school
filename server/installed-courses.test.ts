@@ -61,12 +61,13 @@ function installInStore(store: string, name: string, title: string): CourseInsta
   return { id, course: name, source: "git", url: `https://example.com/${name}.git`, bundleSha256: null, commit: "b".repeat(40), contentSha256: d.digest, title, format: null };
 }
 
-/** A migrated PGlite record at `dir` holding `installs`, recorded through the server's own adapter. */
-async function pgliteWith(dir: string, installs: CourseInstall[]): Promise<string> {
+/** A migrated PGlite record at `dir` holding `installs`, recorded through the server's own adapter, those in `trusted` trusted. */
+async function pgliteWith(dir: string, installs: CourseInstall[], trusted: CourseInstall[] = []): Promise<string> {
   cpSync(await migratedRecord(), dir, { recursive: true });
   const db = await openDatabase({ driver: "pglite", dir });
   try {
     for (const i of installs) await postgresRecord(db.sql).installCourse(i, "2026-11-26T00:00:00.000Z");
+    for (const i of trusted) await postgresRecord(db.sql).chooseCourseTrust(i.id, true, "2026-11-26T00:00:01.000Z");
   } finally {
     await db.close();
   }
@@ -154,6 +155,32 @@ describe("installed courses (PGlite)", () => {
     });
   }, timeout(1));
 
+  // The review of #320 (F-2), its probe: a trusted install's reference page rewritten with a script
+  // after start was served 200 with no Content-Security-Policy. Oracle: flyingrobots/school#322, 2d.
+  test("a trusted install whose reference page changes after start is not served: its page answers 404 and it is listed with lessons null", async () => {
+    const root = scratch();
+    const bells = installInStore(join(root, "store"), "bells", "Bells");
+    const s = await launch(root, { SCHOOL_DATABASE_URL: await pgliteWith(join(root, "record"), [bells], [bells]) });
+    const before = (await fetch(`${s.url}/courses/bells/reference/page.html`)).status;
+    writeFileSync(join(installFolder(join(root, "store"), bells.id), "reference", "page.html"), "<script>fetch('/api/settings/bridge')</script>");
+    const page = await fetch(`${s.url}/courses/bells/reference/page.html`);
+    expect({ before, page: page.status, pageBody: page.status === 200 ? await page.text() : "", list: await listed(s) }).toEqual({
+      before: 200, page: 404, pageBody: "",
+      list: [{ name: "bells", title: "Bells", trusted: true, lessons: null, lessonsError: expect.stringContaining(bells.id) }],
+    });
+  }, timeout(1));
+
+  test("an untrusted install whose reference page changes after start is not served, and its course still answers sandboxed", async () => {
+    const root = scratch();
+    const bells = installInStore(join(root, "store"), "bells", "Bells");
+    const s = await launch(root, { SCHOOL_DATABASE_URL: await pgliteWith(join(root, "record"), [bells]) });
+    writeFileSync(join(installFolder(join(root, "store"), bells.id), "reference", "page.html"), "<script>alert(1)</script>");
+    const page = await fetch(`${s.url}/courses/bells/reference/page.html`);
+    const course = await fetch(`${s.url}/api/courses/bells`);
+    expect({ page: page.status, course: course.status, courseCsp: course.headers.get("content-security-policy") })
+      .toEqual({ page: 404, course: 200, courseCsp: POLICY });
+  }, timeout(1));
+
   test("a name both configured and installed stops start with exit 2, naming both", async () => {
     const root = scratch();
     const own = courseAt(join(root, "own"), "Own");
@@ -190,5 +217,99 @@ describe.skipIf(TEST_POSTGRES_URL === undefined)("installed courses on a real Po
     await postgresRecord(record.sql).installCourse(bad, "2026-11-26T00:00:00.000Z");
     const statuses = await Promise.all(["/api/courses", "/api/courses/own", "/api/courses/bad", "/api/courses/own/lessons/l1"].map(async (p) => (await fetch(`${s.url}${p}`)).status));
     expect(statuses).toEqual([200, 200, 200, 200]);
+  }, timeout(1) + 30_000);
+});
+
+/**
+ * A TCP proxy on a port the OS picks, in front of `target` (host and port): what the server is
+ * given as its database, so a test can make the record unreachable while School runs. `cut()`
+ * closes every proxied connection and stops listening, so a new connection is refused.
+ */
+function proxyTo(target: { hostname: string; port: number }) {
+  type Side = { write(b: Uint8Array): number; end(): void };
+  const pending = new Map<Side, Uint8Array[]>();
+  const send = (to: Side, bytes: Uint8Array) => {
+    const queue = pending.get(to);
+    if (queue !== undefined && queue.length > 0) return void queue.push(bytes);
+    const n = to.write(bytes);
+    if (n < bytes.length) pending.set(to, [bytes.subarray(Math.max(n, 0))]);
+  };
+  const flush = (to: Side) => {
+    const queue = pending.get(to) ?? [];
+    while (queue.length > 0) {
+      const head = queue[0]!;
+      const n = to.write(head);
+      if (n < head.length) return void (queue[0] = head.subarray(Math.max(n, 0)));
+      queue.shift();
+    }
+  };
+  const open = new Set<Side>();
+  type Peer = { upstream: Side | null; early: Uint8Array[] };
+  const listener = Bun.listen<Peer>({
+    hostname: "127.0.0.1", port: 0,
+    socket: {
+      open(client) {
+        client.data = { upstream: null, early: [] };
+        open.add(client);
+        void Bun.connect({
+          ...target,
+          socket: {
+            open(up) {
+              open.add(up);
+              client.data.upstream = up;
+              for (const b of client.data.early.splice(0)) send(up, b);
+            },
+            data(_up, bytes) { send(client, new Uint8Array(bytes)); },
+            drain(up) { flush(up); },
+            close() { client.end(); },
+            error() { client.end(); },
+          },
+        }).catch(() => client.end());
+      },
+      data(client, bytes) {
+        const up = client.data.upstream;
+        if (up === null) client.data.early.push(new Uint8Array(bytes));
+        else send(up, new Uint8Array(bytes));
+      },
+      drain(client) { flush(client); },
+      close(client) { client.data.upstream?.end(); },
+      error(client) { client.data.upstream?.end(); },
+    },
+  });
+  return {
+    port: listener.port,
+    cut() {
+      listener.stop(true);
+      for (const s of open) s.end();
+    },
+  };
+}
+
+// Oracle: the review of #320 (F-4) and flyingrobots/school#322, 2d: with the record unreachable, a
+// configured course's reference file still answers 200, and nothing answers a raw 500; a route that
+// needs the record answers a neutral 503 in JSON, with no stack trace.
+describe.skipIf(TEST_POSTGRES_URL === undefined)("School with its record unreachable (Bun.SQL, SCHOOL_TEST_POSTGRES_URL)", () => {
+  test("a configured course's reference file answers 200, and every other route a JSON answer that is not a 500 (Bun.SQL)", async () => {
+    const root = scratch();
+    const own = courseAt(join(root, "own"), "Own");
+    const record = await fresh();
+    const real = new URL(record.appUrl);
+    const proxy = proxyTo({ hostname: real.hostname, port: Number(real.port || 5432) });
+    const via = new URL(record.appUrl);
+    via.hostname = "127.0.0.1";
+    via.port = String(proxy.port);
+    const s = await launch(root, { SCHOOL_COURSES: `own=${own}`, SCHOOL_DATABASE_URL: via.toString() });
+    proxy.cut();
+    const answer = async (p: string) => {
+      const res = await fetch(`${s.url}${p}`);
+      const body = await res.text();
+      return { path: p, status: res.status, json: res.headers.get("content-type")?.startsWith("application/json") ?? false, trace: /\n\s+at /.test(body) };
+    };
+    const reference = await fetch(`${s.url}/courses/own/reference/page.html`);
+    const routes = await Promise.all(["/api/courses", "/api/courses/own", "/api/courses/own/lessons/l1?view=slides", "/api/resume"].map(answer));
+    expect({ reference: reference.status, body: await reference.text(), routes }).toEqual({
+      reference: 200, body: "<p>page</p>",
+      routes: ["/api/courses", "/api/courses/own", "/api/courses/own/lessons/l1?view=slides", "/api/resume"].map((path) => ({ path, status: 503, json: true, trace: false })),
+    });
   }, timeout(1) + 30_000);
 });

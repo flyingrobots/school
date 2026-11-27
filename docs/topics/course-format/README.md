@@ -179,7 +179,7 @@ ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad reference/deep/
 
 _Listing 3. The manifest of a two-file folder. The digest is the SHA-256 of these two lines, each ending in a newline._
 
-A folder that holds anything but regular files and folders, such as a symlink, has no digest. School lists such a folder, or one whose digest is not the record's, or one that is missing, with `lessons: null` and the reason, and serves none of its files.
+A folder that holds anything but regular files and folders, such as a symlink, has no digest. School lists such a folder, or one whose digest is not the record's, or one that is missing, with `lessons: null` and the reason, and serves none of its files. A folder changed while School runs is checked again on the next request ([the course list](../architecture/README.md#the-course-list)).
 
 ## More than one course under `./school up`
 
