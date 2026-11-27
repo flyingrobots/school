@@ -4,7 +4,7 @@ import { afterAll, afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, runChain, type BridgeConfig } from "./run.ts";
+import { loadConfig, runChain, sweepGroup, sweeps, type BridgeConfig } from "./run.ts";
 
 // Bun's own 5 s per-test limit would race process start-up on a loaded machine; every test here
 // either finishes on its own or is bounded by the agent timeouts below, so the limit is generous.
@@ -232,3 +232,29 @@ test("five forking agents killed at once, three rounds over: every chain returns
     for (const { group } of runs) if (group !== null) expect(await inGroup(group)).toEqual([]);
   }
 }, 120_000);
+
+// Review findings on flyingrobots/school#348. sweepGroup(0) would signal the bridge's own group and
+// sweepGroup(1) every process the user can signal, so neither number is a group it may sweep. The
+// signal function is injected, so these tests send no signal to any group.
+test("sweepGroup signals no group that is not a real one, and a real one once", async () => {
+  const sent: number[] = [];
+  for (const bad of [0, 1, -5, 1.5, Number.NaN, Infinity]) {
+    const stop = sweepGroup(bad, (g) => { sent.push(g); });
+    expect(typeof stop).toBe("function");
+    stop();
+  }
+  expect(sent).toEqual([]);
+  const stop = sweepGroup(4_000_000, (g) => { sent.push(g); });
+  stop();
+  expect(sent).toEqual([4_000_000]);
+});
+
+test("a kill after the agent's pipes closed starts no sweep", async () => {
+  // The agent closes both pipes at once and then lives 3 s; the 1 s timeout lands after the pipes
+  // closed and before the agent exits, so the kill comes when the sweep has already been stopped.
+  const quiet = agent("closes-pipes", "exec >&- 2>&-; sleep 3");
+  const before = sweeps.started;
+  const r = await runChain(cfg([{ name: "quiet", command: quiet }], 1), { prompt: "p", schema });
+  expect(r.attempts[0]).toMatchObject({ status: "failed", error: "timed out after 1 s" });
+  expect(sweeps.started - before).toBe(0);
+});

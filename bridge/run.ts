@@ -200,6 +200,9 @@ export function spawnFailure(program: string, e: unknown): string {
   return `could not start ${program} (${typeof code === "string" && /^E[A-Z0-9]+$/.test(code) ? code : "unknown error"})`;
 }
 
+/** How many sweeps have started: a seam for tests that a kill after the pipes closed starts none. */
+export const sweeps = { started: 0 };
+
 /**
  * SIGKILL process group `group` now, then again every 50 ms (flyingrobots/school#285). A child an
  * agent forks just as the signal lands can miss it, still in the group, and hold the pipes open:
@@ -207,8 +210,9 @@ export function spawnFailure(program: string, e: unknown): string {
  * have closed), and at the latest after 500 ms: once the group is empty its number can be given
  * to another, so a sweep that went on would risk killing a group the agent never started.
  */
-export function sweepGroup(group: number): () => void {
-  const hit = () => { try { process.kill(-group, "SIGKILL"); } catch {} };
+export function sweepGroup(group: number, signal: (group: number) => void = (g) => process.kill(-g, "SIGKILL")): () => void {
+  sweeps.started++;
+  const hit = () => { try { signal(group); } catch {} };
   hit();
   const sweep = setInterval(hit, 50);
   const stop = () => { clearInterval(sweep); clearTimeout(limit); };
