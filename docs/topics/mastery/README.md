@@ -32,7 +32,7 @@ A first try is clean, aided, unknown aid or wrong, as due review names them. Eac
 | Any right first try right after a wrong one | This first try | One day, however long after: it starts again and is the new anchor |
 | Clean, within `delay_ms` of the previous episode's last answer | This first try | Unchanged |
 | Right in an encounter whose `aid_tracking` is NULL (unknown aid) | This first try | Unchanged, however long after the last |
-| Right after help shown for the quiz in that encounter (aided) | This first try | Back to one day |
+| Right after help shown for the quiz, or for the whole encounter, in that encounter (aided) | This first try | Back to one day |
 | Wrong | Unchanged; strength is 0 until the next right first try | Back to one day |
 
 _Table 2. How each kind of first try moves the measure. Only a clean answer after the delay lengthens the half-life; aid withholds growth (unknown aid) or resets it (aided)._
@@ -72,6 +72,6 @@ The port method is `LearningRecord.mastery({ course, blocks, now, delayMs })` (`
 
 _Listing 1. The row for a block with no episodes, as the contract case `mastery: a quiz never answered is null; ...` asserts it through the port._
 
-The episodes come from `school.quiz_episodes(course, blocks)`, also in migration 0011: due review's episodes and how each first try was weak, as one function. It is not granted, so `school_app` cannot call it; `school.mastery` calls it as its owner. `school.due_review` (0006) still computes the same rows in its own body.
+The episodes come from `school.quiz_episodes(course, blocks)`, also in migration 0011: due review's episodes and how each first try was weak, as one function. It is not granted, so `school_app` cannot call it; `school.mastery` calls it as its owner. Since migration 0012 `school.due_review` takes its episodes from it too, so the two read the same rows, and an exposure for the whole encounter (`ai-help`, [due review](../due-review/README.md#help-for-the-whole-encounter)) makes a first try after it aided in both.
 
 In short: one read-only function, one port method, one row per asked block, with nulls for a quiz never answered.
