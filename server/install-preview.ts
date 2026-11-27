@@ -109,12 +109,14 @@ function expiresAt(folder: string): number {
 
 /**
  * Deletes every preview in `<store>/staging/` whose time is up at `now`, or every entry when `all`
- * (as at start, RFC 7 §5.1). `staging/` itself is kept; anything else in the store is not touched.
+ * (as at start, RFC 7 §5.1). `staging/` itself is kept, and is not swept at all unless it is a real folder; anything else in the store is not touched.
  */
 export function sweepStaging(store: string, now: number, all = false): void {
   const staging = join(store, "staging");
   let names: string[];
   try {
+    // A symlinked staging/ would send the sweep wherever it points: only a real folder is swept.
+    if (!lstatSync(staging).isDirectory()) return;
     names = readdirSync(staging);
   } catch {
     return;
