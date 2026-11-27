@@ -82,12 +82,12 @@ _Table 3. The pinned skill's cases. SKILLPIN-16 reads compose.yaml; no test buil
 
 ## Fetching one commit (flyingrobots/school#236)
 
-`fetchCommit` in `server/fetch-commit.ts`, RFC 7 §6, task 6. The oracle for every refusal is §6 and Table 6.1; the limits are Table 6.2's. Every network case runs against a local https server (`server/testing/https-git.ts`: `git http-backend` on loopback, port 0, with a certificate made for `course.test`), never the internet. `course.test` never resolves (RFC 6761), so a good fetch reaching that server shows git used the pinned address.
+`fetchCommit` in `server/fetch-commit.ts`, RFC 7 §6, task 6. The oracle for every refusal is §6 and Table 6.1; the limits are Table 6.2's. Every network case runs against a local https server (`server/testing/https-git.ts`: `git http-backend` on loopback, port 0, with a certificate made for `course.test`; it allows a want for any object unless a case asks for a host that refuses one), never the internet. `course.test` never resolves (RFC 6761), so a good fetch reaching that server shows git used the pinned address.
 
 | ID | Case | Oracle | Status | Test |
 | --- | --- | --- | --- | --- |
 | FETCH-1 | A full hash | Fetched as given into a bare `<staging>/repo.git` holding that commit alone | implemented | `server/fetch-commit.test.ts`: `FETCH-1: a full hash is fetched as given, alone, into a bare repository in staging` |
-| FETCH-2 | A hash no branch points at | Fetched by its hash | implemented | `FETCH-2: a commit no branch points at is fetched by its hash` |
+| FETCH-2 | A commit no branch or tag reaches, by its full hash, from a host that allows any want (`uploadpack.allowAnySHA1InWant`) | Fetched by its hash; a guard shows no ref reaches the commit, so the host never advertises it | implemented | `FETCH-2: a commit no ref points at is fetched by its full hash`, `FETCH-2: the fixture's loose commit is reachable from no ref, so no ref advertises it` |
 | FETCH-3 | A branch, a lightweight tag, an annotated tag, `HEAD` | Each resolves to its full hash (the annotated tag to its commit), which is fetched | implemented | `FETCH-3: %s resolves to its full hash, which is fetched` |
 | FETCH-4 | A branch force-moved between two fetches | Each fetch gets where the branch points then | implemented | `FETCH-4: a branch force-moved between two fetches resolves to where it points now` |
 | FETCH-5 | A host pinned to an IPv6 address | Fetched through `[::1]` | implemented | `FETCH-5: the pin works for an IPv6 address too` |
@@ -115,5 +115,6 @@ _Table 3. The pinned skill's cases. SKILLPIN-16 reads compose.yaml; no test buil
 | FETCH-27 | A good fetch | `refs/heads/course` points at the commit | implemented | `FETCH-27: the fetched commit is held by refs/heads/course, so nothing prunes it before it is read` |
 | FETCH-28 | A SHA-256 repository, by branch and by full hash | Fetched by its 64-digit hash | implemented | `FETCH-28: a SHA-256 repository's commit, named by %s, is fetched by its 64-digit hash` |
 | FETCH-29 | A request carrying `git`, `limits` and `network` fields, as a spread JSON body would | The fields are ignored; fetched with the test seams given as the second argument | implemented | `FETCH-29: the test seams carried on a request, as a JSON body spread into it would carry them, are ignored` |
+| FETCH-30 | The same commit from a host that refuses unadvertised wants (protocol v0, `uploadpack.allowAnySHA1InWant=false`); a commit a branch points at from that host | `git-failed` naming the unadvertised object; staging deleted. The branch's commit is fetched | implemented | `FETCH-30: a host that refuses unadvertised wants refuses a commit no ref points at`, `FETCH-30: the same host serves a commit a branch points at, by its full hash` |
 
-_Table 3. The fetch's cases. FETCH-2 to FETCH-29 are in `server/fetch-commit.test.ts`. FETCH-22 to FETCH-27 each fail when the protection they name is deleted. None runs the server image's git; CI runs them on the runner's git._
+_Table 3. The fetch's cases. FETCH-2 to FETCH-30 are in `server/fetch-commit.test.ts`. FETCH-22 to FETCH-27 each fail when the protection they name is deleted. None runs the server image's git; CI runs them on the runner's git._

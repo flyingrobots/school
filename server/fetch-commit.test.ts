@@ -43,7 +43,8 @@ function network(port: number, address = "127.0.0.1"): Partial<Network> {
   return { resolve: async (host) => (host === HOST ? [address] : []), publicAddress: (a) => a === address, ports: [port], caFile: tls.cert };
 }
 
-// A course repository with two commits on main, a lightweight and an annotated tag, and a branch.
+// A course repository with two commits on main, a lightweight and an annotated tag, and a branch,
+// and one more commit, `loose`, that no ref points at, so only a want by its hash can reach it.
 const course = new TestRepo(join(repos, "course.git"), home);
 const first = course.commit({ "course.json": '{"title":"First"}\n' }, "first");
 const second = course.commit({ "course.json": '{"title":"Second"}\n' }, "second", [first]);
@@ -53,6 +54,7 @@ course.ref("refs/tags/v1", first);
 course.annotatedTag("v2", second);
 course.ref("refs/heads/same", first);
 course.ref("refs/tags/same", second);
+const loose = course.commit({ "course.json": '{"title":"Loose"}\n' }, "loose", [second]);
 
 // A repository whose one commit is far larger than the test's pack limit: a blob of 2 MiB that does
 // not compress (a fixed linear congruential sequence, so the fixture is the same every run).
@@ -63,9 +65,12 @@ const bigCommit = big.commit({ "course.json": "{}\n", "big.bin": noise }, "big")
 big.ref("refs/heads/main", bigCommit);
 
 let good: Server;
+/** A host that refuses a want for any object no ref advertises. */
+let strict: Server;
 let url: (repo: string) => string;
 beforeAll(() => {
   good = server(gitBackend(repos, home));
+  strict = server(gitBackend(repos, home, { anyObject: false }));
   url = (repo) => `https://${HOST}:${good.port}/${repo}`;
 });
 
@@ -88,10 +93,17 @@ describe("fetchCommit: a good fetch", () => {
     expect(commitsIn(join(r.staging, "repo.git"), second)).toEqual([second]);
   });
 
-  test("FETCH-2: a commit no branch points at is fetched by its hash", async () => {
-    const r = request({ commit: first });
-    expect(await fetchCase(r)).toMatchObject({ ok: true, commit: first });
-    expect(commitsIn(join(r.staging, "repo.git"), first)).toEqual([first]);
+  test("FETCH-2: the fixture's loose commit is reachable from no ref, so no ref advertises it", () => {
+    // Guards FETCH-2 and FETCH-30: were any ref to reach `loose`, the host would advertise it and
+    // neither case would test a want for an unadvertised commit.
+    expect(git(home, ["--git-dir", course.dir, "for-each-ref", "--contains", loose])).toBe("");
+    expect(git(home, ["--git-dir", course.dir, "ls-remote", course.dir])).not.toContain(loose);
+  });
+
+  test("FETCH-2: a commit no ref points at is fetched by its full hash", async () => {
+    const r = request({ commit: loose });
+    expect(await fetchCase(r)).toEqual({ ok: true, repository: join(r.staging, "repo.git"), commit: loose });
+    expect(commitsIn(join(r.staging, "repo.git"), loose)).toEqual([loose]);
   });
 
   test.each([
@@ -248,6 +260,20 @@ describe("fetchCommit: refusals from the server, with staging deleted", () => {
     const r = request({ commit: "same" });
     expect(await fetchCase(r)).toMatchObject({ ok: false, refusal: { reason: "ambiguous-ref" } });
     expect(existsSync(r.staging)).toBe(false);
+  });
+
+  test("FETCH-30: a host that refuses unadvertised wants refuses a commit no ref points at", async () => {
+    const r = request({ url: `https://${HOST}:${strict.port}/course.git`, network: network(strict.port!), commit: loose });
+    // Oracle: in protocol v0 a want for an object no ref advertises is refused unless the server
+    // advertises allow-tip-sha1-in-want or allow-reachable-sha1-in-want (gitprotocol-capabilities(5));
+    // git names the object it was refused, and School reports the refusal as git-failed (RFC 7 Table 6.1).
+    expect(await fetchCase(r)).toMatchObject({ ok: false, refusal: { reason: "git-failed", message: expect.stringContaining(`unadvertised object ${loose}`) } });
+    expect(existsSync(r.staging)).toBe(false);
+  });
+
+  test("FETCH-30: the same host serves a commit a branch points at, by its full hash", async () => {
+    const r = request({ url: `https://${HOST}:${strict.port}/course.git`, network: network(strict.port!), commit: second });
+    expect(await fetchCase(r)).toEqual({ ok: true, repository: join(r.staging, "repo.git"), commit: second });
   });
 
   test("FETCH-12: a hash the repository lacks is refused", async () => {
