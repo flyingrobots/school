@@ -1,6 +1,6 @@
 # Course format test plan
 
-The contract ledger for [a course's folder](README.md): the course title (flyingrobots/school#143), the course manifest (flyingrobots/school#209), a lesson's hook (flyingrobots/school#164), [lesson blocks](blocks.md) (flyingrobots/school#196) `school check` (flyingrobots/school#197), the `school` skill (flyingrobots/school#193) and untrusted courses (flyingrobots/school#210).
+The contract ledger for [a course's folder](README.md): the course title (flyingrobots/school#143), the course manifest (flyingrobots/school#209), a lesson's hook (flyingrobots/school#164), [lesson blocks](blocks.md) (flyingrobots/school#196) `school check` (flyingrobots/school#197), the `school` skill (flyingrobots/school#193), untrusted courses (flyingrobots/school#210) and extracting a course from a git commit (flyingrobots/school#235).
 Every case runs in `bun test`. The server cases call the loader and start the real School process
 on PGlite over course folders the test writes; the browser cases drive Chrome through
 playwright-core against the Vite dev server, with `/api` answered by that real server.
@@ -70,7 +70,7 @@ Fuzz and stress cases are not applicable: the inputs are four short fields with 
 
 ## `school check` (flyingrobots/school#197)
 
-Every case runs the program as a process, and every line it prints is validated against its schema in `server/schemas/check/`.
+CHECK-1 to CHECK-10 and CHECK-17 run the program as a process, and every line it prints is validated against its schema in `server/schemas/check/`. CHECK-11 to CHECK-16 call `checkCourse(folder)` (flyingrobots/school#231), the function the program prints from.
 
 | ID | Case | Oracle | Status | Test |
 | --- | --- | --- | --- | --- |
@@ -84,6 +84,13 @@ Every case runs the program as a process, and every line it prints is validated 
 | CHECK-8 | Manifest | A full manifest is on a `school.check.manifest` 1.0.0 line between `start` and `done`, the strings trimmed | implemented | `CHECK-8: a course's summary, author, license and format are on the manifest line, trimmed` |
 | CHECK-9 | Manifest in prose | `--human` names the summary, author, license and format | implemented | `CHECK-9: --human names the course's author, license and format` |
 | CHECK-10 | Done unchanged | The `done` line names `school.check.done` 1.0.0, has none of the four manifest keys, validates against main's 1.0.0 schema kept as `server/testing/fixtures/school.check.done.1.0.0.schema.json`, and the published schema is that schema | implemented | `CHECK-10: the done line is still school.check.done 1.0.0, valid against the schema main published, and carries no manifest key` |
+| CHECK-11 | Golden | The skill's `example/` returns `ok: true` with its title, both lessons with their files, ids, titles and counts, the totals, and its summary, author, license and format 1 | implemented | `server/check-course-function.test.ts`: `checkCourse > CHECK-11: the skill's worked example passes, with its lessons, counts and manifest` |
+| CHECK-12 | Bad course.json | A malformed `course.json` returns `ok: false`, `file` `course.json`, a message saying it is not valid JSON | implemented | `CHECK-12: a malformed course.json is refused, naming course.json` |
+| CHECK-13 | Later lesson | A duplicate id in the second lesson names that lesson's file | implemented | `CHECK-13: a problem in a later lesson is refused, naming that lesson's file` |
+| CHECK-14 | Across files | An unknown ref returns `ok: false` with `file` null | implemented | `CHECK-14: a refusal that spans files names no file` |
+| CHECK-15 | Missing folder | A folder that does not exist returns `ok: false`, `file` null, `<folder> is not a folder` | implemented | `CHECK-15: a folder that does not exist is refused, naming no file` |
+| CHECK-16 | No drift | On the example, the program's `done` line carries `checkCourse`'s result without `manifest`, and its `manifest` line carries `manifest` | implemented | `CHECK-16: school check prints checkCourse's result: done is it without the manifest, manifest is the manifest` |
+| CHECK-17 | Partial manifest in prose | `--human` prints exactly the manifest lines a course declares when it declares only some keys (a license, a summary, an author, a format, a pair), with no `null` and no empty line | implemented | `CHECK-17: --human prints exactly the manifest lines a course with %s declares, and no null` |
 
 ## The `school` skill (flyingrobots/school#193)
 
@@ -93,6 +100,30 @@ Every case runs the program as a process, and every line it prints is validated 
 | SKILL-2 | Example served | `school check` on `example/` exits 0 with a title, at least two lessons, and a manifest line with a summary, an author, a license and format 1 | implemented | `SKILL-2: its worked example is a course School would serve` |
 | SKILL-3 | Example covers the format | The example shows all nine block types and a `ref` | implemented | `SKILL-3: the example shows every block type and a ref` |
 | SKILL-4 | Example's voice | Every explain prompt in the example is a question | implemented | `SKILL-4: every explain prompt in the example is a question` |
+
+## Extracting a course from a git commit (flyingrobots/school#235)
+
+Every case builds a bare repository at test time under a scratch folder the test file creates, most of them from loose objects written by `server/testing/git-trees.ts` because git will not make a hostile tree, and extracts one commit into `<staging>/course`. "Nothing left" means every path under the scratch folder, outside the repositories, is the same before and after.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| EXTRACT-1 | Hostile corpus | One repository per row of RFC 7 Table 6.1 that extraction owns and per limit of Table 6.2: symlinks (in `reference/`, `lessons` itself, `course.json`), a submodule, an LFS pointer, `..` folders and a `../` name climbing out of staging, an absolute path, `.`, `.git`, `.GIT`, `.gitattributes`, a backslash, `/` between safe parts, a control character, a newline, DEL, non-UTF-8, an empty name, case and NFC collisions of files, folders and lessons, a duplicate name, and each limit one past its value. Each is refused with its reason and path, and nothing is left | implemented | `server/extract-tree.test.ts`: `extracting a commit's tree > EXTRACT-1: %s is refused with its reason, leaving nothing outside staging` |
+| EXTRACT-2 | Golden | The skill's `example/` committed with real git extracts `course.json`, its lessons and its reference files byte for byte, and no README | implemented | `EXTRACT-2: the example course, committed with git, extracts byte-identical files and nothing else` |
+| EXTRACT-3 | Only what School reads | A README, a README symlink, `.github/`, `.gitattributes`, a script and a submodule outside the three names, `lessons/notes.md` and `lessons/drafts/` are not written and do not refuse the course | implemented | `EXTRACT-3: only course.json, lessons/*.json and reference/** are written; everything else is skipped, symlinks included` |
+| EXTRACT-4 | Never consulted | A smudge filter, `.gitattributes` and hooks in the repository never run, and CRLF bytes are kept | implemented | `EXTRACT-4: hooks, filters and attributes are never consulted` |
+| EXTRACT-5 | Not executable | A file of mode `100755` is written with no execute bit | implemented | `EXTRACT-5: a file marked executable is written as an ordinary file no one can run` |
+| EXTRACT-6 | At the limits | A 255-byte path, a path 8 folders deep, and files exactly at the count, size and total limits are extracted | implemented | `EXTRACT-6: a course exactly at every limit is extracted` |
+| EXTRACT-7 | Nothing to install | A commit with none of School's files extracts an empty folder | implemented | `EXTRACT-7: a commit with none of School's files extracts an empty folder` |
+| EXTRACT-8 | Not a commit | A branch name, an option-shaped string, an abbreviated hash, a missing hash and a tree's hash are refused as `not-a-commit`, writing nothing | implemented | `EXTRACT-8: %s is refused as not a commit, before anything is written`; `EXTRACT-8: a tree's hash is refused as not a commit` |
+| EXTRACT-9 | Destination | An existing `into` is refused and left as it was; a missing parent is refused, creating nothing | implemented | `EXTRACT-9: a destination that already exists is refused and left as it was`; `EXTRACT-9: a destination whose parent folder does not exist is refused, creating nothing` |
+| EXTRACT-10 | Time limit | A git that sleeps past `gitMs` is killed and the extraction refused as `timeout` within 5 s | implemented | `EXTRACT-10: a git process over the time limit is killed and the extraction refused` |
+| EXTRACT-11 | Not a repository | An empty folder as the repository is refused as `git-failed` | implemented | `EXTRACT-11: a folder that is not a repository is refused as a git failure` |
+| EXTRACT-12 | Generated limits | Seeded random trees inside every limit extract byte for byte; each pushed past exactly one limit is refused for that limit (Table 6.2 applied to the generated list), 5 cases per outcome | implemented | `generated trees (SCHOOL_FUZZ_SEED=235) > EXTRACT-12: a tree within the limits is extracted byte for byte, and one pushed past a single limit is refused for that limit` |
+| EXTRACT-13 | Generated names | Seeded random names from a hostile alphabet: an extraction writes only names safe by Table 6.1, distinct after folding, and nothing outside its folder; a refusal leaves nothing | implemented | `EXTRACT-13: a tree of random names never writes outside its folder, and writes only safe, distinct names` |
+| EXTRACT-14 | Defaults | `DEFAULT_LIMITS` equals RFC 7 Table 6.2 | implemented | `EXTRACT-14: the default limits are RFC 7 Table 6.2's` |
+
+The generated tests use seed 235 (and 236 for names) in CI; `SCHOOL_FUZZ_SEED=<n> bun test server/extract-tree.test.ts` replays another.
+
 
 ## Untrusted courses (flyingrobots/school#210)
 

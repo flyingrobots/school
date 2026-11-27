@@ -610,6 +610,54 @@ test.each<[string, Explanation["grading"]]>([
   }
 )
 
+// Grading feedback is help for its block too (RFC 8 §4.6): the block says each time it shows a
+// succeeded grading's findings, and never for a grading that is in flight or failed.
+function graded(props: Partial<React.ComponentProps<typeof Explain>> = {}) {
+  const feedback: number[] = []
+  const watch = watched({ onFeedbackShown: () => feedback.push(1), ...props })
+  return { ...watch, feedback }
+}
+
+test("onFeedbackShown: once when a grading succeeds, never while grading or for a failed grading", async () => {
+  const { s, host, feedback } = graded()
+  await saved(s, host)
+  expect(feedback).toEqual([]) // saved: the model answer, no findings
+  act(() => click(gradeButton(host)!))
+  expect(stateOf(host)).toBe("grading")
+  await act(async () => s.grades[0]!.resolve(explanation(failed())))
+  expect(stateOf(host)).toBe("failed")
+  expect(feedback).toEqual([])
+  act(() => click(gradeButton(host)!))
+  await act(async () => s.grades[1]!.resolve(explanation(succeeded())))
+  expect(stateOf(host)).toBe("graded")
+  expect(feedback).toEqual([1])
+})
+
+test("onFeedbackShown: once more for the grading of a revision, a new showing", async () => {
+  const { s, host, feedback } = graded({ saved: explanation(succeeded()) })
+  expect(feedback).toEqual([1])
+  act(() => click(revise(host)!))
+  type(textarea(host)!, "A majority of the voting members.")
+  act(() => click(saveButton(host)!))
+  await act(async () => s.saves[0]!.resolve(explanation()))
+  expect(feedback).toEqual([1])
+  act(() => click(gradeButton(host)!))
+  await act(async () => s.grades[0]!.resolve(explanation(succeeded())))
+  expect(feedback).toEqual([1, 1])
+})
+
+test.each<[string, Explanation["grading"], number[]]>([
+  ["saved", null, []],
+  ["graded", succeeded(), [1]],
+  ["failed", failed(), []],
+])(
+  "onFeedbackShown: a %s explanation the record holds calls it on first render only if it is graded",
+  (_, grading, expected) => {
+    const { feedback } = graded({ saved: explanation(grading) })
+    expect(feedback).toEqual(expected)
+  }
+)
+
 test("onSourceOpened: once each time a source is opened, never on closing it", async () => {
   const { s, host, sources } = watched()
   await saved(s, host)
