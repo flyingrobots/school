@@ -63,3 +63,20 @@ fails the case.
 | MJ-R10 | Names match config | The `renamed` line's `from` and `to` patterns are config.ts's course-name rule, and a trailing or doubled hyphen renames | implemented | `the renamed line admits exactly the course names config.ts accepts`; `renameCourse > accepts every name config accepts, such as a trailing or doubled hyphen` |
 | MJ-R11 | No login during a rename | While a rename waits on a table lock, a new `school_app` login is refused; after the rename is refused, School can log in again | implemented | `while a rename runs, School cannot log in; once it is refused, School can again` |
 | MJ-R12 | Authoring requests follow the name | An authoring request's course is renamed with the rest; its drafts and decisions, which name it by id, are unchanged; `course_authoring` answers under the new name only; the CLI prints `renamed_authoring` with the count after `renamed_installs`, and both earlier lines keep their 1.0.0 schemas | implemented | `renameCourse > moves a course's authoring requests to the new name, and its drafts and decisions follow them`; `the authoring request count is a message of its own, and the install line is still exactly as it was`; `--rename-course from=to applies the migrations, then renames the course in the record: a renamed line before done` |
+
+## The owner's attributes
+
+Every migrate job, one that applies nothing included, forces `school_owner` back to a `NOLOGIN`
+role without `SUPERUSER`, `CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS`, beside its update
+of `school_app` (flyingrobots/school#359); it prints nothing new. The cases are in
+`server/adapters/migrate-owner.test.ts`, on real Postgres. Each runs the job (`migrateRecord`) with
+its optional `owner` set to a role name of the test's own, which it drops, because `school_owner` is
+shared by every test on the server.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| MJ-O1 | Already migrated, then `SUPERUSER LOGIN` | On a migrated database whose owner is then made `SUPERUSER LOGIN`, the next job applies nothing and the owner has none of the six attributes | implemented | `on a database already migrated, an owner since made SUPERUSER LOGIN has neither once the next job ends` |
+| MJ-O2 | `SUPERUSER LOGIN` before the first job | After the first job the owner has none of the six | implemented | `an owner that already exists with SUPERUSER LOGIN before the first job has neither, nor any other, once it ends` |
+| MJ-O3 | Each attribute alone | An owner made with only `SUPERUSER`, `LOGIN`, `CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS` has none of the six after a job | implemented | `an owner that already exists with %s alone has it no longer once a job ends` |
+| MJ-O4 | A correct owner is left alone | Its attributes and its `pg_authid` row's `xmin` are unchanged, so the row was not rewritten (watched failing with the attribute condition removed) | implemented | `an owner that already exists with the right attributes is left as it was: its catalog row is not rewritten` |
+| MJ-O5 | No such role | The job succeeds and creates no role of that name | implemented | `with no such owner, the job's check does not fail and creates nothing` |

@@ -330,18 +330,37 @@ async function deniedOrNot(pool: Pool, statement: string): Promise<string> {
 /** How many times the migrate job tries its role update when another job's races it. */
 const ATTEMPTS = 20;
 
+/**
+ * Force `owner` back to a NOLOGIN role without SUPERUSER, CREATEROLE, CREATEDB, REPLICATION or
+ * BYPASSRLS, as the job does for school_app (flyingrobots/school#359): an owner made by hand or by
+ * an older setup may have them, and it owns every School object. Only when one is set, so a
+ * correct owner's catalog row is not rewritten; nothing when the role does not exist.
+ */
+function ownerAttributes(owner: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/.test(owner)) throw new Error(`${JSON.stringify(owner)} is not a plain role name`);
+  return `DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${owner}' AND (rolsuper OR rolcanlogin
+      OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls)) THEN
+    ALTER ROLE ${owner} NOLOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS;
+  END IF;
+END
+$$`;
+}
+
 /** school_app's password: letters and digits only, since compose puts it into a URL as it is. */
 const APP_PASSWORD = /^[A-Za-z0-9]{20,}$/;
 
 /**
  * The migrate job (flyingrobots/school#91): connected with `url`, the owner's or superuser's URL,
- * apply every pending migration as school_owner (server/db/migrate.ts), then make school_app a
- * login with `appPassword` and nothing else, and revoke PUBLIC's TEMPORARY on this database so the
+ * apply every pending migration as school_owner (server/db/migrate.ts), then strip `owner`
+ * (school_owner; a test names a role of its own) of any login or other attribute, make school_app
+ * a login with `appPassword` and nothing else, and revoke PUBLIC's TEMPORARY on this database so the
  * server's login cannot create temporary tables. Idempotent: a second run applies nothing and sets
  * the same password again. The password reaches Postgres only as a SCRAM-SHA-256 verifier, never
  * as text, so not even a statement log holds it. `onApplied` hears of each migration as it commits.
  */
-export async function migrateRecord(url: string, appPassword: string, onApplied?: OnApplied): Promise<{ applied: number[] }> {
+export async function migrateRecord(url: string, appPassword: string, onApplied?: OnApplied, owner: string = OWNER): Promise<{ applied: number[] }> {
   if (!APP_PASSWORD.test(appPassword)) {
     throw new Error("SCHOOL_APP_PASSWORD must be at least 20 letters and digits (it goes into a URL as it is); " +
       "generate one, e.g. `openssl rand -base64 32 | tr -d '/+='`");
@@ -363,6 +382,7 @@ export async function migrateRecord(url: string, appPassword: string, onApplied?
         await conn.exec("BEGIN");
         try {
           await conn.exec("SELECT pg_advisory_xact_lock(hashtext('school.migrate_job'))");
+          await conn.exec(ownerAttributes(owner));
           await conn.exec(`ALTER ROLE ${APP} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '${scramVerifier(appPassword)}'`);
           // Settings on the role, which a compromised server could set for itself (ALTER ROLE
           // school_app SET ...), do not outlive the next job: cleared everywhere they are kept.

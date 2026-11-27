@@ -37,7 +37,10 @@ Practical notes for anyone — human or agent — changing the framework.
     reaches Postgres or a log, and revokes `CREATE` and `TEMPORARY` on the database from `PUBLIC`.
     No secret lives in the repository or in a migration (flyingrobots/school#91).
   - Both roles are created `NOLOGIN`; the migrate job gives `school_app` `LOGIN` and clears its role
-    settings. On Postgres the server's `SCHOOL_DATABASE_URL` is `school_app`'s own login, and before
+    settings. Every job, one that applies nothing included, also removes `LOGIN`, `SUPERUSER`,
+    `CREATEROLE`, `CREATEDB`, `REPLICATION` and `BYPASSRLS` from a `school_owner` that has any of
+    them, in the same transaction as `school_app`'s update; a correct owner is left alone
+    (flyingrobots/school#359). The PGlite path, which runs only the runner, does not. On Postgres the server's `SCHOOL_DATABASE_URL` is `school_app`'s own login, and before
     serving it runs the login check (`loginRefusals` in `server/adapters/database.ts`) and refuses to
     start (exit 2, `Refused`) on any failure. The exact checks, what they cannot detect and what
     `school_app` can still do are in docs/topics/architecture/README.md, "The login check". It still
@@ -129,7 +132,11 @@ Practical notes for anyone — human or agent — changing the framework.
 - `server/compose.yaml` names no course. Its paths come from a gitignored `server/.env`; copy
   `server/compose.example.env` to start one. It runs Postgres (`postgres:18.7`, pinned by digest)
   with its data in the named volume `postgres`; `docker compose down -v` deletes the record.
-  The named volume `course-store` is mounted at `/store` for `SCHOOL_COURSE_STORE` (RFC 7 §5.1), set from the compose-only `SCHOOL_COMPOSE_COURSE_STORE` so a host export never reaches the container. Compose also mounts this checkout's `.agents/skills/school` at `/framework/skills/school` and `docs/topics/course-format` and `voice` under `/framework/docs`, read-only, for `SCHOOL_SKILL` (compose-only `SCHOOL_COMPOSE_SKILL`) and `SCHOOL_SKILL_DOCS`: the skill an authoring agent is given, hashed at start (RFC 9 §5.3). Renaming or moving any of those folders needs compose's mounts moved with it. The
+  The named volume `course-store` is mounted at `/store` for `SCHOOL_COURSE_STORE` (RFC 7 §5.1), set from the compose-only `SCHOOL_COMPOSE_COURSE_STORE` so a host export never reaches the container.
+  Compose also mounts this checkout's `.agents/skills/school` at `/framework/skills/school` and
+  `docs/topics/course-format` and `voice` under `/framework/docs`, read-only, for `SCHOOL_SKILL` (compose-only `SCHOOL_COMPOSE_SKILL`) and `SCHOOL_SKILL_DOCS`:
+  the skill an authoring agent is given, hashed at start (RFC 9 §5.3).
+  Renaming or moving any of those folders needs compose's mounts moved with it. The
   image installs `git` and `ca-certificates` from Ubuntu's archive for fetching courses, and makes
   `/store` owned by `school`, since Docker copies that owner into a new, empty named volume;
   `server/docker.test.ts` checks both in the Dockerfile.

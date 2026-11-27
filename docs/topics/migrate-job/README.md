@@ -11,7 +11,10 @@ status: "Reference. Describes what server/migrate.ts prints on the default branc
 Reference: what the migrate job, `server/migrate.ts`, prints, and the contract its output keeps.
 The job itself (what it does to the database, and why only it holds the superuser's URL) is in
 [the architecture](../architecture/README.md); running it in a deployment is in
-[upgrade a compose deployment](../../workflows/upgrade/README.md). The cases that pin this page
+[upgrade a compose deployment](../../workflows/upgrade/README.md). Every job, one that applies
+nothing included, also strips `school_owner` of `SUPERUSER`, `LOGIN`, `CREATEROLE`, `CREATEDB`,
+`REPLICATION` and `BYPASSRLS` if it has any, as it does for `school_app`
+(flyingrobots/school#359); it prints nothing for this. The cases that pin this page
 are in its [test plan](test-plan.md).
 
 ## The contract
