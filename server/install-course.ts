@@ -34,7 +34,8 @@
 // process that can write the course store can still change a file between the check of step 4 and
 // the record, which is then recorded with step 4's digest, or change `courses/` after the install;
 // the course list's fingerprint and digest find either (docs/topics/architecture/README.md, the
-// course list). Step 5 opens each file without following a symlink and changes it only while it has
+// course list). Just before step 5 the install's folder is lstat'ed again and must have the device
+// and inode the rename gave it, or the install is `changed` and nothing there is removed. Step 5 opens each file without following a symlink and changes it only while it has
 // one link, but a folder swapped for a symlink between step 4 and step 5 is followed, and the files
 // it leads to are made read-only. What memory holds (the URL, commit and digest) no write to the
 // store can change.
@@ -81,6 +82,15 @@ export type InstallAnswer =
   | { status: "installed"; install: string; course: string; url: string; commit: string; trusted: false }
   | { status: "refused"; reason: InstallReason; message: string }
   | { status: "invalid"; error: string };
+
+const INSTALL_STATUS: Record<InstallReason, number> = {
+  "bad-name": 422, "name-taken": 409, "unknown-preview": 404, expired: 410, changed: 409, "over-limit": 422, "invalid-course": 422, "not-recorded": 409,
+};
+
+/** The HTTP status `POST /api/installs` answers with: 201 for an install, 400 for a body that is not an install request, and the reason's own for a refusal. */
+export function installStatus(answer: InstallAnswer): number {
+  return answer.status === "installed" ? 201 : answer.status === "invalid" ? 400 : INSTALL_STATUS[answer.reason];
+}
 
 /** The body, exactly: a preview id as previewInstall makes them (a lowercase UUID) and a name, and no other field. */
 const InstallRequest = z.object({
@@ -201,10 +211,14 @@ export async function installPreviewed(body: unknown, sources: InstallSources): 
   rmSync(folder, { recursive: true, force: true });
 
   let recorded = false;
+  // False once `dest` is no longer the folder the rename made: what is there then is not the
+  // install's to delete.
+  let ours = true;
   try {
     // 4. The folder, checked where it now lies: a real folder (a symlink moved here is removed in
     // the finally below, which deletes the link and never what it points at), then its contents.
-    if (kind(dest) !== "folder") return refused("changed", `preview ${preview} is not as School left it, so the course was not installed. Would you like to preview it again?`);
+    const moved = lstatSync(dest);
+    if (!moved.isDirectory()) return refused("changed", `preview ${preview} is not as School left it, so the course was not installed. Would you like to preview it again?`);
     const shape = shapeProblem(dest, { ...DEFAULT_LIMITS, ...sources.limits });
     if (shape !== null) return refused(shape.reason, `${shape.message}, so the course was not installed`);
     const digest = contentDigest(dest);
@@ -219,7 +233,14 @@ export async function installPreviewed(body: unknown, sources: InstallSources): 
     });
     if (!install.success) throw new Error(`preview ${preview} remembered a URL and commit School cannot record: ${install.error.message}`);
 
-    // 5. Read-only, then the record: only now can the course list serve it.
+    // 5. Read-only, then the record: only now can the course list serve it. The folder must still be
+    // the one the rename made (same device and inode), or something swapped it since step 4's check:
+    // what is there now is not the install's, so nothing is recorded and nothing there is removed.
+    const now = lstatSync(dest, { throwIfNoEntry: false });
+    if (now === undefined || now.dev !== moved.dev || now.ino !== moved.ino) {
+      ours = false;
+      return refused("changed", `the course's folder was replaced after preview ${preview} was checked, so it was not installed. Would you like to preview it again?`);
+    }
     readOnly(dest);
     const result = await sources.record(install.data);
     if (result.status !== "installed" && result.status !== "updated" && result.status !== "duplicate") {
@@ -228,7 +249,7 @@ export async function installPreviewed(body: unknown, sources: InstallSources): 
     recorded = true;
     return { status: "installed", install: id, course: name, url: kept.url, commit: kept.commit, trusted: false };
   } finally {
-    if (!recorded) rmSync(dest, { recursive: true, force: true });
+    if (!recorded && ours) rmSync(dest, { recursive: true, force: true });
   }
 }
 

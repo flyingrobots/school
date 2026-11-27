@@ -20,7 +20,7 @@ import { agentOrder, agentTest } from "./agents.ts";
 import { authoringStatus } from "./skill.ts";
 import { feedbackSpeech, lessonSpeech, SEGMENT, SpeakRequest, toSpeech, UTTERANCE } from "./speak.ts";
 import { PREVIEW_TTL_MS, previewInstall, sweepStaging, type PreviewAnswer, type Previews } from "./install-preview.ts";
-import { courseInstaller, sweepCourses, type InstallAnswer, type InstallReason } from "./install-course.ts";
+import { courseInstaller, installStatus, sweepCourses, type InstallAnswer } from "./install-course.ts";
 
 let config;
 let bridgeCfg;
@@ -634,9 +634,6 @@ async function installPreviewJson(req: Request): Promise<Response> {
   return json(answer, PREVIEW_STATUS[answer.status], { "cache-control": "no-store" });
 }
 
-const INSTALL_STATUS: Record<InstallReason, number> = {
-  "bad-name": 422, "name-taken": 409, "unknown-preview": 404, expired: 410, changed: 409, "over-limit": 422, "invalid-course": 422, "not-recorded": 409,
-};
 const install = STORE === null ? null : courseInstaller({
   store: STORE, configured: configured.map((c) => c.name), installedNames: () => school.installedNames(),
   record: (i) => school.installCourse(i), now: () => Date.now(), newId: () => crypto.randomUUID(), previews,
@@ -659,8 +656,7 @@ async function installJson(req: Request): Promise<Response> {
     console.error(`school: install failed: ${e instanceof Error ? e.message : String(e)}`);
     return json({ status: "failed", error: "School could not install this course; the reason is in School's log" }, 500);
   }
-  const status = answer.status === "installed" ? 201 : answer.status === "invalid" ? 400 : INSTALL_STATUS[answer.reason];
-  return json(answer, status, { "cache-control": "no-store" });
+  return json(answer, installStatus(answer), { "cache-control": "no-store" });
 }
 
 async function readJson(req: Request): Promise<unknown> {

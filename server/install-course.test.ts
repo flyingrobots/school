@@ -19,7 +19,7 @@ import type { LearningRecord } from "./core/ports.ts";
 import { configuredCourses, contentDigest, courseRegistry, installFolder } from "./course-registry.ts";
 import { migrate } from "./db/migrate.ts";
 import type { Network } from "./fetch-commit.ts";
-import { courseInstaller, installPreviewed, sweepCourses, type InstallSources } from "./install-course.ts";
+import { courseInstaller, installPreviewed, installStatus, sweepCourses, type InstallAnswer, type InstallReason, type InstallSources } from "./install-course.ts";
 import { PREVIEW_TTL_MS, previewInstall, type PreviewSources, type Previews } from "./install-preview.ts";
 import { certificate, git, gitBackend, serveHttps } from "./testing/https-git.ts";
 
@@ -478,5 +478,78 @@ describe("sweepCourses: what start deletes from courses/", () => {
     const store = newStore();
     sweepCourses(store, new Set([A]));
     expect(entries(store)).toEqual([]);
+  });
+});
+
+describe("installPreviewed: a folder swapped after the checks, before the files are made read-only", () => {
+  /** Wraps the remembered entry of `preview` so that reading its url, which the install does just before the read-only step, runs `act` once. */
+  function beforeReadOnly(preview: string, act: () => void): void {
+    const kept = previews.get(preview)!;
+    let done = false;
+    previews.set(preview, { ...kept, get url() { if (!done) { done = true; act(); } return kept.url; } } as never);
+  }
+  const modeOf = (p: string) => statSync(p).mode & 0o777;
+
+  test("INSTALL-34: courses/<install id> itself swapped for a symlink to an outside copy before the read-only step is refused as changed, and the outside files are left alone", async () => {
+    const store = newStore();
+    const preview = await stage(store);
+    const id = "11111111-1111-4111-8111-eeeeeeeeeeee";
+    const dest = installFolder(store, id);
+    const outside = join(root, `outside-dest-${preview}`);
+    let before: (string | number)[][] = [];
+    const modes = () => files(outside).sort().map((f) => [f, modeOf(join(outside, f))]);
+    beforeReadOnly(preview, () => {
+      cpSync(dest, outside, { recursive: true });
+      before = modes();
+      rmSync(dest, { recursive: true });
+      symlinkSync(outside, dest);
+    });
+    const got = await installPreviewed({ preview, name: "binary-34" }, sources(store, { newId: () => id }));
+    expect(before.length).toBeGreaterThan(0);
+    expect({ got: got.status === "refused" ? got.reason : got.status, modes: modes(), row: await rowFor("binary-34"), listed: (await registryOver(store).current()).find("binary-34") ?? null })
+      .toEqual({ got: "changed", modes: before, row: null, listed: null });
+  });
+
+  test("INSTALL-35: a lesson replaced by a symlink before the read-only step fails the install, and the file it leads to is left alone", async () => {
+    const store = newStore();
+    const preview = await stage(store);
+    const id = "11111111-1111-4111-8111-000000000001";
+    const lesson = join(installFolder(store, id), "lessons", "0001-places-worth-twice.json");
+    const outside = join(root, `outside-nofollow-${preview}.json`);
+    let before = 0;
+    beforeReadOnly(preview, () => { writeFileSync(outside, readFileSync(lesson)); before = modeOf(outside); rmSync(lesson); symlinkSync(outside, lesson); });
+    await expect(installPreviewed({ preview, name: "binary-35" }, sources(store, { newId: () => id }))).rejects.toThrow();
+    expect({ mode: modeOf(outside), courses: entries(join(store, "courses")), row: await rowFor("binary-35") }).toEqual({ mode: before, courses: [], row: null });
+  });
+
+  test("INSTALL-36: a lesson replaced by a hard link to an outside file before the read-only step fails the install, and that file's mode is left alone", async () => {
+    const store = newStore();
+    const preview = await stage(store);
+    const id = "11111111-1111-4111-8111-000000000002";
+    const lesson = join(installFolder(store, id), "lessons", "0001-places-worth-twice.json");
+    const outside = join(root, `outside-nlink-${preview}.json`);
+    let before = 0;
+    beforeReadOnly(preview, () => { writeFileSync(outside, readFileSync(lesson)); before = modeOf(outside); rmSync(lesson); linkSync(outside, lesson); });
+    await expect(installPreviewed({ preview, name: "binary-36" }, sources(store, { newId: () => id }))).rejects.toThrow();
+    expect({ mode: modeOf(outside), courses: entries(join(store, "courses")), row: await rowFor("binary-36") }).toEqual({ mode: before, courses: [], row: null });
+  });
+});
+
+describe("installStatus: the HTTP status of each answer", () => {
+  const refusal = (reason: InstallReason): InstallAnswer => ({ status: "refused", reason, message: "m" });
+  const cases: [string, InstallAnswer, number][] = [
+    ["installed", { status: "installed", install: "i", course: "c", url: "https://x/y.git", commit: "c".repeat(40), trusted: false }, 201],
+    ["invalid", { status: "invalid", error: "e" }, 400],
+    ["bad-name", refusal("bad-name"), 422],
+    ["name-taken", refusal("name-taken"), 409],
+    ["unknown-preview", refusal("unknown-preview"), 404],
+    ["expired", refusal("expired"), 410],
+    ["changed", refusal("changed"), 409],
+    ["over-limit", refusal("over-limit"), 422],
+    ["invalid-course", refusal("invalid-course"), 422],
+    ["not-recorded", refusal("not-recorded"), 409],
+  ];
+  test.each(cases)("INSTALL-37: %s answers %i", (_name, answer, status) => {
+    expect(installStatus(answer)).toBe(status);
   });
 });
