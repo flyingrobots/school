@@ -787,7 +787,7 @@ describe("the sidebar's safe-mode badge", () => {
             e.closest("[data-course]")!.getAttribute("data-course")
           )
         )
-    ).toEqual(["guest"])
+    ).toEqual(["guest", "markup"])
     await close(p.context())
   })
 

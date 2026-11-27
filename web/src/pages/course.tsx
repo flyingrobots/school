@@ -172,25 +172,25 @@ function AboutCourse({ declaration }: { declaration: Declaration | null }) {
         </p>
       )}
       {(author !== null || license !== null) && (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex min-w-0 flex-wrap gap-2">
           {author !== null && (
             <Badge
               data-manifest="author"
               variant="outline"
-              className="h-auto text-sm"
+              className="h-auto max-w-full text-sm break-words whitespace-normal"
             >
               <UserIcon data-icon="inline-start" />
-              By {author}
+              <span className="min-w-0">By {author}</span>
             </Badge>
           )}
           {license !== null && (
             <Badge
               data-manifest="license"
               variant="outline"
-              className="h-auto text-sm"
+              className="h-auto max-w-full text-sm break-words whitespace-normal"
             >
               <ScaleIcon data-icon="inline-start" />
-              License: {license}
+              <span className="min-w-0">License: {license}</span>
             </Badge>
           )}
         </div>
