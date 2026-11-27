@@ -9,6 +9,11 @@ and reads one endpoint, `GET /api/courses/:course`.
   `GET /api/courses/:course`, which is the course's name when it declares none
   ([a course's folder](../course-format/README.md)). Before that answers, the title from the
   sidebar's course list, or the name from the address.
+- What the course's `course.json` declares about itself ([a course's folder](../course-format/README.md)),
+  under the heading: its `summary` as a line of muted text, then its `author` ("By …") and
+  `license` ("License: …", the SPDX expression as declared) as outline Badges. Each shows only when
+  the course declares it, so a course that declares none shows nothing more. It is shown even when
+  the course's lessons cannot be read, since the API still gives it.
 - A **Reference** button to `/courses/:course/reference` (the [reference page](../reference-page/README.md)), only when the course has reference
   documents. It is shown even when the course's lessons cannot be read.
 - For an untrusted course (`trusted: false`; [trusted and untrusted courses](../course-format/README.md#trusted-and-untrusted-courses)), a note under the heading, **Shown in safe mode**: "This course is shown in safe mode: its pages can’t run scripts. Its lessons and quizzes work as usual." It is the registry's Alert in its default variant, the card's colours in light and dark, with the role `note` rather than `alert`, since nothing is wrong. A trusted course shows no note.
