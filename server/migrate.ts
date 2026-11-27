@@ -32,7 +32,7 @@ import { withPassword, withSecretFiles } from "./secrets.ts";
 const KIND = "school.migrate";
 const schemas = loadSchemas(join(import.meta.dir, "schemas"));
 const ids = { start: `${KIND}.start`, applied: `${KIND}.applied`, done: `${KIND}.done`, captured: `${KIND}.captured`,
-  help: `${KIND}.help`, renamed: `${KIND}.renamed`, renamedInstalls: `${KIND}.renamed.installs`, renamedAuthoring: `${KIND}.renamed.authoring`, schema: `${KIND}.schema`, usage: `${KIND}.error.usage`, settings: `${KIND}.error.settings`, failed: `${KIND}.error.failed` };
+  help: `${KIND}.help`, renamed: `${KIND}.renamed`, renamedInstalls: `${KIND}.renamed.installs`, renamedAuthoring: `${KIND}.renamed.authoring`, renamedConversations: `${KIND}.renamed.conversations`, schema: `${KIND}.schema`, usage: `${KIND}.error.usage`, settings: `${KIND}.error.settings`, failed: `${KIND}.error.failed` };
 
 const OPTIONS = [
   { flags: ["--help", "-h"], description: "Print this help and the schema of every message type, then exit 0. Reads no setting and touches no database." },
@@ -85,6 +85,7 @@ function prose(l: Record<string, any>): string {
     case ids.renamed: return `renamed course ${l.from} to ${l.to}: ${l.rows.encounters} encounters, ${l.rows.views} views, ${l.rows.decision_notes} decision notes`;
     case ids.renamedInstalls: return `  and ${l.course_installs} installs, ${l.course_removals} removals`;
     case ids.renamedAuthoring: return `  and ${l.authoring_requests} authoring requests`;
+    case ids.renamedConversations: return `  and ${l.conversations} passage conversations`;
     case ids.done: return `done: ${l.applied.length === 0 ? "nothing to apply" : `applied ${l.applied.length} migration${l.applied.length === 1 ? "" : "s"}`}; ${l.role} may log in`;
     case ids.captured: return `(${l.stream}) ${l.text}`;
     default: return `error (${l.error}): ${l.message}`;
@@ -145,12 +146,12 @@ try {
   if (rename !== null) {
     const r = await renameRecordCourse(url, rename.from, rename.to);
     // `renamed` and `renamed_installs` are 1.0.0, as consumers know them; each later table's count
-    // follows in a line of its own. Conversations (RFC 6 §5.2) are renamed with the rest, but no line
-    // reports their count yet.
-    const { encounters, views, decision_notes, course_installs, course_removals, authoring_requests } = r.rows;
+    // follows in a line of its own, conversations (RFC 6 §5.2) last.
+    const { encounters, views, decision_notes, course_installs, course_removals, authoring_requests, conversations } = r.rows;
     out.emit("stdout", ids.renamed, { event: "renamed", from: r.from, to: r.to, rows: { encounters, views, decision_notes } });
     out.emit("stdout", ids.renamedInstalls, { event: "renamed_installs", course_installs, course_removals });
     out.emit("stdout", ids.renamedAuthoring, { event: "renamed_authoring", authoring_requests });
+    out.emit("stdout", ids.renamedConversations, { event: "renamed_conversations", conversations });
   }
   out.emit("stdout", ids.done, { event: "done", ok: true, where: redact(url), applied, role: APP });
   process.exit(0);
