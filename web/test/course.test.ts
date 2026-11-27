@@ -280,7 +280,7 @@ describe("a course with lessons", () => {
   test("the browser title names the course", async () => {
     const p = await open("/courses/aion")
     expect(await p.title()).toBe("aion · School")
-    await p.context().close()
+    await close(p.context())
   })
 
   test("lists every lesson, in order, with its progress in words, matching the API", async () => {
