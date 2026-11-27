@@ -249,20 +249,18 @@ export const systemList: List = (dir) => {
  * Every folder and regular file at or below `root`, by identity, with the path it was first found
  * at. Walked breadth-first through `list`, so never through a symlink; a folder seen twice (a bind
  * mount of an ancestor inside its own tree) is walked once, and a file with two names (a hard link)
- * is kept under the first. An entry School cannot list or stat is refused, not skipped, since what
- * it hides could be an alias; one that is gone, or is no folder, holds nothing. Refused, naming
- * `what` and saying to `remedy`, past FOLDER_CAP entries below the root.
+ * is kept under the first. A listed file's identity comes from `lstat`, so a file swapped for a
+ * symlink after it was listed is read as the link, never followed. An entry School cannot list or
+ * stat is refused, not skipped, since what it hides could be an alias; one that is gone, or is no
+ * folder, holds nothing. Refused, naming `what`, the cap and saying to `remedy`, past FOLDER_CAP
+ * folders or FILE_CAP files below the root.
  */
-function tree(root: string, what: string, remedy: string, stat: Stat, list: List): Map<string, string> {
+function tree(root: string, what: string, remedy: string, stat: Stat, lstat: Stat, list: List): Map<string, string> {
   const found = new Map<string, string>();
   const queue = [resolved(root)];
-  let entries = 0;
-  const count = (n: number) => {
-    entries += n;
-    if (entries > FOLDER_CAP) {
-      throw new ConfigError(`${what} holds more than ${FOLDER_CAP} folders and files; with SCHOOL_UNTRUSTED_COURSES set, School walks every folder and file of each course, mount and the web folder, to find one that is both trusted and untrusted under two names, and walks at most ${FOLDER_CAP} in each. To start, ${remedy}`);
-    }
-  };
+  let files = 0;
+  const capped = (count: string, cap: string) =>
+    new ConfigError(`${what} holds more than ${count}, the ${cap} cap. With SCHOOL_UNTRUSTED_COURSES set, School walks every folder and file of each course, mount and the web folder at start, to find one that is both trusted and untrusted under two names, and walks at most ${FOLDER_CAP} folders and ${FILE_CAP} files in each. To start, ${remedy}`);
   for (let i = 0; i < queue.length; i++) {
     const dir = queue[i]!;
     const id = identity(dir, stat);
@@ -275,11 +273,13 @@ function tree(root: string, what: string, remedy: string, stat: Stat, list: List
       if (code(e) === "ENOENT" || code(e) === "ENOTDIR") continue;
       throw new ConfigError(`cannot list ${dir} in ${what}: ${code(e) ?? String(e)}`);
     }
-    count(names.dirs.length + names.files.length);
+    if (queue.length - 1 + names.dirs.length > FOLDER_CAP) throw capped(`${FOLDER_CAP} folders`, "folder");
+    files += names.files.length;
+    if (files > FILE_CAP) throw capped(`${FILE_CAP} files`, "file");
     for (const name of names.dirs) queue.push(join(dir, name));
     for (const name of names.files) {
       const file = join(dir, name);
-      const fileId = identity(file, stat);
+      const fileId = identity(file, lstat);
       if (fileId !== null && !found.has(fileId)) found.set(fileId, file);
     }
   }
@@ -294,10 +294,11 @@ function sameTree(a: string, b: string, stat: Stat): boolean {
 }
 
 /**
- * `stat` is the filesystem's identity and `list` names a folder's subfolders (flyingrobots/school#298);
- * tests give fake ones, since aliases need a bind mount.
+ * `stat` is the filesystem's identity, `list` names a folder's subfolders and regular files
+ * (flyingrobots/school#298), and `lstat` is the identity of a listed file without following a
+ * symlink (flyingrobots/school#315); tests give fake ones, since aliases need a bind mount.
  */
-export function parseConfig(env: Record<string, string | undefined>, frameworkDefault: string, stat: Stat = systemStat, list: List = systemList, _lstat: Stat = systemLstat): Config {
+export function parseConfig(env: Record<string, string | undefined>, frameworkDefault: string, stat: Stat = systemStat, list: List = systemList, lstat: Stat = systemLstat): Config {
   const cwd = process.cwd();
   const framework = abs(env.SCHOOL_ROOT ?? frameworkDefault, cwd);
   // SCHOOL_COURSES registers many; SCHOOL_COURSE stays accepted as a single unnamed course,
@@ -365,11 +366,11 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
   if (Object.keys(untrusted).length > 0) {
     const guests = Object.entries(untrusted).map(([name, path]) => {
       const what = `untrusted course ${JSON.stringify(name)} (${path}) from SCHOOL_UNTRUSTED_COURSES`;
-      return { name, path, what, ids: lineage(path, stat).all, inside: tree(path, what, `remove it from SCHOOL_UNTRUSTED_COURSES, or point it at a folder holding fewer`, stat, list) };
+      return { name, path, what, ids: lineage(path, stat).all, inside: tree(path, what, `remove it from SCHOOL_UNTRUSTED_COURSES, or point it at a folder holding fewer`, stat, lstat, list) };
     });
     for (const [what, root] of roots) {
       const variable = /SCHOOL_[A-Z_]+/.exec(what)?.[0] ?? "the variable named above";
-      const inside = tree(root, what, `unset SCHOOL_UNTRUSTED_COURSES, or point ${variable} at a folder holding fewer`, stat, list);
+      const inside = tree(root, what, `unset SCHOOL_UNTRUSTED_COURSES, or point ${variable} at a folder holding fewer`, stat, lstat, list);
       for (const guest of guests) {
         for (const id of guest.ids) {
           const at = inside.get(id);
