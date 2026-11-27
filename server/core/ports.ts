@@ -2,7 +2,7 @@
 // Adapters implement them; the core never imports an adapter.
 import type {
   Aid, AidTracking, Block, CourseInstall, CourseProgress, DecisionChoice, DueItem, DueReviewQuery, ReviewNote, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingInput,
-  GradingRecord, InstallResult, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, Mastery, MasteryQuery, Outcome, Recorded, RemovalResult, SaveResult, SavedExplanation, StudyDay, Submission, SubmitResult, TrustResult, ViewEvent,
+  GradingRecord, InstallResult, InstalledCourse, LastStudied, LatestFeedback, LessonHelp, LessonProgress, Mastery, MasteryQuery, MasteryRollup, MasteryRollupQuery, Outcome, Recorded, RemovalResult, SaveResult, SavedExplanation, StudyDay, Submission, SubmitResult, TrustResult, ViewEvent,
 } from "./model.ts";
 
 /**
@@ -73,6 +73,12 @@ export interface LearningRecord {
   recordView(v: ViewEvent, now: string): Promise<void>;
   /** Store help shown for a block, once per exposure id. */
   recordExposure(e: Exposure, now: string): Promise<ExposureResult>;
+  /**
+   * Store help shown for the whole encounter, once per exposure id (RFC 6 §5.1): every quiz answer
+   * and explanation after it in that encounter is aided. `rejected` when the encounter does not
+   * exist or does not track aid.
+   */
+  recordLessonHelp(h: LessonHelp, now: string): Promise<ExposureResult>;
   /** A quiz answer's or explanation's aid, derived by the record's order; null if there is no such submission. */
   aid(submissionId: string): Promise<Aid | null>;
   /** Every row this encounter holds that a decision note may cite, by seq, oldest first; empty if there is no such encounter. */
@@ -97,6 +103,12 @@ export interface LearningRecord {
    * mastery, and is the record's.
    */
   mastery(q: MasteryQuery): Promise<Mastery[]>;
+  /**
+   * How each group in `q.groups` is held at `q.now`, one row per group key, in byte order of the key
+   * (RFC 5 §4.5): reads only. The rollup is in server/db/migrations/0013_mastery_rollup.sql,
+   * mastery_rollup, and is the record's.
+   */
+  masteryRollup(q: MasteryRollupQuery): Promise<MasteryRollup[]>;
 }
 
 /** Turns an explanation into findings, or an honest failure. Never throws for a grading failure. */

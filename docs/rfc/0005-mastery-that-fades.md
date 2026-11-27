@@ -2,8 +2,8 @@
 title: "RFC 5: Mastery that fades"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-26
-updated: 2026-11-26
-version: 0.2.0
+updated: 2026-11-27
+version: 0.2.1
 status: "Decided, 2026-11-26: a growing half-life, every open question answered as recommended. Decided by an agent under the maintainer's delegated authority; the maintainer may overturn it. Answers flyingrobots/school#192. Builds on flyingrobots/school at commit 2f18da4."
 ---
 
@@ -22,7 +22,7 @@ This RFC recommends **a per-quiz mastery measure with a half-life that grows**: 
 | Which model: simple exponential decay, SM-2 intervals, or FSRS | Exponential decay with a growing half-life: two constants, computed in closed form in SQL, explainable in a sentence. Shaped as stability and strength, like FSRS, so FSRS can replace the update rule later behind the same function (§3, §4.1) |
 | How aid and unknown aid lower the refresh | A clean answer after the delay restarts the clock and grows stability by 2.5 times. Unknown aid restarts the clock only. An aided first try restarts the clock and returns stability to one day. A wrong first try sets strength to 0 until the next right first try (§4.2) |
 | How it is worded | In words, never numbers: **Holding**, **Ready for another look**, **Still settling**, **Not started yet**. A faded quiz's reason recalls the day it was found from memory and asks how it feels now (§4.7) |
-| How far the due-review rule changes | One added rule, `due-review/faded`, ranked last and sharing the limit. The three existing rules, the function's signature and every existing test stay as they are (§4.6) |
+| How far the due-review rule changes | One added rule, `due-review/faded`, ranked last and sharing the limit. The three existing rules' output and the function's signature stay as they are; three existing tests that asked about a clean quiz long after it was answered move inside one stability (§4.6) |
 
 _Table 0.1. The open questions in flyingrobots/school#192 and this RFC's recommendation for each. Every recommendation keeps the record append-only and every number derivable from it._
 
@@ -268,7 +268,19 @@ The issue asks how far the shared rule changes. This RFC proposes the smallest c
 
 _Table 4.6. The change to due review. Everything the three existing rules do, cite and return stays as it is; a quiz they would not bring back may now come back because it has faded._
 
-Because every caller already goes through `due_review`, the lesson page's Review section, the home page's **Ready for another look** list and the timeline's rings all pick up faded quizzes with no change of their own. On the server, `ReviewRule` in `server/core/model.ts` gains the value and `reviewReason` its case; the web pages parse `rule` as any string (`web/src/lib/home-api.ts`, `web/src/lib/school-api.ts`), so the added value is not a breaking change to them. Every existing case in the due-review [test plan](../topics/due-review/test-plan.md), DR-G1 through DR-W1, must pass unchanged; that is the proof the three rules did not move.
+Because a quiz answered cleanly now comes back once a whole stability has passed (§4.3), no existing test can keep asking about one long after it was answered and expect nothing. When the rule was built (flyingrobots/school#219), three cases did so, and their queries moved inside one stability; each still tests what it was written for:
+
+| Case | Asked before | Asked now | What it still tests |
+| --- | --- | --- | --- |
+| DR-5, no items due | At ten delays (8.3 days) after a right first try | One delay after the last answer | A due block not asked about is not returned |
+| DR-6, clearing needs the delay | 7.5 days after the clearing answer, whose stability is 2.5 days | One delay after it | A clean answer a delay after the wrong one clears the item |
+| DR-H1, over HTTP | History written two days before | 22 hours before: past the 20-hour delay, within one day | The item due comes back in the Review section with its reason |
+
+_Table 4.6a. The existing cases moved inside one stability. Their expected outputs are unchanged._
+
+What proves the three rules did not move is a differential (DR-F-5 in the [test plan](../topics/due-review/test-plan.md)). On seeded random histories, at random times and limits, the new `due_review`'s weak items are exactly the old function's, in its order. Faded items only follow them, and on a history with no faded quiz the two functions return the same rows.
+
+Because every caller already goes through `due_review`, the lesson page's Review section, the home page's **Ready for another look** list and the timeline's rings all pick up faded quizzes with no change of their own. On the server, `ReviewRule` in `server/core/model.ts` gains the value and `reviewReason` its case; the web pages parse `rule` as any string (`web/src/lib/home-api.ts`, `web/src/lib/school-api.ts`), so the added value is not a breaking change to them. Every other existing case in the due-review [test plan](../topics/due-review/test-plan.md), DR-G1 through DR-W1, passes unchanged. The three that asked about a clean quiz past one stability moved inside it (Table 4.6a), and a differential proves the three rules did not move.
 
 Leaving `due_review` alone and adding a second selector was considered. It would keep the shared rule's text untouched, but every caller (opening a lesson, `GET /api/review`, `GET /api/activity`) would then have to merge two lists and share one limit, which moves the rule into three call sites instead of one.
 
@@ -311,7 +323,7 @@ Each step is one issue with one observable outcome. None is filed by this RFC; t
 | --- | --- | --- | --- |
 | 1 | **A database function returns mastery per quiz at a given time.** `school.mastery(course, blocks, at, delay_ms)` in a new migration, granted to `school_app` and listed in `GRANTED_FUNCTIONS`; a `LearningRecord.mastery` port method with its Zod schema, SDL type and regenerated Wesley output; a new `docs/topics/mastery/` reference and test plan; glossary entries for mastery, stability and strength | none | Contract cases pass on PGlite and on Bun.SQL at fixed clocks: a clean answer has strength 1 at once, 0.7071 twelve hours later and 0.5 at one day; a clean answer after the delay raises stability to 2.5 days; one within the delay does not; unknown aid restarts the clock and keeps stability; an aided first try returns it to one day; a wrong first try gives 0 until the next right one; a quiz never answered is null; with `at` out of step with `seq`, order follows `seq`; the function is `STABLE` and takes no sequence value; `school_app` may execute it and still reads no table |
 | 2 | **A database function rolls mastery up per lesson and per course.** `school.mastery_rollup(course, groups, at, delay_ms)`, granted and listed as in step 1 | 1 | Contract cases on both drivers at fixed clocks: the four counts partition each group, the mean counts a quiz not started as 0, an empty group gives null, and a block in two groups counts in both |
-| 3 | **Due review brings back a quiz whose mastery has faded.** `due_review` replaced in a new migration with `due-review/faded` ranked last; `ReviewRule` and `reviewReason` gain it; the due-review reference and test plan updated | 1 | Every existing DR case passes unchanged; new cases on both drivers: a settled quiz past one stability comes back as faded citing `school.mastery`'s evidence, one within it does not, faded ranks after the three weak rules and fills only what they leave of the limit; the year-of-history stress case (DR-9) still reads within 1000 ms; the faded reason passes the voice test with "forgot" and "attempt" added |
+| 3 | **Due review brings back a quiz whose mastery has faded.** `due_review` replaced in a new migration with `due-review/faded` ranked last; `ReviewRule` and `reviewReason` gain it; the due-review reference and test plan updated | 1 | Every existing DR case passes, with DR-5, DR-6 and DR-H1 asking inside one stability (Table 4.6a), and the three rules' output matches the old function's on random histories; new cases on both drivers: a settled quiz past one stability comes back as faded citing `school.mastery`'s evidence, one within it does not, faded ranks after the three weak rules and fills only what they leave of the limit; the year-of-history stress case (DR-9) still reads within 1000 ms; the faded reason passes the voice test with "forgot" and "attempt" added |
 | 4 | **The course API reports each lesson's mastery in counts.** `GET /api/courses/:course` adds `mastery: {notStarted, settling, holding, faded}` per lesson, from step 2 | 2 | An HTTP test at a fixed clock reads the counts for a lesson with one quiz of each state |
 | 5 | **The course page says how each lesson is holding.** Each lesson card shows its counts in words (§4.7), built from shadcn registry components with theme-book colours | 4 | A Chrome test shows "holding" and "ready for another look" on a lesson card in light and dark themes, with no number or percentage, and nothing written to browser storage |
 | 6 | **The home timeline says how each course is holding.** `GET /api/activity` adds per-course counts for today from step 2; each lane shows them in words, built from shadcn registry components with theme-book colours | 2, 3 | A Chrome test shows a course's words in its lane in light and dark themes, and a faded quiz as a ring on the day it comes back |
@@ -350,7 +362,7 @@ The risks are about volume, meaning and copy; each has a mitigation in the desig
 | The faded rule slows `due_review`, which the timeline calls fifteen times per course | DR-9's year-of-history case must still read within 1000 ms (step 3); `school.mastery` is closed form, with no recursion |
 | Someone reads strength as a probability of recall | It is never shown as a number; this RFC and the topic reference say it is a half-life fraction |
 | The constants are wrong for this learner | They are two numbers in one migration, changed by a new one; step 7 and months of real study give the evidence to change them, or to move to FSRS |
-| The faded rule changes what due review means for every page | It is additive: the three rules and their tests are unchanged; the added rule is listed in the reference with its reason |
+| The faded rule changes what due review means for every page | It is additive: the three rules' output is unchanged, which a differential against the old function shows; three tests that asked about a clean quiz past one stability moved inside it (Table 4.6a); the added rule is listed in the reference with its reason |
 | Copy slips into "you forgot" or a grade | The voice test gains the words; every reason is listed in the reference |
 | A quiz's id changes when an author edits a course, and its history is lost | As today for due review: a block id is stable by rule (flyingrobots/school#1), and the measure follows the id |
 
@@ -367,7 +379,7 @@ The maintainer decides Q1 to Q4, which are the issue's own; the rest have a reco
 | Q1 | Which model? | Option B, the growing half-life (§3, §4.1) |
 | Q2 | How do aid and unknown aid lower the refresh? | Unknown aid restarts the clock and withholds growth; aided restarts the clock and returns stability to one day; only a clean answer after the delay grows it (Table 4.2) |
 | Q3 | How is it worded? | Four words, never a number: Not started yet, Still settling, Holding, Ready for another look; the faded reason asks "how does it feel now?" (§4.7) |
-| Q4 | How far does due review change? | One added rule, `due-review/faded`, ranked last, sharing the limit; nothing else moves (§4.6) |
+| Q4 | How far does due review change? | One added rule, `due-review/faded`, ranked last, sharing the limit; the three rules' output does not move (§4.6) |
 | Q5 | Are one day and 2.5 the right constants? | Yes, to start: they match the review delay's one-day intent and SM-2's long-used default. Change them only with evidence from real study |
 | Q6 | Should a late clean answer grow stability more than one on time? | Not now: it would need a third constant. FSRS does this, and is the place to get it |
 | Q7 | Should the rollup be a mean or the weakest quiz? | Both are available: the rollup's mean, and `school.mastery` per quiz for the weakest. Explain mode chooses |
@@ -405,5 +417,7 @@ Every recommendation in Table 0.1 and §8 is accepted as written: a growing half
 | 5, the course page words | flyingrobots/school#221 |
 | 6, the home timeline | flyingrobots/school#222 |
 | 7, the learner gate | flyingrobots/school#223, blocked on real study |
+
+Corrected 2026-11-27 (0.2.1), during step 3: this RFC had said every existing due-review test would pass unchanged. That cannot hold, because §4.3 brings back a clean quiz once a stability has passed, and three cases asked about one later than that. They were moved inside one stability (Table 4.6a), and a differential shows the three rules' output unchanged. The decision record is Reader receipt 4d063706-c100-4ad9-a88f-b94ac207bf21, written by the coordinator who decided it under delegated authority.
 
 In short: RFC 5 is decided as written, and its seven steps are filed.

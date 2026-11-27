@@ -337,7 +337,7 @@ describe.skipIf(URL_ === undefined)("Bun.SQL on a real Postgres, logged in as sc
     const { url } = await fresh();
     const su = track(new Bun.SQL(url));
     const rows = await su.unsafe(`SELECT p.oid::regprocedure::text AS f FROM pg_proc p
-      WHERE p.pronamespace = 'school'::regnamespace AND has_function_privilege('${APP}', p.oid, 'EXECUTE') ORDER BY 1`);
+      WHERE p.pronamespace = 'school'::regnamespace AND has_function_privilege('${APP}', p.oid, 'EXECUTE') ORDER BY p.oid::regprocedure::text COLLATE "C"`);
     expect([...rows].map((r: { f: string }) => r.f)).toEqual([...GRANTED_FUNCTIONS].sort());
   }, SLOW);
 

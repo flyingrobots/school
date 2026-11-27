@@ -91,7 +91,7 @@ JSON API.
 | POST | `/api/explanation` | Saves an explanation, before any grading |
 | POST | `/api/grade` | One grading attempt through the bridge |
 | POST | `/api/view` | Records a view |
-| POST | `/api/exposure` | Records help shown for a block: `{ exposureId, encounterId, blockId, kind }`, kind `hint`, `model-answer`, `feedback` or `reference`. A stored or resent id answers 200 (`stored`, `duplicate`); the id naming something else is a conflict (409); no such encounter, an untracked one, or a block that is not a quiz or explain block in its snapshot is rejected (400) |
+| POST | `/api/exposure` | Records help shown for a block: `{ exposureId, encounterId, blockId, kind }`, kind `hint`, `model-answer`, `feedback` or `reference`; `ai-help` is refused (400), since only the server records help for a whole encounter. A stored or resent id answers 200 (`stored`, `duplicate`); the id naming something else is a conflict (409); no such encounter, an untracked one, or a block that is not a quiz or explain block in its snapshot is rejected (400) |
 | GET | `/api/aid/:submissionId` | One answer's or explanation's derived aid: `{ submissionId, aid }`, aid `aided`, `no-recorded-aid` or `unknown`. No such submission is 404; an id that is not a UUID is refused (400) |
 | GET | `/api/settings/status` | Whether the bridge answers |
 | GET | `/api/settings/authoring` | Whether authoring is on: `{ authoring: "on", skill: { digest, files } }`, the [pinned skill](#the-pinned-skill)'s manifest digest and file count, or `{ authoring: "off", reason }`. Nothing authors a course yet |
@@ -202,7 +202,8 @@ contract suite holds every driver under it to the same behaviour.
 The record is Postgres, built by the numbered migrations in `server/db/migrations/` (`0001_init.sql`,
 `0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_read_committed.sql`,
 `0006_due_review.sql`, `0007_since_last_here.sql`, `0008_study_days.sql`, `0009_time_zone_choices.sql`,
-`0010_course_installs.sql`, `0011_mastery.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
+`0010_course_installs.sql`, `0011_mastery.sql`, `0012_ai_help.sql`, `0013_mastery_rollup.sql`,
+`0014_faded_review.sql`, `0015_course_progress.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -240,7 +241,7 @@ connection, in the record's database. The server refuses to start if any of thes
 | 4 | Owns no schema (schema `school` included), relation, function, type or database | the owner's login, objects it created |
 | 5 | Outside `pg_catalog` and `information_schema`: no privilege on any table, view, materialized view or foreign table (`SELECT` to `MAINTAIN`), no `USAGE`, `SELECT` or `UPDATE` on any sequence, no column privilege | table, column, sequence and `MAINTAIN` grants |
 | 6 | In `pg_catalog` and `information_schema`: no write privilege on any relation (except `UPDATE` on `pg_settings`, which Postgres grants `PUBLIC` and which is `SET`), and no `SELECT` on the relations Postgres withholds from an ordinary role (`RESTRICTED_RELATIONS`: `pg_authid`, `pg_statistic`, `pg_shadow` and 20 more) | catalog grants to it or to `PUBLIC` |
-| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 27 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
+| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 29 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
 | 8 | No privilege granted to it by name on any relation, column, function (but the granted ones), schema (but `USAGE` on `school`), database, type, language, large object, foreign-data wrapper, foreign server or tablespace; no parameter privilege (`pg_parameter_acl`) granted to it or to `PUBLIC` | direct grants, `GRANT SET ON PARAMETER` |
 | 9 | No default privileges (`pg_default_acl`) granting to it or to `PUBLIC`, and none set by it | future grants |
 | 10 | No `CREATE` on any schema; no `CREATE` or `TEMPORARY` on the record's database | creating objects there |
@@ -286,6 +287,18 @@ explanation's aid in `submission_aid`: **unknown** when the encounter's `aid_tra
 **no recorded aid** otherwise. Aid is never stored, and `seq`, not `at`, decides before and after.
 `POST /api/exposure` stores them. The lesson page opens lessons with `?aid=1` and posts each
 exposure it shows (see [the lesson page](../lesson-page/README.md#the-help-it-records)).
+
+Whenever a model shows the learner more about a lesson, the rule is the same: the server records one
+exposure of kind `ai-help` for the whole encounter, before the model is asked, and every quiz answer
+or explanation in that encounter with a larger `seq` is aided, whichever block it belongs to (RFC 6
+§5.1). Migration 0012 adds it. `ai-help` is the only kind whose `block_id` is NULL, and the table
+checks that it is NULL exactly then (`exposures_block`). `record_lesson_help(exposure_id,
+encounter_id, kind, at)` stores one, idempotent by its id, and rejects an encounter that does not
+exist or does not track aid; it is the port's `recordLessonHelp`. `submission_aid`, `due_review` and
+`quiz_episodes` (so mastery too) read an exposure with no block as one to every block of its
+encounter. `POST /api/exposure` refuses the kind: the browser cannot record it or skip it. The rule
+errs toward marking aid: a lesson with five quizzes and one question to the model brings up to five
+items back for review.
 
 Decisions are notes that name their evidence (RFC 2 §3 and §5). Migration 0004 adds
 `decision_notes`: what School chose (a course, a lesson, or a block of a lesson), the rule that
@@ -340,7 +353,15 @@ the port's `mastery`: per quiz, its stability and its strength at `at`, read fro
 time it is asked and never stored. It reads episodes through `school.quiz_episodes`, the same
 episodes and weaknesses as due review, which only the record's own functions call. The measure is
 in [mastery](../mastery/README.md).
-Migration 0012 (RFC 7 §5.2, flyingrobots/school#237) adds `school.course_progress(course)`, the
+Migration 0013 (RFC 5 §4.5, flyingrobots/school#218) adds
+`school.mastery_rollup(course, groups, at, delay_ms)`, the port's `masteryRollup`: per group of quiz
+blocks (a lesson, or a whole course), how many are not started, settling, holding and faded, and
+their mean strength, from `school.mastery`. It is in [mastery](../mastery/README.md#rolling-up-to-lessons-and-courses).
+Migration 0014 (RFC 5 §4.6, flyingrobots/school#219) replaces `due_review`, with its signature and
+its three rules unchanged, to add `due-review/faded`: a settled quiz whose strength from
+`school.mastery` is below one half, ranked after the weak rules and filling only what they leave of
+the limit ([due review](../due-review/README.md#faded-quizzes)).
+Migration 0015 (RFC 7 §5.2, flyingrobots/school#237) adds `school.course_progress(course)`, the
 port's `courseProgress`: how many encounters were opened under a course name, how many answers and
 explanations were given in them, and how many views were recorded under it, whether or not any
 course is served under that name now. The [install preview](#previewing-an-install) reads it to say
@@ -401,8 +422,8 @@ erDiagram
         bigint seq PK
         uuid exposure_id UK "client UUID"
         uuid encounter_id FK
-        text block_id
-        text kind "hint, model-answer, feedback, reference"
+        text block_id "NULL exactly for ai-help: the whole encounter"
+        text kind "hint, model-answer, feedback, reference, ai-help"
         timestamptz at
     }
     ENCOUNTERS |o--o{ DECISION_NOTES : "is chosen for"
@@ -449,8 +470,8 @@ erDiagram
 
 *Figure 3. The learning record's tables, in schema `school`. Every row takes its `seq` from one
 shared sequence, so "before" and "after" across tables compare `seq`, never `at`. `VIEWS` (page
-views) and `TIME_ZONE_CHOICES` (the learner's time zone) are omitted. `EXPOSURES` is written only by `POST /api/exposure`, which the
-lesson page calls for each help it shows.*
+views) and `TIME_ZONE_CHOICES` (the learner's time zone) are omitted. `EXPOSURES` is written by `POST /api/exposure`, which the
+lesson page calls for each help it shows, and will be written by the server's `record_lesson_help` for help a model writes once asking lands (RFC 6).*
 
 | Rule | How it is enforced | What it does not cover |
 | --- | --- | --- |

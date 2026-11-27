@@ -1,6 +1,6 @@
 # Mastery test plan
 
-The contract ledger for [mastery](README.md). Every case runs in `bun test`. Contract cases are in `server/contract/learning-record.ts`, titled `<adapter>: mastery: <case>`, and run at fixed clocks with `delay_ms` of twenty hours. They run on PGlite (`server/adapters/postgres.test.ts`) and on a real Postgres through `Bun.SQL` (`server/adapters/bunsql.test.ts`); CI's gate fails a PGlite case that has no passing `Bun.SQL` counterpart. A strength is compared to 4 decimal places; a stability exactly while it is a whole number of milliseconds.
+The contract ledger for [mastery](README.md) and its rollup. Every case runs in `bun test`. Contract cases are in `server/contract/learning-record.ts`, titled `<adapter>: mastery: <case>`, and run at fixed clocks with `delay_ms` of twenty hours. They run on PGlite (`server/adapters/postgres.test.ts`) and on a real Postgres through `Bun.SQL` (`server/adapters/bunsql.test.ts`); CI's gate fails a PGlite case that has no passing `Bun.SQL` counterpart. A strength is compared to 4 decimal places; a stability exactly while it is a whole number of milliseconds.
 
 ## The measure
 
@@ -44,3 +44,25 @@ These cases are SQL-level, on PGlite, in `server/db/mastery.test.ts` and the rec
 _Table 2. The function's SQL-level cases. They hold the privileges, the read-only promise and the finite stability to the database itself._
 
 In short: the function reads only, is reached only by name, calls no clock, and stays finite over any history.
+
+## The rollup
+
+The rollup's contract cases are titled `<adapter>: mastery rollup: <case>`, in `server/contract/learning-record.ts`, at fixed clocks with `delay_ms` of twenty hours, on both drivers. The oracle is RFC 5 Table 4.5 for the states and the mean, with each quiz's strength from Table 4.1; the fuzz case's oracle is `school.mastery` itself. Its SQL-level cases are in `server/db/mastery-rollup.test.ts`, on PGlite.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| MR-G1 | Golden: one lesson with a quiz in each state | One each of not started, settling, holding and faded; quizzes 4; mean (0.5^(1/2.5) + 0.25) / 4 at day 2 | implemented | `golden: one lesson with a quiz in each state counts one of each, and the mean counts the quiz not started as 0` |
+| MR-1 | A settling quiz's strength (mutant) | An unknown-aid answer a day ago is settling with strength 0.5, and the mean is 0.5, not 0 | implemented | `a quiz still settling counts its strength in the mean, not 0` |
+| MR-2 | The one-half boundary (edge) | Strength exactly 0.5 is holding; 1 ms later it is faded | implemented | `strength exactly one half is holding; 1 ms later it is ready for another look` |
+| MR-3 | Empty group (edge) | Quizzes 0, every count 0, strength null; no groups gives no rows | implemented | `an empty group has no quizzes and a null strength; no groups gives no rows` |
+| MR-4 | Shared block (edge; known failure mode: double counting) | A block in two groups counts in both; a block twice in one group counts once; rows in byte order of the key, not jsonb's order | implemented | `a block in two groups counts in both, a block twice in one group counts once, and rows are in byte order of the key` |
+| MR-5 | Another course | A quiz answered only in another course is not started | implemented | `another course's answers are not this one's` |
+| MR-F1 | Random groups (fuzz) | Seeded (`SCHOOL_TEST_SEED`, 232 in CI): 40 rounds of up to four random groups over eight quizzes with twenty days of random first tries; the four counts sum to the distinct quizzes, each count and the mean equal `school.mastery`'s rows placed by Table 4.5; every state, an empty group and a repeated block are reached | implemented | `under random groups, the four counts always sum to the group's distinct quizzes, and each count and the mean agree with mastery` |
+| MR-S1 | Read-only | `mastery_rollup` is `STABLE`; calling it as `school_app` takes no sequence value | implemented | `server/db/mastery-rollup.test.ts`: `the rollup is read-only: it is STABLE, and calling it takes no sequence value and stores nothing` |
+| MR-S2 | Privileges | `school_app` may execute it, a `SECURITY DEFINER` function with `search_path` fixed; it is in `GRANTED_FUNCTIONS` and the port calls only it | implemented | `server/db/mastery-rollup.test.ts`: `school_app reaches the rollup only as a function: SECURITY DEFINER with search_path fixed`; `server/db/init.test.ts`; `server/adapters/postgres.test.ts`: `every port method is one call of its function, as school_app` |
+| MR-S3 | Malformed groups (edge) | `groups` not an object gives no rows; a value not an array is an empty group | implemented | `server/db/mastery-rollup.test.ts`: `groups that are not a jsonb object ask about nothing, and a group that is not an array is empty` |
+| MR-S4 | Survives a backup | After a dump and restore, `mastery_rollup` reads the same as before | implemented | `server/backup/backup.test.ts`: `Bun.SQL: a dump taken after real writes restores into an empty database, and every read of the record returns the same` |
+
+_Table 3. The rollup's cases. The counts' partition and the shared block are each held by a fixed case and by the seeded differential against `school.mastery`._
+
+In short: the four counts partition every group, the mean counts a quiz not started as 0, an empty group is null and a shared block counts in each group, on both drivers.

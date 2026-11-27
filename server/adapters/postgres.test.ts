@@ -15,7 +15,7 @@ setDefaultTimeout(30_000); // PGlite starts a whole Postgres in process.
 /** The functions the port calls: every one granted to school_app. */
 const PORT_FUNCTIONS = [
   "choice_decision_notes", "choose_course_trust", "choose_time_zone", "course_progress", "due_review", "encounter_answers", "encounter_decision_notes", "encounter_evidence", "encounter_explanations",
-  "explanation", "install_course", "installed_courses", "last_studied", "latest_feedback", "lesson_progress", "mastery", "open_encounter", "open_lesson_encounter", "record_decision_note", "record_exposure", "record_grading",
+  "explanation", "install_course", "installed_courses", "last_studied", "latest_feedback", "lesson_progress", "mastery", "mastery_rollup", "open_encounter", "open_lesson_encounter", "record_decision_note", "record_exposure", "record_grading", "record_lesson_help",
   "record_view", "remove_installed_course", "save_explanation", "study_days", "submission_aid", "submit", "time_zone",
 ];
 
@@ -76,6 +76,7 @@ test("every port method is one call of its function, as school_app", async () =>
   ] };
   const e = await r.openEncounter({ course: "c", lesson: "l1", page, now: "2026-11-21T10:00:00.000Z", aidTracking: 1 });
   await r.recordExposure({ exposureId: crypto.randomUUID(), encounterId: e.id, blockId: "q1", kind: "hint" }, "2026-11-21T10:00:00.500Z");
+  await r.recordLessonHelp({ exposureId: crypto.randomUUID(), encounterId: e.id, kind: "ai-help" }, "2026-11-21T10:00:00.600Z");
   await r.submit({ submissionId: crypto.randomUUID(), encounterId: e.id, blockId: "q1", choiceId: "a", ms: 1 }, "2026-11-21T10:00:01.000Z");
   await r.encounterAnswers(e.id);
   await r.lessonProgress("c");
@@ -107,6 +108,7 @@ test("every port method is one call of its function, as school_app", async () =>
   expect(await r.encounterDecisionNotes(e.id)).toHaveLength(1);
   await r.dueReview({ course: "c", blocks: ["q1"], now: "2026-11-23T10:00:00.000Z", delayMs: 1, limit: 3 });
   await r.mastery({ course: "c", blocks: ["q1"], now: "2026-11-23T10:00:00.000Z", delayMs: 1 });
+  await r.masteryRollup({ course: "c", groups: { l1: ["q1"] }, now: "2026-11-23T10:00:00.000Z", delayMs: 1 });
   await r.openLessonEncounter({ course: "c", lesson: "l1", lessonPage: page, page, notes: [], now: "2026-11-21T10:00:06.000Z", aidTracking: 1 });
   expect(seen.map((s) => FUNCTION_CALL.exec(s)![1]).sort()).toEqual(PORT_FUNCTIONS);
 });

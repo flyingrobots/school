@@ -1,4 +1,4 @@
--- 0012: what the record holds under a course name (RFC 7 §5.2; flyingrobots/school#237).
+-- 0015: what the record holds under a course name (RFC 7 §5.2; flyingrobots/school#237).
 --
 -- A course's name is its progress key. Before a course is installed under a name, its preview says
 -- whether the record already has progress there (a course removed earlier, or one that was

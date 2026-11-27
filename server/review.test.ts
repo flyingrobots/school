@@ -21,7 +21,9 @@ const page = (id: string, title: string, quizzes: string[]): Block =>
   ({ type: "page", id, title, subtitle: "", children: quizzes.map(quiz) });
 const l1 = page("l1", "Orbits", ["q1", "q2"]);
 const l2 = page("l2", "Tides", ["q3"]);
-const YESTERDAY = new Date(Date.now() - 2 * 24 * 3600 * 1000);
+// Twenty-two hours ago: past the review delay, and within a clean answer's stability of one day, so
+// q2 has not faded (RFC 5 §4.6).
+const YESTERDAY = new Date(Date.now() - 22 * 3600 * 1000);
 const yesterday = (ms: number) => new Date(YESTERDAY.getTime() + ms).toISOString();
 
 beforeAll(async () => {
@@ -33,7 +35,7 @@ beforeAll(async () => {
   mkdirSync(join(root, "d", "lessons"), { recursive: true });
   writeFileSync(join(root, "d", "lessons", "0001.json"), JSON.stringify(page("m1", "Bells", ["b1"])));
   writeFileSync(join(root, "d", "lessons", "0002.json"), JSON.stringify(page("m2", "Changes", ["b2"])));
-  // Two days ago, as the server's own record would hold it: q1 wrong then right, q2 right first try.
+  // 22 hours ago, as the server's own record would hold it: q1 wrong then right, q2 right first try.
   const dir = join(root, "record");
   const db = await openDatabase({ driver: "pglite", dir });
   const r = postgresRecord(db.sql);
@@ -65,7 +67,8 @@ const get = async (path: string) => {
 };
 
 test("the next lesson opens with the item due in a Review section at its top, its reason in words, and a reload shows the same", async () => {
-  const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", timeZone: "Pacific/Auckland" }).format(YESTERDAY);
+  // The day of q1's first try, the answer the reason is written from, at yesterday(1000).
+  const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", timeZone: "Pacific/Auckland" }).format(new Date(YESTERDAY.getTime() + 1000));
   const opened = await get("/api/courses/c/lessons/l2?aid=1");
   expect(opened.lesson).toEqual({ ...l2, children: [{ type: "section", id: "school:review", title: "Review", children: [quiz("q1")] }, quiz("q3")] });
   expect(opened.review).toEqual([{
