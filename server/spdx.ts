@@ -9,7 +9,7 @@
 //   license    := a listed id, optionally followed by "+" | LicenseRef-<id> | DocumentRef-<id>:LicenseRef-<id>
 //
 // Operators are matched with their case; license and exception ids without it, as the specification
-// says. An exception is a listed id (server/spdx-exception-ids.ts); a LicenseRef- is not one.
+// says. Parentheses nest at most 32 deep. An exception is a listed id (server/spdx-exception-ids.ts); a LicenseRef- is not one.
 import { EXCEPTION_IDS } from "./spdx-exception-ids.ts";
 import { DEPRECATED_LICENSE_IDS, LICENSE_IDS } from "./spdx-license-ids.ts";
 
@@ -18,6 +18,8 @@ const ID = /^[A-Za-z0-9.-]+$/;
 const REF = /^(DocumentRef-[A-Za-z0-9.-]+:)?LicenseRef-[A-Za-z0-9.-]+$/;
 const exceptions = new Set(EXCEPTION_IDS.map((id) => id.toLowerCase()));
 const OPERATORS = new Set(["AND", "OR", "WITH"]);
+/** The deepest parenthesis nesting accepted. The parser recurses once per level, so a bound keeps a hostile license from exhausting the stack. */
+const MAX_NESTING = 32;
 
 /** The refusal for `token` when it is an operator spelt without its capitals, else null. */
 function lowercaseOperator(token: string): string | null {
@@ -29,6 +31,7 @@ function lowercaseOperator(token: string): string | null {
 export function spdxProblem(expression: string): string | null {
   const tokens = expression.split(/\s+|([()])/).filter((t): t is string => t !== undefined && t !== "");
   let at = 0;
+  let depth = 0;
   const peek = (): string | undefined => tokens[at];
   const found = (): string => (peek() === undefined ? "the end of the expression" : JSON.stringify(peek()));
 
@@ -45,8 +48,11 @@ export function spdxProblem(expression: string): string | null {
   }
   function term(): string | null {
     if (peek() === "(") {
+      if (depth === MAX_NESTING) return `parentheses are nested more than ${MAX_NESTING} deep`;
       at++;
+      depth++;
       const inner = or();
+      depth--;
       if (inner !== null) return inner;
       if (peek() !== ")") return (peek() === undefined ? null : lowercaseOperator(peek()!)) ?? `expected ")", found ${found()}`;
       at++;

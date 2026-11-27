@@ -218,7 +218,7 @@ has no `course.json`, loads exactly as one did before they existed.
 | `title` | yes | non-empty string | What the pages call the course: the sidebar, Home, the course page and every breadcrumb. Surrounding spaces are trimmed. |
 | `summary` | no | non-empty string | What the course is, in a sentence. Surrounding spaces are trimmed. |
 | `author` | no | non-empty string | Who wrote it. Surrounding spaces are trimmed. |
-| `license` | no | SPDX license expression | The terms a learner, or anyone copying the course, may use it on, such as `MIT`, `MIT OR Apache-2.0` or `GPL-2.0-or-later WITH Classpath-exception-2.0`. Surrounding spaces are trimmed. |
+| `license` | no | SPDX license expression | The terms a learner, or anyone copying the course, may use it on, such as `MIT`, `MIT OR Apache-2.0` or `GPL-2.0-or-later WITH Classpath-exception-2.0`. Surrounding spaces are trimmed. Parentheses nest at most 32 deep; a deeper expression is refused like any other bad one. |
 | `format` | no | positive integer | The course format the course is written in. Today's, and the only one this School plays, is `1`. |
 
 The course's **name**, the `name` in `SCHOOL_COURSES=name=path`, stays its slug: it is what
