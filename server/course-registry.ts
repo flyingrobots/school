@@ -8,16 +8,24 @@
 //   list older than the record. Each is served from its install's folder in the course store,
 //   `<SCHOOL_COURSE_STORE>/courses/<install id>/`, trusted only when the record's latest trust choice
 //   for that install says so.
-// - An install's folder is written once and never changed, so its content digest (RFC 7 §7) is
-//   checked the first time the registry sees the install, and the answer kept for that install id.
-//   That its folder still exists is checked on every read. An install with no folder, or whose files
-//   are not the ones recorded, or that cannot be read, is listed with its reason and never served.
-//   A reason names the install by id and says what failed, never an absolute path; a failure of the
-//   file system is not kept, so the install is checked again once its folder is fixed.
+// - An install's content digest (RFC 7 §7) is checked the first time the registry sees the install,
+//   and the answer kept for that install id with a fingerprint of the folder taken just before: the
+//   device, inode, size, modification and change times of every file and folder in it
+//   (flyingrobots/school#322). Every read compares the fingerprint, which costs one lstat per entry
+//   and no hashing; on any difference the folder is hashed again, so a file changed while School
+//   runs is never served unverified, trusted or not, and bytes put back as recorded are served
+//   again. An install with no folder, or whose files are not the ones recorded, or that cannot be
+//   read, is listed with its reason and never served. A reason names the install by id and says
+//   what failed, never an absolute path; a failure of the file system is not kept, so the install
+//   is checked again once its folder is fixed.
+// - Configured courses never wait on the record: `find` answers a configured name without reading
+//   it, and a read of the list whose `installed_courses()` fails still serves the configured
+//   courses and lists the installs it last saw as unavailable until the record answers again
+//   (flyingrobots/school#322).
 // - A name both configured and installed refuses the start (`RegistryError`, exit 2). One that
 //   appears later, written to the record while School runs, is logged and the configured course
 //   keeps the name.
-import { lstatSync, readdirSync, readFileSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, type BigIntStats } from "node:fs";
 import { join } from "node:path";
 import { course, courseNames, type Config, type Course } from "./config.ts";
 import { CourseFileError, readCourseFile, type CourseFile } from "./course-file.ts";
@@ -100,6 +108,40 @@ function isFolder(p: string): boolean {
   }
 }
 
+/** One entry of a folder's fingerprint: its absolute path, and what lstat said of it. */
+type Stamp = { path: string; stat: string };
+
+const stampOf = (s: BigIntStats): string =>
+  `${s.isDirectory() ? "folder" : s.isFile() ? "file" : "other"} ${s.dev} ${s.ino} ${s.size} ${s.mtimeNs} ${s.ctimeNs}`;
+
+/**
+ * The fingerprint of `folder`: every file and folder in it, the folder itself included, with its
+ * device, inode, size, and modification and change times in nanoseconds. A file added, removed or
+ * renamed changes its folder's times, so comparing the entries already listed finds it.
+ */
+function fingerprint(folder: string): Stamp[] {
+  const out: Stamp[] = [{ path: folder, stat: stampOf(lstatSync(folder, { bigint: true })) }];
+  const walk = (dir: string) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, e.name);
+      const st = lstatSync(full, { bigint: true });
+      out.push({ path: full, stat: stampOf(st) });
+      if (st.isDirectory()) walk(full);
+    }
+  };
+  walk(folder);
+  return out;
+}
+
+/** Whether every entry of `fp` is still as it was; any entry that cannot be read is a change. */
+function unchanged(fp: Stamp[]): boolean {
+  try {
+    return fp.every((s) => stampOf(lstatSync(s.path, { bigint: true })) === s.stat);
+  } catch {
+    return false;
+  }
+}
+
 /** `cache` is whether the answer may be kept: a filesystem failure may pass, so it is asked again. */
 type Verified = { ok: true; file: CourseFile } | { ok: false; reason: string; cache: boolean };
 
@@ -133,20 +175,42 @@ function verify(row: InstalledCourse, folder: string): Verified {
 
 /**
  * The course list. `start` reads it the first time and refuses a name both configured and
- * installed; `current` reads it again, from the record, for each request that needs it.
+ * installed; `current` reads it again, from the record, for each request that needs it; `find`
+ * answers one course by name, a configured one without reading the record.
  */
 export function courseRegistry(opts: { config: Config; configured: ServedCourse[]; installed: () => Promise<InstalledCourse[]>; log: (line: string) => void }):
   { start(): Promise<Registry>; current(): Promise<Registry>; find(name: string): Promise<Listed | null> } {
   const { config, configured, installed, log } = opts;
   const byName = new Map(configured.map((c) => [c.name, c]));
-  /** Each install id's verification, made once: its folder never changes. */
-  const verified = new Map<string, Verified>();
+  /** Each install id's verification, with the fingerprint of its folder just before it: kept while the folder is unchanged. */
+  const verified = new Map<string, { v: Verified; fp: Stamp[] }>();
   /** Install ids already logged as shadowed by a configured course, so each is logged once. */
   const shadowed = new Set<string>();
+  /** The installs of the last read the record answered, listed as unavailable while it does not. */
+  let lastRows: InstalledCourse[] = [];
+  /** Whether the last read could not reach the record, so the outage and its end are each logged once. */
+  let unreachable = false;
+
+  /** The record's installs, or null when it cannot be reached; at start a failure is not caught. */
+  const rowsNow = async (starting: boolean): Promise<InstalledCourse[] | null> => {
+    try {
+      const rows = await installed();
+      if (unreachable) log("the record answers again; serving installed courses");
+      unreachable = false;
+      lastRows = rows;
+      return rows;
+    } catch (e) {
+      if (starting) throw e;
+      if (!unreachable) log(`cannot read the installed courses from the record (${e instanceof Error ? e.message : String(e)}); serving the configured courses, and listing installed ones as unavailable until it answers`);
+      unreachable = true;
+      return null;
+    }
+  };
 
   const read = async (starting: boolean): Promise<Registry> => {
     const listed: Listed[] = configured.map((c) => ({ kind: "served", course: c }));
-    for (const row of await installed()) {
+    const rows = await rowsNow(starting);
+    for (const row of rows ?? lastRows) {
       const own = byName.get(row.course);
       if (own !== undefined) {
         const where = config.store === null ? "with no course store set" : `in the course store at ${installFolder(config.store, row.id)}`;
@@ -159,6 +223,10 @@ export function courseRegistry(opts: { config: Config; configured: ServedCourse[
         continue;
       }
       const unavailable = (reason: string): Listed => ({ kind: "unavailable", course: { name: row.course, title: row.title, trusted: row.trusted, manifest: NO_MANIFEST, reason } });
+      if (rows === null) {
+        listed.push(unavailable(`School cannot reach its record just now, so it cannot tell whether ${JSON.stringify(row.course)} is still installed; it is served again once the record answers`));
+        continue;
+      }
       if (config.store === null) {
         listed.push(unavailable(`${JSON.stringify(row.course)} is installed, but no course store is set (SCHOOL_COURSE_STORE), so its files cannot be found`));
         continue;
@@ -169,10 +237,18 @@ export function courseRegistry(opts: { config: Config; configured: ServedCourse[
         listed.push(unavailable(`the files of install ${row.id} of ${JSON.stringify(row.course)} are missing from the course store; installing it again from its recorded source will bring it back`));
         continue;
       }
-      let v = verified.get(row.id);
+      const kept = verified.get(row.id);
+      let v = kept !== undefined && unchanged(kept.fp) ? kept.v : undefined;
       if (v === undefined) {
+        let fp: Stamp[] | null;
+        try {
+          fp = fingerprint(folder);
+        } catch {
+          fp = null; // the digest below fails too, or the next read takes the fingerprint again
+        }
         v = verify(row, folder);
-        if (v.ok || v.cache) verified.set(row.id, v);
+        if (fp !== null && (v.ok || v.cache)) verified.set(row.id, { v, fp });
+        else verified.delete(row.id);
       }
       if (!v.ok) {
         listed.push(unavailable(v.reason));
@@ -191,5 +267,12 @@ export function courseRegistry(opts: { config: Config; configured: ServedCourse[
       find: (name) => index.get(name) ?? null,
     };
   };
-  return { start: () => read(true), current: () => read(false), find: () => { throw new Error("not implemented"); } };
+  return {
+    start: () => read(true),
+    current: () => read(false),
+    find: async (name) => {
+      const own = byName.get(name);
+      return own !== undefined ? { kind: "served", course: own } : (await read(false)).find(name);
+    },
+  };
 }
