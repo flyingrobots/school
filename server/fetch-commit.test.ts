@@ -264,9 +264,10 @@ describe("fetchCommit: refusals from the server, with staging deleted", () => {
 
   test("FETCH-30: a host that refuses unadvertised wants refuses a commit no ref points at", async () => {
     const r = request({ url: `https://${HOST}:${strict.port}/course.git`, network: network(strict.port!), commit: loose });
-    // Oracle: git's upload-pack refuses a want for an object no ref advertises unless
-    // uploadpack.allowAnySHA1InWant or allowReachableSHA1InWant is set (git-config(1)).
-    expect(await fetchCase(r)).toMatchObject({ ok: false, refusal: { reason: "git-failed", message: expect.stringContaining(loose) } });
+    // Oracle: in protocol v0 a want for an object no ref advertises is refused unless the server
+    // advertises allow-tip-sha1-in-want or allow-reachable-sha1-in-want (gitprotocol-capabilities(5));
+    // git names the object it was refused, and School reports the refusal as git-failed (RFC 7 Table 6.1).
+    expect(await fetchCase(r)).toMatchObject({ ok: false, refusal: { reason: "git-failed", message: expect.stringContaining(`unadvertised object ${loose}`) } });
     expect(existsSync(r.staging)).toBe(false);
   });
 

@@ -74,22 +74,26 @@ export type Wants = {
   /**
    * `true` (the default) lets a client ask for any object by hash (`uploadpack.allowAnySHA1InWant`),
    * as GitHub does, so a commit no ref points at can still be fetched by its hash. `false` refuses
-   * such a want, as a host with git's stock upload-pack settings does.
+   * such a want, as a host that speaks protocol v0 with git's stock upload-pack settings does: the
+   * server ignores the client's `Git-Protocol` header, so it answers in v0 and advertises neither
+   * `allow-tip-sha1-in-want` nor `allow-reachable-sha1-in-want`. (git's protocol v2 upload-pack
+   * accepts a want for any object whatever these settings say, so v2 cannot show a refusal.)
    */
   anyObject?: boolean;
 };
 
 /** Serves every bare repository under `root` with `git http-backend`, answering wants as `wants` says. */
-export function gitBackend(root: string, home: string, _wants: Wants = {}): Handler {
+export function gitBackend(root: string, home: string, wants: Wants = {}): Handler {
+  const anyObject = wants.anyObject ?? true;
   return async (req) => {
     const u = new URL(req.url);
     const body = req.method === "POST" ? new Uint8Array(await req.arrayBuffer()) : new Uint8Array(0);
     const env: Record<string, string> = {
       ...gitEnv(home), GIT_PROJECT_ROOT: root, GIT_HTTP_EXPORT_ALL: "1",
-      GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "uploadpack.allowAnySHA1InWant", GIT_CONFIG_VALUE_0: "true",
+      GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "uploadpack.allowAnySHA1InWant", GIT_CONFIG_VALUE_0: String(anyObject),
       REQUEST_METHOD: req.method, PATH_INFO: decodeURIComponent(u.pathname), QUERY_STRING: u.search.slice(1),
       CONTENT_TYPE: req.headers.get("content-type") ?? "", CONTENT_LENGTH: String(body.length), REMOTE_ADDR: "127.0.0.1",
-      HTTP_CONTENT_ENCODING: req.headers.get("content-encoding") ?? "", HTTP_GIT_PROTOCOL: req.headers.get("git-protocol") ?? "",
+      HTTP_CONTENT_ENCODING: req.headers.get("content-encoding") ?? "", HTTP_GIT_PROTOCOL: anyObject ? (req.headers.get("git-protocol") ?? "") : "",
     };
     const proc = Bun.spawn(["git", "http-backend"], { env, cwd: home, stdin: body, stdout: "pipe", stderr: "ignore" });
     const out = new Uint8Array(await new Response(proc.stdout).arrayBuffer());
