@@ -28,12 +28,27 @@ describe("spdxProblem: what a refusal says", () => {
     ["with", "GPL-2.0-only with Classpath-exception-2.0", '"with"', '"WITH"'],
     ["a mixed-case And", "MIT And Apache-2.0", '"And"', '"AND"'],
     ["a mixed-case Or after a group", "(MIT) Or Apache-2.0", '"Or"', '"OR"'],
+    ["and inside parentheses", "(MIT and Apache-2.0)", '"and"', '"AND"'],
+    ["with inside parentheses", "(MIT with Classpath-exception-2.0)", '"with"', '"WITH"'],
+    ["or inside nested parentheses", "((MIT or Apache-2.0)) AND BSD-2-Clause", '"or"', '"OR"'],
   ])("SPDX-MSG-2: a lowercase operator (%s) is refused for not being in capitals", (_, expression, found, wanted) => {
     const problem = spdxProblem(expression);
     expect(problem).toContain(found);
     expect(problem).toContain(wanted);
     expect(problem).toMatch(/capital/i);
     expect(problem).not.toContain(MISLEADING);
+  });
+
+  test.each([
+    ["OR", "MIT OR and", '"and"'],
+    ["AND", "MIT AND or", '"or"'],
+    ["a leading operator", "and MIT", '"and"'],
+    ["a capitalised operator", "MIT OR AND", '"AND"'],
+    ["an opening parenthesis", "(with MIT)", '"with"'],
+  ])("SPDX-MSG-7: where a license is expected (after %s), the refusal says so, with no capitals hint or imperative", (_, expression, found) => {
+    const problem = spdxProblem(expression);
+    expect(problem).toBe(`expected a license, found ${found}`);
+    expect(problem).not.toMatch(/capital|write/i);
   });
 
   test.each(["LicenseRef-x+", "DocumentRef-spdx-tool-1.2:LicenseRef-MIT-Style+", "MIT OR LicenseRef-x+"])(
@@ -58,7 +73,7 @@ describe("spdxProblem: what is accepted is unchanged", () => {
 
   test.each([
     "", "  ", "MIT License", "MIT OR", "OR MIT", "(MIT OR Apache-2.0", "MIT)", "()", "MIT AND", "Frobnicate-1.0", "MIT OR Frobnicate-1.0",
-    "MIT WITH Frobnicate-exception", "MIT WITH LicenseRef-x", "MIT WITH", "MIT WITH (", "MIT or Apache-2.0", "MIT and Apache-2.0", "MIT And Apache-2.0",
+    "MIT WITH Frobnicate-exception", "(MIT and Apache-2.0)", "(MIT with Classpath-exception-2.0)", "MIT OR and", "MIT WITH LicenseRef-x", "MIT WITH", "MIT WITH (", "MIT or Apache-2.0", "MIT and Apache-2.0", "MIT And Apache-2.0",
     "(MIT) WITH Classpath-exception-2.0", "GPL-2.0-only WITH Classpath-exception-2.0 WITH LLVM-exception", "LicenseRef-x+", "MIT++", "MIT, Apache-2.0", "MIT/Apache-2.0",
   ])("SPDX-MSG-5: %p is still refused, with a reason", (expression) => {
     const problem = spdxProblem(expression);
