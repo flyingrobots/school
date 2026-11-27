@@ -5,8 +5,9 @@
 // The repository is hostile until checked, so:
 //
 // - Nothing is checked out and no hook, filter or attribute is consulted: the tree is listed with
-//   `git ls-tree` and each blob read with `git cat-file --batch`, under a clean environment (no
-//   system or global configuration, `core.hooksPath=/dev/null`, no replace objects).
+//   `git ls-tree` and each blob read with `git cat-file --batch`, under the shared hardened runner
+//   (git-run.ts: a clean environment, no system or global configuration, `core.hooksPath=/dev/null`,
+//   no replace objects).
 // - The whole listing is checked before anything is written: every name (no `.`, `..`, empty
 //   name, `.git` prefix in any case, `\` or control character, valid UTF-8), every mode (no
 //   symlink, no submodule), the limits of Table 6.2 (`DEFAULT_LIMITS`; path length and depth are
@@ -30,6 +31,7 @@
 // Fetching the commit is a separate step (RFC 7 task 6); this module takes a repository on disk.
 import { lstatSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
+import { GitRunError, runGit } from "./git-run.ts";
 
 export type Limits = {
   /** Files under the installed names. Folders under them are bounded by `files × depth`. */
@@ -113,48 +115,23 @@ type Git = { bin: string; repository: string; home: string; ms: number };
 type Run = { code: number; stdout: Uint8Array; stderr: string };
 
 /**
- * Runs one git command against the repository under a clean environment and a time limit. With
+ * Runs one git command against the repository through the shared hardened runner (git-run.ts). With
  * `onChunk`, stdout is handed over as it arrives (a Refused thrown from it kills git); otherwise
  * it is collected, up to `maxStdout` bytes.
  */
 async function run(g: Git, args: string[], o: { input?: Uint8Array; maxStdout?: number; maxStderr?: number; onChunk?: (chunk: Uint8Array) => void } = {}): Promise<Run> {
-  const env = {
-    PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: g.home, LC_ALL: "C",
-    GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0", GIT_NO_REPLACE_OBJECTS: "1",
-    GIT_ATTR_NOSYSTEM: "1", GIT_LITERAL_PATHSPECS: "1", GIT_OPTIONAL_LOCKS: "0",
-  };
-  const argv = [g.bin, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "submodule.recurse=false", "--git-dir", g.repository, ...args];
-  let proc;
   try {
-    proc = Bun.spawn(argv, { env, cwd: g.home, stdin: o.input ?? "ignore", stdout: "pipe", stderr: "pipe" });
+    return await runGit(
+      { bin: g.bin, home: g.home, cwd: g.home, ceiling: dirname(g.home), ms: g.ms, repository: g.repository },
+      args,
+      { input: o.input, maxStdout: o.maxStdout, maxStderr: o.maxStderr ?? 2000, onChunk: o.onChunk },
+    );
   } catch (e) {
-    return refuse("git-failed", null, `git could not be started: ${e instanceof Error ? e.message : String(e)}`);
+    if (!(e instanceof GitRunError)) throw e;
+    if (e.kind === "timeout") return refuse("timeout", null, e.message);
+    if (e.kind === "output-too-large") return refuse("git-failed", null, `git ${args[0]} wrote more than expected`);
+    return refuse("git-failed", null, e.message);
   }
-  let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; proc.kill("SIGKILL"); }, g.ms);
-  const stderr = new Response(proc.stderr).text();
-  const chunks: Uint8Array[] = [];
-  let collected = 0;
-  let failure: unknown = null;
-  try {
-    for await (const chunk of proc.stdout) {
-      if (o.onChunk) o.onChunk(chunk);
-      else {
-        collected += chunk.length;
-        if (collected > (o.maxStdout ?? 0)) refuse("git-failed", null, `git ${args[0]} wrote more than expected`);
-        chunks.push(chunk);
-      }
-    }
-  } catch (e) {
-    failure = e;
-    proc.kill("SIGKILL");
-  }
-  const code = await proc.exited;
-  clearTimeout(timer);
-  const err = (await stderr).slice(0, o.maxStderr ?? 2000).trim();
-  if (timedOut) refuse("timeout", null, `git ${args[0]} ran longer than ${g.ms} ms and was stopped`);
-  if (failure !== null) throw failure;
-  return { code, stdout: Buffer.concat(chunks), stderr: err };
 }
 
 /**

@@ -672,7 +672,7 @@ The identity check misses three cases. It cannot see a mount made after School s
 
 ### Fetching a course repository
 
-`fetchCommit` (`server/fetch-commit.ts`, RFC 7 §6) fetches one commit of a course repository into a new bare repository, `<staging>/repo.git`, and answers the commit's full hash. No route calls it yet; the install preview (RFC 7 task 7) will, with a staging folder under the course store. The URL and the server are hostile, so School checks the commit, then the URL, then the host's addresses, then the staging folder, and only then runs git. Table 1 lists the rules in that order, and the first rule broken gives the refusal. Any refusal deletes the staging folder, or never makes it.
+`fetchCommit` (`server/fetch-commit.ts`, RFC 7 §6) fetches one commit of a course repository into a new bare repository, `<staging>/repo.git`, and answers the commit's full hash. No route calls it yet; the install preview (RFC 7 task 7) will, with a staging folder under the course store. The URL and the server are hostile, so School checks the commit, then the URL, then the host's addresses, then the staging folder, and only then runs git. Table 1 lists the rules in that order, and the first rule broken gives the refusal. Any refusal deletes the staging folder, or never makes it. Every git process, here and in extraction, runs through one hardened runner, `server/git-run.ts` (flyingrobots/school#314): a fresh environment, the system and global configuration off, `core.hooksPath=/dev/null`, `GIT_CEILING_DIRECTORIES`, `--git-dir`, a time limit with a process-group kill, and capped output. `server/git-run.test.ts` pins the exact environment and flags.
 
 | Rule | Refused with |
 | --- | --- |

@@ -182,7 +182,7 @@ describe("running", () => {
     writeFileSync(f.bin, `#!/bin/sh\nprintf 'hello'\nprintf '  oops that is long \\n' >&2\n`);
     const r = await runGit(spec(f.bin), ["status"], { maxStdout: 10, maxStderr: 8 });
     expect(new TextDecoder().decode(r.stdout)).toBe("hello");
-    expect(r.stderr).toBe("oops tha".trim());
+    expect(r.stderr).toBe("oops t");
     expect(r.code).toBe(0);
   });
 });
