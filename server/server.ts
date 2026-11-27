@@ -464,7 +464,7 @@ async function speakJson(body: unknown): Promise<Response> {
 
 /** Why School cannot answer a question without a bridge, in words. */
 const noAsking = () => unpaired(bridgeNow()) ? `School cannot answer questions: ${UNPAIRED}`
-  : "Asking about a passage goes through the bridge, and no bridge is connected yet; connect one in Settings.";
+  : "Asking about a passage goes through the bridge, and no bridge is connected yet. Would you like to connect one in Settings?";
 
 /** A course's reference documents as sources an answer may quote: each one's text, titled by its `<title>` or its file name. */
 function referenceSources(c: Course): AskSource[] {

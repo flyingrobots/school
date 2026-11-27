@@ -363,14 +363,14 @@ export async function askRoute(deps: AskDeps, body: unknown): Promise<Response> 
       signal: AbortSignal.timeout(bridge.deadlineMs + 10_000),
     });
   } catch (e) {
-    const error = `The bridge could not be reached (${e instanceof Error ? e.message : String(e)}), so School cannot answer right now. Check that the bridge is running.`;
+    const error = `The bridge could not be reached (${e instanceof Error ? e.message : String(e)}), so School cannot answer right now. Is the bridge running?`;
     await store(failedReply(error));
     return json({ status: "unreachable", error }, 503);
   }
   if (res.status !== 200 || res.body === null) {
     const said = (await res.json().catch(() => null)) as { error?: unknown } | null;
-    const [status, code, error] = res.status === 401 ? ["unauthorised", 502, "The bridge refused School's token, so School cannot answer. Check the token in Settings."] as const
-      : res.status === 404 ? ["unsupported", 503, "This bridge is older than asking about a passage. Update and restart the bridge, then ask again."] as const
+    const [status, code, error] = res.status === 401 ? ["unauthorised", 502, "The bridge refused School's token, so School cannot answer. Does the token in Settings match the bridge's?"] as const
+      : res.status === 404 ? ["unsupported", 503, "This bridge is older than asking about a passage. Would you like to update and restart it, then ask again?"] as const
       : ["failed", 502, `The bridge answered HTTP ${res.status}${typeof said?.error === "string" ? `: ${said.error}` : ""}.`] as const;
     await store(failedReply(error));
     return json({ status, error }, code);
