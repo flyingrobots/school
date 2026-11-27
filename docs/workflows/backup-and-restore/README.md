@@ -60,7 +60,8 @@ Keychain (flyingrobots/school#123, [School's secrets](../../topics/secrets/READM
 given here as `../school --human compose ...`, which runs `docker compose` with them and prints
 compose's output as it is (without `--human`, each line comes as a JSON object); `exec`, `logs`,
 `ps`, `cp`, `stop` and `down` need none. Compose names the
-project after the folder, so its volumes are `server_postgres` and `server_backups` unless you set
+project after the folder, so its volumes are `server_postgres`, `server_backups` and
+`server_course-store` (course content, not part of the record) unless you set
 `COMPOSE_PROJECT_NAME`. `docker volume ls` shows them.
 
 The backup service connects to the database with the superuser password in a file,

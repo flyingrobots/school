@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "school.bridge.ask.end/1.0.0",
+  "title": "Question end",
+  "description": "On stdout: how a POST /ask ended, the agent whose words the caller received (null if none did), how many deltas it passed on, and the answer's token counts. Never the prompt or the answer.",
+  "type": "object",
+  "properties": {
+    "_schema": {
+      "type": "object",
+      "description": "The schema this line follows.",
+      "properties": {
+        "id": {
+          "const": "school.bridge.ask.end"
+        },
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "kind": {
+      "const": "bridge.ask.end",
+      "description": "The program (or, for the bridge, the message type) that printed the line."
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "One id per invocation (for the bridge, per process), on every line it prints: a random (version 4) UUID."
+    },
+    "at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "description": "When the line was printed, UTC."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "status": {
+      "enum": [
+        "succeeded",
+        "failed"
+      ]
+    },
+    "agent": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "deltas": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "usage": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "The answer's token counts as the agent's CLI reported them (output claude-json or claude-stream-json); a count it left out is null. Null for any other agent, or when no agent answered.",
+      "properties": {
+        "input_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cache_creation_input_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cache_read_input_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "_schema",
+    "kind",
+    "run",
+    "at",
+    "id",
+    "status",
+    "agent",
+    "deltas",
+    "usage"
+  ],
+  "additionalProperties": false
+}

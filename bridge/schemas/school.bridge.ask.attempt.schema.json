@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "school.bridge.ask.attempt/1.0.0",
+  "title": "Question attempt",
+  "description": "On stdout, after a question: one ask agent's attempt, how it ended, how long it took and how many text deltas it passed on. Never the prompt or the answer.",
+  "type": "object",
+  "properties": {
+    "_schema": {
+      "type": "object",
+      "description": "The schema this line follows.",
+      "properties": {
+        "id": {
+          "const": "school.bridge.ask.attempt"
+        },
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "kind": {
+      "const": "bridge.ask.attempt",
+      "description": "The program (or, for the bridge, the message type) that printed the line."
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "One id per invocation (for the bridge, per process), on every line it prints: a random (version 4) UUID."
+    },
+    "at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "description": "When the line was printed, UTC."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "agent": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "succeeded",
+        "failed",
+        "skipped"
+      ]
+    },
+    "ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "exit_code": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "deltas": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many text deltas this agent passed on to the caller. Once it is above 0, no other agent is tried."
+    }
+  },
+  "required": [
+    "_schema",
+    "kind",
+    "run",
+    "at",
+    "id",
+    "agent",
+    "status",
+    "ms",
+    "exit_code",
+    "error",
+    "deltas"
+  ],
+  "additionalProperties": false
+}
