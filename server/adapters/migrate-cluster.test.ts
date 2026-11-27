@@ -41,7 +41,10 @@ async function login(url: string, user: string, password: string): Promise<strin
 
 /** Resolves once `sql` (a count) is above zero on `admin`; waits on the condition, not on time. */
 async function until(admin: InstanceType<typeof Bun.SQL>, sql: string): Promise<void> {
-  for (;;) if ((await admin.unsafe(sql))[0].n > 0) return;
+  for (;;) {
+    if ((await admin.unsafe(sql))[0].n > 0) return;
+    await Bun.sleep(20);
+  }
 }
 
 /** Sessions on database `db` waiting for a heavyweight lock (a row, a transaction, an advisory lock). */
@@ -137,6 +140,57 @@ describe.skipIf(URL_ === undefined)("Bun.SQL: migrate jobs on many databases of 
       await admin.unsafe(`DROP ROLE IF EXISTS ${owner}`);
     }
   }, 120_000);
+
+  test("an error in the role step that is not a concurrent create is not swallowed: without CREATEROLE the bootstrap fails with 42501", async () => {
+    const tag = crypto.randomUUID().replaceAll("-", "").slice(0, 10);
+    const owner = `school_owner_${tag}`;
+    const app = `school_app_${tag}`;
+    const plain = `plain_${tag}`;
+    const bootstrap = BOOTSTRAP.replaceAll("school_owner", owner).replaceAll("school_app", app);
+    const url = await database();
+    const admin = track(new Bun.SQL(URL_!, { max: 1 }));
+    await admin.unsafe(`CREATE ROLE ${plain} LOGIN NOSUPERUSER NOCREATEROLE PASSWORD '${TEST_APP_PASSWORD}'`);
+    const db = new Bun.SQL(as(url, plain, TEST_APP_PASSWORD), { max: 1 });
+    try {
+      const got = await db.unsafe(bootstrap).then(() => "ok", (e: unknown) => `${(e as { errno?: string }).errno}: ${(e as Error).message}`);
+      // 42501, insufficient_privilege, from CREATE ROLE itself. A catch of every error would hide it
+      // and fail later, at CREATE SCHEMA, with 42704 (the owner does not exist).
+      expect(got).toBe("42501: permission denied to create role");
+      expect((await admin.unsafe(`SELECT count(*)::int AS n FROM pg_roles WHERE rolname IN ('${owner}', '${app}')`))[0].n).toBe(0);
+    } finally {
+      await db.close().catch(() => {});
+      await admin.unsafe(`DROP DATABASE IF EXISTS ${nameOf(url)} WITH (FORCE)`);
+      await admin.unsafe(`DROP ROLE IF EXISTS ${plain}`);
+    }
+  }, SLOW);
+
+  test("the role bootstrap, whose check saw no role though another job has committed it since, finds it at the CREATE (42710) and succeeds", async () => {
+    const tag = crypto.randomUUID().replaceAll("-", "").slice(0, 10);
+    const owner = `school_owner_${tag}`;
+    const app = `school_app_${tag}`;
+    const bootstrap = BOOTSTRAP.replaceAll("school_owner", owner).replaceAll("school_app", app);
+    const [a, b] = await Promise.all([database(), database()]);
+    const admin = track(new Bun.SQL(URL_!, { max: 1 }));
+    const late = await track(new Bun.SQL(b!, { max: 1 })).reserve();
+    try {
+      // A repeatable-read transaction keeps the snapshot it took first, so its check sees no role
+      // after the other job commits them, and its CREATE ROLE (which reads the catalog as it is
+      // now) meets them: duplicate_object, not the unique violation of a race in flight.
+      await late.unsafe("BEGIN ISOLATION LEVEL REPEATABLE READ");
+      await late.unsafe("SELECT 1");
+      await new Bun.SQL(a!, { max: 1 }).begin(async (tx) => { await tx.unsafe(bootstrap); });
+      await late.unsafe(bootstrap);
+      await late.unsafe("COMMIT");
+      const roles = [...await admin.unsafe(`SELECT rolname FROM pg_roles WHERE rolname IN ('${owner}', '${app}') ORDER BY 1`)].map((r: { rolname: string }) => r.rolname);
+      expect(roles).toEqual([app, owner]);
+    } finally {
+      await late.unsafe("ROLLBACK").catch(() => {});
+      late.release();
+      for (const u of [a!, b!]) await admin.unsafe(`DROP DATABASE IF EXISTS ${nameOf(u)} WITH (FORCE)`);
+      await admin.unsafe(`DROP ROLE IF EXISTS ${app}`);
+      await admin.unsafe(`DROP ROLE IF EXISTS ${owner}`);
+    }
+  }, SLOW);
 
   test("a job whose role update meets another session's uncommitted change of school_app's password waits for it, then sets its own", async () => {
     const url = await database();
