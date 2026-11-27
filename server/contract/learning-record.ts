@@ -786,6 +786,176 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     expect(await r.lastStudied()).toEqual({ course: "c", lesson: "l2", at: at(2) });
   });
 
+  // ---- Mastery (RFC 5 §4.1, §4.2; flyingrobots/school#217) ------------------------------------
+  // The measure reads each quiz's episodes as due review does, by seq, and returns its stability
+  // and its strength at the time asked. Oracle: RFC 5 Table 4.1, Table 4.2 and the worked example
+  // of §4.3; a strength is compared to 4 decimal places, a stability exactly while it is a whole
+  // number of milliseconds.
+
+  /** A case of the mastery measure. */
+  const mm = (title: string, fn: (r: LearningRecord) => Promise<void>) =>
+    test(`${name}: mastery: ${title}`, async () => fn(await make()));
+  const HOUR = 60 * 60 * 1000;
+  const DAY = 24 * HOUR;
+  const measure = (r: LearningRecord, blocks: string[], now: string) => r.mastery({ course: "c", blocks, now, delayMs: DELAY });
+  const held = async (r: LearningRecord, now: string, blockId = "q1") => {
+    const [m] = await measure(r, [blockId], now);
+    if (m === undefined) throw new Error(`no row for ${blockId}`);
+    return m;
+  };
+  type FirstTry = "clean" | "aided" | "unknown" | "wrong";
+  /**
+   * One episode: a new encounter of a lesson of its own holding `blockId`, answered once at `t`:
+   * right with nothing shown, right after a hint, right while aid is not tracked, or wrong.
+   * Returns the first try's seq.
+   */
+  const episode = async (r: LearningRecord, kind: FirstTry, t: number, blockId = "q1", course = "c") => {
+    const id = `l-${uuid()}`;
+    const e = await r.openEncounter({ course, lesson: id, page: lesson(id, [quiz(blockId)]), now: at(t), aidTracking: kind === "unknown" ? null : 1 });
+    if (kind === "aided") await r.recordExposure(exposure(e.id, blockId, "hint"), at(t));
+    await answer(r, e.id, blockId, kind === "wrong" ? "wrong" : "right", at(t));
+    const [first] = await rowsOf(r, e.id, "answer", blockId);
+    return { encounterId: e.id, first: first! };
+  };
+
+  mm("a clean answer has strength 1 at once, 0.7071 twelve hours later and 0.5 at one day, with a stability of one day", async (r) => {
+    const { first } = await episode(r, "clean", 0);
+    expect(await held(r, at(0))).toEqual({ blockId: "q1", strength: 1, stabilityMs: DAY, refreshedAt: at(0), settled: true, evidence: [first] });
+    expect((await held(r, at(12 * HOUR))).strength).toBeCloseTo(Math.SQRT1_2, 4); // 0.5^(1/2)
+    expect((await held(r, at(DAY))).strength).toBeCloseTo(0.5, 4);
+    expect((await held(r, at(2 * DAY))).strength).toBeCloseTo(0.25, 4);
+  });
+
+  mm("RFC 5 Table 4.3: answered cleanly each time it fades, stability grows by 2.5 at each answer", async (r) => {
+    const first = await episode(r, "clean", 0);
+    expect(await held(r, at(0))).toMatchObject({ strength: 1, stabilityMs: DAY });
+    const later = [[1, 2.5], [3.5, 6.25], [9.75, 15.625], [25.375, 39.0625], [64.4375, 97.65625]] as const;
+    const firsts = [first.first];
+    for (const [day, stability] of later) {
+      expect({ day, strength: (await held(r, at(day * DAY))).strength! }).toEqual({ day, strength: expect.closeTo(0.5, 4) }); // just before: one stability has passed
+      firsts.push((await episode(r, "clean", day * DAY)).first);
+      expect({ day, ...await held(r, at(day * DAY)) }).toMatchObject({ day, strength: 1, stabilityMs: stability * DAY, refreshedAt: at(day * DAY), settled: true });
+    }
+    expect((await held(r, at(64.4375 * DAY))).evidence).toEqual(firsts);
+  });
+
+  mm("a clean answer exactly the delay after the last answer grows stability; one 1 ms sooner only restarts the clock", async (r) => {
+    const q1 = await episode(r, "clean", 0, "q1");
+    const q2 = await episode(r, "clean", 0, "q2");
+    const q2Soon = await episode(r, "clean", DELAY - 1, "q2");
+    const q1Spaced = await episode(r, "clean", DELAY, "q1");
+    expect(await measure(r, ["q1", "q2"], at(DELAY))).toEqual([
+      { blockId: "q1", strength: 1, stabilityMs: 2.5 * DAY, refreshedAt: at(DELAY), settled: true, evidence: [q1.first, q1Spaced.first] },
+      { blockId: "q2", strength: expect.closeTo(0.5 ** (1 / DAY), 4), stabilityMs: DAY, refreshedAt: at(DELAY - 1), settled: true, evidence: [q2.first, q2Soon.first] },
+    ]);
+  });
+
+  mm("unknown aid restarts the clock and keeps stability, though it comes after the delay, and the quiz has not settled", async (r) => {
+    const a = await episode(r, "clean", 0);
+    const b = await episode(r, "clean", DAY);
+    const unknown = await episode(r, "unknown", 2 * DAY);
+    expect(await held(r, at(2 * DAY))).toEqual({
+      blockId: "q1", strength: 1, stabilityMs: 2.5 * DAY, refreshedAt: at(2 * DAY), settled: false, evidence: [a.first, b.first, unknown.first],
+    });
+    expect((await held(r, at(4.5 * DAY))).strength).toBeCloseTo(0.5, 4);
+  });
+
+  mm("an aided first try restarts the clock and returns stability to one day; a clean answer a delay later grows it again", async (r) => {
+    await episode(r, "clean", 0);
+    await episode(r, "clean", DAY);
+    const aided = await episode(r, "aided", 2 * DAY);
+    expect(await held(r, at(2 * DAY))).toEqual({ blockId: "q1", strength: 1, stabilityMs: DAY, refreshedAt: at(2 * DAY), settled: false, evidence: [aided.first] });
+    expect((await held(r, at(3 * DAY))).strength).toBeCloseTo(0.5, 4);
+    const clean = await episode(r, "clean", 3 * DAY);
+    expect(await held(r, at(3 * DAY))).toEqual({
+      blockId: "q1", strength: 1, stabilityMs: 2.5 * DAY, refreshedAt: at(3 * DAY), settled: true, evidence: [aided.first, clean.first],
+    });
+  });
+
+  mm("a wrong first try gives strength 0 until the next right first try, though it was put right in the same encounter", async (r) => {
+    await episode(r, "clean", 0);
+    const before = await episode(r, "clean", DAY);
+    const wrong = await episode(r, "wrong", 2 * DAY);
+    await answer(r, wrong.encounterId, "q1", "right", at(2 * DAY + 1000)); // after the first try: the episode's, it moves nothing
+    const zero = { blockId: "q1", strength: 0, stabilityMs: DAY, refreshedAt: at(DAY), settled: false, evidence: [before.first, wrong.first] };
+    expect(await held(r, at(2 * DAY + HOUR))).toEqual(zero);
+    expect(await held(r, at(30 * DAY))).toEqual(zero);
+    const next = await episode(r, "clean", 2 * DAY + 2 * HOUR); // within the delay: the clock restarts, stability stays one day
+    expect(await held(r, at(2 * DAY + 2 * HOUR))).toEqual({
+      blockId: "q1", strength: 1, stabilityMs: DAY, refreshedAt: at(2 * DAY + 2 * HOUR), settled: false, evidence: [wrong.first, next.first],
+    });
+  });
+
+  mm("a quiz never answered is null; rows follow the order asked, each block once; another course's answers are not this one's", async (r) => {
+    const q1 = await episode(r, "clean", 0, "q1");
+    await episode(r, "clean", 0, "q2", "other");
+    const never = (blockId: string) => ({ blockId, strength: null, stabilityMs: null, refreshedAt: null, settled: false, evidence: [] });
+    expect(await measure(r, ["q2", "q1", "q2", "q3"], at(DAY))).toEqual([
+      never("q2"),
+      { blockId: "q1", strength: expect.closeTo(0.5, 4), stabilityMs: DAY, refreshedAt: at(0), settled: true, evidence: [q1.first] },
+      never("q3"),
+    ]);
+    expect(await measure(r, [], at(DAY))).toEqual([]);
+  });
+
+  mm("order is the record's, by seq, never by `at`: the latest first try, the refresh and the delay are read in seq order", async (r) => {
+    // Sent in this order, with clocks that disagree: an outbox flush, or a clock stepped back.
+    await episode(r, "clean", DAY, "q1");
+    const q1Latest = await episode(r, "clean", 0, "q1"); // latest by seq, earliest by `at`: not a delay after the one before
+    await episode(r, "wrong", DAY, "q2");
+    await episode(r, "clean", 0, "q2"); // right after the wrong one by seq: strength comes back
+    await episode(r, "clean", DAY, "q3");
+    await episode(r, "wrong", 0, "q3"); // wrong after the right one by seq: strength 0
+    const [q1, q2, q3] = await measure(r, ["q1", "q2", "q3"], at(12 * HOUR));
+    expect(q1).toMatchObject({ strength: expect.closeTo(Math.SQRT1_2, 4), stabilityMs: DAY, refreshedAt: at(0) });
+    expect(q1!.evidence.at(-1)).toBe(q1Latest.first);
+    expect(q2).toMatchObject({ strength: expect.closeTo(Math.SQRT1_2, 4), stabilityMs: DAY, refreshedAt: at(0), settled: false });
+    expect(q3).toMatchObject({ strength: 0, stabilityMs: DAY, refreshedAt: at(DAY), settled: false });
+  });
+
+  mm("strength is 1 at a time before the refresh, and reaches 0, not an error, ten years after it", async (r) => {
+    await episode(r, "clean", DAY);
+    expect((await held(r, at(0))).strength).toBe(1);
+    expect((await held(r, at(3650 * DAY))).strength).toBeCloseTo(0, 10);
+  });
+
+  // Generated: a year of random first tries for one quiz, each measured at a random time after it,
+  // against a model that moves step by step as RFC 5 Table 4.2 says. Oracle: Table 4.2; the record
+  // computes Table 4.1's closed form, which RFC 5 states is the same measure.
+  mm("under a year of random first tries, strength stays in [0, 1], stability never falls on a spaced clean answer, and both follow Table 4.2", async (r) => {
+    const seed = FUZZ_SEED;
+    const random = seeded(seed);
+    const replay = `replay: SCHOOL_TEST_SEED=${seed} bun test server/adapters/postgres.test.ts -t "mastery: under a year"`;
+    const kinds = ["clean", "clean", "clean", "aided", "unknown", "wrong"] as const;
+    const seen = { spaced: 0, soon: 0, aided: 0, unknown: 0, wrong: 0 };
+    let model = { stabilityMs: DAY, refreshedAt: 0, zero: false };
+    let last: number | null = null;
+    let previous: number | null = null;
+    for (let t = 0, step = 0; t < 365 * DAY; t += Math.floor(random() * 3 * DAY), step++) {
+      const kind = kinds[Math.floor(random() * kinds.length)]!;
+      const spaced = last === null || t - last >= DELAY;
+      // Table 4.2, one row per kind of first try; the first answer starts at one day.
+      if (last === null) model = { stabilityMs: DAY, refreshedAt: t, zero: kind === "wrong" };
+      else if (kind === "wrong") model = { ...model, stabilityMs: DAY, zero: true };
+      else if (kind === "aided") model = { stabilityMs: DAY, refreshedAt: t, zero: false };
+      else if (kind === "unknown" || !spaced) model = { ...model, refreshedAt: t, zero: false };
+      else model = { stabilityMs: model.stabilityMs * 2.5, refreshedAt: t, zero: false };
+      seen[kind === "clean" ? (spaced ? "spaced" : "soon") : kind]++;
+      await episode(r, kind, t);
+      last = t;
+      const probe = t + Math.floor(random() * 2 * DAY);
+      const m = await held(r, at(probe));
+      const strength = model.zero ? 0 : 0.5 ** ((probe - model.refreshedAt) / model.stabilityMs);
+      expect({ step, kind, inRange: m.strength! >= 0 && m.strength! <= 1 }, replay).toEqual({ step, kind, inRange: true });
+      expect({ step, kind, strength: m.strength }, replay).toEqual({ step, kind, strength: expect.closeTo(strength, 4) });
+      expect({ step, kind, stability: m.stabilityMs! / model.stabilityMs }, replay).toEqual({ step, kind, stability: expect.closeTo(1, 12) });
+      if (kind === "clean" && spaced && previous !== null) expect({ step, grew: m.stabilityMs! >= previous }, replay).toEqual({ step, grew: true });
+      previous = m.stabilityMs;
+    }
+    // Witnesses: the fixed seed reaches every kind of first try.
+    for (const [kind, n] of Object.entries(seen)) expect(`${kind}: ${n > 0}`, replay).toBe(`${kind}: true`);
+  });
+
   // ---- Installed courses (RFC 7 §7; flyingrobots/school#232) ----------------------------------
 
   t("installs: nothing is installed at first", async (r) => {
