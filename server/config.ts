@@ -219,36 +219,57 @@ export type List = (dir: string) => { dirs: string[]; files: string[] };
  */
 export const systemList: List = (dir) => {
   const dirs: string[] = [];
+  const files: string[] = [];
   for (const d of readdirSync(dir, { withFileTypes: true })) {
-    if (d.isDirectory() || (!d.isFile() && !d.isSymbolicLink() && lstatSync(join(dir, d.name)).isDirectory())) dirs.push(d.name);
+    if (d.isDirectory()) dirs.push(d.name);
+    else if (d.isFile()) files.push(d.name);
+    else if (!d.isSymbolicLink() && !d.isFIFO() && !d.isSocket() && !d.isBlockDevice() && !d.isCharacterDevice()) {
+      // The type is unknown (DT_UNKNOWN): lstat says what the entry is, without following it.
+      const l = lstatSync(join(dir, d.name));
+      if (l.isDirectory()) dirs.push(d.name);
+      else if (l.isFile()) files.push(d.name);
+    }
   }
-  return { dirs, files: [] };
+  return { dirs, files };
 };
 
 /**
- * Every folder at or below `root`, by identity, with the path it was found at. Walked breadth-first
- * through `list`, so never through a symlink; a folder seen twice (a bind mount of an ancestor
- * inside its own tree) is walked once. Refused, naming `what`, past ENTRY_CAP folders.
+ * Every folder and regular file at or below `root`, by identity, with the path it was first found
+ * at. Walked breadth-first through `list`, so never through a symlink; a folder seen twice (a bind
+ * mount of an ancestor inside its own tree) is walked once, and a file with two names (a hard link)
+ * is kept under the first. An entry School cannot list or stat is refused, not skipped, since what
+ * it hides could be an alias; one that is gone, or is no folder, holds nothing. Refused, naming
+ * `what` and saying to `remedy`, past ENTRY_CAP entries below the root.
  */
-function tree(root: string, what: string, stat: Stat, list: List): Map<string, string> {
+function tree(root: string, what: string, remedy: string, stat: Stat, list: List): Map<string, string> {
   const found = new Map<string, string>();
   const queue = [resolved(root)];
+  let entries = 0;
+  const count = (n: number) => {
+    entries += n;
+    if (entries > ENTRY_CAP) {
+      throw new ConfigError(`${what} holds more than ${ENTRY_CAP} folders and files; with SCHOOL_UNTRUSTED_COURSES set, School walks every folder and file of each course, mount and the web folder, to find one that is both trusted and untrusted under two names, and walks at most ${ENTRY_CAP} in each. To start, ${remedy}`);
+    }
+  };
   for (let i = 0; i < queue.length; i++) {
     const dir = queue[i]!;
     const id = identity(dir, stat);
     if (id === null || found.has(id)) continue;
     found.set(id, dir);
-    let names: string[];
+    let names: { dirs: string[]; files: string[] };
     try {
-      names = list(dir).dirs;
+      names = list(dir);
     } catch (e) {
       if (code(e) === "ENOENT" || code(e) === "ENOTDIR") continue;
       throw new ConfigError(`cannot list ${dir} in ${what}: ${code(e) ?? String(e)}`);
     }
-    if (queue.length - 1 + names.length > ENTRY_CAP) {
-      throw new ConfigError(`${what} holds more than ${ENTRY_CAP} folders; with SCHOOL_UNTRUSTED_COURSES set, School walks every folder of each trusted course, mount and the web folder to find one bind-mounted where an untrusted course lives, and walks at most ${ENTRY_CAP} in each. To start, unset SCHOOL_UNTRUSTED_COURSES, or point ${/SCHOOL_[A-Z_]+/.exec(what)?.[0] ?? "the variable named above"} at a folder holding fewer`);
+    count(names.dirs.length + names.files.length);
+    for (const name of names.dirs) queue.push(join(dir, name));
+    for (const name of names.files) {
+      const file = join(dir, name);
+      const fileId = identity(file, stat);
+      if (fileId !== null && !found.has(fileId)) found.set(fileId, file);
     }
-    for (const name of names) queue.push(join(dir, name));
   }
   return found;
 }
@@ -322,18 +343,32 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
   }
   // Part of one bind-mounted elsewhere (flyingrobots/school#298): at a bind mount's root ".." leaves
   // the trusted tree, so the ancestors above cannot show that /library is a trusted course's
-  // reference/. Every folder of each trusted root is collected by identity instead, and an untrusted
-  // course whose folder or an ancestor has one of them is refused. Walked only when there is an
-  // untrusted course to protect, so a setup without one starts as before.
+  // reference/. Every folder and file of each trusted root is collected by identity instead, and an
+  // untrusted course whose folder or an ancestor has one of them is refused. Each untrusted course
+  // is walked the same way (flyingrobots/school#315), and refused when any folder or file below it
+  // has the identity of one in a trusted root: one of its files or subfolders bind-mounted into a
+  // trusted folder, or one of theirs into it, or a file hard-linked into both. Two names for one
+  // file inside one course, or across two untrusted courses, keep one trust and are accepted.
+  // Walked only when there is an untrusted course to protect, so a setup without one starts as before.
   if (Object.keys(untrusted).length > 0) {
-    const lineages = Object.entries(untrusted).map(([name, path]) => ({ name, path, ids: lineage(path, stat).all }));
+    const guests = Object.entries(untrusted).map(([name, path]) => {
+      const what = `untrusted course ${JSON.stringify(name)} (${path}) from SCHOOL_UNTRUSTED_COURSES`;
+      return { name, path, what, ids: lineage(path, stat).all, inside: tree(path, what, `remove it from SCHOOL_UNTRUSTED_COURSES, or point it at a folder holding fewer`, stat, list) };
+    });
     for (const [what, root] of roots) {
-      const inside = tree(root, what, stat, list);
-      for (const { name, path, ids } of lineages) {
-        for (const id of ids) {
+      const variable = /SCHOOL_[A-Z_]+/.exec(what)?.[0] ?? "the variable named above";
+      const inside = tree(root, what, `unset SCHOOL_UNTRUSTED_COURSES, or point ${variable} at a folder holding fewer`, stat, list);
+      for (const guest of guests) {
+        for (const id of guest.ids) {
           const at = inside.get(id);
           if (at !== undefined) {
-            throw new ConfigError(`untrusted course ${JSON.stringify(name)} (${path}) from SCHOOL_UNTRUSTED_COURSES is, or sits inside, ${at} in ${what} under another name (same device and inode, as when Docker bind-mounts part of a folder); a folder is trusted or untrusted, not both`);
+            throw new ConfigError(`${guest.what} is, or sits inside, ${at} in ${what} under another name (same device and inode, as when Docker bind-mounts part of a folder); a folder is trusted or untrusted, not both`);
+          }
+        }
+        for (const [id, own] of guest.inside) {
+          const at = inside.get(id);
+          if (at !== undefined) {
+            throw new ConfigError(`${guest.what} holds ${own}, which is ${at} in ${what} under another name (same device and inode, as when Docker bind-mounts a file or folder of one inside the other, or a file is hard-linked into both); a file or folder is trusted or untrusted, not both`);
           }
         }
       }
