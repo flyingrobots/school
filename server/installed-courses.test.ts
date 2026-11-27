@@ -97,6 +97,10 @@ describe("installed courses (PGlite)", () => {
     ]);
   }, timeout(1));
 
+  // The untrusted policy flyingrobots/school#271 set: sandbox, with fetch directives that keep the
+  // document from loading anything from another site.
+  const POLICY = "sandbox; default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'";
+
   test("an installed course's lesson and reference files are served sandboxed", async () => {
     const root = scratch();
     const bells = installInStore(join(root, "store"), "bells", "Bells");
@@ -104,7 +108,7 @@ describe("installed courses (PGlite)", () => {
     const lesson = await fetch(`${s.url}/api/courses/bells/lessons/l1?view=slides`);
     const page = await fetch(`${s.url}/courses/bells/reference/page.html`);
     expect({ lesson: lesson.status, lessonCsp: lesson.headers.get("content-security-policy"), page: await page.text(), pageCsp: page.headers.get("content-security-policy") })
-      .toEqual({ lesson: 200, lessonCsp: "sandbox", page: "<p>page</p>", pageCsp: "sandbox" });
+      .toEqual({ lesson: 200, lessonCsp: POLICY, page: "<p>page</p>", pageCsp: POLICY });
   }, timeout(1));
 
   test("an install whose folder is gone or whose files changed is listed with lessons null and its reason", async () => {
