@@ -63,3 +63,19 @@ fails the case.
 | MJ-R10 | Names match config | The `renamed` line's `from` and `to` patterns are config.ts's course-name rule, and a trailing or doubled hyphen renames | implemented | `the renamed line admits exactly the course names config.ts accepts`; `renameCourse > accepts every name config accepts, such as a trailing or doubled hyphen` |
 | MJ-R11 | No login during a rename | While a rename waits on a table lock, a new `school_app` login is refused; after the rename is refused, School can log in again | implemented | `while a rename runs, School cannot log in; once it is refused, School can again` |
 | MJ-R12 | Authoring requests follow the name | An authoring request's course is renamed with the rest; its drafts and decisions, which name it by id, are unchanged; `course_authoring` answers under the new name only; the CLI prints `renamed_authoring` with the count after `renamed_installs`, and both earlier lines keep their 1.0.0 schemas | implemented | `renameCourse > moves a course's authoring requests to the new name, and its drafts and decisions follow them`; `the authoring request count is a message of its own, and the install line is still exactly as it was`; `--rename-course from=to applies the migrations, then renames the course in the record: a renamed line before done` |
+
+## The owner's attributes
+
+The runner's bootstrap forces `school_owner` back to a `NOLOGIN` role without `SUPERUSER`,
+`CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS` (flyingrobots/school#359); it prints nothing
+new. The real-Postgres cases are in `server/adapters/migrate-owner.test.ts` and run the runner's own
+`BOOTSTRAP` text under role names of their own, which they drop, because `school_owner` is shared by
+every test on the server.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| MJ-O1 | `SUPERUSER LOGIN` beforehand (real Postgres) | After the bootstrap the owner has none of the six attributes | implemented | `an owner that already exists with SUPERUSER LOGIN leaves the bootstrap with neither, nor any other` |
+| MJ-O2 | Each attribute alone (real Postgres) | An owner made with only `SUPERUSER`, `LOGIN`, `CREATEROLE`, `CREATEDB`, `REPLICATION` or `BYPASSRLS` has none of the six afterwards | implemented | `an owner that already exists with %s alone leaves the bootstrap without it` |
+| MJ-O3 | A correct owner is left alone (real Postgres) | Its attributes and its `pg_authid` row's `xmin` are unchanged, so the row was not rewritten (watched failing with the `ALTER ROLE` made unconditional) | implemented | `an owner that already exists with the right attributes is left as it was: its catalog row is not rewritten` |
+| MJ-O4 | No owner yet (real Postgres) | The bootstrap creates it with none of the six and does not fail | implemented | `with no owner yet, the bootstrap creates it with none of the attributes and does not fail` |
+| MJ-O5 | Through the runner | On PGlite, `migrate()` on a database whose `school_owner` has all six leaves it with none | implemented | `server/db/migrate.test.ts`: `a school_owner that already exists with every attribute the runner forbids has none of them once a file is applied` |
