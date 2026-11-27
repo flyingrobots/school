@@ -60,6 +60,26 @@ test("POST /api/exposure is behind the API guard and parses its body", async () 
   }
 });
 
+// RFC 6 §5.1: help for a whole encounter is recorded by the server alone, so the browser's route
+// refuses the kind, with a block or without one (flyingrobots/school#224).
+test("POST /api/exposure refuses an ai-help exposure, and nothing is stored", async () => {
+  const { encounterId } = await (await lesson("?aid=1")).json();
+  for (const body of [
+    { exposureId: crypto.randomUUID(), encounterId, blockId: "e1", kind: "ai-help" },
+    { exposureId: crypto.randomUUID(), encounterId, blockId: null, kind: "ai-help" },
+    { exposureId: crypto.randomUUID(), encounterId, kind: "ai-help" },
+  ]) {
+    const r = await expose(body);
+    expect(`${JSON.stringify(body)}: ${r.status}`).toBe(`${JSON.stringify(body)}: 400`);
+    expect(await r.json()).toEqual({ status: "invalid" });
+  }
+  server!.proc.kill("SIGKILL");
+  await server!.proc.exited;
+  expect(await ownerQuery(join(root, "record"), "SELECT * FROM school.exposures")).toEqual([]);
+  server = await startSchool(env);
+  base = server.url;
+}, timeout(2));
+
 // Recording an exposure in a tracked encounter: it is stored once, and the record holds it.
 test("on Postgres a valid exposure in a tracked encounter is stored once; a resend is a duplicate, a reused id a conflict", async () => {
   const { encounterId } = await (await lesson("?aid=1")).json();

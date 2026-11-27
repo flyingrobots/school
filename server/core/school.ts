@@ -48,7 +48,10 @@ const listed = (words: string[]) => words.length <= 1 ? words.join("") : `${word
  */
 export function reviewReason(item: DueItem, tz?: string): string {
   const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", timeZone: tz }).format(new Date(item.answeredAt));
-  const help = listed(item.shown.map((k) => helpWords[k]));
+  const help = listed(item.shown.map((k) => {
+    if (k === "ai-help") throw new Error("not implemented");
+    return helpWords[k];
+  }));
   // School's voice: say what helped, never what was wrong (docs/topics/voice/README.md).
   const back = "It's back so you can answer it from memory.";
   switch (item.rule) {

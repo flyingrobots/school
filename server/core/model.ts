@@ -86,6 +86,21 @@ export type Exposure = z.infer<typeof Exposure>;
 export const ExposureResult = z.object({ status: z.enum(["stored", "duplicate", "conflict", "rejected"]) });
 export type ExposureResult = z.infer<typeof ExposureResult>;
 
+/**
+ * Help a model wrote for the learner about a lesson, shown in one encounter (RFC 6 §5.1): one
+ * exposure for the whole encounter, with no block, recorded by the server and never by the page.
+ */
+export const LessonHelpKind = z.enum(["ai-help"]);
+export type LessonHelpKind = z.infer<typeof LessonHelpKind>;
+
+/** Help for a whole encounter. `exposureId` names it once, as an exposure's does. */
+export const LessonHelp = z.object({ exposureId: uuid, encounterId: uuid, kind: LessonHelpKind });
+export type LessonHelp = z.infer<typeof LessonHelp>;
+
+/** Every kind of exposure the record holds: the page's, and the server's help for a whole encounter. */
+export const RecordedExposureKind = z.enum([...ExposureKind.options, ...LessonHelpKind.options]);
+export type RecordedExposureKind = z.infer<typeof RecordedExposureKind>;
+
 /** Whether a submission was aided: derived from exposures by the record's order, never stored (RFC 2 §3). */
 export const Aid = z.enum(["aided", "no-recorded-aid", "unknown"]);
 export type Aid = z.infer<typeof Aid>;
@@ -277,7 +292,7 @@ export const DueItem = z.object({
   rule: ReviewRule,
   answeredAt: timestamp,
   corrected: z.boolean(),
-  shown: z.array(ExposureKind),
+  shown: z.array(RecordedExposureKind),
   lastSeen: timestamp,
   evidence: z.array(Seq).min(1).max(100),
 });
