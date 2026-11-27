@@ -143,7 +143,10 @@ Practical notes for anyone — human or agent — changing the framework.
 - An agent's command is written only in the bridge's file on its host. `POST /api/settings/agents`
   (and the bridge's `PUT /config` behind it) takes `{ "agents": [{ "name", "enabled" }] }` naming
   every declared agent once, and nothing else; `server/agents.ts` rebuilds the body from those
-  fields so no other field can reach the bridge. Do not add a way to write a command over HTTP.
+  fields so no other field can reach the bridge. The bridge's `PUT /config` also takes
+  `"ask": { "agents": [{ "name", "enabled" }] }` for the ask list, checked the same way, with or
+  without `agents`; a list left out stays as written, and `/health` lists both (`ask` is null with
+  no ask list). The server does not forward `ask` yet. Do not add a way to write a command over HTTP.
 - The bridge token is only ever sent to the address it was saved with. `POST /api/settings/bridge`
   with a new `url` drops a saved token unless the same request gives one, and is refused (409)
   when the token comes from `SCHOOL_BRIDGE_TOKEN`. Every request carrying the token uses

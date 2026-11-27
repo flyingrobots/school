@@ -183,10 +183,11 @@ describe("the ask list in /health and PUT /config", () => {
     writeFileSync(file(), JSON.stringify(config, null, 2) + "\n");
     return readFileSync(file(), "utf8");
   }
-  const two = { timeout_seconds: 60, agents: [{ name: "first", command: "no-such-cli-qqq {prompt}", output: "claude-stream-json" }, { name: "second", command: `${join(dir, "good")} {prompt}`, output: "text" }] };
+  // Built per test: `dir` is set by beforeEach.
+  const two = () => ({ timeout_seconds: 60, agents: [{ name: "first", command: "no-such-cli-qqq {prompt}", output: "claude-stream-json" }, { name: "second", command: `${join(dir, "good")} {prompt}`, output: "text" }] });
 
   test("health lists the ask agents and whether each program was found", async () => {
-    write(two);
+    write(two());
     expect(await (await send("GET", "/health")).json()).toMatchObject({ status: "ok",
       ask: [{ name: "first", enabled: true, found: false }, { name: "second", enabled: true, found: true }] });
   });
@@ -202,16 +203,16 @@ describe("the ask list in /health and PUT /config", () => {
   });
 
   test("golden: PUT /config reorders two ask agents and saves them to bridge.json, the grading list as written", async () => {
-    write(two);
+    write(two());
     const before = JSON.parse(readFileSync(file(), "utf8"));
     const r = await send("PUT", "/config", { ask: { agents: [{ name: "second" }, { name: "first", enabled: false }] } });
     expect(await r.json()).toEqual({ status: "saved", agents: [{ name: "good", enabled: true, found: true }],
       ask: [{ name: "second", enabled: true, found: true }, { name: "first", enabled: false, found: false }] });
-    expect(JSON.parse(readFileSync(file(), "utf8"))).toEqual({ ...before, ask: { timeout_seconds: 60, agents: [two.agents[1], { ...two.agents[0], enabled: false }] } });
+    expect(JSON.parse(readFileSync(file(), "utf8"))).toEqual({ ...before, ask: { timeout_seconds: 60, agents: [two().agents[1], { ...two().agents[0], enabled: false }] } });
   });
 
   test("PUT /config can reorder both lists in one request", async () => {
-    write(two);
+    write(two());
     writeFileSync(file(), JSON.stringify({ ...JSON.parse(readFileSync(file(), "utf8")), agents: [{ name: "good", command: "true" }, { name: "other", command: "true" }] }));
     const r = await send("PUT", "/config", { agents: [{ name: "other" }, { name: "good" }], ask: { agents: [{ name: "second" }, { name: "first" }] } });
     expect((await r.json()).status).toBe("saved");
@@ -220,14 +221,14 @@ describe("the ask list in /health and PUT /config", () => {
   });
 
   test("a grading-only PUT /config keeps the ask list as written", async () => {
-    write(two);
+    write(two());
     const before = JSON.parse(readFileSync(file(), "utf8"));
     expect((await send("PUT", "/config", { agents: [{ name: "good", enabled: false }] })).status).toBe(200);
     expect(JSON.parse(readFileSync(file(), "utf8")).ask).toEqual(before.ask);
   });
 
   test("PUT /config refuses an ask list that does not name every declared ask agent once, by name and enabled only, and leaves the file as written", async () => {
-    const written = write(two);
+    const written = write(two());
     for (const body of [
       { ask: { agents: [] } }, { ask: { agents: [{ name: "second" }] } }, { ask: { agents: [{ name: "first" }, { name: "first" }, { name: "second" }] } },
       { ask: { agents: [{ name: "first" }, { name: "second" }, { name: "new" }] } }, { ask: { agents: [{ name: "first", command: "touch x" }, { name: "second" }] } },
