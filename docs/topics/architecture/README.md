@@ -164,7 +164,10 @@ per entry and no hashing. A file added, removed or renamed changes its folder's 
 entries already listed are enough. On any difference the list computes the digest again: a folder
 whose digest is still the record's is served, with a new fingerprint, and one whose digest is not is
 listed as not served, trusted or not, with a reason naming the install id. So a file changed while
-School runs is never served unverified, and one put back as it was recorded is served again. Nothing
+School runs is checked at each request, and one put back as it was recorded is served again. The
+check is not a lock: a file can change in the small window between the check and the read, which
+takes write access to the course store. A filesystem with coarse timestamps could also miss a
+change made in the same tick as the one before it. Nothing
 writes into the course store yet: the install routes are later tasks of RFC 7.
 
 A request that fails, most often because the record cannot be reached, answers `503` with
