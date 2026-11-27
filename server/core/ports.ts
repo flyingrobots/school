@@ -1,7 +1,7 @@
 // The ports: what School's core needs from the world, defined by the core (RFC 3, §4).
 // Adapters implement them; the core never imports an adapter.
 import type {
-  Aid, AidTracking, Block, CourseInstall, DecisionChoice, DueItem, DueReviewQuery, ReviewNote, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingInput,
+  Aid, AidTracking, Block, CourseInstall, CourseProgress, DecisionChoice, DueItem, DueReviewQuery, ReviewNote, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingInput,
   GradingRecord, InstallResult, InstalledCourse, LastStudied, LatestFeedback, LessonHelp, LessonProgress, Mastery, MasteryQuery, MasteryRollup, MasteryRollupQuery, Outcome, Recorded, RemovalResult, SaveResult, SavedExplanation, StudyDay, Submission, SubmitResult, TrustResult, ViewEvent,
 } from "./model.ts";
 
@@ -58,6 +58,11 @@ export interface LearningRecord {
   chooseCourseTrust(installId: string, trusted: boolean, now: string): Promise<TrustResult>;
   /** Each name's current install, by name. */
   installedCourses(): Promise<InstalledCourse[]>;
+  /**
+   * What the record holds under `course`, whether or not anything serves it now: a course removed
+   * earlier, or configured before, keeps its progress under its name (RFC 7 §5.2).
+   */
+  courseProgress(course: string): Promise<CourseProgress>;
   saveExplanation(s: ExplanationSubmission, now: string): Promise<SaveResult>;
   /** A saved explanation, its block from the snapshot and its latest grading; null if there is none. */
   explanation(submissionId: string): Promise<SavedExplanation | null>;
