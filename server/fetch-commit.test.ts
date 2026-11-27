@@ -461,6 +461,19 @@ describe("fetchCommit: each protection holds on its own", () => {
   });
 });
 
+describe("fetchCommit: a request chooses only the URL, the commit and the staging folder", () => {
+  test("FETCH-29: the test seams carried on a request, as a JSON body spread into it would carry them, are ignored", async () => {
+    // A client naming its own git, port, CA, resolver or limits would choose what runs and where it
+    // connects; those are a second argument that only tests pass, never part of the request.
+    const body = JSON.parse(JSON.stringify({
+      url: url("course.git"), commit: second, staging: staging(),
+      git: "/nonexistent/git", limits: { packBytes: 1, gitMs: 1 }, network: { ports: [1], caFile: "/nonexistent/ca.pem" },
+    })) as FetchRequest;
+    const got = await fetchCommit({ ...body }, { network: network(good.port!) });
+    expect(got).toEqual({ ok: true, repository: join(body.staging, "repo.git"), commit: second });
+  });
+});
+
 describe("isPublicAddress", () => {
   // Oracle: the IANA IPv4 and IPv6 Special-Purpose Address Registries (RFC 6890 and its updates),
   // RFC 6598 for CGNAT, and RFC 4291 §2.4 for IPv6's global unicast range 2000::/3.
