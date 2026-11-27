@@ -29,16 +29,30 @@ export const OWNER = "school_owner";
  * What every migration relies on and none can create as the owner: the two roles (cluster-wide,
  * so created only if absent) and the schema the owner builds in. Idempotent; runs in each pending
  * file's transaction, as the connecting role, before the switch to the owner.
+ *
+ * The runner's lock covers one database and the roles the whole cluster, so a job on another
+ * database can create a role between the check and the CREATE (flyingrobots/school#356). Its
+ * CREATE then waits for that job's transaction and fails, 23505 on pg_authid's name index once the
+ * other commits, or 42710 if it had already: either way the role now exists, which is all this
+ * needs, so both are caught and nothing else is.
  */
 export const BOOTSTRAP = `
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'school_owner') THEN
-    CREATE ROLE school_owner NOLOGIN;
+    BEGIN
+      CREATE ROLE school_owner NOLOGIN;
+    EXCEPTION WHEN unique_violation OR duplicate_object THEN
+      NULL;
+    END;
   END IF;
   -- NOLOGIN here; a deployment grants it LOGIN and a password (docs/working-notes.md).
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'school_app') THEN
-    CREATE ROLE school_app NOLOGIN;
+    BEGIN
+      CREATE ROLE school_app NOLOGIN;
+    EXCEPTION WHEN unique_violation OR duplicate_object THEN
+      NULL;
+    END;
   END IF;
 END
 $$;
