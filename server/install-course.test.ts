@@ -8,7 +8,7 @@
 // Oracle: the issue's sections 2b, 2d and 2e, and RFC 7 §4, §5.1, §5.2 and §6.
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { postgresRecord } from "./adapters/postgres.ts";
@@ -313,14 +313,47 @@ describe("installPreviewed: a preview changed after it was checked", () => {
     expect({ got: got.status === "refused" ? got.reason : got.status, courses: entries(join(store, "courses")) }).toEqual({ got: "over-limit", courses: [] });
   });
 
-  test("INSTALL-21: a preview.json changed to name another URL is refused as changed", async () => {
+  // A process that can write the store could write a preview.json; School does not read one.
+  test("INSTALL-21: a preview.json put in staging naming another https URL and commit is not read: the row names what the preview fetched", async () => {
     const store = newStore();
     const preview = await stage(store);
     const file = join(store, "staging", preview, "preview.json");
-    writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), url: "http://evil.example/x.git" }));
+    const was = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+    writeFileSync(file, JSON.stringify({ ...was, url: "https://evil.example/other.git", commit: "f".repeat(40) }));
     const got = await installPreviewed({ preview, name: "binary-21" }, sources(store));
-    expect({ got: got.status === "refused" ? got.reason : got.status, courses: entries(join(store, "courses")), row: await rowFor("binary-21") })
-      .toEqual({ got: "changed", courses: [], row: null });
+    const row = await rowFor("binary-21");
+    expect({ got: got.status, url: row?.url, commit: row?.commit }).toEqual({ got: "installed", url, commit: good });
+  });
+
+  // The swap lands after every check of staging and before the move: the install id is asked for between them.
+  test("INSTALL-29: a course/ swapped for a symlink just before the move is refused, and what it points at is left alone", async () => {
+    const store = newStore();
+    const preview = await stage(store);
+    const course = join(store, "staging", preview, "course");
+    const outside = join(root, `outside-swap-${preview}`);
+    cpSync(course, outside, { recursive: true });
+    const modes = () => files(outside).sort().map((f) => [f, statSync(join(outside, f)).mode & 0o777]);
+    const before = modes();
+    const id = "11111111-1111-4111-8111-aaaaaaaaaaaa";
+    const got = await installPreviewed({ preview, name: "binary-29" }, sources(store, {
+      newId: () => { rmSync(course, { recursive: true }); symlinkSync(outside, course); return id; },
+    }));
+    expect({ got: got.status === "refused" ? got.reason : got.status, modes: modes(), courses: entries(join(store, "courses")), row: await rowFor("binary-29") })
+      .toEqual({ got: "changed", modes: before, courses: [], row: null });
+  });
+
+  test("INSTALL-30: a lesson replaced in staging by a hard link to an outside file with the same bytes is refused, and that file's mode is left alone", async () => {
+    const store = newStore();
+    const preview = await stage(store);
+    const lesson = join(store, "staging", preview, "course", "lessons", "0001-places-worth-twice.json");
+    const outside = join(root, `outside-link-${preview}.json`);
+    writeFileSync(outside, readFileSync(lesson));
+    rmSync(lesson);
+    linkSync(outside, lesson);
+    const mode = statSync(outside).mode & 0o777;
+    const got = await installPreviewed({ preview, name: "binary-30" }, sources(store));
+    expect({ got: got.status === "refused" ? got.reason : got.status, mode: statSync(outside).mode & 0o777, courses: entries(join(store, "courses")), row: await rowFor("binary-30") })
+      .toEqual({ got: "changed", mode, courses: [], row: null });
   });
 });
 
@@ -387,6 +420,18 @@ describe("sweepCourses: what start deletes from courses/", () => {
     mkdirSync(join(store, "courses"));
     symlinkSync(outside, join(store, "courses", A));
     sweepCourses(store, new Set([A]));
+    expect({ courses: entries(join(store, "courses")), outside: entries(outside) }).toEqual({ courses: [], outside: ["keep"] });
+  });
+
+  test("INSTALL-31: a stray folder holding a symlink to an outside folder is deleted, and what it points at is left alone", () => {
+    const store = newStore();
+    const stray = join(installFolder(store, B), "reference");
+    mkdirSync(stray, { recursive: true });
+    const outside = join(root, `outside-sweep-${stores}`);
+    mkdirSync(outside);
+    writeFileSync(join(outside, "keep"), "keep");
+    symlinkSync(outside, join(stray, "out"));
+    sweepCourses(store, new Set());
     expect({ courses: entries(join(store, "courses")), outside: entries(outside) }).toEqual({ courses: [], outside: ["keep"] });
   });
 
