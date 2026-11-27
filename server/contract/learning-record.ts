@@ -1438,6 +1438,40 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     expect(await r.lessonProgress("bells")).toEqual({ l1: ["q1"] });
   });
 
+  // ---- What the record holds under a name (RFC 7 §5.2; flyingrobots/school#237) -----------------
+
+  t("course progress: a name nothing was ever filed under has none", async (r) => {
+    expect(await r.courseProgress("bells")).toEqual({ encounters: 0, answers: 0, explanations: 0, views: 0 });
+  });
+
+  t("course progress: counts the encounters, answers, explanations and views filed under the name, and none of another name's", async (r) => {
+    const e1 = await r.openEncounter({ course: "bells", lesson: "l1", aidTracking: null, page: lesson("l1", [quiz("q1"), explain]), now: at(0) });
+    const e2 = await r.openEncounter({ course: "bells", lesson: "l2", aidTracking: null, page: lesson("l2", [quiz("q2")]), now: at(1000) });
+    await r.submit({ submissionId: uuid(), encounterId: e1.id, blockId: "q1", choiceId: "wrong", ms: 1 }, at(2000));
+    await r.submit({ submissionId: uuid(), encounterId: e1.id, blockId: "q1", choiceId: "right", ms: 1 }, at(3000));
+    await r.submit({ submissionId: uuid(), encounterId: e2.id, blockId: "q2", choiceId: "right", ms: 1 }, at(4000));
+    await r.saveExplanation({ submissionId: uuid(), encounterId: e1.id, blockId: "e1", text: "Because.", ms: 1 }, at(5000));
+    await r.recordView({ course: "bells", lesson: "l1" }, at(6000));
+    const other = await r.openEncounter({ course: "aion", lesson: "l1", aidTracking: null, page: lesson("l1", [quiz("q1")]), now: at(7000) });
+    await r.submit({ submissionId: uuid(), encounterId: other.id, blockId: "q1", choiceId: "right", ms: 1 }, at(8000));
+    await r.recordView({ course: "aion", lesson: "l1" }, at(9000));
+    // Oracle: the writes above, counted by hand: two encounters, three answers, one explanation, one view under bells.
+    expect(await r.courseProgress("bells")).toEqual({ encounters: 2, answers: 3, explanations: 1, views: 1 });
+  });
+
+  t("course progress: a view alone is progress under its name", async (r) => {
+    await r.recordView({ course: "bells", lesson: "l1" }, at(0));
+    expect(await r.courseProgress("bells")).toEqual({ encounters: 0, answers: 0, explanations: 0, views: 1 });
+  });
+
+  t("course progress: a removed install's progress stays under its name", async (r) => {
+    await r.installCourse(gitInstall(), at(0));
+    const e = await r.openEncounter({ course: "bells", lesson: "l1", aidTracking: null, page: lesson("l1", [quiz("q1")]), now: at(1000) });
+    await r.submit({ submissionId: uuid(), encounterId: e.id, blockId: "q1", choiceId: "right", ms: 1 }, at(2000));
+    await r.removeInstalledCourse("bells", at(3000));
+    expect(await r.courseProgress("bells")).toEqual({ encounters: 1, answers: 1, explanations: 0, views: 0 });
+  });
+
   t("installs: removing a name with no current install is refused, never installed or already removed", async (r) => {
     expect(await r.removeInstalledCourse("bells", at(0))).toEqual({ status: "not-installed" });
     await r.installCourse(gitInstall(), at(1000));
