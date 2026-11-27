@@ -7,7 +7,7 @@
 // docs/topics/architecture/test-plan.md lists these by ID.
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { postgresRecord } from "./adapters/postgres.ts";
@@ -278,6 +278,25 @@ describe("sweepStaging", () => {
     const s = sources();
     staged(s.store, "expired", T0 - 1);
     await preview({ url: url("counting-in-binary.git"), commit: "no-such-branch" }, s);
+    expect(tree(join(s.store, "staging"))).toEqual([]);
+  });
+
+  test("PREVIEW-17: staging/ that is a symlink is not swept, and what it points at is left alone", () => {
+    const { store } = sources();
+    const outside = join(root, `outside-${++n}`);
+    mkdirSync(join(outside, "expired", "course"), { recursive: true });
+    writeFileSync(join(outside, "expired", "preview.json"), JSON.stringify({ url: "https://example.com/c.git", commit: "a".repeat(40), expires: new Date(T0 - 1).toISOString() }));
+    symlinkSync(outside, join(store, "staging"));
+    sweepStaging(store, T0);
+    sweepStaging(store, T0, true);
+    expect(tree(outside)).toEqual(["expired", "expired/course", "expired/preview.json"]);
+  });
+});
+
+describe("previewInstall: a failure that is not a refusal", () => {
+  test("PREVIEW-18: a preview that throws after the course passed its check still deletes its staging, and the error reaches the caller", async () => {
+    const s = sources({ progress: async () => { throw new Error("record down"); } });
+    await expect(preview({ url: url("counting-in-binary.git"), commit: good }, s)).rejects.toThrow("record down");
     expect(tree(join(s.store, "staging"))).toEqual([]);
   });
 });
