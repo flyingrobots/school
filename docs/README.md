@@ -29,6 +29,9 @@ Start here. Each page has one job; this page routes to all of them.
 | [RFC 4: Publishing courses](rfc/0004-publishing-courses.md) | Decided 2026-11-26 as the Library: a public index of course repositories and a static catalog built from it; School stays private. |
 | [RFC 5: Mastery that fades](rfc/0005-mastery-that-fades.md) | Decided 2026-11-26: a per-quiz mastery measure with a growing half-life, derived by a database function, and one added due-review rule for quizzes that have faded. |
 | [RFC 6: Ask about a passage](rfc/0006-ask-about-a-passage.md) | Decided 2026-11-26: select text in a lesson and ask an agent about it through the bridge; answers from the course's sources, streamed, saved to the record, and every question counted as aid for the encounter. |
+| [RFC 7: Installing courses](rfc/0007-installing-courses.md) | Decided 2026-11-26: a course store of write-once installs, added from Settings by git URL at a pinned commit or by git bundle, checked as hostile input and recorded in the database. |
+| [RFC 8: Explain mode](rfc/0008-explain-mode.md) | Decided 2026-11-26: Explain more on a section or block, pitched from the learner's recorded mastery (RFC 5) through the ask path (RFC 6), and recorded as help. |
+| [RFC 9: Authoring a course in the browser](rfc/0009-authoring-in-the-browser.md) | Decided 2026-11-26: a confined agent drafts a course change from a request; the author previews the diff and accepts it as a new write-once install. |
 | [ADRs](adr/) | The decisions, in order, with what each cost. |
 
 Living pages describe only what exists on the default branch. Proposals live in RFCs until they
