@@ -67,7 +67,35 @@ const LONE_SURROGATE =
   /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g
 const wellFormed = (s: string) => s.replace(LONE_SURROGATE, "\uFFFD")
 
-const VAR = /var\(\s*(--[\w-]+)\s*(?:,([^)]*))?\)/g
+/**
+ * `value` with each `var(--name)` or `var(--name, fallback)` replaced by `token(name)`, or else
+ * by its fallback, resolved the same way, or else by currentColor. Parentheses are matched, so a
+ * fallback may hold `rgb(1, 2, 3)` or another `var()`. An unclosed `var(` is left as written.
+ */
+function resolveVars(value: string, token: (name: string) => string): string {
+  let out = ""
+  let from = 0
+  for (;;) {
+    const at = value.indexOf("var(", from)
+    if (at === -1) return out + value.slice(from)
+    let depth = 0
+    let end = -1
+    for (let i = at + 3; i < value.length && end === -1; i++) {
+      if (value[i] === "(") depth++
+      else if (value[i] === ")" && --depth === 0) end = i
+    }
+    if (end === -1) return out + value.slice(from)
+    const inner = value.slice(at + 4, end)
+    const comma = inner.indexOf(",")
+    const name = (comma === -1 ? inner : inner.slice(0, comma)).trim()
+    const fallback = comma === -1 ? "" : inner.slice(comma + 1).trim()
+    const set = /^--[\w-]+$/.test(name) ? token(name).trim() : ""
+    out +=
+      value.slice(from, at) +
+      (set || (fallback && resolveVars(fallback, token)) || "currentColor")
+    from = end + 1
+  }
+}
 
 /**
  * The figure as a `data:image/svg+xml` URL for an <img>, or null unless it is exactly one <svg>.
@@ -83,14 +111,7 @@ export function figureImage(
   for (const el of [svg, ...svg.querySelectorAll("*")])
     for (const a of [...el.attributes])
       if (a.value.includes("var("))
-        el.setAttribute(
-          a.name,
-          a.value.replace(
-            VAR,
-            (_, name: string, fallback?: string) =>
-              token(name).trim() || fallback?.trim() || "currentColor"
-          )
-        )
+        el.setAttribute(a.name, resolveVars(a.value, token))
   // The serialiser declares the SVG namespace itself, so the image parses as SVG.
   return (
     "data:image/svg+xml," +

@@ -143,6 +143,12 @@ function within(inner: string, outer: string): boolean {
 export type Stat = (path: string) => { dev: number | bigint; ino: number | bigint };
 
 /**
+ * School's own stat. It asks for bigint fields: a Number rounds an inode above 2^53, so two
+ * folders could share an identity, or one folder appear as two.
+ */
+export const systemStat: Stat = (path) => statSync(path, { bigint: true });
+
+/**
  * The identity of `p` (null when it does not exist yet) and of every ancestor that exists, as
  * "dev:ino" strings. Two names for one folder, such as one directory bind-mounted twice into a
  * container, resolve to two paths but share an identity (flyingrobots/school#280).
@@ -154,7 +160,8 @@ function lineage(p: string, stat: Stat): { self: string | null; all: Set<string>
   for (let first = true; ; first = false) {
     try {
       const s = stat(at);
-      const id = `${s.dev}:${s.ino}`;
+      // Exact integers either way: a bigint prints every digit, and an injected Number is taken as given.
+      const id = `${BigInt(s.dev)}:${BigInt(s.ino)}`;
       all.add(id);
       if (first) self = id;
     } catch (e) {
@@ -174,7 +181,7 @@ function sameTree(a: string, b: string, stat: Stat): boolean {
 }
 
 /** `stat` is the filesystem's identity; tests give a fake one, since aliases need a bind mount. */
-export function parseConfig(env: Record<string, string | undefined>, frameworkDefault: string, stat: Stat = statSync): Config {
+export function parseConfig(env: Record<string, string | undefined>, frameworkDefault: string, stat: Stat = systemStat): Config {
   const cwd = process.cwd();
   const framework = abs(env.SCHOOL_ROOT ?? frameworkDefault, cwd);
   // SCHOOL_COURSES registers many; SCHOOL_COURSE stays accepted as a single unnamed course,
