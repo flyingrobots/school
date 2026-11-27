@@ -5,7 +5,7 @@
 // contract checks on PGlite and Bun.SQL (server/contract/learning-record.ts); here it is a list the
 // test changes, so a refresh can be seen without a database.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseConfig, type Config } from "./config.ts";
@@ -23,7 +23,16 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "school-registry-"));
   logged = [];
 });
-afterEach(() => rmSync(root, { recursive: true, force: true }));
+afterEach(() => {
+  const unlock = (dir: string) => {
+    try {
+      chmodSync(dir, 0o755);
+      for (const e of readdirSync(dir, { withFileTypes: true })) if (e.isDirectory()) unlock(join(dir, e.name));
+    } catch {}
+  };
+  unlock(root);
+  rmSync(root, { recursive: true, force: true });
+});
 
 /** A course folder with a course.json titled `title` and one lesson. */
 function courseAt(dir: string, title: string): string {
@@ -191,5 +200,83 @@ describe("an installed folder's content digest", () => {
     mkdirSync(join(dir, "lessons"), { recursive: true });
     symlinkSync("/etc/hosts", join(dir, "lessons", "0001.json"));
     expect(contentDigest(dir)).toEqual({ ok: false, path: "lessons/0001.json", message: expect.stringContaining("not a regular file") });
+  });
+});
+
+// Oracle: the review of #320 (F-1, F-3, F-5): a filesystem failure while verifying one install makes
+// that install unavailable and nothing else; a refusal for altered files is remembered; a reason
+// names the install by id and never an absolute path of the store.
+describe.skipIf(process.getuid?.() === 0)("an install that cannot be read", () => {
+  const reasonOf = (r: Awaited<ReturnType<ReturnType<typeof registryOf>["current"]>>, name: string) => {
+    const f = r.find(name);
+    return f?.kind === "unavailable" ? f.course.reason : "";
+  };
+
+  test("an unreadable subfolder at start lists that install as unavailable and still serves the others", async () => {
+    const own = courseAt(join(root, "own"), "Own");
+    const good = installed("good", "Good");
+    const bad = installed("bad", "Bad");
+    chmodSync(join(installFolder(join(root, "store"), bad.id), "lessons"), 0o000);
+    const r = await registryOf(configWith({ SCHOOL_COURSES: `own=${own}` }), [good, bad]).start();
+    expect(summary(r)).toEqual([
+      { name: "bad", title: "Bad", trusted: false, kind: "unavailable" },
+      { name: "good", title: "Good", trusted: false, kind: "served" },
+      { name: "own", title: "Own", trusted: true, kind: "served" },
+    ]);
+  });
+
+  test("an unreadable subfolder appearing after start leaves the other courses served, and is not remembered", async () => {
+    const own = courseAt(join(root, "own"), "Own");
+    const rows = [installed("bells", "Bells")];
+    const registry = registryOf(configWith({ SCHOOL_COURSES: `own=${own}` }), rows);
+    await registry.start();
+    rows.push(installed("late", "Late"));
+    const lessons = join(installFolder(join(root, "store"), rows[1]!.id), "lessons");
+    chmodSync(lessons, 0o000);
+    const during = await registry.current();
+    chmodSync(lessons, 0o755);
+    const after = await registry.current();
+    expect({ during: summary(during).map((s) => `${s.name}:${s.kind}`), after: summary(after).map((s) => `${s.name}:${s.kind}`) }).toEqual({
+      during: ["bells:served", "late:unavailable", "own:served"],
+      after: ["bells:served", "late:served", "own:served"],
+    });
+  });
+
+  test("an unreadable subfolder's reason names the install and what failed, not the store's path", async () => {
+    const bad = installed("bad", "Bad");
+    chmodSync(join(installFolder(join(root, "store"), bad.id), "lessons"), 0o000);
+    const reason = reasonOf(await registryOf(configWith({}), [bad]).start(), "bad");
+    expect(reason).toContain(bad.id);
+    expect(reason).not.toContain(root);
+  });
+});
+
+describe("a reason for an install that is not served", () => {
+  const reasonOf = (r: Awaited<ReturnType<ReturnType<typeof registryOf>["current"]>>, name: string) => {
+    const f = r.find(name);
+    return f?.kind === "unavailable" ? f.course.reason : "";
+  };
+
+  test("names the install by id and never an absolute path, for a missing folder and for changed files", async () => {
+    const gone = installed("gone", "Gone");
+    const changed = installed("changed", "Changed");
+    rmSync(installFolder(join(root, "store"), gone.id), { recursive: true });
+    writeFileSync(join(installFolder(join(root, "store"), changed.id), "lessons", "0001.json"), LESSON.replace("Which?", "Which one?"));
+    const r = await registryOf(configWith({}), [gone, changed]).start();
+    const [g, c] = [reasonOf(r, "gone"), reasonOf(r, "changed")];
+    expect({ g: [g.includes(gone.id), g.includes(root)], c: [c.includes(changed.id), c.includes(root)] }).toEqual({ g: [true, false], c: [true, false] });
+  });
+
+  // F-3: an altered folder put back after a missing read stays unavailable (the digest is checked again).
+  test("an install folder deleted and put back altered stays unavailable", async () => {
+    const row = installed("bells", "Bells");
+    const folder = installFolder(join(root, "store"), row.id);
+    const registry = registryOf(configWith({}), [row]);
+    expect((await registry.start()).served.length).toBe(1);
+    rmSync(folder, { recursive: true });
+    expect((await registry.current()).served).toEqual([]);
+    courseAt(folder, "Bells");
+    writeFileSync(join(folder, "lessons", "0001.json"), LESSON.replace("Which?", "Which one?"));
+    expect(summary(await registry.current())).toEqual([{ name: "bells", title: "Bells", trusted: false, kind: "unavailable" }]);
   });
 });

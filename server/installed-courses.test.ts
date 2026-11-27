@@ -4,7 +4,7 @@
 // `lessons: null` and its reason, and not served; a name both configured and installed stops start.
 // Oracle: the issue's sections 2b and 2d, and RFC 7 §7 for the shape of a course not served.
 import { afterAll, describe, expect, test } from "bun:test";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDatabase } from "./adapters/database.ts";
@@ -17,6 +17,13 @@ import { migratedRecord, NotStarted, startSchool, timeout, type Started } from "
 const roots: string[] = [];
 const servers: Started[] = [];
 afterAll(async () => {
+  const unlock = (dir: string) => {
+    try {
+      chmodSync(dir, 0o755);
+      for (const e of readdirSync(dir, { withFileTypes: true })) if (e.isDirectory()) unlock(join(dir, e.name));
+    } catch {}
+  };
+  for (const r of roots) unlock(r);
   for (const s of servers) {
     s.proc.kill();
     await s.proc.exited;
@@ -125,6 +132,24 @@ describe("installed courses (PGlite)", () => {
       .toEqual({ lessons: null, reason: expect.stringContaining("changed since it was installed"), reference: [], lesson: 404, page: 404 });
   }, timeout(1));
 
+  // Oracle: the review of #320 (F-1): one install's unreadable folder makes that course unavailable only.
+  test.skipIf(process.getuid?.() === 0)("an install with an unreadable subfolder at start is unavailable, and School starts and serves the configured course", async () => {
+    const root = scratch();
+    const own = courseAt(join(root, "own"), "Own");
+    const bad = installInStore(join(root, "store"), "bad", "Bad");
+    chmodSync(join(installFolder(join(root, "store"), bad.id), "lessons"), 0o000);
+    const s = await launch(root, { SCHOOL_COURSES: `own=${own}`, SCHOOL_DATABASE_URL: await pgliteWith(join(root, "record"), [bad]) });
+    const list = await listed(s);
+    const own200 = (await fetch(`${s.url}/api/courses/own`)).status;
+    expect({ list, own200 }).toEqual({
+      list: [
+        { name: "bad", title: "Bad", trusted: false, lessons: null, lessonsError: expect.not.stringContaining(root) },
+        { name: "own", title: "Own", trusted: true, lessons: 1, lessonsError: undefined },
+      ],
+      own200: 200,
+    });
+  }, timeout(1));
+
   test("a name both configured and installed stops start with exit 2, naming both", async () => {
     const root = scratch();
     const own = courseAt(join(root, "own"), "Own");
@@ -149,5 +174,17 @@ describe.skipIf(TEST_POSTGRES_URL === undefined)("installed courses on a real Po
     const bells = installInStore(join(root, "store"), "bells", "Bells");
     await postgresRecord(record.sql).installCourse(bells, "2026-11-26T00:00:00.000Z");
     expect({ before, after: await listed(s) }).toEqual({ before: [], after: [{ name: "bells", title: "Bells", trusted: false, lessons: 1, lessonsError: undefined }] });
+  }, timeout(1) + 30_000);
+
+  test.skipIf(process.getuid?.() === 0)("an unreadable subfolder appearing while School runs leaves every other course route at 200 (Bun.SQL)", async () => {
+    const root = scratch();
+    const own = courseAt(join(root, "own"), "Own");
+    const record = await fresh();
+    const s = await launch(root, { SCHOOL_COURSES: `own=${own}`, SCHOOL_DATABASE_URL: record.appUrl });
+    const bad = installInStore(join(root, "store"), "bad", "Bad");
+    chmodSync(join(installFolder(join(root, "store"), bad.id), "lessons"), 0o000);
+    await postgresRecord(record.sql).installCourse(bad, "2026-11-26T00:00:00.000Z");
+    const statuses = await Promise.all(["/api/courses", "/api/courses/own", "/api/courses/bad", "/api/courses/own/lessons/l1"].map(async (p) => (await fetch(`${s.url}${p}`)).status));
+    expect(statuses).toEqual([200, 200, 200, 200]);
   }, timeout(1) + 30_000);
 });
