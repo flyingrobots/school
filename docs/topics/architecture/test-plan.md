@@ -31,6 +31,7 @@ ask list in the test's process; the `bridge/ask-route.test.ts` cases run the bri
 | ASK-8 | Hang-up | A caller that hangs up stops its agent, and the next question runs | implemented | `bridge/ask-route.test.ts`: `a caller that hangs up stops the agent, which frees the ask queue for the next question`; `bridge/ask.test.ts`: `a caller that goes away stops the agent, and the reply ends as failed` |
 | ASK-9 | Other output kinds | `text`, `claude-json`, `{output_file}` and stream-json without partial messages answer as one delta at the end; no answer at all hands over | implemented | `bridge/ask.test.ts`: `an agent with output text still answers, as one delta at the end, with no usage`, and the four cases after it |
 | ASK-10 | Configuration | The `ask` list is optional, its timeout defaults to 90 s, it is checked like the grading list, and the example file loads | implemented | `bridge/ask.test.ts`: `the ask list is optional, its own timeout defaults to 90 s, and it is checked like the grading list`; `the example configuration loads, its first ask agent streaming` |
+| ASK-10a | Settings | `/health` lists the ask agents with `found` (`ask: null` with no ask list) and reports an empty ask list as `misconfigured` with its reason. `PUT /config` reorders and switches the ask list as it does the grading list, alone or with it, and saves it to bridge.json; a list left out stays as written; a body that misses, repeats or adds an agent, sends any field but `name` and `enabled`, or names an ask list the file does not declare is refused 400 and the file is untouched | implemented | `bridge/bridge.test.ts`: `the ask list in /health and PUT /config` (8 cases, flyingrobots/school#287) |
 | ASK-11 | Refusals | No token 401, not JSON 415 or 400, a bad prompt or deadline 400, a GET 405, no agent run; no ask list is one failed `end` line naming the file | implemented | `bridge/ask-route.test.ts`: `POST /ask refuses a request without the token, a body that is not JSON, and a bad prompt or deadline`; `with no ask list, POST /ask is one failed end line naming the configuration file` |
 | ASK-12 | Retry mid-stream | After a delta, an `api_retry` line or a second `message_start` kills the agent and the reply fails with only the first answer's deltas; before any delta a retry is ignored. Includes a stream recorded from Claude Code 2.1.323 (`bridge/testing/fixtures/claude-retry-stream.jsonl`) | implemented | `bridge/ask.test.ts`: `a retry after the first delta ...`, `a second message_start alone ...`, `a retry before any delta is harmless ...`, `a stream recorded from Claude Code 2.1.323 ...` |
 | ASK-13 | Escaped child | A child outside the agent's process group that holds the pipes does not keep the reply waiting: the readers are cancelled 500 ms after the kill | implemented | `bridge/ask.test.ts`: `a child that escaped the process group ...` (`bridge/testing/escaping-agent.ts`) |
@@ -57,6 +58,18 @@ ask list in the test's process; the `bridge/ask-route.test.ts` cases run the bri
 
 _Table 2. The course store's cases. STORE-9 reads the Dockerfile; no test builds the image._
 
+## Stopping the bridge (flyingrobots/school#286)
+
+Each agent leads its own process group, so the signal that stops the bridge never reaches it. The
+cases in `bridge/stop.test.ts` run the bridge as a real process with fake agents that start
+background children and hang; an agent process counts as left if `ps` shows it running, not a
+zombie, 2 s after the bridge exits.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| STOP-1 | Golden | One hanging grading agent and its child: after SIGTERM, and after SIGINT, neither is left | implemented | `SIGTERM with one hanging grading agent: no agent process is left once the bridge exits`; the same for SIGINT |
+| STOP-2 | Nothing running | SIGTERM or SIGINT with no agent running: exit 0, "stopped" ([the bridge's exit codes](../program-output/README.md#the-bridge)) | implemented | `SIGTERM with no agent running: the bridge exits 0`; the same for SIGINT |
+| STOP-3 | Many agents | A hanging grading and a hanging question at once, each agent with three children: none of the 8 processes is left | implemented | `SIGTERM with a hanging grading and a hanging question, each agent with three children: no agent process is left` |
 ## The course list (flyingrobots/school#234)
 
 [The course list](README.md#the-course-list), RFC 7 task 4. The oracle is the issue's sections 2b and 2d and RFC 7 §7: configured and installed courses are served together, an install's trust comes from the record, a name in both places stops start with exit 2, and an install whose folder is missing or altered is listed with `lessons: null` and not served. The registry cases stand a list in for the `installedCourses` port, whose answers the LearningRecord contract checks on both drivers.

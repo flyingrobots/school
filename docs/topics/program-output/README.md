@@ -233,7 +233,9 @@ the question nor the answer.
 A consumer must go by the exit status when a stream ends without the line it expected.
 
 - **A signal kill.** `SIGKILL` ends any of them with no last line. The backup job handles `TERM`
-  and `INT` (a `stopped` line); the gate and the bridge install no handler for them.
+  and `INT` (a `stopped` line). The bridge handles them too, with no last line: it kills every
+  running agent's process group, gradings and questions alike, then exits 0. The gate installs no
+  handler for them.
 - **The backup job's own tools.** The script redirects or captures the stderr of `pg_dump`, `ln`,
   `mktemp`, `chmod`, `ls` and `rm`. If `sh` itself, `od`, `sed`, `awk`, `tr`, `date` or `wc` failed
   (a broken image), their own messages would reach stderr as raw text. A failed `rm` during the
