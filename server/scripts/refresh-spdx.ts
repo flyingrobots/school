@@ -1,8 +1,9 @@
 // Regenerates the vendored SPDX lists (flyingrobots/school#274): server/spdx-license-ids.ts from the
 // `spdx-license-ids` package and server/spdx-exception-ids.ts from `spdx-exceptions` (both copied, not
 // dependencies: ADR 2). It fetches with `npm pack` into a scratch directory under $TMPDIR, never into
-// the repository, and writes only those two files, both or neither (each goes to a temporary file
-// beside it first, and the two are then renamed into place).
+// the repository, and writes only those two files and NOTICE (the versions it records), all or none: each
+// goes to a temporary file beside it first, each original is then renamed aside, and the new files are
+// renamed into place, so undoing a failure takes only renames and a full disk cannot leave a half-update.
 //
 //   bun server/scripts/refresh-spdx.ts [--license-ids <version>] [--exceptions <version>]
 //
@@ -163,39 +164,54 @@ function checkLicense(fetched: Release, path: string): void {
   }
 }
 
-/** Writes each `[path, text]` to a temporary file beside it, then renames them all into place; on a failure the files are as they were. */
+/** `notice` with the version recorded for each of `releases` replaced by the release's own; a Refusal when NOTICE names a package at no version. */
+export function updateNotice(notice: string, releases: readonly Release[]): string {
+  let text = notice;
+  for (const r of releases) {
+    const named = new RegExp(`(${r.package}\\s+)\\d+\\.\\d+\\.\\d+`, "g");
+    if (!named.test(text)) throw new Refusal(`NOTICE names no version of ${r.package}, so it cannot be updated to ${r.version}; fix NOTICE first, then run this again`);
+    text = text.replace(named, `$1${r.version}`);
+  }
+  return text;
+}
+
+/**
+ * Writes each `[path, text]` to a temporary file beside it, then moves each original aside by rename and
+ * renames the new files into place; on a failure the originals are renamed back, so recovery writes nothing
+ * and a full disk cannot leave the set half-updated. Only the temporary files are written; the rest is renames.
+ */
 function writeAll(files: readonly (readonly [string, string])[], fs: Deps["fs"]): void {
   const temps = files.map(([path]) => `${path}.tmp-${process.pid}`);
-  const originals = files.map(([path]) => readFileSync(path, "utf8"));
-  const renamed: number[] = [];
+  const asides = files.map(([path]) => `${path}.back-${process.pid}`);
+  const movedAside: number[] = [];
   try {
     files.forEach(([, text], i) => fs.writeFileSync(temps[i]!, text));
     files.forEach(([path], i) => {
-      fs.renameSync(temps[i]!, path);
-      renamed.push(i);
+      fs.renameSync(path, asides[i]!);
+      movedAside.push(i);
     });
+    files.forEach(([path], i) => fs.renameSync(temps[i]!, path));
   } catch (e) {
-    for (const i of renamed) {
-      const back = `${files[i]![0]}.back-${process.pid}`;
-      fs.writeFileSync(back, originals[i]!);
-      fs.renameSync(back, files[i]![0]);
-    }
+    // Renaming an original back over whatever is at its path (a new file, or nothing) restores it.
+    for (const i of movedAside) fs.renameSync(asides[i]!, files[i]![0]);
     throw e;
   } finally {
     for (const path of temps) fs.rmSync(path, { force: true });
-    for (const [path] of files) fs.rmSync(`${path}.back-${process.pid}`, { force: true });
+    for (const path of asides) fs.rmSync(path, { force: true });
   }
 }
 
-/** Fetches both packages, checks their licences against the recorded ones, and writes both lists or neither. */
+/** Fetches both packages, checks their licences against the recorded ones, and writes both lists and NOTICE, or none of them. */
 export function refresh(versions: Record<string, string | null>, deps: Deps): { licenses: Release; exceptions: Release } {
   const licenses = deps.fetch("spdx-license-ids", versions["--license-ids"] ?? null, deps.scratch);
   const exceptions = deps.fetch("spdx-exceptions", versions["--exceptions"] ?? null, deps.scratch);
   checkLicense(licenses.release, deps.paths.licenses);
   checkLicense(exceptions.release, deps.paths.exceptions);
-  // Nothing is written until both lists have been fetched, read and checked.
+  const notice = updateNotice(readFileSync(deps.paths.notice, "utf8"), [licenses.release, exceptions.release]);
+  // Nothing is written until both lists have been fetched, read and checked, and NOTICE has been updated in memory.
   writeAll(
     [
+      [deps.paths.notice, notice],
       [deps.paths.licenses, renderLicenseIds(licenses.release, strings(join(licenses.dir, "index.json")), strings(join(licenses.dir, "deprecated.json")))],
       [deps.paths.exceptions, renderExceptionIds(exceptions.release, strings(join(exceptions.dir, "index.json")))],
     ],
@@ -219,7 +235,7 @@ function main(argv: string[]): void {
     const paths = { licenses: join(import.meta.dir, "..", "spdx-license-ids.ts"), exceptions: join(import.meta.dir, "..", "spdx-exception-ids.ts"), notice: join(import.meta.dir, "..", "..", "NOTICE") };
     const { licenses, exceptions } = refresh(versions, { fetch: fetchRelease, fs: nodeFs, paths, scratch });
     console.log(`spdx-license-ids ${licenses.version} (${licenses.published}), spdx-exceptions ${exceptions.version} (${exceptions.published}) written.`);
-    console.log(`Update the versions named in docs/working-notes.md and docs/topics/course-format/README.md to match.`);
+    console.log(`NOTICE now names those versions. Update the versions named in docs/working-notes.md and docs/topics/course-format/README.md to match.`);
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
