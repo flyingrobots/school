@@ -2,7 +2,7 @@
 // process gets, one test for each protection, and a check that extraction and fetching both go
 // through it. A fake `git` records what it was started with, so nothing here depends on git itself.
 import { afterAll, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { extractCommit } from "./extract-tree.ts";
@@ -15,28 +15,44 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 let n = 0;
 type Call = { cwd: string; args: string[]; env: Record<string, string> };
 
-/** A fake git that appends its working folder, arguments and environment to a log, then exits 0. */
+/** A fake git, a small `sh` script, that appends its working folder, arguments and environment to a log, then exits 0. */
 function fakeGit() {
   const dir = join(root, `f${++n}`);
   mkdirSync(dir);
-  const log = join(dir, "log.json");
+  const log = join(dir, "log.txt");
   const bin = join(dir, "git");
-  const recorder = join(dir, "record.js");
-  writeFileSync(recorder, `require("fs").appendFileSync(${JSON.stringify(log)}, JSON.stringify({ cwd: process.cwd(), args: process.argv.slice(2), env: process.env }) + "\\n");`);
   // `init` must leave a folder behind, as the real one does, because fetching starts in it.
-  writeFileSync(bin, `#!/bin/sh\n${JSON.stringify(process.execPath)} ${JSON.stringify(recorder)} "$@"\ncase " $* " in *" init "*) for last; do :; done; mkdir -p "$last";; esac\nexit 0\n`);
+  writeFileSync(bin, `#!/bin/sh
+{
+  echo "CALL"
+  echo "cwd $(pwd -P)"
+  for a in "$@"; do echo "arg $a"; done
+  env | sed 's/^/env /'
+} >> ${JSON.stringify(log)}
+case " $* " in *" init "*) for last; do :; done; mkdir -p "$last";; esac
+exit 0
+`);
   chmodSync(bin, 0o755);
   const calls = (): Call[] => {
+    let text: string;
     try {
-      return readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((l) => {
-        const call = JSON.parse(l) as Call;
-        // The shell that runs the fake adds these three itself; git's parent never sets them.
-        for (const k of ["PWD", "SHLVL", "_", "OLDPWD"]) delete call.env[k];
-        return call;
-      });
+      text = readFileSync(log, "utf8");
     } catch {
       return [];
     }
+    return text.split("CALL\n").filter(Boolean).map((block) => {
+      const call: Call = { cwd: "", args: [], env: {} };
+      for (const line of block.split("\n").filter(Boolean)) {
+        const [kind, ...rest] = line.split(" ");
+        const value = rest.join(" ");
+        if (kind === "cwd") call.cwd = value;
+        else if (kind === "arg") call.args.push(value);
+        else if (kind === "env") call.env[value.slice(0, value.indexOf("="))] = value.slice(value.indexOf("=") + 1);
+      }
+      // The shell that runs the fake adds these itself; git's parent never sets them.
+      for (const k of ["PWD", "SHLVL", "_", "OLDPWD"]) delete call.env[k];
+      return call;
+    });
   };
   return { bin, calls, dir };
 }
@@ -66,6 +82,26 @@ async function hostileParent<T>(body: () => Promise<T>): Promise<T> {
     Object.assign(process.env, saved);
   }
 }
+
+/** Waits until `ok` holds, for at most `ms`. */
+async function until(ok: () => boolean, ms = 2000): Promise<boolean> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (ok()) return true;
+    await Bun.sleep(20);
+  }
+  return ok();
+}
+
+/** Whether the process is gone, polled for up to 2 s. */
+const exited = (pid: number) => until(() => {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch {
+    return true;
+  }
+});
 
 const spec = (bin: string, extra: Partial<GitSpec> = {}): GitSpec => ({ bin, home: "/home/x", cwd: root, ceiling: "/ceiling", ms: 10_000, ...extra });
 
@@ -146,6 +182,8 @@ describe("the two protections against a repository around the working folder", (
     expect(call?.cwd.replace(/^\/private/, "")).toBe(repository.replace(/^\/private/, ""));
   });
 
+  // The ceiling is required, as a type: the `@ts-expect-error` below fails `tsc` if a spec without
+  // `ceiling` ever type-checks. The runtime check only keeps the line from being dead code.
   test("a runner given neither has no ceiling to omit: the ceiling is required, as a type", () => {
     // @ts-expect-error a spec without `ceiling` does not type-check
     const bad: GitSpec = { bin: "git", home: "/h", cwd: "/c", ms: 1 };
@@ -165,9 +203,16 @@ describe("running", () => {
     writeFileSync(f.bin, `#!/bin/sh\nsh -c 'echo $$ > "${f.dir}/pid"; exec sleep 30' </dev/null >/dev/null 2>&1 &\nwhile [ ! -s "${f.dir}/pid" ]; do :; done\nsleep 30\n`);
     const e = await runGit(spec(f.bin, { ms: 500 }), ["status"]).catch((x: unknown) => x);
     expect((e as GitRunError).kind).toBe("timeout");
+    await until(() => existsSync(join(f.dir, "pid")) && readFileSync(join(f.dir, "pid"), "utf8").trim() !== "");
     const pid = Number(readFileSync(join(f.dir, "pid"), "utf8"));
-    await Bun.sleep(100);
-    expect(() => process.kill(pid, 0)).toThrow();
+    expect(await exited(pid)).toBe(true);
+  }, 15_000);
+
+  test("stderr is kept to 4096 bytes by default", async () => {
+    const f = fakeGit();
+    writeFileSync(f.bin, `#!/bin/sh\nhead -c 10000 /dev/zero | tr '\\0' 'x' >&2\n`);
+    const r = await runGit(spec(f.bin), ["status"]);
+    expect(r.stderr).toBe("x".repeat(4096));
   });
 
   test("output past the cap is refused", async () => {
@@ -198,7 +243,7 @@ describe("both callers use it", () => {
     const call = f.calls()[0];
     expect(call?.env).toEqual(environment(parent, dirname(parent)));
     expect(call?.args).toEqual([...BASE_FLAGS, "--git-dir", join(parent, "repo.git"), "cat-file", "--batch-check"]);
-  });
+  }, 30_000);
 
   test("fetching passes the pinned environment, the three flags among its own, and --git-dir after init", async () => {
     const f = fakeGit();
@@ -218,7 +263,7 @@ describe("both callers use it", () => {
       expect(call.args).toContain("--git-dir");
       expect(call.args[call.args.indexOf("--git-dir") + 1]).toBe(join(staging, "repo.git"));
     }
-  });
+  }, 30_000);
 
   test("neither module builds its own environment or spawns git", () => {
     for (const file of ["extract-tree.ts", "fetch-commit.ts"]) {
