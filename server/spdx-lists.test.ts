@@ -17,7 +17,17 @@ import { isStale, readRelease, refresh, Refusal, type Fetched, REFRESH_AFTER_MON
 const LICENSE_FILE = join(import.meta.dir, "spdx-license-ids.ts");
 const EXCEPTION_FILE = join(import.meta.dir, "spdx-exception-ids.ts");
 const SCRIPT = join(import.meta.dir, "scripts", "refresh-spdx.ts");
+const NOTICE_FILE = join(import.meta.dir, "..", "NOTICE");
 const read = (path: string) => readFileSync(path, "utf8");
+
+/** LISTS-12's rule: the NOTICE at `noticePath` names the package, version and licence that `source` records. */
+function expectNoticeNamesRecord(source: string, noticePath: string): void {
+  const { package: name, version, license } = readRelease(source);
+  const notice = read(noticePath).replace(/\s+/g, " ");
+  expect(notice).toContain(`${name} ${version}`);
+  const entry = notice.split(" - ").find((part) => part.includes(`${name} ${version}`))!;
+  expect(entry).toContain(license);
+}
 const docs = {
   readme: read(join(import.meta.dir, "..", "docs", "topics", "course-format", "README.md")),
   notes: read(join(import.meta.dir, "..", "docs", "working-notes.md")),
@@ -56,11 +66,7 @@ describe.each(lists)("the vendored $name", ({ file, pkg, render }) => {
   });
 
   test("LISTS-12: NOTICE names the package, the version and the licence the file records", () => {
-    const { package: name, version, license } = readRelease(source);
-    const notice = read(join(import.meta.dir, "..", "NOTICE")).replace(/\s+/g, " ");
-    expect(notice).toContain(`${name} ${version}`);
-    const entry = notice.split(" - ").find((part) => part.includes(`${name} ${version}`))!;
-    expect(entry).toContain(license);
+    expectNoticeNamesRecord(source, NOTICE_FILE);
   });
 
   test("LISTS-4: its header points at the refresh script", () => {
@@ -143,9 +149,10 @@ describe("refreshing, with the fetch and the file system injected", () => {
   function setup(fetchedLicense: { licenses?: string; exceptions?: string } = {}) {
     const dir = join(root, `t${n++}`);
     mkdirSync(join(dir, "files"), { recursive: true });
-    const paths = { licenses: join(dir, "files", "spdx-license-ids.ts"), exceptions: join(dir, "files", "spdx-exception-ids.ts") };
+    const paths = { licenses: join(dir, "files", "spdx-license-ids.ts"), exceptions: join(dir, "files", "spdx-exception-ids.ts"), notice: join(dir, "files", "NOTICE") };
     copyFileSync(LICENSE_FILE, paths.licenses);
     copyFileSync(EXCEPTION_FILE, paths.exceptions);
+    copyFileSync(NOTICE_FILE, paths.notice);
     const fetched = (pkg: string, version: string, license: string, files: Record<string, unknown>): Fetched => {
       const pkgDir = join(dir, "fetched", pkg);
       mkdirSync(pkgDir, { recursive: true });
@@ -218,6 +225,55 @@ describe("refreshing, with the fetch and the file system injected", () => {
       }) as typeof realFs.renameSync,
     };
     expect(() => refresh({ "--license-ids": null, "--exceptions": null }, { fetch, fs, paths, scratch: root })).toThrow("rename failed");
+    expect(snapshot()).toEqual(before);
+  });
+
+  test("LISTS-17: a same-licence version bump leaves NOTICE naming the new versions, and LISTS-12 holds for the result", () => {
+    const { paths, fetch } = setup();
+    const noticeBefore = read(paths.notice);
+    expect(noticeBefore).toContain("spdx-license-ids 3.0.24");
+    refresh({ "--license-ids": null, "--exceptions": null }, { fetch, fs: realFs, paths, scratch: root });
+    const notice = read(paths.notice);
+    expect(notice).toContain("spdx-license-ids 9.9.9");
+    expect(notice).toContain("spdx-exceptions 8.8.8");
+    expect(notice).not.toContain("3.0.24");
+    expect(notice).not.toContain("2.5.0");
+    expectNoticeNamesRecord(read(paths.licenses), paths.notice);
+    expectNoticeNamesRecord(read(paths.exceptions), paths.notice);
+  });
+
+  test("LISTS-18: a NOTICE that names neither package at its recorded version is refused before anything is written", () => {
+    const { paths, fetch, snapshot } = setup();
+    writeFileSync(paths.notice, "No packages are named here.\n");
+    const before = snapshot();
+    expect(() => refresh({ "--license-ids": null, "--exceptions": null }, { fetch, fs: realFs, paths, scratch: root })).toThrow(Refusal);
+    expect(snapshot()).toEqual(before);
+  });
+
+  // The refresh makes up to three renames to move originals aside and three to put new files in place.
+  // Failing the Kth rename with ENOSPC, and every write after it, must leave all three files as they were
+  // with nothing left beside them, so recovery cannot depend on writing anything.
+  test.each([1, 2, 3, 4, 5, 6])("LISTS-19: with rename %p failing ENOSPC and every later write failing too, the files stay as they were", (failing) => {
+    const { paths, fetch, snapshot } = setup();
+    const before = snapshot();
+    const enospc = () => Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+    let renames = 0;
+    let failed = false;
+    const fs = {
+      ...realFs,
+      renameSync: ((from: string, to: string) => {
+        if (++renames === failing) {
+          failed = true;
+          throw enospc();
+        }
+        return realFs.renameSync(from, to);
+      }) as typeof realFs.renameSync,
+      writeFileSync: ((path: string, data: string) => {
+        if (failed) throw enospc();
+        return realFs.writeFileSync(path, data);
+      }) as typeof realFs.writeFileSync,
+    };
+    expect(() => refresh({ "--license-ids": null, "--exceptions": null }, { fetch, fs, paths, scratch: root })).toThrow("ENOSPC");
     expect(snapshot()).toEqual(before);
   });
 });
