@@ -230,7 +230,7 @@ Every refusal the issue names is a case here, and every case reads the record ba
 | --- | --- | --- | --- | --- |
 | PREVIEW-1 | The example course at its full hash | Its title, summary, author, license `Apache-2.0`, format 1, both lessons with their quiz and explain counts, 3 distinct quizzes, the suggested name `counting-in-binary`, nothing taken, no progress, the preview id and an expiry an hour on | implemented | `server/install-preview.test.ts`: `PREVIEW-1: the example course answers its title, lessons, quizzes, license and format` |
 | PREVIEW-2 | The example course by branch | Answered with the full hash the branch resolved to | implemented | `PREVIEW-2: a branch is answered as the full hash it resolved to` |
-| PREVIEW-3 | What a good preview leaves | `staging/<id>/` holds only `course/` (course.json, two lessons, the glossary) and `preview.json` (URL, full commit, expiry); no `repo.git`, no `courses/` | implemented | `PREVIEW-3: the preview is kept in staging as the course School reads and its source, with no repository and nothing in courses/` |
+| PREVIEW-3 | What a good preview leaves | `staging/<id>/` holds only `course/` (course.json, two lessons, the glossary) and `preview.json` (URL, full commit, expiry, and the content digest of `course/`, for the install); no `repo.git`, no `courses/` | implemented | `PREVIEW-3: the preview is kept in staging as the course School reads and its source, with no repository and nothing in courses/` |
 | PREVIEW-4 | The example with a quiz that has no correct choice | `check` refusal with `checkCourse`'s own file and message; only an empty `staging/` left | implemented | `PREVIEW-4: a bad course answers the check's own message, and leaves nothing in the store but an empty staging/` |
 | PREVIEW-5 | A `course.json` that is not JSON | Named `course.json` in `path` and `message`; the answer holds no path in the store | implemented | `PREVIEW-5: a course.json the check refuses is named as course.json, never by its path in the store` |
 | PREVIEW-6 | A branch the repository lacks | `fetch` refusal, `no-such-ref`; nothing staged | implemented | `PREVIEW-6: a fetch refusal answers its reason, and leaves nothing staged` |
@@ -257,3 +257,50 @@ Every refusal the issue names is a case here, and every case reads the record ba
 | PREVIEW-PROGRESS-1 | `courseProgress` on every record adapter: a name with nothing, one with encounters, answers, explanations and views beside another name's, a view alone, a removed install's | The counts written, and none of the other name's | implemented | `server/contract/learning-record.ts`: `course progress: %s`, run on PGlite and Bun.SQL |
 
 _Table 8. The install preview's cases. PREVIEW-3, -4, -5, -8, -12, -14, -16, PREVIEW-ROUTE-1 and the `same-site` and `none` cases of PREVIEW-ROUTE-6 each fail when the behaviour they name is removed. No case previews a course from the internet._
+
+## Installing a previewed course (flyingrobots/school#238)
+
+`POST /api/installs`, and `installPreviewed`, `courseInstaller` and `sweepCourses` in `server/install-course.ts`, RFC 7 §4, §5.1, §5.2 and §8, task 8. The oracles are the issue's acceptance criteria and test plan (golden: install then open a lesson; edges: name taken, preview expired; known failure mode: serving before recording) and RFC 7's pipeline. Every preview is made by the real `previewInstall` from the local https server of the fetch cases, and the record is a real PGlite record through the server's adapter, or Bun.SQL for INSTALL-ROUTE-10.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| INSTALL-1 | The example course's preview installed as `binary` | Answered `installed` with the install id, URL, commit and `trusted: false`; the record's row names `source: "git"`, the URL, the commit, the folder's digest, the title and format 1, untrusted | implemented | `server/install-course.test.ts`: `INSTALL-1: installing a preview answers the install, and the record's row names the URL and commit` |
+| INSTALL-2 | Where the files go | `courses/` holds only the install's folder, with the four files School read; `staging/` is empty | implemented | `INSTALL-2: the preview's folder becomes courses/<install id>, and nothing of the preview is left in staging/` |
+| INSTALL-3 | The course list after the install | Served, untrusted, from `courses/<install id>/` | implemented | `INSTALL-3: the course list serves the install untrusted, from its folder in the store` |
+| INSTALL-4 | The installed files' modes | Every file 0444 (RFC 7 §5.1) | implemented | `INSTALL-4: every installed file is read-only` |
+| INSTALL-5 | Serving before recording | While the record is asked, the folder is in `courses/` and the course list does not serve it | implemented | `INSTALL-5: while the install is being recorded, its folder is in courses/ and the course list does not serve it` |
+| INSTALL-6 | The record throws | The error reaches the caller; no folder in `courses/`, no row, nothing listed | implemented | `INSTALL-6: a record that fails leaves no folder in courses/ and nothing served, and the failure is the caller's` |
+| INSTALL-7 | The record answers `conflict`, `stale` or `rejected` | `not-recorded`; no folder in `courses/` | implemented | `INSTALL-7: a record that answers %s is refused as not recorded, and leaves no folder in courses/` |
+| INSTALL-8 | A configured course's name | `name-taken`; the preview kept; nothing moved or recorded | implemented | `INSTALL-8: a name a configured course has is refused as taken, and the preview is kept for another name` |
+| INSTALL-9 | A current install's name | `name-taken`; the first install stays current | implemented | `INSTALL-9: a name a current install has is refused as taken, and that install stays current` |
+| INSTALL-10 | `Binary`, `api`, `-binary`, the empty name, `bin ary` | `bad-name`; nothing moved | implemented | `INSTALL-10: the name %j is refused as a bad name, and nothing is moved` |
+| INSTALL-11 | A preview past its `expires` | `expired`; the preview deleted; nothing installed | implemented | `INSTALL-11: an expired preview is refused as expired and deleted, and nothing is installed` |
+| INSTALL-12 | A preview id School never staged | `unknown-preview` | implemented | `INSTALL-12: a preview id School never staged is refused as unknown` |
+| INSTALL-13 | A preview id that is a path or not a UUID, no name, a name over 255 characters, another field, an array | `invalid` | implemented | `INSTALL-13: a body with %s is invalid` |
+| INSTALL-14 | The preview's folder a symlink to a preview in another store | `unknown-preview`; the other preview untouched | implemented | `INSTALL-14: a preview whose staged folder is a symlink to another preview is not followed` |
+| INSTALL-15 | `staging/` a symlink to another store's `staging/` | `unknown-preview`; the other preview untouched | implemented | `INSTALL-15: a staging/ that is a symlink to a folder of previews is not followed` |
+| INSTALL-16 | A lesson changed in staging after the preview | `changed`; nothing installed or recorded | implemented | `INSTALL-16: a lesson changed in staging is refused as changed, and nothing is installed or recorded` |
+| INSTALL-17 | A reference file added in staging | `changed` | implemented | `INSTALL-17: a file added in staging is refused as changed` |
+| INSTALL-18 | A symlink to a folder outside the store put in staging | `changed`; the folder it points at and its file's mode untouched | implemented | `INSTALL-18: a symlink put in staging is refused, and what it points at is left alone` |
+| INSTALL-19 | A `build.sh` put in staging | `changed` | implemented | `INSTALL-19: a file outside what School installs, put in staging, is refused` |
+| INSTALL-20 | A file limit of 3 for a four-file course | `over-limit` | implemented | `INSTALL-20: a preview over RFC 7 Table 6.2's limits is refused as over the limit` |
+| INSTALL-21 | `preview.json` changed to name an `http` URL | `changed`; nothing installed or recorded | implemented | `INSTALL-21: a preview.json changed to name another URL is refused as changed` |
+| INSTALL-22 | `courses/` a symlink to a folder outside the store | The install fails naming `courses/`; nothing written there; no row | implemented | `INSTALL-22: a courses/ that is a symlink is not written through, and the install fails` |
+| INSTALL-23 | One preview installed twice at once | One `installed`, one `unknown-preview`; one folder | implemented | `INSTALL-23: the same preview installed twice at once installs once; the other finds it gone` |
+| INSTALL-24 | Two previews installed under one name at once | The first `installed`, the second `name-taken` with its preview kept | implemented | `INSTALL-24: two previews installed under one name at once: the first is installed and the second is refused as taken` |
+| INSTALL-25 | The start sweep: a current install's folder, another, and a stray file | Only the current install's folder is left | implemented | `INSTALL-25: a folder no current install names is deleted, and a current install's is kept` |
+| INSTALL-26 | A symlink in `courses/` named as a current install | Removed; what it points at untouched | implemented | `INSTALL-26: a symlink in courses/ is removed, and what it points at is left alone` |
+| INSTALL-27 | `courses/` a symlink | Not swept | implemented | `INSTALL-27: a courses/ that is a symlink is not swept` |
+| INSTALL-28 | A store with no `courses/` | Unchanged | implemented | `INSTALL-28: a store with no courses/ is left as it is` |
+| INSTALL-ROUTE-1 | A folder in `courses/` no row names, before start (a crash between the move and the record) | Gone once School is up, and not listed | implemented | `server/install-route.test.ts`: `INSTALL-ROUTE-1: a folder in courses/ that no install names is deleted at start, and is not served` |
+| INSTALL-ROUTE-2 | Golden: install a preview, then open a lesson | 201 with the install; `/api/courses/binary` `trusted: false`; the lesson and the glossary 200 with the safe-mode policy; listed with 2 lessons | implemented | `INSTALL-ROUTE-2: install a preview, then open a lesson: the course is served untrusted at /courses/<name>` |
+| INSTALL-ROUTE-3 | A configured course's name | 409 `name-taken`; the preview kept | implemented | `INSTALL-ROUTE-3: a name a configured course has is a 409, and the preview is kept` |
+| INSTALL-ROUTE-4 | A preview made more than an hour ago | 410 `expired`; the preview deleted | implemented | `INSTALL-ROUTE-4: an expired preview is a 410, and is deleted` |
+| INSTALL-ROUTE-5 | A preview id School never staged | 404 `unknown-preview` | implemented | `INSTALL-ROUTE-5: a preview School never staged is a 404` |
+| INSTALL-ROUTE-6 | Another field in the body | 400 | implemented | `INSTALL-ROUTE-6: a body with any field besides preview and name is a 400` |
+| INSTALL-ROUTE-7 | `Sec-Fetch-Site` `cross-site`, `same-site`, `none` | 403; the preview kept | implemented | `INSTALL-ROUTE-7: Sec-Fetch-Site %s is refused, and the preview is kept` |
+| INSTALL-ROUTE-8 | A body declared `text/plain` | 415 | implemented | `INSTALL-ROUTE-8: a body not declared JSON is refused` |
+| INSTALL-ROUTE-9 | No course store | 503, naming `SCHOOL_COURSE_STORE` | implemented | `INSTALL-ROUTE-9: without a course store, the answer is a 503 that names SCHOOL_COURSE_STORE` |
+| INSTALL-ROUTE-10 | Golden on a real Postgres, through `school_app` | 201; the lesson 200 in safe mode; `installed_courses()` names the install's id, `git`, the URL and commit, untrusted | implemented | `INSTALL-ROUTE-10: install a preview, then open a lesson; the row names the URL and commit (Bun.SQL)` |
+
+_Table 9. The install's cases. INSTALL-4, -5, -6, -7, -16, -17, -20, -22, -24, -26 and INSTALL-ROUTE-1 each fail when the behaviour they name is removed. No case installs a course from the internet._
