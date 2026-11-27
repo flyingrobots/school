@@ -14,7 +14,8 @@
 //   alone keeps an enclosing repository's configuration out; both are pinned, each by its own test.
 // - Three `-c` flags come before everything else, and the caller cannot take them away: hooks go
 //   to /dev/null, no filesystem monitor, no submodule recursion. A caller adds its own `-c` flags
-//   after them.
+//   after them, but git lets a later `-c` win, so configuration naming any of the three keys is
+//   refused (a `GitRunError`, `refused-config`) before git starts.
 // - The process starts in its own process group with a time limit. Stopping it (the time limit, a
 //   refused output, a caller's `watch`) kills the whole group, so no helper outlives it.
 // - Output is capped: stdout is refused once past `maxStdout` (or handed over chunk by chunk to
@@ -56,9 +57,9 @@ export type GitOptions = {
 
 export type GitResult = { code: number; stdout: Uint8Array; stderr: string };
 
-/** The runner's own failures: git did not start, ran too long, or wrote more than allowed. */
+/** The runner's own failures: git did not start, ran too long, wrote more than allowed, or was given configuration it refuses. */
 export class GitRunError extends Error {
-  constructor(readonly kind: "start-failed" | "timeout" | "output-too-large", message: string) {
+  constructor(readonly kind: "start-failed" | "timeout" | "output-too-large" | "refused-config", message: string) {
     super(message);
   }
 }
@@ -72,8 +73,14 @@ export function gitEnvironment(spec: Pick<GitSpec, "home" | "ceiling">): Record<
   };
 }
 
+const ALWAYS_ON = ["core.hooksPath", "core.fsmonitor", "submodule.recurse"];
+
 /** git's arguments: the three always-on `-c` flags, the caller's, `--git-dir` when named, then `args`. */
 export function gitArguments(spec: Pick<GitSpec, "config" | "repository">, args: string[]): string[] {
+  for (const c of spec.config ?? []) {
+    const key = c.split("=")[0]?.toLowerCase() ?? "";
+    if (ALWAYS_ON.some((k) => k.toLowerCase() === key)) throw new GitRunError("refused-config", `git configuration may not name ${key}`);
+  }
   const config = ["core.hooksPath=/dev/null", "core.fsmonitor=false", "submodule.recurse=false", ...(spec.config ?? [])];
   return [...config.flatMap((c) => ["-c", c]), ...(spec.repository === undefined ? [] : ["--git-dir", spec.repository]), ...args];
 }
@@ -97,9 +104,10 @@ async function capped(stream: ReadableStream<Uint8Array>, max: number, truncate:
 /** Runs one git command under the environment and flags above, in its own process group, with a time limit. */
 export async function runGit(spec: GitSpec, args: string[], options: GitOptions = {}): Promise<GitResult> {
   const what = args[0] ?? "";
+  const argv = gitArguments(spec, args);
   let proc;
   try {
-    proc = Bun.spawn([spec.bin, ...gitArguments(spec, args)], {
+    proc = Bun.spawn([spec.bin, ...argv], {
       env: gitEnvironment(spec), cwd: spec.cwd, stdin: options.input ?? "ignore", stdout: "pipe", stderr: "pipe", detached: true,
     });
   } catch (e) {
