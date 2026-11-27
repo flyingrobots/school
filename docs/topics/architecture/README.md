@@ -85,7 +85,7 @@ JSON API.
 | GET | `/api/activity?days=14&tz=` | Each course's study days in the last `days` (1 to 60), and how many questions come back on each day ahead, as days in `tz` |
 | GET | `/api/showcase` | What's ahead: every lesson with a quiz not yet answered correctly, with its hook ([a course's folder](../course-format/README.md#a-lessons-hook)) |
 | GET | `/api/courses/:c` | One course: its `name`, `title`, `trusted`, `summary`, `author`, `license` and `format` (null when not declared), lessons with correct-quiz counts, reference documents. Lessons that cannot be read are `lessons: null` with the reason in `lessonsError`, still a 200 with the reference documents |
-| GET | `/api/courses/:c/lessons/:id` | One lesson; `?view=web` opens or resumes an encounter, `?view=slides` records nothing. `?aid=1` declares that the client records every exposure it shows, so the encounter is opened with aid tracking 1; absent, it is untracked and its aid unknown. Any other `aid` value is refused (400). `?tz=` is the zone a review reason names its day in |
+| GET | `/api/courses/:c/lessons/:id` | One lesson; `?view=web` (the default) opens or resumes an encounter, `?view=slides` records nothing. The web view answers only School's own `fetch()`: a request whose `Sec-Fetch-Site` is not `same-origin` or whose `Sec-Fetch-Dest` is not `empty`, such as an image or a link from another page, is refused (403) and opens nothing; one with neither header is answered ([trust](#trust-and-known-defects)). `?aid=1` declares that the client records every exposure it shows, so the encounter is opened with aid tracking 1; absent, it is untracked and its aid unknown. Any other `aid` value is refused (400). `?tz=` is the zone a review reason names its day in |
 | POST | `/api/answer` | Records a quiz answer |
 | POST | `/api/explanation` | Saves an explanation, before any grading |
 | POST | `/api/grade` | One grading attempt through the bridge |
@@ -601,8 +601,14 @@ An untrusted course is served in safe mode (flyingrobots/school#210, RFC 4 step 
 
 | Header | Effect |
 | --- | --- |
-| `Content-Security-Policy: sandbox` | No `allow-*` token, so a document opened from the course, HTML or SVG, runs no script, submits no form and has an opaque origin: it cannot read School's API replies or storage, and cannot send the JSON requests every state-changing endpoint requires. Like any web page, it can still make requests that read nothing back, such as a GET from `<img src="/api/...">` |
+| `Content-Security-Policy: sandbox` | No `allow-*` token, so a document opened from the course, HTML or SVG, runs no script, submits no form and has an opaque origin: it cannot read School's API replies or storage, and cannot send the JSON requests every state-changing endpoint requires. Like any web page, it can still make GETs that read nothing back, such as one from `<img src="/api/...">`; what those can cause is below the table |
 | `X-Content-Type-Options: nosniff` | The browser takes the bytes as the type School names (`image/svg+xml` for SVG, never HTML), not as a type it guesses |
+
+What a sandboxed document can still cause in School, with no script and no form:
+
+- **GETs, which change nothing.** An `<img>`, a stylesheet link or a link the learner follows makes a GET to any School address, and School answers it, but the document cannot read the reply. Every GET is a read except the lesson in the web view, which opens an encounter. That one answers only School's own `fetch()`, `Sec-Fetch-Site: same-origin` with `Sec-Fetch-Dest: empty` (flyingrobots/school#306). A sandboxed document's requests are `cross-site`, since its origin is opaque, and an image's destination is `image`, so the request is refused (403) and the record gains nothing. A browser that sends no fetch metadata gets no such check; Chrome and Edge have sent it since 2020, Firefox since 2021 and Safari since 16.4 (2023). The work of answering a GET, such as reading the record or a lesson file, is still done.
+- **A School page the learner opens.** A link the learner follows to one of School's pages, such as `/courses/:c/lessons/:l`, opens that page as a new document on School's origin, outside the sandbox. It then acts as it always does: the lesson page opens the learner's encounter. That encounter is one the learner opened by following the link, as from any other site.
+- **Nothing that writes otherwise.** Every other change to the record or settings is a POST or PUT, which needs a JSON body the document cannot send.
 
 Other JSON replies also carry course-written strings without those headers: `/api/showcase`, `/api/resume`, `/api/review`, `/api/feedback` and `/api/activity` hold course and lesson titles, questions, teasers and prompts, and `/api/showcase` holds hook figures. A JSON reply runs nothing when opened, and the web app shows those strings as React text, never parsed as HTML.
 

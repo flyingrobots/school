@@ -136,7 +136,10 @@ Practical notes for anyone — human or agent — changing the framework.
   is `docs/workflows/backup-and-restore/README.md`.
 - Every `POST /api/*` needs `Content-Type: application/json` and is refused when the browser
   says it is cross-site. A new endpoint under `/api/` inherits that guard; one outside it does
-  not, so keep state-changing routes under `/api/`.
+  not, so keep state-changing routes under `/api/`. A GET is not guarded that way, since any page
+  can make one with an `<img>` and no script: keep GETs free of writes. The one that writes, the
+  lesson in the web view (it opens an encounter), answers only School's own `fetch()`
+  (`guardLessonOpen`, `server/server.ts`); a new GET that writes needs the same guard.
 - Every request is checked against the Host allowlist (`server/hosts.ts`) before routing, so a
   new route of any method inherits it. School behind a new name (another tailnet name, a LAN
   name) needs that name in `SCHOOL_ALLOWED_HOSTS`, or every request through it gets a 403.

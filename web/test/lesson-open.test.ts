@@ -38,7 +38,7 @@ const LESSON_API = "/api/courses/guest/lessons"
 
 /** The reviewer's probe: images whose addresses open a lesson, in the web view by name and by default, and the slides view. */
 const PROBE = `<!doctype html><title>Probe</title>
-<p>Nothing to see here.</p>
+<p>Nothing to see here. <a id="leave" href="/api/courses">Courses</a></p>
 <img id="web" src="${LESSON_API}/probed?view=web&aid=1" alt="">
 <img id="default" src="${LESSON_API}/probed" alt="">
 <img id="slides" src="${LESSON_API}/probed?view=slides" alt="">`
@@ -144,6 +144,18 @@ describe("an untrusted course's reference page in Chrome", () => {
     ])
     await p.context().close()
     expect(await encounters("probed")).toBe(0)
+  })
+
+  // The architecture doc's trust section says a followed link opens School's page outside the
+  // sandbox, where it acts as School: the sandbox belongs to the document, not the tab.
+  test("a link the learner follows from it opens School's page on School's own origin", async () => {
+    const { p } = await open("/courses/guest/reference/probe.html")
+    await Promise.all([
+      p.waitForURL(`${school!.url}/api/courses`),
+      p.click("#leave"),
+    ])
+    expect(await p.evaluate(() => window.origin)).toBe(school!.url)
+    await p.context().close()
   })
 })
 
