@@ -11,15 +11,15 @@ type Lane = Activity["courses"][number]
 
 /**
  * How a course's quizzes are holding today, in the words of RFC 5 Table 4.7, one phrase per state
- * that has any. A course none of whose quizzes is answered, or with no quizzes and nothing studied
- * or coming back, is "Not started yet".
+ * that has any. A course with no study day and nothing coming back, and with no quiz answered or no
+ * quizzes, is "Not started yet"; one with a study day and no quiz answered shows its counts.
  */
 export function holdingWords(c: Lane): string[] {
   const { notStarted, settling, holding, faded } = c.mastery
   const fresh =
-    c.quizzes === 0
-      ? c.studied.length === 0 && c.due.length === 0
-      : notStarted === c.quizzes
+    c.studied.length === 0 &&
+    c.due.length === 0 &&
+    (c.quizzes === 0 || notStarted === c.quizzes)
   if (fresh) return ["Not started yet"]
   const words: string[] = []
   if (holding > 0)
