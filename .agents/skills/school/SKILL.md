@@ -11,6 +11,10 @@ database, never in the course.
 
 `example/` beside this file is a small, complete course that School serves. Copy its shape.
 
+`course.json` names the course with `title`, and should also say what it is (`summary`), who
+wrote it (`author`), its terms (`license`, an SPDX expression such as `MIT OR Apache-2.0`) and the
+course format it is written in (`format`, today `1`). The example declares all five.
+
 ## Read first
 
 These are the living references. Do not work from memory of them, because they change:
