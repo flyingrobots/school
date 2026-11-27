@@ -220,15 +220,26 @@ async function serveMount(pathname: string): Promise<Response> {
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(body, { status, headers });
 
 /**
- * An untrusted course's response, sandboxed (flyingrobots/school#210). `sandbox` with no allow-*
- * token gives a document an opaque origin and no script, so a course's HTML or SVG opened in a tab
- * cannot read School's API or act as School; `nosniff` stops the browser reading the bytes as a
- * type that would run. Applied to every response that carries the course's bytes: its reference
- * files and its course and lesson JSON. A trusted course's responses are left exactly as they were.
+ * The policy on an untrusted course's responses. `sandbox` (flyingrobots/school#210), with no
+ * allow-* token, gives a document an opaque origin and no script. The fetch directives
+ * (flyingrobots/school#271) let it load only School's own images and stylesheets, inline styles
+ * and `data:` images, so a reference page cannot tell another site when the learner opens it:
+ * everything else, frames, media and fonts included, falls back to `default-src 'none'`. No
+ * `font-src 'self'`: from the sandbox's opaque origin a font request is cross-origin and School
+ * sends no CORS header, so a course's own font would not load even if the policy allowed it.
+ */
+const UNTRUSTED_POLICY = "sandbox; default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'";
+
+/**
+ * An untrusted course's response, contained. `UNTRUSTED_POLICY` stops a course's HTML or SVG
+ * opened in a tab running script, reading School's API, acting as School or loading anything from
+ * another site; `nosniff` stops the browser reading the bytes as a type that would run. Applied to
+ * every response that carries the course's bytes: its reference files and its course and lesson
+ * JSON. A trusted course's responses are left exactly as they were.
  */
 function contained(c: Course, res: Response): Response {
   if (c.trusted) return res;
-  res.headers.set("content-security-policy", "sandbox");
+  res.headers.set("content-security-policy", UNTRUSTED_POLICY);
   res.headers.set("x-content-type-options", "nosniff");
   return res;
 }
