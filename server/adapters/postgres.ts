@@ -12,7 +12,7 @@
 // end as the model's ISO form, 2026-11-21T10:00:00.000Z.
 import { z } from "zod";
 import {
-  CourseInstall, Aid, Block, DecisionNote, InstallResult, InstalledCourse, RemovalResult, TrustResult, DecisionNoteResult, DueItem, Encounter, EvidenceKind, EvidenceRow, ExplanationState, ExposureResult, Grading,
+  AskQuestion, AskResult, Conversation, ReplyRecord, ReplyResult, CourseInstall, Aid, Block, DecisionNote, InstallResult, InstalledCourse, RemovalResult, TrustResult, DecisionNoteResult, DueItem, Encounter, EvidenceKind, EvidenceRow, ExplanationState, ExposureResult, Grading,
   Findings, LastStudied, LatestFeedback, LessonProgress, Mastery, MasteryRollup, Recorded, SaveResult, Seq, StudyDay, SubmitResult, type ExplainBlock,
 } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
@@ -53,6 +53,7 @@ const OpenedLesson = Opened.extend({ content: Block });
 const Due = z.object({ item: DueItem });
 const Held = z.object({ item: Mastery });
 const Rolled = z.object({ item: MasteryRollup });
+const Talked = z.object({ conversation: Conversation });
 const Studied = z.object({ course: z.string(), lesson: z.string(), at: time });
 const InstalledRow = z.object({
   id: z.string(), course: z.string(), source: z.string(), url: z.string().nullable(), bundle_sha256: z.string().nullable(), commit: z.string(),
@@ -222,8 +223,21 @@ export function postgresRecord(sql: Sql): LearningRecord {
     masteryRollup: async (q) =>
       (await rows("mastery_rollup", q.course, q.groups, q.now, q.delayMs)).map((row) => Rolled.parse(row).item),
 
-    ask: async () => { throw new Error("not implemented"); },
-    recordReply: async () => { throw new Error("not implemented"); },
-    lessonConversations: async () => { throw new Error("not implemented"); },
+    // Parsed first, as installCourse is: a question the model trims is stored trimmed, and one it
+    // refuses never reaches the record. The tables check the lengths again.
+    ask: async (input, now) => {
+      const q = AskQuestion.parse(input);
+      return AskResult.parse({ status: await value("ask", q.conversationId, q.questionId, q.encounterId, q.blockId, q.passage, q.text, now) });
+    },
+
+    // sources and usage go as values for their jsonb parameters, like a grading's sources.
+    recordReply: async (input, now) => {
+      const r = ReplyRecord.parse(input);
+      return ReplyResult.parse({ status: await value("record_reply",
+        r.questionId, r.status, r.text, r.sources, r.agent, r.model, r.usage, r.error, now) });
+    },
+
+    lessonConversations: async (course, lesson) =>
+      (await rows("lesson_conversations", course, lesson)).map((row) => Talked.parse(row).conversation),
   };
 }

@@ -38,6 +38,29 @@ ask list in the test's process; the `bridge/ask-route.test.ts` cases run the bri
 | ASK-14 | Nothing received | A hang-up before any delta ends the reply with `agent` null | implemented | `bridge/ask.test.ts`: `a caller that hangs up before any delta is told of no agent` |
 | ASK-15 | Cannot be started | An agent that `Bun.spawn` cannot start (ENOENT, EACCES; E2BIG for a long prompt on Linux) is a failed attempt, `could not start <program> (<code>)`, with no prompt text, and the next agent is tried, for `POST /run` and `POST /ask`; with none startable, the reply fails with every attempt | implemented | `bridge/bridge.test.ts`: `a grading whose first agent cannot be started falls back to the next and logs that attempt as failed`; `bridge/ask-route.test.ts`: `a question whose first agent cannot be started ...`; `bridge/run.test.ts`: `when no agent can be started ...`; `bridge/ask.test.ts`: `when no ask agent can be started ...` (flyingrobots/school#290) |
 
+## Conversations in the record
+
+The conversation tables and `school.ask`, `school.record_reply` and `school.lesson_conversations`
+(RFC 6 §5.2, Figure 5.1, Table 5.3; flyingrobots/school#225). The oracle for each status is RFC 6
+Table 5.3, and for aid §5.1. Every contract case runs on PGlite and on `Bun.SQL`, as
+`postgres (PGlite): conversations: ...` and `postgres (Bun.SQL): conversations: ...`, and the races
+run on `Bun.SQL` only.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| CONV-1 | Golden | One question and its reply round-trip; the conversation, its exposure, the question and the reply take increasing `seq` | implemented | `server/contract/learning-record.ts`: `conversations: golden: one question and its reply round-trip, the question with its own ai-help exposure` |
+| CONV-2 | Question resent | `duplicate`, with no second exposure; the same id with any field changed is `conflict` and stores nothing | implemented | `conversations: a question is stored once: a resend is a duplicate, and stores no second exposure`; `conversations: a question id holding another question is a conflict; the first stands and nothing more is stored` |
+| CONV-3 | Aid | The question's exposure has a smaller `seq` than a later answer, which is aided; an earlier answer is not | implemented | `conversations: the question's exposure has a smaller seq than any later answer, which is aided; an earlier one is not` |
+| CONV-4 | The passage rule | The first question needs a passage and a block of the snapshot (not the page); a later one gives neither and may be asked in a later encounter of the same lesson, never another lesson's | implemented | `conversations: the first question needs a passage and a block in the encounter's snapshot; a later one may give neither`; `conversations: a later question in an encounter of another lesson is rejected; one in a later encounter of the same lesson is stored` |
+| CONV-5 | Untracked or unknown encounter | `rejected`, nothing stored | implemented | `conversations: asking in an untracked or unknown encounter is rejected, and stores nothing` |
+| CONV-6 | Malformed question | Refused; neither the question nor an exposure is stored, also when the table refuses it inside `school.ask` | implemented | `conversations: a malformed question is refused and stores neither it nor an exposure`; `server/db/conversations.test.ts`: `a question the table refuses stores no exposure and opens no conversation` |
+| CONV-7 | Reply stored once | `duplicate` for the same reply, `conflict` for another; the first stands | implemented | `conversations: a reply is stored once: a resend is a duplicate, and another reply a conflict; the first stands` |
+| CONV-8 | Reply to an unknown question | `rejected`, nothing stored | implemented | `conversations: a reply to an unknown question is rejected, and stores nothing` |
+| CONV-9 | Read order | Conversations in `seq` order, each question in `seq` order with its reply, whatever order the replies came in; no other lesson's | implemented | `conversations: a lesson's conversations are read in seq order, each question in seq order with its reply, and no other lesson's` |
+| CONV-10 | Append-only | Every conversation table refuses `UPDATE`, `DELETE` and `TRUNCATE`, even by its owner | implemented | `server/contract/conversation-tables.ts`: `conversations: every conversation table refuses update, delete and truncate, even by its owner` |
+| CONV-11 | No direct path for `school_app` | Insert, update, delete, select and truncate on each table are permission errors | implemented | `server/contract/conversation-tables.ts`: `conversations: school_app may not insert, update, delete, read or truncate a conversation table` |
+| CONV-12 | Many at once | 20 questions in one encounter, 10 follow-ups in one conversation, one question twice, one id for two questions, one reply twice, each held at a gate until all wait: each stored once, with its own exposure before it, read in `seq` order; `ask` and `record_reply` refuse REPEATABLE READ | implemented | `server/adapters/bunsql.concurrency.test.ts`: `20 questions at once in one encounter ...` and the four races after it; `ask and record_reply refuse to run under it, and store nothing`; the contract's `conversations: many questions at once in one encounter ...` |
+
 ## The course store (flyingrobots/school#233)
 
 `SCHOOL_COURSE_STORE`, RFC 7 §5.1. The oracle for every refusal is §5.1's: start refuses, with exit 2 naming both paths, a store that is, holds or sits inside a course or learner state. This page extends it to mounts and the web folder, which School serves and must not write into.

@@ -474,8 +474,11 @@ describe("functions", () => {
       SELECT 'snapshots' AS t, seq::int FROM school.snapshots UNION ALL SELECT 'encounters', seq::int FROM school.encounters
       UNION ALL SELECT 'answers', seq::int FROM school.answers UNION ALL SELECT 'explanations', seq::int FROM school.explanations
       UNION ALL SELECT 'gradings', seq::int FROM school.gradings UNION ALL SELECT 'views', seq::int FROM school.views
-      UNION ALL SELECT 'exposures', seq::int FROM school.exposures ORDER BY seq`)).rows);
-    expect(seqs.map((r) => r.t)).toEqual(["snapshots", "encounters", "answers", "explanations", "gradings", "views", "exposures"]);
+      UNION ALL SELECT 'exposures', seq::int FROM school.exposures UNION ALL SELECT 'conversations', seq::int FROM school.conversations
+      UNION ALL SELECT 'questions', seq::int FROM school.questions UNION ALL SELECT 'replies', seq::int FROM school.replies ORDER BY seq`)).rows);
+    // A question opens its conversation, then records its exposure, then itself (RFC 6 §5.2).
+    expect(seqs.map((r) => r.t)).toEqual(["snapshots", "encounters", "answers", "explanations", "gradings", "views", "exposures",
+      "conversations", "exposures", "questions", "replies"]);
     expect(new Set(seqs.map((r) => r.seq)).size).toBe(seqs.length);
   }, SLOW);
 

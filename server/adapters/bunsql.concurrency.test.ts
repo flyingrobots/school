@@ -374,8 +374,13 @@ describe.skipIf(URL_ === undefined)("Bun.SQL concurrency on a real Postgres (SCH
       expect(rows.every((x) => x.kind === "ai-help" && x.block_id === null && x.exposure_encounter === e.id && x.exposure_seq < x.seq)).toBe(true);
       expect(new Set(rows.map((x) => x.exposure_seq)).size).toBe(20);
       expect(await helps(s.admin, e.id)).toBe(20);
+      // Each conversation opened before its question's exposure, so the read, in conversations' seq
+      // order, need not follow the questions' order across conversations.
       const read = await s.record.lessonConversations("c", `l${i}`);
-      expect(read.map((c) => c.questions[0]!.questionId)).toEqual(rows.map((x) => x.question_id));
+      const opened = read.map((c) => c.seq);
+      expect(opened).toEqual([...opened].sort((x, y) => x - y));
+      expect(read.map((c) => c.questions.map((q) => q.questionId)).flat().sort()).toEqual(rows.map((x) => x.question_id).sort());
+      expect(read.every((c) => c.questions.length === 1 && c.seq < c.questions[0]!.exposureSeq)).toBe(true);
     }
   }, SLOW);
 

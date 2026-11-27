@@ -144,6 +144,7 @@ try {
   if (rename !== null) {
     const r = await renameRecordCourse(url, rename.from, rename.to);
     // `renamed` is 1.0.0, as consumers know it; the install and removal counts follow in a line of their own.
+    // Conversations (RFC 6 §5.2) are renamed with the rest, but no line reports their count yet.
     const { encounters, views, decision_notes, course_installs, course_removals } = r.rows;
     out.emit("stdout", ids.renamed, { event: "renamed", from: r.from, to: r.to, rows: { encounters, views, decision_notes } });
     out.emit("stdout", ids.renamedInstalls, { event: "renamed_installs", course_installs, course_removals });

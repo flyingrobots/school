@@ -123,6 +123,7 @@ type Login = {
  * another adds it here, or the server refuses to start; app-login.test.ts checks the two agree.
  */
 export const GRANTED_FUNCTIONS: readonly string[] = [
+  "school.ask(uuid,uuid,uuid,text,text,text,timestamp with time zone)",
   "school.choice_decision_notes(text,text,text)",
   "school.choose_course_trust(uuid,boolean,timestamp with time zone)",
   "school.choose_time_zone(text,timestamp with time zone)",
@@ -136,6 +137,7 @@ export const GRANTED_FUNCTIONS: readonly string[] = [
   "school.installed_courses()",
   "school.last_studied()",
   "school.latest_feedback()",
+  "school.lesson_conversations(text,text)",
   "school.lesson_progress(text)",
   "school.mastery(text,jsonb,timestamp with time zone,bigint)",
   "school.mastery_rollup(text,jsonb,timestamp with time zone,bigint)",
@@ -145,6 +147,7 @@ export const GRANTED_FUNCTIONS: readonly string[] = [
   "school.record_exposure(uuid,uuid,text,text,timestamp with time zone)",
   "school.record_grading(uuid,text,text,text,text,text,jsonb,text,jsonb,text,timestamp with time zone)",
   "school.record_lesson_help(uuid,uuid,text,timestamp with time zone)",
+  "school.record_reply(uuid,text,text,jsonb,text,text,jsonb,text,timestamp with time zone)",
   "school.record_view(text,text,timestamp with time zone)",
   "school.remove_installed_course(text,timestamp with time zone)",
   "school.save_explanation(uuid,uuid,text,text,bigint,timestamp with time zone)",

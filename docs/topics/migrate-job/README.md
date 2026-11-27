@@ -165,16 +165,17 @@ refusal gives the login back. `school_app` is a role of the whole Postgres serve
 every database on it: rehearsing on a restored copy beside the live record (the backup drill's
 `school_restore`) also keeps the live School from logging in until `../school up`, so stop School
 for a rehearsal too. It lifts the
-append-only trigger on the five tables that name a course only inside the transaction, and commits
+append-only trigger on the six tables that name a course only inside the transaction, and commits
 only if every record table's row count is unchanged, every trigger is enabled again and no row names
 `<from>`. A refusal or failure rolls all of it back, triggers included, and exits 1 with the reason.
-Snapshots hold page content and name no course, so they are not touched. Links to the old course's
-lessons stop working.
+Snapshots hold page content and name no course, so they are not touched. Conversations about a
+passage are renamed too; their questions and replies follow them, and no line reports their count.
+Links to the old course's lessons stop working.
 
 If it refused because `<to>` already has rows, nothing changed: find out where those rows came from
 before choosing another name. To check the outcome, compare each table's count per course before and
 after (`SELECT course, count(*) FROM school.encounters GROUP BY 1`, and the same for `views`,
-`decision_notes`, `course_installs` and `course_removals`), through `../school compose exec postgres psql -U postgres -d school`.
+`decision_notes`, `course_installs`, `course_removals` and `conversations`), through `../school compose exec postgres psql -U postgres -d school`.
 
 ## What the contract cannot cover
 
