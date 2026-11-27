@@ -8,11 +8,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startBridge, timeout } from "../server/testing/processes.ts";
 import { publishedIn, wellFormed } from "../server/testing/schemas.ts";
+import { fakeAgent, USAGE } from "./testing/fake-agent.ts";
 
 const BRIDGE = join(import.meta.dir, "bridge.ts");
 const TOKEN = "output-token-0123456789";
 const bridgeSchemas = publishedIn(join(import.meta.dir, "schemas"));
-const TYPES = ["attempt", "config.saved", "error", "help", "listening", "run.end", "run.start", "schema", "speak.cancel", "speak.failed", "speak.submit", "start", "test"];
+const TYPES = ["ask.attempt", "ask.end", "ask.start", "attempt", "config.saved", "error", "help", "listening", "run.end", "run.start", "schema", "speak.cancel", "speak.failed", "speak.submit", "start", "test"];
 const IDS = TYPES.map((t) => `school.bridge.${t}`);
 
 let dir = "";
@@ -59,6 +60,29 @@ describe("the bridge's output", () => {
     expect(new Set(out.filter((l) => "id" in l).map((l) => l.id)).size).toBe(1);
     expect(stdout).not.toContain(TOKEN);
     expect(stdout).not.toContain("SECRET-LEARNER-TEXT");
+  }, timeout(1));
+
+  test("bridge, a question: ask.start, an ask.attempt per agent tried, ask.end with the token counts, every line valid, no prompt and no answer", async () => {
+    const fails = fakeAgent(dir, "fails", [{ stderr: "SECRET-LEARNER-TEXT" }, { exit: 1 }]);
+    const claude = fakeAgent(dir, "claude", [{ delta: "SECRET-ANSWER-ONE " }, { delta: "SECRET-ANSWER-TWO" }, { result: "SECRET-ANSWER-ONE SECRET-ANSWER-TWO" }]);
+    writeFileSync(join(dir, "bridge.json"), JSON.stringify({ agents: [{ name: "grader", command: "true" }], ask: { agents: [
+      { name: "missing", command: "no-such-cli-qqq {prompt}" },
+      { name: "fails", command: `${fails} ${dir} {prompt}`, output: "claude-stream-json" },
+      { name: "claude", command: `${claude} ${dir} {prompt}`, output: "claude-stream-json" }] } }));
+    const b = await startBridge({ PATH: process.env.PATH, HOME: dir, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: join(dir, "bridge.json") });
+    const r = await fetch(b.url + "/ask", { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ prompt: "SECRET-LEARNER-TEXT" }) });
+    expect(await r.text()).toContain("SECRET-ANSWER-TWO");
+    b.proc.kill();
+    const { stdout, stderr } = await b.output();
+    expect(stderr).toBe("");
+    const out = bridgeSchemas.validated(stdout);
+    expect(out.map((l) => l.kind)).toEqual(["bridge.start", "bridge.listening", "bridge.ask.start", "bridge.ask.attempt", "bridge.ask.attempt", "bridge.ask.attempt", "bridge.ask.end"]);
+    expect(out.filter((l) => l.kind === "bridge.ask.attempt").map((l) => [l.agent, l.status, l.deltas])).toEqual([["missing", "skipped", 0], ["fails", "failed", 0], ["claude", "succeeded", 2]]);
+    expect(out.at(-1)).toMatchObject({ status: "succeeded", agent: "claude", deltas: 2, usage: USAGE });
+    expect(new Set(out.filter((l) => "id" in l).map((l) => l.id)).size).toBe(1);
+    expect(stdout).not.toContain(TOKEN);
+    expect(stdout).not.toContain("SECRET-LEARNER-TEXT");
+    expect(stdout).not.toContain("SECRET-ANSWER");
   }, timeout(1));
 
   test("bridge, a refusal to start (short token, bad port, unreadable configuration, unknown argument): one valid bridge.error line, exit 2, no token", async () => {
