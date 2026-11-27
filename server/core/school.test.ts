@@ -78,6 +78,15 @@ test("opening a lesson passes the client's aid capture version, or null, to the 
   ]);
 });
 
+test("mastery is read at the clock's now with due review's delay, one group per key (RFC 5 §4.5)", async () => {
+  const asked: unknown[] = [];
+  const row = { key: "l1", quizzes: 1, notStarted: 1, settling: 0, holding: 0, faded: 0, strength: 0 };
+  const record = { masteryRollup: async (q: unknown) => (asked.push(q), [row]) } as unknown as LearningRecord;
+  const school = createSchool({ record, grader: grader({ status: "failed", error: "x" }), clock });
+  expect(await school.masteryNow("c", { l1: ["q1"], l2: [] })).toEqual([row]);
+  expect(asked).toEqual([{ course: "c", groups: { l1: ["q1"], l2: [] }, now: NOW, delayMs: REVIEW_DELAY_MS }]);
+});
+
 describe("due review on opening a lesson (RFC 2 §5; flyingrobots/school#32)", () => {
   const quiz = (id: string): Block => ({ type: "quiz", id, q: `${id}?`, why: ".", choices: [{ id: "a", text: "A", correct: true }] });
   const item = (blockId: string, o: Partial<DueItem> = {}): DueItem => ({
