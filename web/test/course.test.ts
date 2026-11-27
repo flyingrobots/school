@@ -251,9 +251,15 @@ async function context(
   const c = await browser.newContext({ viewport })
   await c.route(/\/api\//, async (route) => {
     const u = new URL(route.request().url())
-    await route.fulfill({
-      response: await route.fetch({ url: school.url + u.pathname + u.search }),
-    })
+    try {
+      await route.fulfill({
+        response: await route.fetch({
+          url: school.url + u.pathname + u.search,
+        }),
+      })
+    } catch {
+      // A test that has what it needs closes its context while a request is still in flight.
+    }
   })
   return c
 }
