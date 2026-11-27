@@ -42,6 +42,7 @@ const web = join(import.meta.dir, "..")
 let vite: ViteDevServer
 let partway: Started // astro started, bio not
 let everywhere: Started // both started
+let holding: Started // geo with one quiz faded, one holding, one not started; bio not started
 let browser: Browser
 let base = ""
 let root = ""
@@ -86,6 +87,7 @@ const orbits = page("orbits", "Orbits", [quiz("q1"), quiz("q2"), explain], {
   teaser: "Nothing stops them.",
 })
 const tides = page("tides", "Tides", [quiz("q3"), quiz("q4")])
+const rocks = page("rocks", "Rocks", [quiz("g1"), quiz("g2"), quiz("g3")])
 const cells = page("cells", "Cells", [quiz("q9")], {
   question: "What is a cell made of?",
   teaser: "Smaller than you'd think.",
@@ -124,6 +126,7 @@ beforeAll(
     }
     course("astro", "Astronomy", [orbits, tides])
     course("bio", "Biology", [cells])
+    course("geo", "Geology", [rocks])
 
     // Two days ago, in Orbits: q1 wrong then right (so it is due now), and an explanation, graded.
     const DAY = 24 * 3600 * 1000
@@ -230,19 +233,54 @@ beforeAll(
     }
     await seed(join(root, "partway", "record"), false)
     await seed(join(root, "everywhere", "record"), true)
-    const env = (state: string) => ({
+    // How Geology is holding (RFC 5 §4.1, Table 4.5; flyingrobots/school#222), each answer a clean
+    // first try in an encounter of its own. g1, two days ago: stability one day, strength 0.25
+    // now, so faded today. g2, three days ago and again an hour ago: stability 2.5 days, holding
+    // now, and below one half from 60 hours on, so it comes back three days ahead (strength 0.43;
+    // 0.57 two days ahead). g3 is never answered. Biology is not started.
+    {
+      const db = await openDatabase({
+        driver: "pglite",
+        dir: join(root, "holding", "record"),
+      })
+      const r = postgresRecord(db.sql)
+      for (const [blockId, ms] of [
+        ["g2", 3 * DAY],
+        ["g1", 2 * DAY],
+        ["g2", 3600_000],
+      ] as const) {
+        const e = await r.openEncounter({
+          course: "geo",
+          lesson: "rocks",
+          page: rocks,
+          now: ago(ms + 1000),
+          aidTracking: 1,
+        })
+        await r.submit(
+          {
+            submissionId: crypto.randomUUID(),
+            encounterId: e.id,
+            blockId,
+            choiceId: "right",
+            ms: 10,
+          },
+          ago(ms)
+        )
+      }
+      await db.close()
+    }
+    const env = (state: string, courses = ["astro", "bio"]) => ({
       ...process.env,
       TZ: NOON,
       HOST: "127.0.0.1",
       SCHOOL_STATE: join(root, state),
       SCHOOL_WEB: join(root, "no-web"),
       SCHOOL_DATABASE_URL: `pglite:${join(root, state, "record")}`,
-      SCHOOL_COURSES: ["astro", "bio"]
-        .map((c) => `${c}=${join(root, c)}`)
-        .join(","),
+      SCHOOL_COURSES: courses.map((c) => `${c}=${join(root, c)}`).join(","),
     })
     partway = await startSchool(env("partway"))
     everywhere = await startSchool(env("everywhere"))
+    holding = await startSchool(env("holding", ["geo", "bio"]))
 
     vite = await createServer({
       root: web,
@@ -255,13 +293,13 @@ beforeAll(
     browser = await chromium.launch({ channel: "chrome" })
     await warm(browser, base)
   },
-  timeout(2) + 60_000
+  timeout(3) + 60_000
 )
 
 afterAll(async () => {
   await browser?.close()
   await vite?.close()
-  for (const s of [partway, everywhere]) {
+  for (const s of [partway, everywhere, holding]) {
     s?.proc.kill()
     await s?.proc.exited
   }
@@ -272,11 +310,13 @@ afterAll(async () => {
 async function context(
   school = partway,
   viewport = { width: 1280, height: 900 },
-  reducedMotion: "reduce" | "no-preference" = "reduce"
+  reducedMotion: "reduce" | "no-preference" = "reduce",
+  colorScheme: "light" | "dark" = "light"
 ): Promise<BrowserContext> {
   const c = await browser.newContext({
     viewport,
     reducedMotion,
+    colorScheme,
     timezoneId: NOON,
   })
   await c.route(/\/api\//, async (route) => {
@@ -633,6 +673,126 @@ describe("states", () => {
     const p = await open(c)
     await main(p).getByText("Nothing ahead right now").waitFor()
     await close(c)
+  })
+})
+
+// RFC 5 Table 5.1 step 6 (flyingrobots/school#222): each lane says, in words, how its course's
+// quizzes are holding today, with the registry's Badge in the theme's colours, and a quiz that will
+// fade is a ring on the day it comes back. Oracle: the Geology record above, worked from RFC 5
+// §4.1 and Table 4.5, and the words of RFC 5 Table 4.7.
+describe("how each course is holding", () => {
+  const lane = (p: Page, course: string) =>
+    main(p).locator(`[data-timeline] [data-lane=${course}]`)
+  const words = (p: Page, course: string) =>
+    lane(p, course).locator("[data-holding] [data-slot=badge]")
+  const localDay = (ms: number) =>
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: NOON,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(ms)
+
+  test.each(["light", "dark"] as const)(
+    "a course's lane says how its quizzes are holding, in Badges in the theme's colours (%s)",
+    async (colorScheme) => {
+      const p = await open(
+        await context(holding, undefined, undefined, colorScheme)
+      )
+      await words(p, "geo").first().waitFor()
+      expect(await words(p, "geo").allTextContents()).toEqual([
+        "1 of 3 quizzes holding",
+        "1 ready for another look",
+        "1 not started yet",
+      ])
+      const got = await words(p, "geo")
+        .first()
+        .evaluate((el) => {
+          // The tokens as the browser resolves them, through the same property.
+          const probe = document.createElement("div")
+          probe.style.backgroundColor = "var(--secondary)"
+          probe.style.color = "var(--secondary-foreground)"
+          document.body.append(probe)
+          const want = getComputedStyle(probe)
+          const have = getComputedStyle(el)
+          const out = {
+            background: have.backgroundColor === want.backgroundColor,
+            text: have.color === want.color,
+            dark: document.documentElement.classList.contains("dark"),
+          }
+          probe.remove()
+          return out
+        })
+      expect(got).toEqual({
+        background: true,
+        text: true,
+        dark: colorScheme === "dark",
+      })
+      await close(p.context())
+    }
+  )
+
+  test("a course not started says so in its lane", async () => {
+    const p = await open(await context(holding))
+    await words(p, "bio").first().waitFor()
+    expect(await words(p, "bio").allTextContents()).toEqual(["Not started yet"])
+    await close(p.context())
+  })
+
+  test("a quiz that fades is a ring on the day it comes back, three days ahead, and on no day before", async () => {
+    const p = await open(await context(holding))
+    await lane(p, "geo").waitFor()
+    const back = localDay(Date.now() + 3 * 24 * 3600 * 1000)
+    expect(
+      await lane(p, "geo")
+        .locator("[data-mark^='due:']")
+        .evaluateAll((els) => els.map((e) => e.getAttribute("data-mark")))
+    ).toEqual([`due:geo:${back}`])
+    const ring = lane(p, "geo").locator(`[data-mark='due:geo:${back}']`)
+    expect(await ring.getAttribute("aria-label")).toStartWith(
+      "1 question comes back in Geology, "
+    )
+    await ring.click()
+    expect((await main(p).locator("[data-day]").textContent()) ?? "").toContain(
+      "1 question comes back on"
+    )
+    await close(p.context())
+  })
+
+  test("the lane's words sit inside the timeline above the lane's line, from a phone to a wide screen", async () => {
+    for (const width of [390, 1440]) {
+      const p = await open(await context(holding, { width, height: 900 }))
+      await words(p, "geo").first().waitFor()
+      const svg = (await main(p)
+        .locator("[data-timeline] svg[aria-label^='Days you studied']")
+        .boundingBox())!
+      const line = (await lane(p, "geo").locator("line").first().boundingBox())!
+      const boxes = await words(p, "geo").evaluateAll((els) =>
+        els.map((e) => e.getBoundingClientRect().toJSON() as DOMRect)
+      )
+      expect(boxes.length).toBe(3)
+      for (const b of boxes) {
+        expect(b.left).toBeGreaterThanOrEqual(svg.x)
+        expect(b.right).toBeLessThanOrEqual(svg.x + svg.width + 0.5)
+        expect(b.bottom).toBeLessThanOrEqual(line.y - 8)
+      }
+      await close(p.context())
+    }
+  })
+
+  test("nothing is written to browser storage", async () => {
+    const p = await open(await context(holding))
+    await words(p, "geo").first().waitFor()
+    await lane(p, "geo").locator("[data-mark^='due:']").click()
+    await main(p).locator("[data-day]").waitFor()
+    expect(
+      await p.evaluate(async () => ({
+        local: localStorage.length,
+        session: sessionStorage.length,
+        indexedDB: (await indexedDB.databases()).map((d) => d.name),
+      }))
+    ).toEqual({ local: 0, session: 0, indexedDB: [] })
+    await close(p.context())
   })
 })
 
