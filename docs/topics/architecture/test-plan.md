@@ -75,6 +75,18 @@ _Table 1. The agent kill's cases. The ask route uses the same sweep (`sweepGroup
 
 _Table 2. The course store's cases. STORE-9 reads the Dockerfile; no test builds the image._
 
+## Stopping the bridge (flyingrobots/school#286)
+
+Each agent leads its own process group, so the signal that stops the bridge never reaches it. The
+cases in `bridge/stop.test.ts` run the bridge as a real process with fake agents that start
+background children and hang; an agent process counts as left if `ps` shows it running, not a
+zombie, 2 s after the bridge exits.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| STOP-1 | Golden | One hanging grading agent and its child: after SIGTERM, and after SIGINT, neither is left | implemented | `SIGTERM with one hanging grading agent: no agent process is left once the bridge exits`; the same for SIGINT |
+| STOP-2 | Nothing running | SIGTERM or SIGINT with no agent running: exit 0, "stopped" ([the bridge's exit codes](../program-output/README.md#the-bridge)) | implemented | `SIGTERM with no agent running: the bridge exits 0`; the same for SIGINT |
+| STOP-3 | Many agents | A hanging grading and a hanging question at once, each agent with three children: none of the 8 processes is left | implemented | `SIGTERM with a hanging grading and a hanging question, each agent with three children: no agent process is left` |
 ## The course list (flyingrobots/school#234)
 
 [The course list](README.md#the-course-list), RFC 7 task 4. The oracle is the issue's sections 2b and 2d and RFC 7 §7: configured and installed courses are served together, an install's trust comes from the record, a name in both places stops start with exit 2, and an install whose folder is missing or altered is listed with `lessons: null` and not served. The registry cases stand a list in for the `installedCourses` port, whose answers the LearningRecord contract checks on both drivers.

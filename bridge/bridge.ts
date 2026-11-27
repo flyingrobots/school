@@ -19,7 +19,7 @@ import type { Server } from "bun";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { BridgeConfigError, loadConfig, runChain, type BridgeConfig } from "./run.ts";
+import { BridgeConfigError, killAgents, loadConfig, runChain, type BridgeConfig } from "./run.ts";
 import { runAsk, type AskResult } from "./ask.ts";
 import { keychainStore } from "../host/keychain.ts";
 import { accountFrom, resolveSecret } from "../host/secrets.ts";
@@ -126,6 +126,16 @@ const crash = (e: unknown) => {
 };
 process.on("uncaughtException", crash);
 process.on("unhandledRejection", crash);
+
+// Stopping: every agent leads its own process group, so the signal that stops the bridge never
+// reaches one. Kill each live agent's group, then exit, all in this one turn: no queued grading or
+// question can start an agent in between (flyingrobots/school#286).
+const stop = () => {
+  killAgents();
+  process.exit(0);
+};
+process.on("SIGTERM", stop);
+process.on("SIGINT", stop);
 
 let token = "";
 let tokenFrom = "";
