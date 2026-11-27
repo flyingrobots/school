@@ -236,7 +236,7 @@ The record is Postgres, built by the numbered migrations in `server/db/migration
 `0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_read_committed.sql`,
 `0006_due_review.sql`, `0007_since_last_here.sql`, `0008_study_days.sql`, `0009_time_zone_choices.sql`,
 `0010_course_installs.sql`, `0011_mastery.sql`, `0012_ai_help.sql`, `0013_mastery_rollup.sql`,
-`0014_faded_review.sql`, `0015_course_progress.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
+`0014_faded_review.sql`, `0015_course_progress.sql`, `0016_authoring.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -274,7 +274,7 @@ connection, in the record's database. The server refuses to start if any of thes
 | 4 | Owns no schema (schema `school` included), relation, function, type or database | the owner's login, objects it created |
 | 5 | Outside `pg_catalog` and `information_schema`: no privilege on any table, view, materialized view or foreign table (`SELECT` to `MAINTAIN`), no `USAGE`, `SELECT` or `UPDATE` on any sequence, no column privilege | table, column, sequence and `MAINTAIN` grants |
 | 6 | In `pg_catalog` and `information_schema`: no write privilege on any relation (except `UPDATE` on `pg_settings`, which Postgres grants `PUBLIC` and which is `SET`), and no `SELECT` on the relations Postgres withholds from an ordinary role (`RESTRICTED_RELATIONS`: `pg_authid`, `pg_statistic`, `pg_shadow` and 20 more) | catalog grants to it or to `PUBLIC` |
-| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 29 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
+| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 34 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
 | 8 | No privilege granted to it by name on any relation, column, function (but the granted ones), schema (but `USAGE` on `school`), database, type, language, large object, foreign-data wrapper, foreign server or tablespace; no parameter privilege (`pg_parameter_acl`) granted to it or to `PUBLIC` | direct grants, `GRANT SET ON PARAMETER` |
 | 9 | No default privileges (`pg_default_acl`) granting to it or to `PUBLIC`, and none set by it | future grants |
 | 10 | No `CREATE` on any schema; no `CREATE` or `TEMPORARY` on the record's database | creating objects there |
@@ -399,6 +399,24 @@ port's `courseProgress`: how many encounters were opened under a course name, ho
 explanations were given in them, and how many views were recorded under it, whether or not any
 course is served under that name now. The [install preview](#previewing-an-install) reads it to say
 whether a name already holds progress.
+Migration 0016 (RFC 9 §5.5, flyingrobots/school#258) records authoring in three more append-only
+tables, before any of RFC 9's routes use them: `authoring_requests` (what the learner asked of a
+course, on which install, with the skill's digest and School's version; 1 to 20,000 characters),
+`authoring_drafts` (each round of a request, at most two: `ready` or `refused` by the check with the
+agent, the draft commit and its digest, or `failed` with no commit; a second round only after a
+refused first that has no decision) and `authoring_decisions` (one per draft, `accepted` with its install and patch, or
+`discarded`). `school.request_authoring(...)` answers `stored`, `duplicate`, `conflict`, or `refused`
+when the base is not the course's current install; `school.record_draft(...)` answers `stored`,
+`duplicate`, `conflict`, or `rejected` for no such request or a round out of turn (round 2 only follows a refused round 1 with no decision);
+`school.decide_draft(...)` answers `stored`, `duplicate`, `conflict`, or, storing nothing,
+`already-decided`, `not-ready` (an accept of a draft that is not `ready`), `stale` (the accepted
+install is no longer current) or `rejected` (no such draft, an accept naming another install, or a discard of a draft an install already names); `school.course_authoring(course)` lists a course's
+requests with their drafts and decisions. They are the port's `requestAuthoring`, `recordDraft`,
+`decideDraft` and `courseAuthoring`. `course_installs` gains the source `authored`, with
+`parent_install_id` and `draft_id`; `school.install_course` takes both and answers `stale` when an
+authored install's parent is no longer current, or `rejected` when its draft is not an undecided
+`ready` draft of a request on that parent whose commit and content digest the install names, and `school.installed_courses()` reports both.
+One extension beyond RFC 9 Figure 5.2 stays: a `failed` draft may be discarded, so the 14-day sweep can close it.
 `school.latest_feedback()` is the succeeded grading with the highest `seq` and where its explanation
 was written; the port's `latestFeedback`. A failed attempt is never feedback.
 
@@ -477,13 +495,52 @@ erDiagram
         bigint seq PK
         uuid id UK "caller UUID"
         text course "the name the learner chose"
-        text source "git or bundle"
+        text source "git, bundle or authored"
         text url "https, set for git"
         text bundle_sha256 "set for bundle"
-        text commit
+        text commit "the draft commit, for authored"
         text content_sha256 "the files' manifest"
         text title
         integer format "NULL when undeclared"
+        uuid parent_install_id FK "set for authored"
+        uuid draft_id FK "set for authored, once per draft"
+        timestamptz at
+    }
+    COURSE_INSTALLS ||--o{ AUTHORING_REQUESTS : "is the base of"
+    AUTHORING_REQUESTS ||--o{ AUTHORING_DRAFTS : "is drafted in"
+    AUTHORING_DRAFTS ||--o| AUTHORING_DECISIONS : "is decided by"
+    AUTHORING_DRAFTS ||--o| COURSE_INSTALLS : "becomes"
+    AUTHORING_REQUESTS {
+        bigint seq PK
+        uuid id UK "caller UUID"
+        text course
+        uuid base_install_id FK "the current install when asked"
+        text text "1 to 20,000 characters"
+        text skill_sha256 "the skill's manifest"
+        text school_version
+        timestamptz at
+    }
+    AUTHORING_DRAFTS {
+        bigint seq PK
+        uuid id UK "caller UUID"
+        uuid request_id FK
+        integer round "1, or 2 after a refused 1"
+        text status "ready, refused or failed"
+        text agent "NULL only when failed"
+        text commit "set unless failed"
+        text content_sha256 "set unless failed"
+        text check_message "set exactly when refused"
+        integer input_tokens
+        integer output_tokens
+        timestamptz at
+    }
+    AUTHORING_DECISIONS {
+        bigint seq PK
+        uuid id UK "caller UUID"
+        uuid draft_id FK "UK: one per draft"
+        text decision "accepted or discarded"
+        uuid install_id FK "set exactly when accepted"
+        text patch "set exactly when accepted"
         timestamptz at
     }
     COURSE_REMOVALS {

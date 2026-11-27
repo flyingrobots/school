@@ -3,7 +3,10 @@
 // It speaks only through the port; storage-level rules (append-only triggers, privileges) are
 // tested beside each adapter, since how they are enforced is the adapter's business.
 import { expect, test } from "bun:test";
-import { ExposureKind, type Block, type CourseInstall, type DecisionNoteInput, type DueItem, type GradingRecord, type InstalledCourse, type LessonHelp, type Mastery } from "../core/model.ts";
+import {
+  ExposureKind, type AuthoringDecision, type AuthoringDraft, type AuthoringRequest, type Block, type CourseInstall, type DecisionNoteInput, type DueItem, type GradingRecord,
+  type InstalledCourse, type LessonHelp, type Mastery, type RecordedDecision, type RecordedDraft, type RecordedRequest,
+} from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
 
 /**
@@ -50,6 +53,45 @@ const bundleInstall = (o: Partial<Extract<CourseInstall, { source: "bundle" }>> 
   commit: hex(64, "d"), contentSha256: hex(64, "e"), title: "Bells", format: null, ...o,
 });
 const current = (i: CourseInstall, now: string, trusted = false): InstalledCourse => ({ ...i, at: now, trusted });
+
+// Authoring (RFC 9 §5.5). The record checks shapes and order; what a draft holds is the course store's.
+type Ready = Extract<AuthoringDraft, { status: "ready" }>;
+type Refused = Extract<AuthoringDraft, { status: "refused" }>;
+type Failed = Extract<AuthoringDraft, { status: "failed" }>;
+const authoringRequest = (base: CourseInstall, o: Partial<AuthoringRequest> = {}): AuthoringRequest => ({
+  id: uuid(), course: base.course, baseInstallId: base.id, text: "Add a lesson on rounds after the plain hunt lesson.",
+  skillSha256: hex(64, "5"), schoolVersion: "0.1.0", ...o,
+});
+const readyDraft = (req: AuthoringRequest, o: Partial<Ready> = {}): Ready => ({
+  id: uuid(), requestId: req.id, round: 1, status: "ready", agent: "claude", commit: hex(40, "7"), contentSha256: hex(64, "8"),
+  checkMessage: null, inputTokens: 1200, outputTokens: 340, ...o,
+});
+const refusedDraft = (req: AuthoringRequest, o: Partial<Refused> = {}): Refused => ({
+  id: uuid(), requestId: req.id, round: 1, status: "refused", agent: "claude", commit: hex(40, "9"), contentSha256: hex(64, "6"),
+  checkMessage: "lessons/0002-rounds.json > q1: exactly one choice must be correct", inputTokens: 1100, outputTokens: 300, ...o,
+});
+const failedDraft = (req: AuthoringRequest, o: Partial<Failed> = {}): Failed => ({
+  id: uuid(), requestId: req.id, round: 1, status: "failed", agent: null, commit: null, contentSha256: null, checkMessage: null,
+  inputTokens: null, outputTokens: null, ...o,
+});
+/** The `authored` install a ready draft becomes, on the install its request was based on. */
+const authoredInstall = (base: CourseInstall, d: Ready, o: Partial<Extract<CourseInstall, { source: "authored" }>> = {}): CourseInstall => ({
+  id: uuid(), course: base.course, source: "authored", url: null, bundleSha256: null, parentInstallId: base.id, draftId: d.id,
+  commit: d.commit, contentSha256: d.contentSha256, title: base.title, format: base.format, ...o,
+});
+const PATCH = "From 7777777777777777777777777777777777777777 Mon Sep 17 00:00:00 2001\nSubject: [PATCH] Add a lesson on rounds\n";
+const accept = (d: AuthoringDraft, install: CourseInstall, patch = PATCH): Extract<AuthoringDecision, { decision: "accepted" }> =>
+  ({ id: uuid(), draftId: d.id, decision: "accepted", installId: install.id, patch });
+const discard = (d: AuthoringDraft): AuthoringDecision => ({ id: uuid(), draftId: d.id, decision: "discarded", installId: null, patch: null });
+const recordedRequest = (req: AuthoringRequest, now: string, drafts: RecordedDraft[] = []): RecordedRequest => ({ ...req, at: now, drafts });
+const recordedDraft = (d: AuthoringDraft, now: string, decision: RecordedDecision | null = null): RecordedDraft => {
+  const { requestId: _, ...rest } = d;
+  return { ...rest, at: now, decision };
+};
+const recordedDecision = (d: AuthoringDecision, now: string): RecordedDecision => {
+  const { draftId: _, ...rest } = d;
+  return { ...rest, at: now };
+};
 
 /** A small seeded generator (mulberry32), so a fuzz case replays from its seed. */
 function seeded(seed: number): () => number {
@@ -1554,5 +1596,374 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     }
     // Witnesses: the fixed seed reaches every kind of step.
     for (const [kind, n] of Object.entries(kinds)) expect(`${kind}: ${n > 0}`, replay).toBe(`${kind}: true`);
+  });
+
+  // ---- Authoring (RFC 9 §5.5; flyingrobots/school#258) ----------------------------------------
+  // Oracle: RFC 9 §5.4's draft states (Figure 5.2) and §5.5's tables and functions.
+
+  /** `bells` installed from git at at(0), and a request on it at at(1000). */
+  const requested = async (r: LearningRecord) => {
+    const base = gitInstall();
+    await r.installCourse(base, at(0));
+    const req = authoringRequest(base);
+    expect(await r.requestAuthoring(req, at(1000))).toEqual({ status: "stored" });
+    return { base, req };
+  };
+
+  t("authoring: nothing is recorded at first", async (r) => {
+    expect(await r.courseAuthoring("bells")).toEqual([]);
+  });
+
+  t("authoring: a request on the course's current install is stored, and read back with no drafts", async (r) => {
+    const { req } = await requested(r);
+    expect(await r.courseAuthoring("bells")).toEqual([recordedRequest(req, at(1000))]);
+  });
+
+  t("authoring: a resent request is a duplicate, and its id with another request is a conflict; the first stands", async (r) => {
+    const { req } = await requested(r);
+    expect(await r.requestAuthoring(req, at(2000))).toEqual({ status: "duplicate" });
+    expect(await r.requestAuthoring({ ...req, text: "Something else." }, at(3000))).toEqual({ status: "conflict" });
+    expect(await r.requestAuthoring({ ...req, skillSha256: hex(64, "4") }, at(4000))).toEqual({ status: "conflict" });
+    expect(await r.courseAuthoring("bells")).toEqual([recordedRequest(req, at(1000))]);
+  });
+
+  t("authoring: a request whose base is not the course's current install is refused, and stores nothing", async (r) => {
+    const old = gitInstall();
+    const now = gitInstall({ commit: hex(40, "b") });
+    const aion = gitInstall({ course: "aion", title: "Aion" });
+    const gone = gitInstall({ course: "gone", title: "Gone" });
+    await r.installCourse(old, at(0));
+    await r.installCourse(now, at(1000));
+    await r.installCourse(aion, at(2000));
+    await r.installCourse(gone, at(3000));
+    await r.removeInstalledCourse("gone", at(4000));
+    for (const [why, req] of [
+      ["an earlier install of the course", authoringRequest(old)],
+      ["another course's install", authoringRequest(aion, { course: "bells" })],
+      ["a removed course's last install", authoringRequest(gone)],
+      ["no install at all", authoringRequest(now, { baseInstallId: uuid() })],
+    ] as const) expect({ why, ...(await r.requestAuthoring(req, at(5000))) }).toEqual({ why, status: "refused" });
+    for (const course of ["bells", "aion", "gone"]) expect(await r.courseAuthoring(course)).toEqual([]);
+  });
+
+  t("authoring: a draft is read back under its request with its agent, commit, digest and token counts", async (r) => {
+    const { req } = await requested(r);
+    const d = readyDraft(req);
+    expect(await r.recordDraft(d, at(2000))).toEqual({ status: "stored" });
+    expect(await r.courseAuthoring("bells")).toEqual([recordedRequest(req, at(1000), [recordedDraft(d, at(2000))])]);
+  });
+
+  t("authoring: a refused first draft keeps the check's message, and its repair round is stored after it", async (r) => {
+    const { req } = await requested(r);
+    const first = refusedDraft(req);
+    const second = readyDraft(req, { round: 2, inputTokens: null, outputTokens: null });
+    expect(await r.recordDraft(first, at(2000))).toEqual({ status: "stored" });
+    expect(await r.recordDraft(second, at(3000))).toEqual({ status: "stored" });
+    expect(await r.courseAuthoring("bells")).toEqual([recordedRequest(req, at(1000), [recordedDraft(first, at(2000)), recordedDraft(second, at(3000))])]);
+  });
+
+  t("authoring: a failed round is stored with no commit, digest or message, and may name no agent", async (r) => {
+    const { req } = await requested(r);
+    const d = failedDraft(req);
+    expect(await r.recordDraft(d, at(2000))).toEqual({ status: "stored" });
+    expect(await r.courseAuthoring("bells")).toEqual([recordedRequest(req, at(1000), [recordedDraft(d, at(2000))])]);
+  });
+
+  t("authoring: a resent draft is a duplicate, and its id with another draft is a conflict; the first stands", async (r) => {
+    const { req } = await requested(r);
+    const d = readyDraft(req);
+    await r.recordDraft(d, at(2000));
+    expect(await r.recordDraft(d, at(3000))).toEqual({ status: "duplicate" });
+    expect(await r.recordDraft({ ...d, commit: hex(40, "3") }, at(4000))).toEqual({ status: "conflict" });
+    expect(await r.recordDraft({ ...d, outputTokens: 1 }, at(5000))).toEqual({ status: "conflict" });
+    expect(await r.courseAuthoring("bells")).toEqual([recordedRequest(req, at(1000), [recordedDraft(d, at(2000))])]);
+  });
+
+  t("authoring: a draft out of turn is rejected and stores nothing", async (r) => {
+    const { base, req } = await requested(r);
+    const unrecorded = authoringRequest(base);
+    const ready = readyDraft(req);
+    await r.recordDraft(ready, at(2000));
+    const other = authoringRequest(base);
+    await r.requestAuthoring(other, at(2500));
+    await r.recordDraft(failedDraft(other), at(2600));
+    for (const [why, d] of [
+      ["no request has its id", readyDraft(unrecorded)],
+      ["the request already has a first round", refusedDraft(req)],
+      ["a repair round after a ready first round", readyDraft(req, { round: 2 })],
+      ["a repair round after a failed first round", readyDraft(other, { round: 2 })],
+    ] as const) expect({ why, ...(await r.recordDraft(d, at(3000))) }).toEqual({ why, status: "rejected" });
+    expect((await r.courseAuthoring("bells")).map((q) => q.drafts.map((x) => x.id))).toEqual([[ready.id], [expect.any(String)]]);
+  });
+
+  t("authoring: a request has at most two rounds; a third is rejected", async (r) => {
+    const { req } = await requested(r);
+    await r.recordDraft(refusedDraft(req), at(2000));
+    await r.recordDraft(refusedDraft(req, { round: 2 }), at(3000));
+    expect(await r.recordDraft(readyDraft(req, { round: 2 }), at(4000))).toEqual({ status: "rejected" });
+    expect((await r.courseAuthoring("bells"))[0]!.drafts.map((x) => [x.round, x.status])).toEqual([[1, "refused"], [2, "refused"]]);
+  });
+
+  t("authoring: an authored install of a ready draft updates the course, and is listed with its parent and draft, untrusted", async (r) => {
+    const { base, req } = await requested(r);
+    const d = readyDraft(req);
+    await r.recordDraft(d, at(2000));
+    const i = authoredInstall(base, d);
+    expect(await r.installCourse(i, at(3000))).toEqual({ status: "updated" });
+    expect(await r.installCourse(i, at(4000))).toEqual({ status: "duplicate" });
+    expect(await r.installedCourses()).toEqual([current(i, at(3000))]);
+  });
+
+  t("authoring: an authored install whose parent is no longer the course's current install is stale, and stores nothing", async (r) => {
+    const { base, req } = await requested(r);
+    const d = readyDraft(req);
+    await r.recordDraft(d, at(2000));
+    const update = gitInstall({ commit: hex(40, "b") });
+    await r.installCourse(update, at(3000));
+    expect(await r.installCourse(authoredInstall(base, d), at(4000))).toEqual({ status: "stale" });
+    await r.removeInstalledCourse("bells", at(5000));
+    expect(await r.installCourse(authoredInstall(base, d), at(6000))).toEqual({ status: "stale" });
+    expect(await r.installedCourses()).toEqual([]);
+  });
+
+  t("authoring: an authored install of a draft that is not an undecided ready draft on its parent is rejected, and stores nothing", async (r) => {
+    const { base, req } = await requested(r);
+    const refused = refusedDraft(req);
+    await r.recordDraft(refused, at(2000));
+    const ready = readyDraft(req, { round: 2 });
+    await r.recordDraft(ready, at(2100));
+    const other = authoringRequest(base);
+    await r.requestAuthoring(other, at(2200));
+    const failed = failedDraft(other);
+    await r.recordDraft(failed, at(2300));
+    const discarded = authoringRequest(base);
+    await r.requestAuthoring(discarded, at(2400));
+    const thrown = readyDraft(discarded);
+    await r.recordDraft(thrown, at(2500));
+    await r.decideDraft(discard(thrown), at(2600));
+    const aion = gitInstall({ course: "aion", title: "Aion" });
+    await r.installCourse(aion, at(2700));
+    for (const [why, i] of [
+      ["a refused draft", authoredInstall(base, { ...ready, id: refused.id })],
+      ["a failed draft", authoredInstall(base, { ...ready, id: failed.id })],
+      ["a discarded draft", authoredInstall(base, thrown)],
+      ["no draft at all", authoredInstall(base, { ...ready, id: uuid() })],
+      ["a parent that is not the request's base", authoredInstall(aion, ready, { course: "bells", title: "Bells" })],
+      ["another course's name", authoredInstall(aion, ready)],
+    ] as const) expect({ why, ...(await r.installCourse(i, at(3000))) }).toEqual({ why, status: "rejected" });
+    expect(await r.installedCourses()).toEqual([current(aion, at(2700)), current(base, at(0))]);
+  });
+
+  t("authoring: an authored install must name its draft's own commit and content digest, or it is rejected and stores nothing", async (r) => {
+    const { base, req } = await requested(r);
+    const d = readyDraft(req);
+    await r.recordDraft(d, at(2000));
+    for (const [why, o] of [
+      ["another commit", { commit: hex(40, "a") }],
+      ["another content digest", { contentSha256: hex(64, "b") }],
+    ] as const) expect({ why, ...(await r.installCourse(authoredInstall(base, d, o), at(3000))) }).toEqual({ why, status: "rejected" });
+    expect(await r.installedCourses()).toEqual([current(base, at(0))]);
+  });
+
+  t("authoring: a draft that has become an install cannot be discarded before its accept is recorded; nothing is stored", async (r) => {
+    const { base, req } = await requested(r);
+    const d = readyDraft(req);
+    await r.recordDraft(d, at(2000));
+    const i = authoredInstall(base, d);
+    await r.installCourse(i, at(3000));
+    expect(await r.decideDraft(discard(d), at(4000))).toEqual({ status: "rejected" });
+    expect((await r.courseAuthoring("bells"))[0]!.drafts[0]!.decision).toBeNull();
+    const decision = accept(d, i);
+    expect(await r.decideDraft(decision, at(5000))).toEqual({ status: "stored" });
+    expect((await r.courseAuthoring("bells"))[0]!.drafts[0]!.decision).toEqual(recordedDecision(decision, at(5000)));
+  });
+
+  t("authoring: round 2 is refused once round 1 has any decision, and stores nothing", async (r) => {
+    const { base, req } = await requested(r);
+    const refused = refusedDraft(req);
+    await r.recordDraft(refused, at(2000));
+    const decision = discard(refused);
+    await r.decideDraft(decision, at(3000));
+    expect(await r.recordDraft(readyDraft(req, { round: 2 }), at(4000))).toEqual({ status: "rejected" });
+    expect(await r.recordDraft(failedDraft(req, { round: 2 }), at(4100))).toEqual({ status: "rejected" });
+    expect(await r.courseAuthoring("bells")).toEqual([recordedRequest(req, at(1000), [recordedDraft(refused, at(2000), recordedDecision(decision, at(3000)))])]);
+    expect(await r.installedCourses()).toEqual([current(base, at(0))]);
+  });
+
+  t("authoring: a draft installed once cannot be installed again under another install id", async (r) => {
+    const { base, req } = await requested(r);
+    const d = readyDraft(req);
+    await r.recordDraft(d, at(2000));
+    const first = authoredInstall(base, d);
+    await r.installCourse(first, at(3000));
+    expect(await r.installCourse(authoredInstall(first, d, { parentInstallId: first.id }), at(4000))).toEqual({ status: "rejected" });
+    expect(await r.installedCourses()).toEqual([current(first, at(3000))]);
+  });
+
+  t("authoring: an accepted draft keeps its install and patch, and is read back with its decision", async (r) => {
+    const { base, req } = await requested(r);
+    const d = readyDraft(req);
+    await r.recordDraft(d, at(2000));
+    const i = authoredInstall(base, d);
+    await r.installCourse(i, at(3000));
+    const decision = accept(d, i);
+    expect(await r.decideDraft(decision, at(4000))).toEqual({ status: "stored" });
+    expect(await r.courseAuthoring("bells")).toEqual([
+      recordedRequest(req, at(1000), [recordedDraft(d, at(2000), recordedDecision(decision, at(4000)))])]);
+  });
+
+  t("authoring: a discarded draft is read back with its decision, and the course's current install is unchanged", async (r) => {
+    const { base, req } = await requested(r);
+    const d = readyDraft(req);
+    await r.recordDraft(d, at(2000));
+    const decision = discard(d);
+    expect(await r.decideDraft(decision, at(3000))).toEqual({ status: "stored" });
+    expect(await r.courseAuthoring("bells")).toEqual([
+      recordedRequest(req, at(1000), [recordedDraft(d, at(2000), recordedDecision(decision, at(3000)))])]);
+    expect(await r.installedCourses()).toEqual([current(base, at(0))]);
+  });
+
+  t("authoring: a resent decision is a duplicate, and its id with another decision is a conflict; the first stands", async (r) => {
+    const { req } = await requested(r);
+    const d = readyDraft(req);
+    await r.recordDraft(d, at(2000));
+    const decision = discard(d);
+    await r.decideDraft(decision, at(3000));
+    expect(await r.decideDraft(decision, at(4000))).toEqual({ status: "duplicate" });
+    const elsewhere = refusedDraft(authoringRequest(gitInstall()));
+    expect(await r.decideDraft({ ...decision, draftId: elsewhere.id }, at(5000))).toEqual({ status: "conflict" });
+    expect((await r.courseAuthoring("bells"))[0]!.drafts[0]!.decision).toEqual(recordedDecision(decision, at(3000)));
+  });
+
+  t("authoring: a second decision on a draft is refused, whichever came first; the first stands", async (r) => {
+    const { base, req } = await requested(r);
+    const d = readyDraft(req);
+    await r.recordDraft(d, at(2000));
+    const i = authoredInstall(base, d);
+    await r.installCourse(i, at(3000));
+    const first = accept(d, i);
+    await r.decideDraft(first, at(4000));
+    expect(await r.decideDraft(discard(d), at(5000))).toEqual({ status: "already-decided" });
+    expect(await r.decideDraft(accept(d, i), at(6000))).toEqual({ status: "already-decided" });
+    const other = authoringRequest(i);
+    await r.requestAuthoring(other, at(7000));
+    const thrown = refusedDraft(other);
+    await r.recordDraft(thrown, at(8000));
+    const discarded = discard(thrown);
+    await r.decideDraft(discarded, at(9000));
+    expect(await r.decideDraft(discard(thrown), at(10_000))).toEqual({ status: "already-decided" });
+    const decisions = (await r.courseAuthoring("bells")).map((q) => q.drafts[0]!.decision);
+    expect(decisions).toEqual([recordedDecision(first, at(4000)), recordedDecision(discarded, at(9000))]);
+  });
+
+  t("authoring: accepting a draft that is not ready is refused, and stores nothing", async (r) => {
+    const { base, req } = await requested(r);
+    const refused = refusedDraft(req);
+    await r.recordDraft(refused, at(2000));
+    const other = authoringRequest(base);
+    await r.requestAuthoring(other, at(2100));
+    const failed = failedDraft(other);
+    await r.recordDraft(failed, at(2200));
+    for (const d of [refused, failed]) {
+      expect({ draft: d.status, ...(await r.decideDraft(accept(d, base), at(3000))) }).toEqual({ draft: d.status, status: "not-ready" });
+    }
+    expect((await r.courseAuthoring("bells")).flatMap((q) => q.drafts.map((x) => x.decision))).toEqual([null, null]);
+  });
+
+  t("authoring: accepting after the course has moved on from the draft's install is refused as stale, and stores nothing", async (r) => {
+    const { base, req } = await requested(r);
+    const d = readyDraft(req);
+    await r.recordDraft(d, at(2000));
+    const i = authoredInstall(base, d);
+    await r.installCourse(i, at(3000));
+    await r.installCourse(gitInstall({ commit: hex(40, "b") }), at(4000));
+    expect(await r.decideDraft(accept(d, i), at(5000))).toEqual({ status: "stale" });
+    await r.removeInstalledCourse("bells", at(6000));
+    expect(await r.decideDraft(accept(d, i), at(7000))).toEqual({ status: "stale" });
+    expect((await r.courseAuthoring("bells"))[0]!.drafts[0]!.decision).toBeNull();
+  });
+
+  t("authoring: a failed draft may be discarded (an extension beyond RFC 9 Figure 5.2, for the 14-day sweep)", async (r) => {
+    const { req } = await requested(r);
+    const d = failedDraft(req);
+    await r.recordDraft(d, at(2000));
+    const decision = discard(d);
+    expect(await r.decideDraft(decision, at(3000))).toEqual({ status: "stored" });
+    expect((await r.courseAuthoring("bells"))[0]!.drafts[0]!.decision).toEqual(recordedDecision(decision, at(3000)));
+  });
+
+  t("authoring: a draft whose base is stale can still be discarded", async (r) => {
+    const { req } = await requested(r);
+    const d = readyDraft(req);
+    await r.recordDraft(d, at(2000));
+    await r.installCourse(gitInstall({ commit: hex(40, "b") }), at(3000));
+    const decision = discard(d);
+    expect(await r.decideDraft(decision, at(4000))).toEqual({ status: "stored" });
+    expect((await r.courseAuthoring("bells"))[0]!.drafts[0]!.decision).toEqual(recordedDecision(decision, at(4000)));
+  });
+
+  t("authoring: an accept naming an install that is not the draft's, or a decision on no draft, is rejected", async (r) => {
+    const { base, req } = await requested(r);
+    const d = readyDraft(req);
+    await r.recordDraft(d, at(2000));
+    expect(await r.decideDraft(accept(d, base), at(3000))).toEqual({ status: "rejected" });
+    expect(await r.decideDraft({ ...accept(d, base), installId: uuid() }, at(3000))).toEqual({ status: "rejected" });
+    expect(await r.decideDraft(discard({ ...d, id: uuid() }), at(3000))).toEqual({ status: "rejected" });
+    expect((await r.courseAuthoring("bells"))[0]!.drafts[0]!.decision).toBeNull();
+  });
+
+  t("authoring: a malformed request, draft or decision is refused and stores nothing", async (r) => {
+    const { base, req } = await requested(r);
+    const d = readyDraft(req);
+    await r.recordDraft(d, at(2000));
+    for (const bad of [
+      authoringRequest(base, { text: "" }), authoringRequest(base, { text: "x".repeat(20_001) }), authoringRequest(base, { skillSha256: hex(63, "5") }),
+      authoringRequest(base, { schoolVersion: "" }), authoringRequest(base, { course: "Not A Name" }),
+    ]) await expect(r.requestAuthoring(bad, at(3000)), JSON.stringify(bad)).rejects.toThrow();
+    const other = authoringRequest(base);
+    await r.requestAuthoring(other, at(3500));
+    for (const bad of [
+      { ...readyDraft(other), round: 3 }, { ...readyDraft(other), commit: null }, { ...readyDraft(other), checkMessage: "No." },
+      { ...refusedDraft(other), checkMessage: null }, { ...refusedDraft(other), checkMessage: "" }, { ...failedDraft(other), commit: hex(40, "7") },
+      { ...readyDraft(other), agent: "" }, { ...readyDraft(other), inputTokens: -1 },
+    ] as unknown as AuthoringDraft[]) await expect(r.recordDraft(bad, at(4000)), JSON.stringify(bad)).rejects.toThrow();
+    for (const bad of [
+      { ...discard(d), decision: "accepted" }, { ...accept(d, base), patch: null }, { ...accept(d, base), patch: "" }, { ...discard(d), installId: base.id },
+    ] as unknown as AuthoringDecision[]) await expect(r.decideDraft(bad, at(5000)), JSON.stringify(bad)).rejects.toThrow();
+    expect(await r.courseAuthoring("bells")).toEqual([recordedRequest(req, at(1000), [recordedDraft(d, at(2000))]), recordedRequest(other, at(3500))]);
+  });
+
+  // RFC 9 Table 5.5: "at most 20,000 characters". A character is a code point, as Postgres counts
+  // them, so text outside the Basic Multilingual Plane (two UTF-16 units each) counts once.
+  t("authoring: a request of exactly 20,000 characters is stored, counted in code points", async (r) => {
+    const base = gitInstall();
+    await r.installCourse(base, at(0));
+    const req = authoringRequest(base, { text: "\u{1F514}".repeat(20_000) });
+    expect(await r.requestAuthoring(req, at(1000))).toEqual({ status: "stored" });
+    expect((await r.courseAuthoring("bells"))[0]!.text).toBe(req.text);
+  });
+
+  t("authoring: each course lists only its own requests, in the record's order, each with its drafts in order", async (r) => {
+    const bells = gitInstall();
+    const aion = gitInstall({ course: "aion", title: "Aion" });
+    await r.installCourse(bells, at(0));
+    await r.installCourse(aion, at(100));
+    const first = authoringRequest(bells);
+    const onAion = authoringRequest(aion);
+    const second = authoringRequest(bells, { text: "Make the second quiz harder." });
+    await r.requestAuthoring(first, at(1000));
+    await r.requestAuthoring(onAion, at(1100));
+    await r.requestAuthoring(second, at(1200));
+    const d1 = refusedDraft(first);
+    const d2 = readyDraft(second);
+    const d3 = readyDraft(first, { round: 2 });
+    await r.recordDraft(d1, at(2000));
+    await r.recordDraft(d2, at(2100));
+    await r.recordDraft(d3, at(2200));
+    expect(await r.courseAuthoring("bells")).toEqual([
+      recordedRequest(first, at(1000), [recordedDraft(d1, at(2000)), recordedDraft(d3, at(2200))]),
+      recordedRequest(second, at(1200), [recordedDraft(d2, at(2100))]),
+    ]);
+    expect(await r.courseAuthoring("aion")).toEqual([recordedRequest(onAion, at(1100))]);
   });
 }
