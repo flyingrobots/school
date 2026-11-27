@@ -114,6 +114,15 @@ describe("fetchCommit: a good fetch", () => {
     expect(commitsIn(join(r.staging, "repo.git"), b)).toEqual([b]);
   });
 
+  test.each([["a branch", "main"], ["its full hash", ""]])("FETCH-28: a SHA-256 repository's commit, named by %s, is fetched by its 64-digit hash", async (_what, name) => {
+    const wide = new TestRepo(join(repos, `sha256-${++n}.git`), home, "sha256");
+    const c = wide.commit({ "course.json": '{"title":"Wide"}\n' }, "wide");
+    wide.ref("refs/heads/main", c);
+    const r = request({ url: url(`sha256-${n}.git`), commit: name || c });
+    expect(await fetchCommit(r)).toEqual({ ok: true, repository: join(r.staging, "repo.git"), commit: c });
+    expect([c.length, ...commitsIn(join(r.staging, "repo.git"), c)]).toEqual([64, c]);
+  });
+
   test("FETCH-5: the pin works for an IPv6 address too", async () => {
     const six = server(gitBackend(repos, home), "::1");
     const r = request({ url: `https://${HOST}:${six.port}/course.git`, commit: "main", network: network(six.port!, "::1") });

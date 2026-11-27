@@ -5,7 +5,10 @@
 // The URL and the server are hostile until checked, so:
 //
 // - The URL is checked before git runs: it starts `https://`, holds no whitespace, control
-//   character or backslash, no user or password, no query or fragment, and names port 443. Every
+//   character or backslash, no user or password, no query or fragment, and names port 443. Its
+//   host is an IP address or a plain host name (letters, digits and hyphens in labels of 1 to 63
+//   characters, no label starting or ending with a hyphen, 253 characters in all; one trailing dot
+//   is dropped), so the pin below means what it says. Every
 //   other form (`http`, `ssh`, scp-like `host:path`, `git://`, `file://`, `ext::`, a local path, an
 //   option) is refused here, and again by git's `protocol.allow=never` with only `https` allowed.
 // - The host is resolved once, and refused unless every address is public (`isPublicAddress`: not
@@ -17,7 +20,10 @@
 //   and no proxy is configured or inherited.
 // - git runs with a fresh environment (no system or global configuration, `HOME` the staging
 //   folder, so no `.netrc`, no askpass, `GIT_TERMINAL_PROMPT=0`), no credential helper, no hooks,
-//   no submodules, `transfer.fsckObjects`, and no template in `git init`.
+//   no submodules, `transfer.fsckObjects`, and no template in `git init`. Every git command after
+//   `git init` names the new repository with `--git-dir` and starts in it, and
+//   `GIT_CEILING_DIRECTORIES` stops git looking above the staging folder, so a repository around
+//   the staging folder adds no configuration (a header, a URL rewrite, a proxy).
 // - A branch, tag or `HEAD` is resolved once with `git ls-remote` to its full hash (an annotated
 //   tag to the commit it tags); a name that is both a branch and a tag is refused as ambiguous.
 //   A full hash is fetched as given. The fetch is `git fetch --depth=1 --no-tags
@@ -26,12 +32,12 @@
 //   and checked again when it ends. Passing either kills git's whole process group and deletes
 //   the staging folder.
 //
-// The caller chooses the staging folder (task 7 puts it under the course store's `staging/`); its
-// parent must exist and it must not. Reading the commit's tree is a separate step (task 5).
+// The caller chooses the staging folder (task 7 puts it under the course store's `staging/`): an
+// absolute path whose parent exists and which does not. Reading the commit's tree is a separate step (task 5).
 import { lookup } from "node:dns/promises";
 import { lstatSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { isIP } from "node:net";
-import { join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 
 export type FetchLimits = {
   /** Bytes the fetched repository may hold on disk, pack and all. */
@@ -76,7 +82,7 @@ export type FetchRequest = {
   url: string;
   /** A full commit hash (40 or 64 hex digits), or a branch, tag or `HEAD` to resolve to one. */
   commit: string;
-  /** The folder to create and fetch into. Its parent must exist; it must not. */
+  /** The folder to create and fetch into, as an absolute path. Its parent must exist; it must not. */
   staging: string;
   limits?: Partial<FetchLimits>;
   /** The git executable; `git` from PATH by default. */
@@ -89,6 +95,11 @@ const HASH = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const REF = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$/;
 // Whitespace, control characters (C0, DEL, C1) and backslash, which URL parsers read as a slash.
 const UNSAFE_URL_CHAR = /[\u0000- \u007f-\u009f\\]/;
+// One label of a host name (RFC 1123 §2.1): letters, digits and hyphens, 1 to 63 of them, neither
+// first nor last a hyphen. The URL parser has already lowercased the host and turned Unicode into
+// punycode (`xn--`), which is such a label.
+const HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const MAX_HOST = 253;
 
 class Refused extends Error {
   constructor(readonly refusal: FetchRefusal) {
@@ -192,7 +203,17 @@ function checkUrl(raw: string, ports: readonly number[]): Target {
   if (!ports.includes(port)) refuse("bad-port", `the repository URL names port ${port}; School fetches only from port 443`);
   const host = url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname;
   if (host === "") refuse("bad-url", "the repository URL names no host");
-  return { href: url.href, host, port, literal: isIP(host) !== 0 };
+  if (isIP(host) !== 0) return { href: url.href, host, port, literal: true };
+  // A name is pinned as `NAME:PORT:ADDRESS`, so it must be a plain host name: anything else could
+  // change what libcurl reads (a leading `-` removes the entry, and git would look the name up
+  // itself). One trailing dot names the same host; it is dropped from the URL, the lookup and the
+  // pin alike, so all three name the host the same way.
+  const name = host.endsWith(".") ? host.slice(0, -1) : host;
+  if (name.length > MAX_HOST || !name.split(".").every((label) => HOST_LABEL.test(label))) {
+    refuse("bad-url", `the repository URL's host ${JSON.stringify(host)} is not a host name: letters, digits and hyphens in dot-separated labels of at most 63 characters, none starting or ending with a hyphen, ${MAX_HOST} characters in all`);
+  }
+  url.hostname = name;
+  return { href: url.href, host: name, port, literal: false };
 }
 
 type Wanted = { hash: string } | { ref: string };
@@ -228,7 +249,11 @@ async function checkAddresses(target: Target, net: Network): Promise<string[]> {
 
 // ---- Running git ----
 
-type Git = { bin: string; home: string; ms: number; config: string[] };
+/**
+ * How git runs: `home` is its HOME, the staging folder; `cwd` the folder it starts in; `ceiling`
+ * the folder above which git never looks for a repository of its own.
+ */
+type Git = { bin: string; home: string; cwd: string; ceiling: string; ms: number; config: string[] };
 
 /**
  * Reads a stream to its end, keeping at most `max` bytes. Past that, a `truncate` stream keeps
@@ -256,11 +281,11 @@ async function run(g: Git, args: string[], o: { maxStdout: number; watch?: () =>
   const env = {
     PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: g.home, LC_ALL: "C",
     GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0", GIT_NO_REPLACE_OBJECTS: "1",
-    GIT_ATTR_NOSYSTEM: "1", GIT_OPTIONAL_LOCKS: "0",
+    GIT_ATTR_NOSYSTEM: "1", GIT_OPTIONAL_LOCKS: "0", GIT_CEILING_DIRECTORIES: g.ceiling,
   };
   let proc;
   try {
-    proc = Bun.spawn([g.bin, ...g.config, ...args], { env, cwd: g.home, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true });
+    proc = Bun.spawn([g.bin, ...g.config, ...args], { env, cwd: g.cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true });
   } catch (e) {
     return refuse("git-failed", `git could not be started: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -328,10 +353,10 @@ function bytesUnder(dir: string): number {
   return total;
 }
 
-/** The full hash a branch, tag or HEAD names on the remote, by one `git ls-remote`. */
-async function resolveRef(g: Git, href: string, name: string): Promise<string> {
+/** The full hash a branch, tag or HEAD names on the remote, by one `git ls-remote` from `repository`. */
+async function resolveRef(g: Git, repository: string, href: string, name: string): Promise<string> {
   const wanted = name === "HEAD" ? ["HEAD"] : [`refs/heads/${name}`, `refs/tags/${name}`, `refs/tags/${name}^{}`];
-  const r = await run(g, ["ls-remote", href, ...wanted], { maxStdout: MiB });
+  const r = await run(g, ["--git-dir", repository, "ls-remote", href, ...wanted], { maxStdout: MiB });
   if (r.code !== 0) failed("ls-remote", r);
   const refs = new Map<string, string>();
   for (const line of r.stdout.split("\n")) {
@@ -357,6 +382,7 @@ export async function fetchCommit(request: FetchRequest): Promise<Fetched> {
     const wanted = checkCommit(request.commit);
     const target = checkUrl(request.url, net.ports);
     const pinned = await checkAddresses(target, net);
+    if (!isAbsolute(request.staging)) refuse("bad-staging", `the staging folder ${JSON.stringify(request.staging)} is not an absolute path`);
     try {
       mkdirSync(request.staging);
     } catch (e) {
@@ -372,11 +398,23 @@ export async function fetchCommit(request: FetchRequest): Promise<Fetched> {
       ...(pin ? [`http.curloptResolve=${target.host}:${target.port}:${pin}`] : []),
       ...(net.caFile ? [`http.sslCAInfo=${net.caFile}`] : []),
     ].flatMap((c) => ["-c", c]);
-    const g: Git = { bin: request.git ?? "git", home: request.staging, ms: limits.gitMs, config };
-    const commit = "hash" in wanted ? wanted.hash : await resolveRef(g, target.href, wanted.ref);
+    // Every git command names the repository it uses (`--git-dir`), starts in it, and may not look
+    // above the staging folder for another, so no enclosing repository's configuration applies.
     const repository = join(request.staging, "repo.git");
-    const init = await run(g, ["init", "--quiet", "--bare", "--template=", `--object-format=${commit.length === 64 ? "sha256" : "sha1"}`, repository], { maxStdout: 4096 });
-    if (init.code !== 0) failed("init", init);
+    const atStaging: Git = { bin: request.git ?? "git", home: request.staging, cwd: request.staging, ceiling: dirname(request.staging), ms: limits.gitMs, config };
+    const g: Git = { ...atStaging, cwd: repository };
+    const init = async (format: "sha1" | "sha256") => {
+      const r = await run(atStaging, ["init", "--quiet", "--bare", "--template=", `--object-format=${format}`, repository], { maxStdout: 4096 });
+      if (r.code !== 0) failed("init", r);
+    };
+    const format = (hash: string) => (hash.length === 64 ? "sha256" : "sha1");
+    await init("hash" in wanted ? format(wanted.hash) : "sha1");
+    const commit = "hash" in wanted ? wanted.hash : await resolveRef(g, repository, target.href, wanted.ref);
+    if (format(commit) === "sha256" && !("hash" in wanted)) {
+      // The remote's ref is a SHA-256 hash: the repository was made for SHA-1, so make it again.
+      rmSync(repository, { recursive: true, force: true });
+      await init("sha256");
+    }
     const tooLarge = () => {
       if (bytesUnder(request.staging) > limits.packBytes) refuse("too-large", `the repository is larger than ${limits.packBytes} bytes at this commit`);
     };
