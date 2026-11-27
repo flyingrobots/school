@@ -216,5 +216,9 @@ export function postgresRecord(sql: Sql): LearningRecord {
     // blocks goes as a value for its jsonb parameter, as for due review.
     mastery: async (q) =>
       (await rows("mastery", q.course, q.blocks, q.now, q.delayMs)).map((row) => Held.parse(row).item),
+
+    masteryRollup: async () => {
+      throw new Error("not implemented");
+    },
   };
 }

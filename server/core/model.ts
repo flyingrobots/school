@@ -337,6 +337,37 @@ export const Mastery = z.object({
 });
 export type Mastery = z.infer<typeof Mastery>;
 
+/**
+ * What to ask the rollup (RFC 5 §4.5): the course, groups from a key (a lesson, or the whole
+ * course) to quiz block ids, and the time and delay as for the measure. A block may sit in more than
+ * one group, and counts in each.
+ */
+export const MasteryRollupQuery = z.object({
+  course: z.string().min(1).max(200),
+  groups: z.record(z.string().min(1).max(200), z.array(blockId).max(10_000)),
+  now: timestamp,
+  delayMs: ms,
+});
+export type MasteryRollupQuery = z.infer<typeof MasteryRollupQuery>;
+
+/**
+ * How one group of quizzes is held at the query's time (RFC 5 Table 4.5). `quizzes` is the number
+ * of distinct blocks in the group, and the four counts partition them: never answered, answered but
+ * not settled, settled with strength one half or more, settled with strength below one half.
+ * `strength` is the mean strength over the group, a quiz not started counting 0, and null for an
+ * empty group; it is for ranking, never for display.
+ */
+export const MasteryRollup = z.object({
+  key: z.string(),
+  quizzes: z.int().nonnegative(),
+  notStarted: z.int().nonnegative(),
+  settling: z.int().nonnegative(),
+  holding: z.int().nonnegative(),
+  faded: z.int().nonnegative(),
+  strength: z.number().min(0).max(1).nullable(),
+});
+export type MasteryRollup = z.infer<typeof MasteryRollup>;
+
 // ---- Installed courses (RFC 7 §7; flyingrobots/school#232) -------------------------------------
 
 /**
