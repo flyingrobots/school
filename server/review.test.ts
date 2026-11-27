@@ -86,7 +86,7 @@ test("the next lesson opens with the item due in a Review section at its top, it
   expect(again.review).toEqual(opened.review);
   expect(again.answers).toEqual([{ blockId: "q1", choiceId: "right", correct: true }]);
   // A review answer in Tides is not progress in Tides: its own quiz is still to answer.
-  expect((await get("/api/courses"))[0]).toEqual({ name: "c", title: "c", trusted: true, lessons: 2, reference: 0, quizzes: 3, answeredCorrectly: 2 });
+  expect((await get("/api/courses"))[0]).toEqual({ name: "c", title: "c", trusted: true, summary: null, author: null, license: null, format: null, lessons: 2, reference: 0, quizzes: 3, answeredCorrectly: 2 });
 });
 
 test("the slides view records nothing, so it carries no review", async () => {
