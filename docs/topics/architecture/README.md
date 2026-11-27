@@ -635,6 +635,14 @@ unless the caller received some of that agent's words. After a kill the bridge w
 the agent's pipes to close, then stops reading them, so a child that left the process group cannot
 hold the queue. The cases are in the [test plan](test-plan.md#asking-the-bridge-a-question).
 
+Every kill, of a grading agent or a question's, sends SIGKILL to the agent's process group and
+sends it again every 50 ms until the pipes close, for at most 500 ms. A child the agent forks just
+as the first signal lands can miss it and hold the pipes; a later one ends it, so it cannot hold
+either queue. The sweep stops by 500 ms because once the group is empty its number can be reused,
+and a kill that lands after the pipes have closed starts no sweep: it ends the agent alone, never
+its group. Group numbers 0 and 1 are never swept
+(flyingrobots/school#285; the cases are in the [test plan](test-plan.md#killing-an-agent-flyingrobotsschool285)).
+
 The bridge also reads aloud: it hands text the server built to the AI-TTS daemon on the host's
 Unix socket, for synthesis only, and serves the audio back for the browser to play
 ([reading aloud](../reading-aloud/README.md)).
