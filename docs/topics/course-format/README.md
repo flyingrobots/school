@@ -1,7 +1,7 @@
 # A course's folder
 
 Reference: what School reads from a course's folder, the one `SCHOOL_COURSES` (or `SCHOOL_COURSE`,
-or `SCHOOL_UNTRUSTED_COURSES` for [an untrusted course](#trusted-and-untrusted-courses)) names. School reads the folder and never writes to it ([ADR 6](../../adr/0006-separate-framework-lessons-and-learner-state.md)).
+or `SCHOOL_UNTRUSTED_COURSES` for [an untrusted course](#trusted-and-untrusted-courses)) names, or that an install puts in the course store ([an installed course's folder](#an-installed-courses-folder)). School reads the folder and never writes to it ([ADR 6](../../adr/0006-separate-framework-lessons-and-learner-state.md)).
 
 | Path | Required | Holds | Read |
 | --- | --- | --- | --- |
@@ -159,6 +159,28 @@ _Table 2. `DEFAULT_LIMITS`, RFC 7 Table 6.2's starting values. A caller may lowe
 
 So a commit's course reaches disk only after every entry School would write has passed every check, and a refused one leaves nothing behind.
 
+## An installed course's folder
+
+An installed course is a course folder in the course store, `<SCHOOL_COURSE_STORE>/courses/<install id>/`, named by its install's id in the record, not by its course name (RFC 7 §5.1). It has the layout above and nothing else, since extraction writes only `course.json`, `lessons/*.json` and `reference/**`. School serves it under the name the record gives it ([the course list](../architecture/README.md#the-course-list)) and never writes to it after the install.
+
+The record keeps the folder's content digest, `content_sha256`. `contentDigest` in `server/course-registry.ts` computes it:
+
+1. Take every regular file under the folder, at any depth. Its path is relative to the folder, with `/` between names.
+2. Write one line per file: the file's SHA-256 in lowercase hex, one space, its path, and a newline.
+3. Sort the lines by path, comparing the paths' UTF-8 bytes.
+4. The digest is the SHA-256 of all the lines together, in lowercase hex.
+
+For example, a folder holding an empty `course.json` and `reference/deep/z.html` containing `abc` has this manifest:
+
+```text
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 course.json
+ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad reference/deep/z.html
+```
+
+_Listing 3. The manifest of a two-file folder. The digest is the SHA-256 of these two lines, each ending in a newline._
+
+A folder that holds anything but regular files and folders, such as a symlink, has no digest. School lists such a folder, or one whose digest is not the record's, or one that is missing, with `lessons: null` and the reason, and serves none of its files.
+
 ## More than one course under `./school up`
 
 Compose mounts the course in `SCHOOL_COURSE_DIR` at `/course`. School calls that course `course`.
@@ -183,14 +205,14 @@ SCHOOL_COURSES=bells=/library/bells
 SCHOOL_UNTRUSTED_COURSES=guest=/library/guest
 ```
 
-_Listing 1. Two courses in `server/.env` (illustrative): `bells` is trusted, `guest` is in safe mode. Compose passes `SCHOOL_UNTRUSTED_COURSES` to the server as it does `SCHOOL_COURSES`._
+_Listing 4. Two courses in `server/.env` (illustrative): `bells` is trusted, `guest` is in safe mode. Compose passes `SCHOOL_UNTRUSTED_COURSES` to the server as it does `SCHOOL_COURSES`._
 
 A course in `SCHOOL_COURSES` or `SCHOOL_COURSE` is trusted, as it always was. An untrusted course is read from the same folder layout and works the same way, with four differences:
 
 | What | For an untrusted course |
 | --- | --- |
-| Its reference documents and every other file under `reference/` | Served with `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`: a page opened from it runs no script and cannot use School's API. An SVG file is served as `image/svg+xml` under the same sandbox |
-| `GET /api/courses` and `GET /api/courses/:course` | `trusted: false` (a trusted course gives `trusted: true`); the course and lesson JSON carry the same two headers |
+| Its reference documents and every other file under `reference/` | Served with `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'` and `X-Content-Type-Options: nosniff`: a page opened from it runs no script, cannot use School's API, and loads nothing from another site. Its own images and stylesheets in `reference/`, `<style>` and `style=` styles, and `data:` images still work; fonts, frames, audio and video do not. An SVG file is served as `image/svg+xml` under the same policy |
+| `GET /api/courses` and `GET /api/courses/:course` | `trusted: false` (a trusted course gives `trusted: true`); the course and lesson JSON carry the same two headers. The replies that mix courses, `/api/showcase`, `/api/review`, `/api/feedback`, `/api/resume` and `/api/activity`, give each item its course's `trusted` |
 | Its hook figures on the home page | Drawn as an image, not inline SVG, so nothing in them runs; `GET /api/showcase` gives each item `trusted` |
 | The course page and the sidebar | A note on the course page: "This course is shown in safe mode: its pages can’t run scripts." ([the course page](../course-page/README.md)); a **Safe mode** badge beside the course in the sidebar ([the app shell](../app-shell/README.md#the-sidebars-courses)) |
 
@@ -218,7 +240,7 @@ has no `course.json`, loads exactly as one did before they existed.
 | `title` | yes | non-empty string | What the pages call the course: the sidebar, Home, the course page and every breadcrumb. Surrounding spaces are trimmed. |
 | `summary` | no | non-empty string | What the course is, in a sentence. Surrounding spaces are trimmed. |
 | `author` | no | non-empty string | Who wrote it. Surrounding spaces are trimmed. |
-| `license` | no | SPDX license expression | The terms a learner, or anyone copying the course, may use it on, such as `MIT`, `MIT OR Apache-2.0` or `GPL-2.0-or-later WITH Classpath-exception-2.0`. Surrounding spaces are trimmed. |
+| `license` | no | SPDX license expression | The terms a learner, or anyone copying the course, may use it on, such as `MIT`, `MIT OR Apache-2.0` or `GPL-2.0-or-later WITH Classpath-exception-2.0`. Surrounding spaces are trimmed. Parentheses nest at most 32 deep; a deeper expression is refused like any other bad one. |
 | `format` | no | positive integer | The course format the course is written in. Today's, and the only one this School plays, is `1`. |
 
 The course's **name**, the `name` in `SCHOOL_COURSES=name=path`, stays its slug: it is what
@@ -250,7 +272,7 @@ where a license belongs (`MIT OR and`), the refusal says a license is expected, 
 capitals; an empty `license` is refused as empty, and so on.
 
 The lists are `server/spdx-license-ids.ts`, copied from the `spdx-license-ids` package (3.0.24,
-CC0-1.0), and `server/spdx-exception-ids.ts`, from `spdx-exceptions` (2.5.0, CC0-1.0), rather than
+CC0-1.0), and `server/spdx-exception-ids.ts`, from `spdx-exceptions` (2.5.0, CC-BY-3.0, attributed in `NOTICE`), rather than
 added as dependencies; a license or exception published after those releases is refused until the
 lists are updated. School has no preference among licenses: any listed id is accepted.
 

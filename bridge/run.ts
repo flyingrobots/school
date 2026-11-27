@@ -176,6 +176,16 @@ export function claudeStreamLine(line: string): StreamLine {
   return { kind: "other" };
 }
 
+/**
+ * Why an agent could not be started, when Bun.spawn throws (ENOENT, EACCES, or E2BIG for a long
+ * prompt on Linux): the program as configured and the system's error code. Never the system's
+ * message, which may quote the expanded command line, and with it the prompt.
+ */
+export function spawnFailure(program: string, e: unknown): string {
+  const code = (e as { code?: unknown } | null)?.code;
+  return `could not start ${program} (${typeof code === "string" && /^E[A-Z0-9]+$/.test(code) ? code : "unknown error"})`;
+}
+
 async function readCapped(stream: ReadableStream<Uint8Array>, onOverflow: () => void): Promise<string> {
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -201,10 +211,15 @@ async function runAgent(agent: Agent, job: Job, timeoutMs: number): Promise<Atte
   argv[0] = resolved;
   try {
     // detached: the agent leads its own process group, so a timeout can kill everything it started.
-    const proc = Bun.spawn(argv, {
-      cwd: work, detached: true, stdout: "pipe", stderr: "pipe",
-      stdin: onStdin ? new TextEncoder().encode(job.prompt) : "ignore",
-    });
+    let proc: Bun.Subprocess<"ignore" | Uint8Array, "pipe", "pipe">;
+    try {
+      proc = Bun.spawn(argv, {
+        cwd: work, detached: true, stdout: "pipe", stderr: "pipe",
+        stdin: onStdin ? new TextEncoder().encode(job.prompt) : "ignore",
+      });
+    } catch (e) {
+      return { agent: agent.name, status: "failed", error: spawnFailure(program, e), exitCode: null, ms: Date.now() - started };
+    }
     let why: string | null = null;
     const kill = (reason: string) => {
       why ??= reason;
