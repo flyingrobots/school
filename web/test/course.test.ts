@@ -81,6 +81,23 @@ const torn = {
   license: "MIT OR Apache-2.0",
 }
 
+// wordy: a long author and a long SPDX OR chain, which must not widen a phone's page. markup: an
+// untrusted course whose summary and author are markup-like strings (flyingrobots/school#277).
+const wordy = {
+  title: "Wordy",
+  summary: "A course with long words.",
+  author:
+    "Dr. Wolfeschlegelsteinhausenbergerdorff-Extraordinarily-Long-Surname and the Committee of Unbroken-Hyphenated-Collaborators",
+  license:
+    "MIT OR Apache-2.0 OR BSD-2-Clause OR BSD-3-Clause OR ISC OR MPL-2.0 OR Unlicense OR CC0-1.0 OR Zlib OR 0BSD",
+}
+const markup = {
+  title: "Markup",
+  summary: "<img src=x onerror=\"window.__fired = 'summary'\">",
+  author: "<img src=x onerror=\"window.__fired = 'author'\"><b>Bold</b>",
+  license: "MIT",
+}
+
 type CourseJson = {
   name: string
   reference: string[]
@@ -145,17 +162,29 @@ beforeAll(
     writeFileSync(join(root, "torn", "course.json"), JSON.stringify(torn))
     writeFileSync(join(root, "torn", "lessons", "0001.json"), "{ not json")
 
+    for (const [name, json] of [
+      ["wordy", wordy],
+      ["markup", markup],
+    ] as const) {
+      mkdirSync(join(root, name, "lessons"), { recursive: true })
+      writeFileSync(join(root, name, "course.json"), JSON.stringify(json))
+      writeFileSync(
+        join(root, name, "lessons", "0001.json"),
+        lesson(name[0] + "1", "Only", ["q1"])
+      )
+    }
+
     // The helper chooses the port (flyingrobots/school#82). `example` is the school skill's
     // worked example, which declares a summary, an author and a license (flyingrobots/school#277).
     school = await startSchool({
       ...process.env,
       SCHOOL_COURSES: [
-        ...["aion", "empty", "broken", "torn"].map(
+        ...["aion", "empty", "broken", "torn", "wordy"].map(
           (c) => `${c}=${join(root, c)}`
         ),
         `example=${example}`,
       ].join(","),
-      SCHOOL_UNTRUSTED_COURSES: `guest=${join(root, "guest")}`,
+      SCHOOL_UNTRUSTED_COURSES: `guest=${join(root, "guest")},markup=${join(root, "markup")}`,
       SCHOOL_STATE: join(root, "state"),
       SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`,
       SCHOOL_WEB: join(root, "no-web"),
@@ -616,6 +645,37 @@ describe("a course's declaration", () => {
     await close(p.context())
   })
 
+  test("a long author and a long license chain wrap on a phone: no sideways scroll, full text reachable", async () => {
+    const p = await open(
+      "/courses/wordy",
+      await context({ width: 375, height: 800 })
+    )
+    await lessons(p).first().waitFor()
+    const { scroll, inner } = await p.evaluate(() => ({
+      scroll: document.scrollingElement!.scrollWidth,
+      inner: innerWidth,
+    }))
+    expect(scroll).toBeLessThanOrEqual(inner)
+    const shown = await read(p)
+    expect([shown.author, shown.license]).toEqual([
+      `By ${wordy.author}`,
+      `License: ${wordy.license}`,
+    ])
+    // Reachable: each badge sits inside the viewport and shows its whole text (no clipping).
+    for (const key of ["author", "license"]) {
+      const box = await part(p, key).evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        return {
+          right: r.right,
+          clipped: el.scrollWidth > el.clientWidth,
+        }
+      })
+      expect(box.right).toBeLessThanOrEqual(375)
+      expect(box.clipped).toBe(false)
+    }
+    await close(p.context())
+  })
+
   test("the summary and badges take the theme's colours, in light and in dark", async () => {
     const colours = async (colorScheme: "light" | "dark") => {
       const c = await browser.newContext({ colorScheme })
@@ -673,6 +733,27 @@ describe("a course's declaration", () => {
 // flyingrobots/school#277: the sidebar marks an untrusted course (`trusted: false` from
 // GET /api/courses) with a neutral Safe mode badge, the registry's outline Badge, and names it in
 // the link's accessible name. Oracle: the issue's 2b and 2d.
+describe("markup in a course's declaration", () => {
+  test("an untrusted course's markup-like summary and author show as literal text and run nothing", async () => {
+    const p = await open("/courses/markup")
+    await lessons(p).first().waitFor()
+    const text = async (key: string) =>
+      (await main(p).locator(`[data-manifest=${key}]`).textContent())?.trim()
+    expect([await text("summary"), await text("author")]).toEqual([
+      markup.summary,
+      `By ${markup.author}`,
+    ])
+    expect(await main(p).locator("img, b").count()).toBe(0)
+    expect(await p.locator("img[src=x]").count()).toBe(0)
+    // Give a would-be broken image time to fail and fire its handler.
+    await p.waitForTimeout(500)
+    expect(
+      await p.evaluate(() => (window as { __fired?: string }).__fired)
+    ).toBe(undefined)
+    await close(p.context())
+  })
+})
+
 describe("the sidebar's safe-mode badge", () => {
   const sidebar = (p: Page) => p.locator("[data-sidebar=sidebar]")
   const badge = (p: Page, course: string) =>
