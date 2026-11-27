@@ -13,7 +13,7 @@
 // Bun.SQL tests it needs SCHOOL_TEST_POSTGRES_URL and skips without it; CI provides one, and its
 // gate (server/testing/postgres-gate.ts) fails the build if any test here skipped or failed.
 import { describe, expect, test } from "bun:test";
-import type { Block, CourseInstall, SubmitResult } from "../core/model.ts";
+import type { AskQuestion, Block, CourseInstall, SubmitResult } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
 import { scratchPostgres, TEST_POSTGRES_URL as URL_ } from "../testing/postgres.ts";
 import { APP } from "./database.ts";
@@ -132,6 +132,23 @@ async function history(admin: Pool, course: string) {
      UNION ALL SELECT seq, 'removal', id::text FROM school.course_removals WHERE course = $1
      ORDER BY seq`, [course])] as { seq: string | bigint; kind: "install" | "removal"; id: string }[];
 }
+
+// Authoring (RFC 9 §5.5, flyingrobots/school#258): request_authoring, decide_draft and an authored
+// install_course serialise on the same advisory lock per course name, so a draft is decided once.
+/** `course` installed, a request on it, and a ready draft of that request. Returns the draft's id. */
+async function readyDraft(r: LearningRecord, course: string): Promise<string> {
+  const base = install(course);
+  await r.installCourse(base, NOW);
+  const requestId = uuid();
+  expect(await r.requestAuthoring({ id: requestId, course, baseInstallId: base.id, text: "Add a lesson.", skillSha256: hex(64, "5"), schoolVersion: "0.1.0" },
+    NOW)).toEqual({ status: "stored" });
+  const draftId = uuid();
+  expect(await r.recordDraft({ id: draftId, requestId, round: 1, status: "ready", agent: "claude", commit: hex(40, "7"), contentSha256: hex(64, "8"),
+    checkMessage: null, inputTokens: 1, outputTokens: 1 }, NOW)).toEqual({ status: "stored" });
+  return draftId;
+}
+const doDiscard = (r: LearningRecord, draftId: string) => (): Promise<Told> =>
+  r.decideDraft({ id: uuid(), draftId, decision: "discarded", installId: null, patch: null }, NOW);
 
 describe.skipIf(URL_ === undefined)("Bun.SQL concurrency on a real Postgres (SCHOOL_TEST_POSTGRES_URL)", () => {
   test(`two first answers to one block at once: exactly one is first try, the other stored as not first (${REPS} times)`, async () => {
@@ -344,6 +361,120 @@ describe.skipIf(URL_ === undefined)("Bun.SQL concurrency on a real Postgres (SCH
     }
   }, SLOW);
 
+  // Conversations (RFC 6 §5.2; flyingrobots/school#225): ask serialises on an advisory lock per
+  // conversation and then per question, and writes the question's ai-help exposure before the
+  // question, in one transaction. Many questions at once in one encounter must each be stored once,
+  // with their own exposure before them, and read back in seq order.
+  const opening = (encounterId: string, text: string, questionId = uuid()): AskQuestion =>
+    ({ conversationId: uuid(), questionId, encounterId, blockId: "q1", passage: "Which?", text });
+  const doAsk = (r: LearningRecord, q: AskQuestion) => (): Promise<Told> => r.ask(q, NOW);
+  async function asked(admin: Pool, encounterId: string) {
+    return [...await admin.unsafe(
+      `SELECT q.question_id::text AS question_id, q.conversation_id::text AS conversation_id, q.seq::int AS seq, x.seq::int AS exposure_seq,
+              x.kind, x.block_id, x.encounter_id::text AS exposure_encounter
+       FROM school.questions q JOIN school.exposures x ON x.seq = q.exposure_seq WHERE q.encounter_id = $1 ORDER BY q.seq`, [encounterId])] as
+      { question_id: string; conversation_id: string; seq: number; exposure_seq: number; kind: string; block_id: string | null; exposure_encounter: string }[];
+  }
+  const helps = async (admin: Pool, encounterId: string) =>
+    (await admin.unsafe("SELECT count(*)::int AS n FROM school.exposures WHERE encounter_id = $1 AND kind = 'ai-help'", [encounterId]))[0].n as number;
+
+  test(`20 questions at once in one encounter: each stored once, after its own ai-help exposure, read in seq order (${REPS} times)`, async () => {
+    const s = await setup(20);
+    for (let i = 0; i < REPS; i++) {
+      const e = await open(s.record, `l${i}`);
+      const all = Array.from({ length: 20 }, (_, k) => opening(e.id, `Q${k}?`));
+      const { results, waiting } = await race(s, "school.questions", "ask", all.map((q) => doAsk(s.record, q)));
+      expect(waiting.size).toBe(20);
+      expect(values(results).map((x) => x.status)).toEqual(Array(20).fill("stored"));
+      const rows = await asked(s.admin, e.id);
+      expect(rows.map((x) => x.question_id).sort()).toEqual(all.map((q) => q.questionId).sort());
+      expect(rows.every((x) => x.kind === "ai-help" && x.block_id === null && x.exposure_encounter === e.id && x.exposure_seq < x.seq)).toBe(true);
+      expect(new Set(rows.map((x) => x.exposure_seq)).size).toBe(20);
+      expect(await helps(s.admin, e.id)).toBe(20);
+      // Each conversation opened before its question's exposure, so the read, in conversations' seq
+      // order, need not follow the questions' order across conversations.
+      const read = await s.record.lessonConversations("c", `l${i}`);
+      const opened = read.map((c) => c.seq);
+      expect(opened).toEqual([...opened].sort((x, y) => x - y));
+      expect(read.map((c) => c.questions.map((q) => q.questionId)).flat().sort()).toEqual(rows.map((x) => x.question_id).sort());
+      expect(read.every((c) => c.questions.length === 1 && c.seq < c.questions[0]!.exposureSeq)).toBe(true);
+    }
+  }, SLOW);
+
+  test(`10 follow-up questions at once in one conversation: all stored, and their exposures in the questions' seq order (${REPS} times)`, async () => {
+    const s = await setup(10);
+    for (let i = 0; i < REPS; i++) {
+      const e = await open(s.record, `l${i}`);
+      const first = opening(e.id, "Q0?");
+      await s.record.ask(first, NOW);
+      const all = Array.from({ length: 10 }, (_, k): AskQuestion =>
+        ({ conversationId: first.conversationId, questionId: uuid(), encounterId: e.id, blockId: null, passage: null, text: `Q${k + 1}?` }));
+      const { results, waiting } = await race(s, "school.questions", "ask", all.map((q) => doAsk(s.record, q)));
+      expect(waiting.size).toBe(10);
+      expect(values(results).map((x) => x.status)).toEqual(Array(10).fill("stored"));
+      const rows = await asked(s.admin, e.id);
+      expect(rows).toHaveLength(11);
+      const exposures = rows.map((x) => x.exposure_seq);
+      expect(exposures).toEqual([...exposures].sort((x, y) => x - y));
+      expect(rows.every((x) => x.exposure_seq < x.seq)).toBe(true);
+      const [c] = await s.record.lessonConversations("c", `l${i}`);
+      expect(c!.questions.map((q) => q.questionId)).toEqual(rows.map((x) => x.question_id));
+    }
+  }, SLOW);
+
+  test(`the same question twice at once: one stored and one duplicate, with one exposure (${REPS} times)`, async () => {
+    const s = await setup(2);
+    for (let i = 0; i < REPS; i++) {
+      const e = await open(s.record, `l${i}`);
+      const q = opening(e.id, "Why?");
+      const { results, waiting } = await race(s, "school.questions", "ask", [doAsk(s.record, q), doAsk(s.record, q)]);
+      expect(waiting.size).toBe(2);
+      expect(values(results).map((x) => x.status).sort()).toEqual(["duplicate", "stored"]);
+      expect((await asked(s.admin, e.id)).map((x) => x.question_id)).toEqual([q.questionId]);
+      expect(await helps(s.admin, e.id)).toBe(1);
+    }
+  }, SLOW);
+
+  test(`one question id for two questions at once: one stored and one conflict, with one exposure (${REPS} times)`, async () => {
+    const s = await setup(2);
+    for (let i = 0; i < REPS; i++) {
+      const e = await open(s.record, `l${i}`);
+      const id = uuid();
+      const { results, waiting } = await race(s, "school.questions", "ask",
+        [doAsk(s.record, opening(e.id, "Why?", id)), doAsk(s.record, opening(e.id, "How?", id))]);
+      expect(waiting.size).toBe(2);
+      expect(values(results).map((x) => x.status).sort()).toEqual(["conflict", "stored"]);
+      expect((await asked(s.admin, e.id)).map((x) => x.question_id)).toEqual([id]);
+      expect(await helps(s.admin, e.id)).toBe(1);
+    }
+  }, SLOW);
+
+  test(`the same reply twice at once: one stored and one duplicate, one row (${REPS} times)`, async () => {
+    const s = await setup(2);
+    for (let i = 0; i < REPS; i++) {
+      const e = await open(s.record, `l${i}`);
+      const q = opening(e.id, "Why?");
+      await s.record.ask(q, NOW);
+      const reply = (): Promise<Told> => s.record.recordReply({ questionId: q.questionId, status: "succeeded", text: "Because.", error: null,
+        sources: [], agent: "a", model: null, usage: null }, NOW);
+      const { results, waiting } = await race(s, "school.replies", "record_reply", [reply, reply]);
+      expect(waiting.size).toBe(2);
+      expect(values(results).map((x) => x.status).sort()).toEqual(["duplicate", "stored"]);
+      expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.replies WHERE question_id = $1", [q.questionId]))[0].n).toBe(1);
+    }
+  }, SLOW);
+
+  test(`two decisions on one draft at once: one is stored, the other is told the draft is already decided (${REPS} times)`, async () => {
+    const s = await setup(2);
+    for (let i = 0; i < REPS; i++) {
+      const draftId = await readyDraft(s.record, `bells-${i}`);
+      const { results, waiting } = await race(s, "school.authoring_drafts", "decide_draft", [doDiscard(s.record, draftId), doDiscard(s.record, draftId)]);
+      expect(waiting.size).toBe(2);
+      expect(values(results).map((x) => x.status).sort()).toEqual(["already-decided", "stored"]);
+      expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.authoring_decisions WHERE draft_id = $1", [draftId]))[0].n).toBe(1);
+    }
+  }, SLOW);
+
   // F-8 of the review of flyingrobots/school#45: open_encounter and record_grading serialise on an
   // advisory lock and then read what the lock holder committed. That needs a snapshot taken after
   // the lock, which READ COMMITTED gives each statement; under REPEATABLE READ the transaction's
@@ -383,6 +514,37 @@ describe.skipIf(URL_ === undefined)("Bun.SQL concurrency on a real Postgres (SCH
       await expect(rr.removeInstalledCourse("bells", NOW)).rejects.toThrow(/READ COMMITTED/);
       expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.course_removals"))[0].n).toBe(0);
       expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.course_installs"))[0].n).toBe(1);
+    }, SLOW);
+
+    test("ask and record_reply refuse to run under it, and store nothing", async () => {
+      const s = await setup(1);
+      const rr = postgresRecord(repeatableRead(s.pool));
+      const e = await open(s.record, "l");
+      await expect(rr.ask(opening(e.id, "Why?"), NOW)).rejects.toThrow(/READ COMMITTED/);
+      expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.exposures"))[0].n).toBe(0);
+      const q = opening(e.id, "Why?");
+      await s.record.ask(q, NOW);
+      await expect(rr.recordReply({ questionId: q.questionId, status: "failed", text: "", error: "x", sources: [], agent: null, model: null, usage: null }, NOW))
+        .rejects.toThrow(/READ COMMITTED/);
+      expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.replies"))[0].n).toBe(0);
+    }, SLOW);
+
+    test("request_authoring, record_draft and decide_draft refuse to run under it, and store nothing", async () => {
+      const s = await setup(2);
+      const rr = postgresRecord(repeatableRead(s.pool));
+      const base = install("bells");
+      await s.record.installCourse(base, NOW);
+      const request = { id: uuid(), course: "bells", baseInstallId: base.id, text: "Add a lesson.", skillSha256: hex(64, "5"), schoolVersion: "0.1.0" };
+      await expect(rr.requestAuthoring(request, NOW)).rejects.toThrow(/READ COMMITTED/);
+      expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.authoring_requests"))[0].n).toBe(0);
+      await s.record.requestAuthoring(request, NOW);
+      const draft = { id: uuid(), requestId: request.id, round: 1, status: "ready", agent: "claude", commit: hex(40, "7"), contentSha256: hex(64, "8"),
+        checkMessage: null, inputTokens: 1, outputTokens: 1 } as const;
+      await expect(rr.recordDraft(draft, NOW)).rejects.toThrow(/READ COMMITTED/);
+      expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.authoring_drafts"))[0].n).toBe(0);
+      await s.record.recordDraft(draft, NOW);
+      await expect(doDiscard(rr, draft.id)()).rejects.toThrow(/READ COMMITTED/);
+      expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.authoring_decisions"))[0].n).toBe(0);
     }, SLOW);
 
     test("the adapter runs every request READ COMMITTED even when the database defaults to REPEATABLE READ", async () => {

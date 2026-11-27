@@ -280,7 +280,7 @@ describe("a course with lessons", () => {
   test("the browser title names the course", async () => {
     const p = await open("/courses/aion")
     expect(await p.title()).toBe("aion · School")
-    await p.context().close()
+    await close(p.context())
   })
 
   test("lists every lesson, in order, with its progress in words, matching the API", async () => {
@@ -411,14 +411,21 @@ describe("a course with lessons", () => {
 
 describe("states", () => {
   test("while the course loads, it shows Skeletons and a Spinner, then the lessons", async () => {
+    // The course's reply is held until the test opens the gate, so the loading state is there by
+    // construction; waiting for the request to reach the gate proves the route holds it
+    // (flyingrobots/school#354).
     const c = await context()
+    let reached!: () => void
+    const atGate = new Promise<void>((r) => (reached = r))
     let release!: () => void
     const held = new Promise<void>((r) => (release = r))
     await c.route(/\/api\/courses\/aion$/, async (route) => {
+      reached()
       await held
       await route.fallback()
     })
     const p = await open("/courses/aion", c)
+    await atGate
     await main(p).locator("[data-slot=skeleton]").first().waitFor()
     expect(
       await main(p).locator("[data-slot=spinner], [role=status]").count()

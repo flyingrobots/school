@@ -9,7 +9,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { answerText, claudeStreamLine, usageOf, type Agent, type AskConfig, type StreamLine, type Usage } from "./run.ts";
+import { agentEnded, agentStarted, answerText, claudeStreamLine, spawnFailure, sweepGroup, usageOf, type Agent, type AskConfig, type StreamLine, type Usage } from "./run.ts";
 import { expand, usesPlaceholder } from "./template.ts";
 
 export type { Usage } from "./run.ts";
@@ -96,21 +96,26 @@ async function askAgent(agent: Agent, job: AskJob, timeoutMs: number, onDelta: (
   const streaming = agent.output === "claude-stream-json" && !toFile;
   const argv = expand(agent.argv, { "{prompt}": job.prompt, "{output_file}": outputFile });
   argv[0] = resolved;
+  let pid: number | null = null;
   try {
     // detached: the agent leads its own process group, so a kill ends everything it started.
-    const proc = Bun.spawn(argv, {
-      cwd: work, detached: true, stdout: "pipe", stderr: "pipe",
-      stdin: usesPlaceholder(agent.argv, "{prompt}") ? "ignore" : new TextEncoder().encode(job.prompt),
-    });
+    let proc: Bun.Subprocess<"ignore" | Uint8Array, "pipe", "pipe">;
+    try {
+      proc = Bun.spawn(argv, {
+        cwd: work, detached: true, stdout: "pipe", stderr: "pipe",
+        stdin: usesPlaceholder(agent.argv, "{prompt}") ? "ignore" : new TextEncoder().encode(job.prompt),
+      });
+    } catch (e) {
+      return { attempt: { agent: agent.name, status: "failed", error: spawnFailure(program, e), exitCode: null, ms: Date.now() - started, deltas: 0 }, usage: null };
+    }
+    agentStarted(pid = proc.pid);
     let why: string | null = null;
-    let sweep: ReturnType<typeof setInterval> | null = null;
-    const hit = () => { try { process.kill(-proc.pid, "SIGKILL"); } catch {} };
+    const sweep: { stop?: () => void } = {};
+    let done = false; // set once the pipes have closed: the group may be empty, so no sweep starts
     const kill = (reason: string) => {
       why ??= reason;
-      hit();
-      // A child the agent forks just as the signal lands can miss it, still in the group, and hold
-      // the pipes open until the timeout: sweep the group until they close.
-      sweep ??= setInterval(hit, 50);
+      if (done) { proc.kill("SIGKILL"); return; } // the agent itself, still unreaped; not its group
+      sweep.stop ??= sweepGroup(proc.pid);
       grace ??= setTimeout(() => { for (const r of readers) r.cancel().catch(() => {}); }, PIPE_GRACE_MS);
     };
     // A child that left the group holds the pipes open however often the group is killed. Once
@@ -134,7 +139,8 @@ async function askAgent(agent: Agent, job: AskJob, timeoutMs: number, onDelta: (
       readLines(proc.stdout, onLine, !streaming, () => kill("produced more than 8 MiB of output"), readers),
       readLines(proc.stderr, () => {}, false, () => kill("produced more than 8 MiB of error output"), readers),
     ]);
-    if (sweep !== null) clearInterval(sweep);
+    done = true;
+    sweep.stop?.();
     if (grace !== null) clearTimeout(grace);
     const exitCode = await proc.exited;
     clearTimeout(timer);
@@ -167,6 +173,7 @@ async function askAgent(agent: Agent, job: AskJob, timeoutMs: number, onDelta: (
     pass(text);
     return succeeded(usage);
   } finally {
+    if (pid !== null) agentEnded(pid);
     rmSync(work, { recursive: true, force: true });
   }
 }

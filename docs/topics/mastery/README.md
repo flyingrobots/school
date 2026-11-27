@@ -1,8 +1,8 @@
 # Mastery
 
-Reference: how well School holds each quiz to be known at a given time, as a stability and a strength (RFC 5 §4.1, §4.2; flyingrobots/school#217).
+Reference: how well School holds each quiz to be known at a given time, as a stability and a strength (RFC 5 §4.1, §4.2; flyingrobots/school#217), how a lesson's or a course's quizzes roll up into four states (RFC 5 §4.5; flyingrobots/school#218), and how that chooses an explanation's pitch (RFC 8 §4.1, §4.2; flyingrobots/school#249).
 
-A quiz answered cleanly last month is not held as surely as one answered cleanly this morning, and each clean answer given after a delay makes it last longer. `school.mastery` measures that for each quiz, from the append-only record, every time it is asked; nothing it returns is stored. It exists as the database function and the `LearningRecord.mastery` port method; no page or API reads it.
+A quiz answered cleanly last month is not held as surely as one answered cleanly this morning, and each clean answer given after a delay makes it last longer. `school.mastery` measures that for each quiz, from the append-only record, every time it is asked; nothing it returns is stored. It exists as the database function and the `LearningRecord.mastery` port method, and `school.mastery_rollup` counts it per lesson or per course ([Rolling up to lessons and courses](#rolling-up-to-lessons-and-courses)). Due review reads it to bring back a settled quiz whose strength is below one half ([faded quizzes](../due-review/README.md#faded-quizzes), migration 0014). `GET /api/courses/:course` reports the rollup's counts for each lesson ([the course page](../course-page/README.md#each-lessons-mastery)), and `GET /api/activity` reports them for each course, which the home page's timeline says in words ([the home page](../home-page/README.md#how-each-course-is-holding)); no page shows the lesson counts yet, and no page or API reads `school.mastery` directly.
 
 ## The measure
 
@@ -32,7 +32,7 @@ A first try is clean, aided, unknown aid or wrong, as due review names them. Eac
 | Any right first try right after a wrong one | This first try | One day, however long after: it starts again and is the new anchor |
 | Clean, within `delay_ms` of the previous episode's last answer | This first try | Unchanged |
 | Right in an encounter whose `aid_tracking` is NULL (unknown aid) | This first try | Unchanged, however long after the last |
-| Right after help shown for the quiz in that encounter (aided) | This first try | Back to one day |
+| Right after help shown for the quiz, or for the whole encounter, in that encounter (aided) | This first try | Back to one day |
 | Wrong | Unchanged; strength is 0 until the next right first try | Back to one day |
 
 _Table 2. How each kind of first try moves the measure. Only a clean answer after the delay lengthens the half-life; aid withholds growth (unknown aid) or resets it (aided)._
@@ -72,6 +72,66 @@ The port method is `LearningRecord.mastery({ course, blocks, now, delayMs })` (`
 
 _Listing 1. The row for a block with no episodes, as the contract case `mastery: a quiz never answered is null; ...` asserts it through the port._
 
-The episodes come from `school.quiz_episodes(course, blocks)`, also in migration 0011: due review's episodes and how each first try was weak, as one function. It is not granted, so `school_app` cannot call it; `school.mastery` calls it as its owner. `school.due_review` (0006) still computes the same rows in its own body.
+The episodes come from `school.quiz_episodes(course, blocks)`, also in migration 0011: due review's episodes and how each first try was weak, as one function. It is not granted, so `school_app` cannot call it; `school.mastery` calls it as its owner. Since migration 0012 `school.due_review` takes its episodes from it too, so the two read the same rows, and an exposure for the whole encounter (`ai-help`, [due review](../due-review/README.md#help-for-the-whole-encounter)) makes a first try after it aided in both.
 
 In short: one read-only function, one port method, one row per asked block, with nulls for a quiz never answered.
+
+## Rolling up to lessons and courses
+
+A page says how a lesson or a course is holding in words, and explain mode ranks lessons by how well they are held, so `school.mastery_rollup` places each quiz of a group in one of four states and gives the group's mean strength. A group is any set of quiz blocks under a key: one key per lesson for a course page, or one key holding every quiz for a course. Each quiz's state comes from its `school.mastery` row, as Table 4 defines.
+
+| Field | Meaning | The learner reads it as |
+| --- | --- | --- |
+| `quizzes` | The number of distinct blocks in the group | |
+| `notStarted` | Never answered in this course: strength is null | Not started yet |
+| `settling` | Answered, not settled: due review's weak rules still hold it | Still settling |
+| `holding` | Settled, strength one half or more | Holding |
+| `faded` | Settled, strength below one half | Ready for another look |
+| `strength` | The mean strength over the group, a quiz not started counting 0; null for an empty group | Never shown: it is for explain mode to rank lessons by |
+
+_Table 4. What `school.mastery_rollup` returns for each group (RFC 5 Table 4.5, the words of §4.7). The four counts partition the group, so they always sum to `quizzes` and can always be said in words._
+
+A block in two groups counts in both, so a lesson's quiz counts once for its lesson and once for its course; a block named twice in one group counts once. A quiz at exactly one half strength is holding. A quiz still settling adds its own strength to the mean, which may be more than 0; only a quiz not started is counted as 0.
+
+`school.mastery_rollup(course text, groups jsonb, at timestamptz, delay_ms bigint)` returns one row, `item jsonb`, per key of `groups`, in byte order of the key (`COLLATE "C"`). `groups` is a jsonb object from a key to a jsonb array of block ids; `groups` that is not an object asks about nothing, a key whose value is not an array is an empty group, and a null in an array is not a block. It calls `school.mastery` once, with every distinct block asked, so both read the record by one definition. It is defined in `server/db/migrations/0013_mastery_rollup.sql`, is `STABLE` and `SECURITY DEFINER` with `search_path` fixed to `school, pg_temp`, writes nothing, and is granted to `school_app` by name (it is in `GRANTED_FUNCTIONS`). Listing 2 shows one lesson with a quiz in each state.
+
+```json
+{"key": "l1", "quizzes": 4, "notStarted": 1, "settling": 1, "holding": 1, "faded": 1, "strength": 0.2520}
+```
+
+_Listing 2. The row for a lesson of four quizzes at day 2: one never answered, one answered wrong at day 0, one answered cleanly at days 0 and 1 (strength 0.5^(1/2.5), about 0.758), and one answered cleanly at day 0 alone (strength 0.25). The mean is (0 + 0 + 0.758 + 0.25) / 4; the contract case is `mastery rollup: golden: ...`, and the value is shown to 4 places._
+
+The port method is `LearningRecord.masteryRollup({ course, groups, now, delayMs })`, parsed with the `MasteryRollupQuery` and `MasteryRollup` schemas in `server/core/model.ts`. `server/schema/school.graphql` describes `MasteryRollup` and the rest of `MasteryRollupQuery` for Wesley; `groups`, a map from key to blocks, has no GraphQL form, so `server/schema/check.ts` compares the query without it.
+
+In short: one function counts any group of quizzes into four states that always sum to the group, and a mean strength in which a quiz not started counts 0.
+
+## Pitching an explanation
+
+Explain more, when it is built (RFC 8), writes an explanation pitched to how well the learner holds the quizzes a block is about. The core chooses that pitch from the rollup; no route calls it yet. It reads only the record's answers, keeps nothing between requests, and is tested in `server/core/explain-pitch.test.ts`.
+
+A block's **scope** is the quizzes it is about, read from the lesson as served in the encounter's snapshot (`explainScope`, `server/core/explain-pitch.ts`):
+
+| Block | Its scope |
+| --- | --- |
+| A section | The quizzes among its descendants, nested sections included |
+| A quiz | That quiz |
+| Any other block in a section, such as an explain block | The quizzes of the nearest section that holds it |
+| A section with no quiz, a block in one, or a block outside any section | The lesson's quizzes, marked `from: "lesson"` |
+| An id the lesson does not hold | None: `explainScope` answers null |
+
+_Table 5. The scope of each block (RFC 8 Table 4.1). RFC 8 names sections, quizzes and explain blocks; any other block is scoped as an explain block is._
+
+The **pitch** is the weakest state present in the scope's counts, checked in this order (`choosePitch`):
+
+| Pitch | When the scope has |
+| --- | --- |
+| `deeper` | Any quiz still settling |
+| `first` | Any quiz not started yet, none settling; or no quiz at all |
+| `refresh` | Any quiz ready for another look, none settling or not started |
+| `onward` | Every quiz holding |
+
+_Table 6. The four pitches, weakest first (RFC 8 Table 4.2). The `Pitch` schema in `server/core/model.ts` lists the four names._
+
+`School.explainPitch(course, page, courseQuizzes, blockId)` (`server/core/school.ts`) finds the block's scope in `page`, then calls `masteryRollup` once with three groups, `scope`, `lesson` (every quiz in `page`) and `course` (`courseQuizzes`), at the clock's now and due review's delay, `REVIEW_DELAY_MS`. It answers the pitch chosen from `scope`, the time it read at, the scope, and the three groups' rows. A block the page does not hold answers null, and the record is not asked.
+
+In short: a block's scope is its quizzes, or its section's, or the lesson's; its pitch is the weakest state among them, read from one rollup at the server's clock.

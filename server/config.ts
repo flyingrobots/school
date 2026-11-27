@@ -46,6 +46,11 @@ export type Config = {
   mounts: Record<string, string>;
   host: string;
   port: number;
+  /**
+   * A fixed instant the server reads as now, from SCHOOL_TEST_CLOCK; null, the default, for the
+   * system clock. Only for tests over HTTP that need a time-dependent answer at a known time.
+   */
+  clock: string | null;
 };
 
 /** Which Postgres driver holds the record, and where. */
@@ -164,6 +169,12 @@ export type Stat = (path: string) => { dev: number | bigint; ino: number | bigin
 export const systemStat: Stat = (path) => statSync(path, { bigint: true });
 
 /**
+ * School's own lstat, for the files a walk lists (flyingrobots/school#315): it never follows a
+ * symlink, so a file swapped for a link after it was listed gives the link's own identity.
+ */
+export const systemLstat: Stat = (path) => lstatSync(path, { bigint: true });
+
+/**
  * The identity of `p` (null when it does not exist yet) and of every ancestor that exists, as
  * "dev:ino" strings. Two names for one folder, such as one directory bind-mounted twice into a
  * container, resolve to two paths but share an identity (flyingrobots/school#280).
@@ -195,53 +206,87 @@ function identity(at: string, stat: Stat): string | null {
 }
 
 /**
- * The most folders School walks below one trusted course, mount or web folder (flyingrobots/school#298).
+ * The most folders School walks below one course, mount or web folder (flyingrobots/school#298).
  * A course holds lessons/ and reference/ and a few folders under them: the example course holds 2,
  * and a course of 2,000 reference files in 100 topics about 100. 10,000 is far past any course. Each
  * folder costs one readdir and one stat, so the cap bounds a walk to about a quarter of a second on
- * a local SSD (100 folders take 3 ms), and a folder that is not a course, such as a home directory
- * or a whole disk, is refused at once instead of walked for minutes.
+ * a local SSD, and a folder that is not a course, such as a home directory or a whole disk, is
+ * refused at once instead of walked for minutes.
  */
-export const DIRECTORY_CAP = 10_000;
-
-/** The names of the folders directly inside `dir`, never a symlink, whatever it points at. */
-export type List = (dir: string) => string[];
+export const FOLDER_CAP = 10_000;
 
 /**
- * School's own list. A symlink is never a folder here: the server never serves through a symlink
- * that leaves the folder it serves (serveFrom compares real paths), so following one would only
- * refuse setups that are safe, or loop. A filesystem that does not say an entry's type is asked
- * with lstat, which does not follow links either.
+ * The most regular files School walks below one course, mount or web folder (flyingrobots/school#315).
+ * Counted apart from folders, so a source mount of many files in few folders, accepted while only
+ * folders were walked, is still accepted. Each file costs one lstat, about 1.4 µs on a local SSD.
  */
-export const systemList: List = (dir) =>
-  readdirSync(dir, { withFileTypes: true })
-    .filter((d) => d.isDirectory() || (!d.isFile() && !d.isSymbolicLink() && lstatSync(join(dir, d.name)).isDirectory()))
-    .map((d) => d.name);
+export const FILE_CAP = 100_000;
 
 /**
- * Every folder at or below `root`, by identity, with the path it was found at. Walked breadth-first
- * through `list`, so never through a symlink; a folder seen twice (a bind mount of an ancestor
- * inside its own tree) is walked once. Refused, naming `what`, past DIRECTORY_CAP folders.
+ * The entries directly inside `dir` that School walks: its folders and its regular files, by name.
+ * Never a symlink, whatever it points at, and nothing else (a socket, a pipe, a device).
  */
-function tree(root: string, what: string, stat: Stat, list: List): Map<string, string> {
+export type List = (dir: string) => { dirs: string[]; files: string[] };
+
+/**
+ * School's own list. A symlink is never a folder or a file here: the server never serves through a
+ * symlink that leaves the folder it serves (serveFrom compares real paths), so following one would
+ * only refuse setups that are safe, or loop. A filesystem that does not say an entry's type is
+ * asked with lstat, which does not follow links either.
+ */
+export const systemList: List = (dir) => {
+  const dirs: string[] = [];
+  const files: string[] = [];
+  for (const d of readdirSync(dir, { withFileTypes: true })) {
+    if (d.isDirectory()) dirs.push(d.name);
+    else if (d.isFile()) files.push(d.name);
+    else if (!d.isSymbolicLink() && !d.isFIFO() && !d.isSocket() && !d.isBlockDevice() && !d.isCharacterDevice()) {
+      // The type is unknown (DT_UNKNOWN): lstat says what the entry is, without following it.
+      const l = lstatSync(join(dir, d.name));
+      if (l.isDirectory()) dirs.push(d.name);
+      else if (l.isFile()) files.push(d.name);
+    }
+  }
+  return { dirs, files };
+};
+
+/**
+ * Every folder and regular file at or below `root`, by identity, with the path it was first found
+ * at. Walked breadth-first through `list`, so never through a symlink; a folder seen twice (a bind
+ * mount of an ancestor inside its own tree) is walked once, and a file with two names (a hard link)
+ * is kept under the first. A listed file's identity comes from `lstat`, so a file swapped for a
+ * symlink after it was listed is read as the link, never followed. An entry School cannot list or
+ * stat is refused, not skipped, since what it hides could be an alias; one that is gone, or is no
+ * folder, holds nothing. Refused, naming `what`, the cap and saying to `remedy`, past FOLDER_CAP
+ * folders or FILE_CAP files below the root.
+ */
+function tree(root: string, what: string, remedy: string, stat: Stat, lstat: Stat, list: List): Map<string, string> {
   const found = new Map<string, string>();
   const queue = [resolved(root)];
+  let files = 0;
+  const capped = (count: string, cap: string) =>
+    new ConfigError(`${what} holds more than ${count}, the ${cap} cap. With SCHOOL_UNTRUSTED_COURSES set, School walks every folder and file of each course, mount and the web folder at start, to find one that is both trusted and untrusted under two names, and walks at most ${FOLDER_CAP} folders and ${FILE_CAP} files in each. To start, ${remedy}`);
   for (let i = 0; i < queue.length; i++) {
     const dir = queue[i]!;
     const id = identity(dir, stat);
     if (id === null || found.has(id)) continue;
     found.set(id, dir);
-    let names: string[];
+    let names: { dirs: string[]; files: string[] };
     try {
       names = list(dir);
     } catch (e) {
       if (code(e) === "ENOENT" || code(e) === "ENOTDIR") continue;
       throw new ConfigError(`cannot list ${dir} in ${what}: ${code(e) ?? String(e)}`);
     }
-    if (queue.length - 1 + names.length > DIRECTORY_CAP) {
-      throw new ConfigError(`${what} holds more than ${DIRECTORY_CAP} folders; with SCHOOL_UNTRUSTED_COURSES set, School walks every folder of each trusted course, mount and the web folder to find one bind-mounted where an untrusted course lives, and walks at most ${DIRECTORY_CAP} in each. To start, unset SCHOOL_UNTRUSTED_COURSES, or point ${/SCHOOL_[A-Z_]+/.exec(what)?.[0] ?? "the variable named above"} at a folder holding fewer`);
+    if (queue.length - 1 + names.dirs.length > FOLDER_CAP) throw capped(`${FOLDER_CAP} folders`, "folder");
+    files += names.files.length;
+    if (files > FILE_CAP) throw capped(`${FILE_CAP} files`, "file");
+    for (const name of names.dirs) queue.push(join(dir, name));
+    for (const name of names.files) {
+      const file = join(dir, name);
+      const fileId = identity(file, lstat);
+      if (fileId !== null && !found.has(fileId)) found.set(fileId, file);
     }
-    for (const name of names) queue.push(join(dir, name));
   }
   return found;
 }
@@ -254,10 +299,11 @@ function sameTree(a: string, b: string, stat: Stat): boolean {
 }
 
 /**
- * `stat` is the filesystem's identity and `list` names a folder's subfolders (flyingrobots/school#298);
- * tests give fake ones, since aliases need a bind mount.
+ * `stat` is the filesystem's identity, `list` names a folder's subfolders and regular files
+ * (flyingrobots/school#298), and `lstat` is the identity of a listed file without following a
+ * symlink (flyingrobots/school#315); tests give fake ones, since aliases need a bind mount.
  */
-export function parseConfig(env: Record<string, string | undefined>, frameworkDefault: string, stat: Stat = systemStat, list: List = systemList): Config {
+export function parseConfig(env: Record<string, string | undefined>, frameworkDefault: string, stat: Stat = systemStat, list: List = systemList, lstat: Stat = systemLstat): Config {
   const cwd = process.cwd();
   const framework = abs(env.SCHOOL_ROOT ?? frameworkDefault, cwd);
   // SCHOOL_COURSES registers many; SCHOOL_COURSE stays accepted as a single unnamed course,
@@ -315,18 +361,32 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
   }
   // Part of one bind-mounted elsewhere (flyingrobots/school#298): at a bind mount's root ".." leaves
   // the trusted tree, so the ancestors above cannot show that /library is a trusted course's
-  // reference/. Every folder of each trusted root is collected by identity instead, and an untrusted
-  // course whose folder or an ancestor has one of them is refused. Walked only when there is an
-  // untrusted course to protect, so a setup without one starts as before.
+  // reference/. Every folder and file of each trusted root is collected by identity instead, and an
+  // untrusted course whose folder or an ancestor has one of them is refused. Each untrusted course
+  // is walked the same way (flyingrobots/school#315), and refused when any folder or file below it
+  // has the identity of one in a trusted root: one of its files or subfolders bind-mounted into a
+  // trusted folder, or one of theirs into it, or a file hard-linked into both. Two names for one
+  // file inside one course, or across two untrusted courses, keep one trust and are accepted.
+  // Walked only when there is an untrusted course to protect, so a setup without one starts as before.
   if (Object.keys(untrusted).length > 0) {
-    const lineages = Object.entries(untrusted).map(([name, path]) => ({ name, path, ids: lineage(path, stat).all }));
+    const guests = Object.entries(untrusted).map(([name, path]) => {
+      const what = `untrusted course ${JSON.stringify(name)} (${path}) from SCHOOL_UNTRUSTED_COURSES`;
+      return { name, path, what, ids: lineage(path, stat).all, inside: tree(path, what, `remove it from SCHOOL_UNTRUSTED_COURSES, or point it at a folder holding fewer`, stat, lstat, list) };
+    });
     for (const [what, root] of roots) {
-      const inside = tree(root, what, stat, list);
-      for (const { name, path, ids } of lineages) {
-        for (const id of ids) {
+      const variable = /SCHOOL_[A-Z_]+/.exec(what)?.[0] ?? "the variable named above";
+      const inside = tree(root, what, `unset SCHOOL_UNTRUSTED_COURSES, or point ${variable} at a folder holding fewer`, stat, lstat, list);
+      for (const guest of guests) {
+        for (const id of guest.ids) {
           const at = inside.get(id);
           if (at !== undefined) {
-            throw new ConfigError(`untrusted course ${JSON.stringify(name)} (${path}) from SCHOOL_UNTRUSTED_COURSES is, or sits inside, ${at} in ${what} under another name (same device and inode, as when Docker bind-mounts part of a folder); a folder is trusted or untrusted, not both`);
+            throw new ConfigError(`${guest.what} is, or sits inside, ${at} in ${what} under another name (same device and inode, as when Docker bind-mounts part of a folder); a folder is trusted or untrusted, not both`);
+          }
+        }
+        for (const [id, own] of guest.inside) {
+          const at = inside.get(id);
+          if (at !== undefined) {
+            throw new ConfigError(`${guest.what} holds ${own}, which is ${at} in ${what} under another name (same device and inode, as when Docker bind-mounts a file or folder of one inside the other, or a file is hard-linked into both); a file or folder is trusted or untrusted, not both`);
           }
         }
       }
@@ -382,6 +442,19 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     }
   }
 
+  // A fixed clock for tests over HTTP (flyingrobots/school#220). Refused on a postgres:// record, so
+  // a learner's record is never written at a time that is not now.
+  const clockValue = env.SCHOOL_TEST_CLOCK === undefined || env.SCHOOL_TEST_CLOCK === "" ? null : env.SCHOOL_TEST_CLOCK;
+  let clock: string | null = null;
+  if (clockValue !== null) {
+    if (database.driver !== "pglite") throw new ConfigError("SCHOOL_TEST_CLOCK is for tests: it fixes the server's clock, so it is refused unless SCHOOL_DATABASE_URL is pglite:<directory>");
+    const instant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(clockValue) ? Date.parse(clockValue) : NaN;
+    if (Number.isNaN(instant)) {
+      throw new ConfigError(`SCHOOL_TEST_CLOCK ${JSON.stringify(clockValue)} is not an instant: give a date, a time and a zone, as 2026-01-03T10:00:00Z`);
+    }
+    clock = new Date(instant).toISOString();
+  }
+
   // The school skill an authoring agent is given, and the references it links (RFC 9 §5.3,
   // flyingrobots/school#257): this checkout's by default; compose mounts them under /framework.
   // Whether they are there is reported at start (server/skill.ts), never a refusal to start.
@@ -405,6 +478,7 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     mounts,
     host: env.HOST ?? "127.0.0.1",
     port,
+    clock,
   };
 }
 

@@ -86,6 +86,21 @@ export type Exposure = z.infer<typeof Exposure>;
 export const ExposureResult = z.object({ status: z.enum(["stored", "duplicate", "conflict", "rejected"]) });
 export type ExposureResult = z.infer<typeof ExposureResult>;
 
+/**
+ * Help a model wrote for the learner about a lesson, shown in one encounter (RFC 6 §5.1): one
+ * exposure for the whole encounter, with no block, recorded by the server and never by the page.
+ */
+export const LessonHelpKind = z.enum(["ai-help"]);
+export type LessonHelpKind = z.infer<typeof LessonHelpKind>;
+
+/** Help for a whole encounter. `exposureId` names it once, as an exposure's does. */
+export const LessonHelp = z.object({ exposureId: uuid, encounterId: uuid, kind: LessonHelpKind });
+export type LessonHelp = z.infer<typeof LessonHelp>;
+
+/** Every kind of exposure the record holds: the page's, and the server's help for a whole encounter. */
+export const RecordedExposureKind = z.enum([...ExposureKind.options, ...LessonHelpKind.options]);
+export type RecordedExposureKind = z.infer<typeof RecordedExposureKind>;
+
 /** Whether a submission was aided: derived from exposures by the record's order, never stored (RFC 2 §3). */
 export const Aid = z.enum(["aided", "no-recorded-aid", "unknown"]);
 export type Aid = z.infer<typeof Aid>;
@@ -248,9 +263,10 @@ export type DecisionNoteResult = z.infer<typeof DecisionNoteResult>;
 
 /**
  * Why a block came back: its latest weak first try was wrong; right, but after help shown for it in
- * that encounter; or right while School was not recording help, so its aid is unknown.
+ * that encounter; or right while School was not recording help, so its aid is unknown. Or, ranked
+ * after those three, it had settled and its mastery has faded below one half (RFC 5 §4.6).
  */
-export const ReviewRule = z.enum(["due-review/wrong-first-try", "due-review/aided-first-try", "due-review/unknown-aid"]);
+export const ReviewRule = z.enum(["due-review/wrong-first-try", "due-review/aided-first-try", "due-review/unknown-aid", "due-review/faded"]);
 export type ReviewRule = z.infer<typeof ReviewRule>;
 
 /**
@@ -277,7 +293,7 @@ export const DueItem = z.object({
   rule: ReviewRule,
   answeredAt: timestamp,
   corrected: z.boolean(),
-  shown: z.array(ExposureKind),
+  shown: z.array(RecordedExposureKind),
   lastSeen: timestamp,
   evidence: z.array(Seq).min(1).max(100),
 });
@@ -322,6 +338,45 @@ export const Mastery = z.object({
 });
 export type Mastery = z.infer<typeof Mastery>;
 
+/**
+ * What to ask the rollup (RFC 5 §4.5): the course, groups from a key (a lesson, or the whole
+ * course) to quiz block ids, and the time and delay as for the measure. A block may sit in more than
+ * one group, and counts in each.
+ */
+export const MasteryRollupQuery = z.object({
+  course: z.string().min(1).max(200),
+  groups: z.record(z.string().min(1).max(200), z.array(blockId).max(10_000)),
+  now: timestamp,
+  delayMs: ms,
+});
+export type MasteryRollupQuery = z.infer<typeof MasteryRollupQuery>;
+
+/**
+ * How one group of quizzes is held at the query's time (RFC 5 Table 4.5). `quizzes` is the number
+ * of distinct blocks in the group, and the four counts partition them: never answered, answered but
+ * not settled, settled with strength one half or more, settled with strength below one half.
+ * `strength` is the mean strength over the group, a quiz not started counting 0, and null for an
+ * empty group; it is for ranking, never for display.
+ */
+export const MasteryRollup = z.object({
+  key: z.string(),
+  quizzes: z.int().nonnegative(),
+  notStarted: z.int().nonnegative(),
+  settling: z.int().nonnegative(),
+  holding: z.int().nonnegative(),
+  faded: z.int().nonnegative(),
+  strength: z.number().min(0).max(1).nullable(),
+});
+export type MasteryRollup = z.infer<typeof MasteryRollup>;
+
+/**
+ * How an explanation is pitched (RFC 8 Table 4.2), from the weakest state its scope holds to the
+ * strongest: `deeper` when any quiz is still settling, `first` when any is not started yet,
+ * `refresh` when any is ready for another look, `onward` when every one is holding.
+ */
+export const Pitch = z.enum(["deeper", "first", "refresh", "onward"]);
+export type Pitch = z.infer<typeof Pitch>;
+
 // ---- Installed courses (RFC 7 §7; flyingrobots/school#232) -------------------------------------
 
 /**
@@ -351,20 +406,26 @@ const installFields = {
 };
 
 /**
- * One install to record: a course fetched from a git repository at a commit, or read from an
- * uploaded git bundle. `url` is set exactly for `git`, and `bundleSha256` exactly for `bundle`.
+ * One install to record: a course fetched from a git repository at a commit, read from an uploaded
+ * git bundle, or authored in School from an accepted draft (RFC 9 §5.5). `url` is set exactly for
+ * `git`, and `bundleSha256` exactly for `bundle`. An `authored` install names the draft commit as
+ * its `commit`, the install the draft was based on as `parentInstallId`, and the draft as `draftId`.
  */
 export const CourseInstall = z.discriminatedUnion("source", [
   z.object({ ...installFields, source: z.literal("git"), url: z.string().regex(/^https:\/\/\S+$/), bundleSha256: z.null() }),
   z.object({ ...installFields, source: z.literal("bundle"), url: z.null(), bundleSha256: sha256 }),
+  z.object({ ...installFields, source: z.literal("authored"), url: z.null(), bundleSha256: z.null(), parentInstallId: uuid, draftId: uuid }),
 ]);
 export type CourseInstall = z.infer<typeof CourseInstall>;
 
 /**
  * `installed`: the name had no current install. `updated`: it had one, and this one replaces it.
  * `duplicate`: this id already holds this same install. `conflict`: it holds another; the first stands.
+ * For an `authored` install only, nothing stored: `stale`, its parent is no longer the name's current
+ * install; `rejected`, its draft is not an undecided `ready` draft of a request on that parent under
+ * this name, or another install already names it.
  */
-export const InstallResult = z.object({ status: z.enum(["installed", "updated", "duplicate", "conflict"]) });
+export const InstallResult = z.object({ status: z.enum(["installed", "updated", "duplicate", "conflict", "stale", "rejected"]) });
 export type InstallResult = z.infer<typeof InstallResult>;
 
 /** `removed`: the course had a current install and now has none. `not-installed`: it had none; nothing was stored. */
@@ -382,5 +443,201 @@ export type TrustResult = z.infer<typeof TrustResult>;
 export const InstalledCourse = z.discriminatedUnion("source", [
   CourseInstall.options[0].extend({ at: timestamp, trusted: z.boolean() }),
   CourseInstall.options[1].extend({ at: timestamp, trusted: z.boolean() }),
+  CourseInstall.options[2].extend({ at: timestamp, trusted: z.boolean() }),
 ]);
 export type InstalledCourse = z.infer<typeof InstalledCourse>;
+
+// ---- Conversations about a passage (RFC 6 §5.2, Figure 5.1, Table 5.3; flyingrobots/school#225) --
+
+/** The longest passage a conversation may be anchored to, in characters (RFC 6 §5.6). */
+export const PASSAGE_MAX = 2000;
+/** The longest question, in characters (RFC 6 Figure 5.1). */
+export const QUESTION_MAX = 4000;
+
+/**
+ * A question about a passage, to store before any model is asked. `conversationId` and `questionId`
+ * are the caller's, so a resend is stored once. The first question of a conversation opens it and
+ * carries `blockId`, the block where the passage begins, and `passage`, the selected words; every
+ * later question carries neither, since they are the conversation's.
+ */
+export const AskQuestion = z.object({
+  conversationId: uuid,
+  questionId: uuid,
+  encounterId: uuid,
+  blockId: blockId.nullable(),
+  passage: z.string().min(1).max(PASSAGE_MAX).nullable(),
+  text: z.string().trim().min(1).max(QUESTION_MAX),
+}).refine((q) => (q.blockId === null) === (q.passage === null), { message: "a passage is given with the block where it begins", path: ["passage"] });
+export type AskQuestion = z.infer<typeof AskQuestion>;
+
+/**
+ * `stored`: the question and its `ai-help` exposure, in one write. `duplicate`: this id already holds
+ * this same question. `conflict`: it holds another; the first stands. `rejected`: nothing stored,
+ * because the encounter does not exist or does not track aid; or the conversation is new and the
+ * question has no passage, or its block is not in the encounter's snapshot; or the conversation
+ * exists and the question gives a passage, or its encounter is of another lesson.
+ */
+export const AskResult = z.object({ status: z.enum(["stored", "duplicate", "conflict", "rejected"]) });
+export type AskResult = z.infer<typeof AskResult>;
+
+/** A source an answer quoted: the source's id, the words quoted, and whether they were found in it (RFC 6 §5.5). */
+export const ReplySource = z.object({ sourceId: z.string().min(1), quote: z.string(), checked: z.boolean() });
+export type ReplySource = z.infer<typeof ReplySource>;
+
+/** Token counts, by the name the agent reports each under, when it reports them (RFC 6 §5.4). */
+export const ReplyUsage = z.record(z.string(), z.int().nonnegative());
+export type ReplyUsage = z.infer<typeof ReplyUsage>;
+
+const replyFields = {
+  /** The answer as shown: the whole of it, or for a failed reply whatever reached the learner, possibly nothing. */
+  text: z.string(),
+  sources: z.array(ReplySource),
+  /** The agent that answered, as the bridge names it, and its model, when known. */
+  agent: z.string().nullable(),
+  model: z.string().nullable(),
+  usage: ReplyUsage.nullable(),
+};
+
+/** The one reply to a question, to store: succeeded with an answer, or failed with the reason. */
+export const ReplyRecord = z.discriminatedUnion("status", [
+  z.object({ ...replyFields, status: z.literal("succeeded"), text: z.string().min(1), error: z.null() }),
+  z.object({ ...replyFields, status: z.literal("failed"), error: z.string().min(1) }),
+]).and(z.object({ questionId: uuid }));
+export type ReplyRecord = z.infer<typeof ReplyRecord>;
+
+/**
+ * `stored`: the question's reply. `duplicate`: it already has this same reply. `conflict`: it has
+ * another; the first stands. `rejected`: there is no such question; nothing stored.
+ */
+export const ReplyResult = z.object({ status: z.enum(["stored", "duplicate", "conflict", "rejected"]) });
+export type ReplyResult = z.infer<typeof ReplyResult>;
+
+/** A reply as stored, with its place in the record's order. */
+export const Reply = z.discriminatedUnion("status", [
+  z.object({ ...replyFields, status: z.literal("succeeded"), error: z.null(), seq: Seq, at: timestamp }),
+  z.object({ ...replyFields, status: z.literal("failed"), error: z.string(), seq: Seq, at: timestamp }),
+]);
+export type Reply = z.infer<typeof Reply>;
+
+/** A question as stored: its encounter, its own `ai-help` exposure, and its reply or null. */
+export const ConversationQuestion = z.object({
+  questionId: z.string(), encounterId: z.string(), text: z.string(), seq: Seq, exposureSeq: Seq, at: timestamp, reply: Reply.nullable(),
+});
+export type ConversationQuestion = z.infer<typeof ConversationQuestion>;
+
+/** A conversation as stored: the passage it is anchored to, and its questions in `seq` order. */
+export const Conversation = z.object({
+  conversationId: z.string(), blockId: z.string(), passage: z.string(), seq: Seq, at: timestamp,
+  questions: z.array(ConversationQuestion),
+});
+export type Conversation = z.infer<typeof Conversation>;
+
+// ---- Authoring (RFC 9 §5.5; flyingrobots/school#258) ---------------------------------------------
+
+/** The most characters (Unicode code points, as Postgres counts them) an authoring request's text may hold. */
+export const AUTHORING_TEXT_MAX = 20_000;
+
+/**
+ * One authoring request to record, before the bridge is asked: what the author asked of `course`,
+ * on which install (`baseInstallId`, which must be the course's current install), with which skill
+ * (the SHA-256 of its manifest, RFC 9 §5.3) and which School.
+ */
+export const AuthoringRequest = z.object({
+  /** The caller's, so a resend is stored once. */
+  id: uuid,
+  course: CourseName,
+  baseInstallId: uuid,
+  text: z.string().min(1).refine((t) => [...t].length <= AUTHORING_TEXT_MAX, { message: `is longer than ${AUTHORING_TEXT_MAX} characters` }),
+  skillSha256: sha256,
+  schoolVersion: z.string().min(1).max(200),
+});
+export type AuthoringRequest = z.infer<typeof AuthoringRequest>;
+
+/**
+ * `stored`. `duplicate`: this id already holds this same request. `conflict`: it holds another; the
+ * first stands. `refused`: the base is not the course's current install; nothing was stored.
+ */
+export const AuthoringResult = z.object({ status: z.enum(["stored", "duplicate", "conflict", "refused"]) });
+export type AuthoringResult = z.infer<typeof AuthoringResult>;
+
+const tokens = z.int().nonnegative().nullable();
+const draftFields = {
+  /** The caller's, so a resend is stored once. It also names the draft's folder in the course store. */
+  id: uuid,
+  requestId: uuid,
+  /** 1, or 2 for the one repair round after a refused first draft (RFC 9 Table 5.1). */
+  round: z.union([z.literal(1), z.literal(2)]),
+  /** Token counts the agent reported, or null when it reported none. */
+  inputTokens: tokens,
+  outputTokens: tokens,
+};
+const agent = z.string().min(1);
+/**
+ * One round of a request, recorded once it ends. A `ready` or `refused` draft was built: it names
+ * the agent, the draft commit and its content digest, and a `refused` one keeps the check's message.
+ * A `failed` one was not built (the agent failed or ran out of time), and may name no agent.
+ */
+export const AuthoringDraft = z.discriminatedUnion("status", [
+  z.object({ ...draftFields, status: z.literal("ready"), agent, commit: commitHash, contentSha256: sha256, checkMessage: z.null() }),
+  z.object({ ...draftFields, status: z.literal("refused"), agent, commit: commitHash, contentSha256: sha256, checkMessage: z.string().min(1) }),
+  z.object({ ...draftFields, status: z.literal("failed"), agent: agent.nullable(), commit: z.null(), contentSha256: z.null(), checkMessage: z.null() }),
+]);
+export type AuthoringDraft = z.infer<typeof AuthoringDraft>;
+
+/**
+ * `stored`. `duplicate`: this id already holds this same draft. `conflict`: it holds another; the
+ * first stands. `rejected`, nothing stored: no request has that id, or the round is not the
+ * request's next one (round 1 when it has none; round 2 only after a `refused` round 1).
+ */
+export const DraftResult = z.object({ status: z.enum(["stored", "duplicate", "conflict", "rejected"]) });
+export type DraftResult = z.infer<typeof DraftResult>;
+
+/**
+ * The author's decision on a draft, once per draft. `accepted` names the `authored` install the
+ * draft became, and keeps the draft's patch (`git format-patch` of the draft commit) so the
+ * install can be rebuilt from the record (RFC 9 §5.4).
+ */
+export const AuthoringDecision = z.discriminatedUnion("decision", [
+  z.object({ id: uuid, draftId: uuid, decision: z.literal("accepted"), installId: uuid, patch: z.string().min(1) }),
+  z.object({ id: uuid, draftId: uuid, decision: z.literal("discarded"), installId: z.null(), patch: z.null() }),
+]);
+export type AuthoringDecision = z.infer<typeof AuthoringDecision>;
+
+/**
+ * `stored`. `duplicate`: this id already holds this same decision. `conflict`: it holds another; the
+ * first stands. Nothing stored for the rest: `already-decided`, the draft has a decision;
+ * `not-ready`, an accept of a draft that is not `ready`; `stale`, an accept whose install is no
+ * longer the course's current one; `rejected`, no draft has that id, or an accept's install is not
+ * this draft's `authored` install.
+ */
+export const DecisionResult = z.object({ status: z.enum(["stored", "duplicate", "conflict", "already-decided", "not-ready", "stale", "rejected"]) });
+export type DecisionResult = z.infer<typeof DecisionResult>;
+
+/** A decision as recorded. */
+export const RecordedDecision = z.discriminatedUnion("decision", [
+  AuthoringDecision.options[0].omit({ draftId: true }).extend({ at: timestamp }),
+  AuthoringDecision.options[1].omit({ draftId: true }).extend({ at: timestamp }),
+]);
+export type RecordedDecision = z.infer<typeof RecordedDecision>;
+
+/** A draft as recorded, with its decision, or null while it has none. */
+export const RecordedDraft = z.discriminatedUnion("status", [
+  AuthoringDraft.options[0].omit({ requestId: true }).extend({ at: timestamp, decision: RecordedDecision.nullable() }),
+  AuthoringDraft.options[1].omit({ requestId: true }).extend({ at: timestamp, decision: RecordedDecision.nullable() }),
+  AuthoringDraft.options[2].omit({ requestId: true }).extend({ at: timestamp, decision: RecordedDecision.nullable() }),
+]);
+export type RecordedDraft = z.infer<typeof RecordedDraft>;
+
+/** A request as recorded, with its drafts in the record's order. */
+export const RecordedRequest = AuthoringRequest.extend({ at: timestamp, drafts: z.array(RecordedDraft) });
+export type RecordedRequest = z.infer<typeof RecordedRequest>;
+
+/**
+ * What the record already holds under a course name (RFC 7 §5.2, flyingrobots/school#237): its
+ * encounters, the quiz answers and explanations given in them, and its recorded views. A name with
+ * all four zero has no progress; any other is progress an install under that name would continue.
+ */
+export const CourseProgress = z.object({
+  encounters: z.int().nonnegative(), answers: z.int().nonnegative(), explanations: z.int().nonnegative(), views: z.int().nonnegative(),
+});
+export type CourseProgress = z.infer<typeof CourseProgress>;

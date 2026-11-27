@@ -7,6 +7,7 @@
 // one migrated template, and every database it makes is dropped at the end
 // (server/testing/postgres.ts).
 import { describe, expect, test } from "bun:test";
+import { conversationTables } from "../contract/conversation-tables.ts";
 import { learningRecordContract } from "../contract/learning-record.ts";
 import { appUrl, scratchPostgres, TEST_APP_PASSWORD, TEST_POSTGRES_URL as URL_ } from "../testing/postgres.ts";
 import { APP, FUNCTION_CALL, migrateRecord, openDatabase, redact } from "./database.ts";
@@ -21,6 +22,11 @@ const { database, fresh, track } = scratchPostgres();
 
 describe.skipIf(URL_ === undefined)("Bun.SQL on a real Postgres (SCHOOL_TEST_POSTGRES_URL)", () => {
   learningRecordContract("postgres (Bun.SQL)", async () => postgresRecord((await fresh()).sql));
+  conversationTables("postgres (Bun.SQL)", async () => {
+    const { url, sql } = await fresh();
+    const pool = track(new Bun.SQL(url));
+    return { record: postgresRecord(sql), as: (role) => bunSql(pool, role) };
+  });
 
   // The server no longer migrates a Postgres record: the migrate job does, as the owner, and the
   // server opens it as school_app (flyingrobots/school#91; server/adapters/app-login.test.ts).
@@ -80,6 +86,35 @@ describe.skipIf(URL_ === undefined)("Bun.SQL on a real Postgres (SCHOOL_TEST_POS
     const app = bunSql(pool, APP);
     const owner = bunSql(pool, "school_owner");
     for (const t of ["course_installs", "course_removals", "course_trust_choices"]) {
+      for (const text of [`INSERT INTO school.${t} DEFAULT VALUES`, `UPDATE school.${t} SET at = at`, `DELETE FROM school.${t}`, `SELECT * FROM school.${t}`]) {
+        await expect(app.query(text, []), `${APP}: ${text}`).rejects.toThrow(`permission denied for table ${t}`);
+      }
+      for (const text of [`UPDATE school.${t} SET at = at`, `DELETE FROM school.${t}`, `TRUNCATE school.${t} CASCADE`]) {
+        await expect(owner.query(text, []), `school_owner: ${text}`).rejects.toThrow(`${t} are append-only`);
+      }
+      expect(await owner.query<{ n: number }>(`SELECT count(*)::int AS n FROM school.${t}`, [])).toEqual([{ n: 1 }]);
+    }
+  }, SLOW);
+
+  // RFC 9 §5.5 (flyingrobots/school#258): the authoring tables are record tables, on a real server too.
+  test("the authoring tables refuse school_app's direct writes, and the owner's UPDATE, DELETE and TRUNCATE", async () => {
+    const { url, sql: record } = await fresh();
+    const r = postgresRecord(record);
+    const install = crypto.randomUUID();
+    const request = crypto.randomUUID();
+    const draft = crypto.randomUUID();
+    const at = "2026-11-21T10:00:00.000Z";
+    expect(await r.installCourse({ id: install, course: "bells", source: "git", url: "https://example.com/bells.git", bundleSha256: null,
+      commit: "a".repeat(40), contentSha256: "c".repeat(64), title: "Bells", format: 1 }, at)).toEqual({ status: "installed" });
+    expect(await r.requestAuthoring({ id: request, course: "bells", baseInstallId: install, text: "Add a lesson.", skillSha256: "5".repeat(64),
+      schoolVersion: "0.1.0" }, at)).toEqual({ status: "stored" });
+    expect(await r.recordDraft({ id: draft, requestId: request, round: 1, status: "ready", agent: "claude", commit: "7".repeat(40),
+      contentSha256: "8".repeat(64), checkMessage: null, inputTokens: 10, outputTokens: 2 }, at)).toEqual({ status: "stored" });
+    expect(await r.decideDraft({ id: crypto.randomUUID(), draftId: draft, decision: "discarded", installId: null, patch: null }, at)).toEqual({ status: "stored" });
+    const pool = track(new Bun.SQL(url));
+    const app = bunSql(pool, APP);
+    const owner = bunSql(pool, "school_owner");
+    for (const t of ["authoring_requests", "authoring_drafts", "authoring_decisions"]) {
       for (const text of [`INSERT INTO school.${t} DEFAULT VALUES`, `UPDATE school.${t} SET at = at`, `DELETE FROM school.${t}`, `SELECT * FROM school.${t}`]) {
         await expect(app.query(text, []), `${APP}: ${text}`).rejects.toThrow(`permission denied for table ${t}`);
       }

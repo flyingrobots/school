@@ -1,6 +1,6 @@
 # Mastery test plan
 
-The contract ledger for [mastery](README.md). Every case runs in `bun test`. Contract cases are in `server/contract/learning-record.ts`, titled `<adapter>: mastery: <case>`, and run at fixed clocks with `delay_ms` of twenty hours. They run on PGlite (`server/adapters/postgres.test.ts`) and on a real Postgres through `Bun.SQL` (`server/adapters/bunsql.test.ts`); CI's gate fails a PGlite case that has no passing `Bun.SQL` counterpart. A strength is compared to 4 decimal places; a stability exactly while it is a whole number of milliseconds.
+The contract ledger for [mastery](README.md), its rollup and the pitch it chooses. Every case runs in `bun test`. Contract cases are in `server/contract/learning-record.ts`, titled `<adapter>: mastery: <case>`, and run at fixed clocks with `delay_ms` of twenty hours. They run on PGlite (`server/adapters/postgres.test.ts`) and on a real Postgres through `Bun.SQL` (`server/adapters/bunsql.test.ts`); CI's gate fails a PGlite case that has no passing `Bun.SQL` counterpart. A strength is compared to 4 decimal places; a stability exactly while it is a whole number of milliseconds.
 
 ## The measure
 
@@ -20,7 +20,7 @@ Each case below is a contract case, so it names the behaviour through the port a
 | MA-5 | Never answered (edge) | Strength, stability and refresh time null, not settled, no evidence; rows follow the order asked, each block once; another course's answers count for nothing; no blocks gives no rows | implemented | `a quiz never answered is null; rows follow the order asked, each block once; another course's answers are not this one's` |
 | MA-6 | Ordering by `at` (known failure mode) | With `at` out of step with `seq`, the latest first try, the refresh time and the delay all follow `seq` | implemented | ``order is the record's, by seq, never by `at`: the latest first try, the refresh and the delay are read in seq order`` |
 | MA-7 | Before the refresh, and long after | Strength 1 at a time before the refresh; close to 0, not an error, ten years after it | implemented | `strength is 1 at a time before the refresh, and reaches 0, not an error, ten years after it` |
-| MA-F1 | A year of random first tries (fuzz) | Seeded (`SCHOOL_TEST_SEED`, 232 in CI): after every episode, strength is in [0, 1], stability never falls on a spaced clean answer, and both equal a step-by-step model of Table 4.2; every kind of first try is reached | implemented | `under a year of random first tries, strength stays in [0, 1], stability never falls on a spaced clean answer, and both follow Table 4.2` |
+| MA-F1 | 64 random first tries, up to three days apart (fuzz) | Seeded (`SCHOOL_TEST_SEED`, 232 in CI), with a time budget derived from the count (flyingrobots/school#354): after every episode, strength is in [0, 1], stability never falls on a spaced clean answer, and both equal a step-by-step model of Table 4.2; every kind of first try is reached | implemented | `under 64 random first tries, strength stays in [0, 1], stability never falls on a spaced clean answer, and both follow Table 4.2` |
 
 _Table 1. The measure's contract cases. Each names its RFC 5 oracle, and each runs on both drivers._
 
@@ -44,3 +44,50 @@ These cases are SQL-level, on PGlite, in `server/db/mastery.test.ts` and the rec
 _Table 2. The function's SQL-level cases. They hold the privileges, the read-only promise and the finite stability to the database itself._
 
 In short: the function reads only, is reached only by name, calls no clock, and stays finite over any history.
+
+## The rollup
+
+The rollup's contract cases are titled `<adapter>: mastery rollup: <case>`, in `server/contract/learning-record.ts`, at fixed clocks with `delay_ms` of twenty hours, on both drivers. The oracle is RFC 5 Table 4.5 for the states and the mean, with each quiz's strength from Table 4.1; the fuzz case's oracle is `school.mastery` itself. Its SQL-level cases are in `server/db/mastery-rollup.test.ts`, on PGlite.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| MR-G1 | Golden: one lesson with a quiz in each state | One each of not started, settling, holding and faded; quizzes 4; mean (0.5^(1/2.5) + 0.25) / 4 at day 2 | implemented | `golden: one lesson with a quiz in each state counts one of each, and the mean counts the quiz not started as 0` |
+| MR-1 | A settling quiz's strength (mutant) | An unknown-aid answer a day ago is settling with strength 0.5, and the mean is 0.5, not 0 | implemented | `a quiz still settling counts its strength in the mean, not 0` |
+| MR-2 | The one-half boundary (edge) | Strength exactly 0.5 is holding; 1 ms later it is faded | implemented | `strength exactly one half is holding; 1 ms later it is ready for another look` |
+| MR-3 | Empty group (edge) | Quizzes 0, every count 0, strength null; no groups gives no rows | implemented | `an empty group has no quizzes and a null strength; no groups gives no rows` |
+| MR-4 | Shared block (edge; known failure mode: double counting) | A block in two groups counts in both; a block twice in one group counts once; rows in byte order of the key, not jsonb's order | implemented | `a block in two groups counts in both, a block twice in one group counts once, and rows are in byte order of the key` |
+| MR-5 | Another course | A quiz answered only in another course is not started | implemented | `another course's answers are not this one's` |
+| MR-F1 | Random groups (fuzz) | Seeded (`SCHOOL_TEST_SEED`, 232 in CI): 40 rounds of up to four random groups over eight quizzes with twenty days of random first tries; the four counts sum to the distinct quizzes, each count and the mean equal `school.mastery`'s rows placed by Table 4.5; every state, an empty group and a repeated block are reached | implemented | `under random groups, the four counts always sum to the group's distinct quizzes, and each count and the mean agree with mastery` |
+| MR-S1 | Read-only | `mastery_rollup` is `STABLE`; calling it as `school_app` takes no sequence value | implemented | `server/db/mastery-rollup.test.ts`: `the rollup is read-only: it is STABLE, and calling it takes no sequence value and stores nothing` |
+| MR-S2 | Privileges | `school_app` may execute it, a `SECURITY DEFINER` function with `search_path` fixed; it is in `GRANTED_FUNCTIONS` and the port calls only it | implemented | `server/db/mastery-rollup.test.ts`: `school_app reaches the rollup only as a function: SECURITY DEFINER with search_path fixed`; `server/db/init.test.ts`; `server/adapters/postgres.test.ts`: `every port method is one call of its function, as school_app` |
+| MR-S3 | Malformed groups (edge) | `groups` not an object gives no rows; a value not an array is an empty group | implemented | `server/db/mastery-rollup.test.ts`: `groups that are not a jsonb object ask about nothing, and a group that is not an array is empty` |
+| MR-S4 | Survives a backup | After a dump and restore, `mastery_rollup` reads the same as before | implemented | `server/backup/backup.test.ts`: `Bun.SQL: a dump taken after real writes restores into an empty database, and every read of the record returns the same` |
+
+_Table 3. The rollup's cases. The counts' partition and the shared block are each held by a fixed case and by the seeded differential against `school.mastery`._
+
+In short: the four counts partition every group, the mean counts a quiz not started as 0, an empty group is null and a shared block counts in each group, on both drivers.
+
+## Pitching an explanation
+
+The pitch's cases are core tests in `server/core/explain-pitch.test.ts`, at fixed clocks against an in-memory record that answers `masteryRollup` from a fixed state per quiz. The oracle is RFC 8: Table 4.1 for the scope, Table 4.2 and §4.2 for the pitch. Fuzz and stress do not apply: the inputs are fixed fixtures.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| EP-G1 | Golden: Still settling | A section with one quiz still settling gets `deeper` | implemented | `the pitch a section gets from its quizzes (RFC 8 Table 4.2) > a section with one Still settling quiz gets deeper` |
+| EP-G2 | Golden: Not started yet | A section with only quizzes not started gets `first` | implemented | `... > a section with only Not started yet gets first` |
+| EP-G3 | Golden: Ready for another look | One quiz ready for another look and the rest holding gets `refresh` | implemented | `... > a section with one Ready for another look and the rest Holding gets refresh` |
+| EP-G4 | Golden: Holding | Every quiz holding gets `onward` | implemented | `... > a section whose quizzes are all Holding gets onward` |
+| EP-1 | Order (mutant) | With a stronger state beside it, each weaker state still wins; a group with no quiz gets `first` | implemented | `choosePitch: the weakest state present wins, in Table 4.2's order > ...`, five cases |
+| EP-2 | Only the scope chooses | A holding section in a lesson and course with settling quizzes gets `onward` | implemented | `... > only the scope's quizzes choose the pitch, not the lesson's or the course's` |
+| EP-S1 | A section's scope | Its descendant quizzes, a nested section's included | implemented | `the scope of each kind of block (RFC 8 Table 4.1) > a section's scope is the quizzes among its descendants, nested sections included` |
+| EP-S2 | A quiz's scope | Itself, not its section's quizzes | implemented | `... > a quiz block's scope is itself` |
+| EP-S3 | An explain block's scope | The quizzes of the section that holds it | implemented | `... > an explain block's scope is the quizzes of the section that holds it` |
+| EP-S4 | No quiz to go by (edge) | A section with no quiz, an explain block in one, and a block outside any section use the lesson's quizzes; the scope is pitched from them; a lesson with no quiz gets `first` | implemented | `... > a section with no quiz uses the lesson's quizzes`, `... > an explain block in a section with no quiz uses the lesson's quizzes`, `... > a block outside any section uses the lesson's quizzes`, `reading mastery for a pitch > a section with no quiz is pitched from the lesson's quizzes`, `... > a lesson with no quiz gets first (RFC 8 §4.2)` |
+| EP-S5 | A block not served (edge; refusal) | An id the lesson does not hold has no scope; the use case answers null and asks the record nothing | implemented | `... > a block the lesson as served does not hold has no scope`, `reading mastery for a pitch > a block the lesson does not hold is refused as null, and the record is not asked` |
+| EP-R1 | One read at the clock | One `masteryRollup` call with groups `scope`, `lesson` and `course`, at the clock's now and `REVIEW_DELAY_MS`; the answer carries the pitch, the time, the scope and the three rows | implemented | `reading mastery for a pitch > one rollup at the clock's now, with due review's delay, for scope, lesson and course`, `... > the answer carries the pitch, the time, the scope and the three groups' counts` |
+| EP-R2 | The caller's clock | The same block and record give `onward` at day 1 and `refresh` at day 30, once its quiz has faded | implemented | `... > the same block is pitched by the record at each clock: holding on day 1, ready for another look on day 30` |
+| EP-R3 | Nothing kept outside the record (known failure mode) | The record is all it reads: a change there changes the next pitch from the same `School` | implemented | `... > nothing is kept between requests: a change in the record changes the next pitch` |
+
+_Table 4. The pitch's cases. The in-memory record answers only `masteryRollup`, so the use case cannot write; the rollup itself is held to the record by Table 3._
+
+In short: four goldens, the order of the rule, every row of the scope table and its refusal, and one read at the caller's clock with nothing kept between requests.

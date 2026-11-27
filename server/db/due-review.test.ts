@@ -1,11 +1,13 @@
 // Migration 0006 at the SQL level: the due-review selector reads and never writes, and a year of
-// synthetic history is read within a bounded time on PGlite and on a real Postgres through Bun.SQL
+// synthetic history is read with bounded work on PGlite and on a real Postgres through Bun.SQL
 // (RFC 2 §5; flyingrobots/school#32). What the selector returns is the contract's
 // (server/contract/learning-record.ts); these are the facts the port cannot see.
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
 import { migrate } from "./migrate.ts";
+import { bunSql } from "../adapters/bunsql.ts";
 import { pgliteSql } from "../adapters/pglite.ts";
+import type { Sql } from "../adapters/sql.ts";
 import { postgresRecord } from "../adapters/postgres.ts";
 import type { LearningRecord } from "../core/ports.ts";
 import { REVIEW_DELAY_MS, REVIEW_LIMIT } from "../core/school.ts";
@@ -59,25 +61,63 @@ BEGIN
   END LOOP;
 END $$`;
 
-/** The bound: generous for a loaded CI machine, far below what a lesson open can afford to wait. */
-const BOUND_MS = 1000;
+/**
+ * The bound, as work rather than time, so it holds on a machine of any speed or load
+ * (flyingrobots/school#354): one call may touch at most this many buffer pages for each page the
+ * school schema holds, counted by EXPLAIN (ANALYZE, BUFFERS), which counts the pages the function's
+ * own statements touch. A year of history touches about 23 per page at REVIEW_LIMIT and 47 at
+ * FADED_LIMIT on PGlite, 24 and 49 on Postgres 18. Without the index on exposures by encounter, every
+ * cited exposure is found by a scan of all of them: about 175 and 350 per page on both, and six times
+ * the time, which this bound fails.
+ */
+const PAGES_TOUCHED_PER_PAGE = 100;
+/** A limit no year of history can fill, so the faded rule is read in full. */
+const FADED_LIMIT = 10_000;
 
-async function aYear(name: string, history: () => Promise<{ record: LearningRecord; count: () => Promise<number> }>) {
-  test(`${name}: due review: a year of synthetic history is read within ${BOUND_MS} ms, and bounded by the limit`, async () => {
-    const { record, count } = await history();
+type Year = {
+  record: LearningRecord;
+  count: () => Promise<number>;
+  /** The pages the school schema's tables and indexes hold. */
+  pages: number;
+  /** school_app's connection, which EXPLAIN runs on. */
+  sql: Sql;
+};
+
+/** The buffer pages one due-review call at `limit` touches, found in the cache or read. */
+async function pagesTouched(sql: Sql, limit: number): Promise<number> {
+  const [row] = await sql.query<{ "QUERY PLAN": unknown }>(
+    "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT * FROM school.due_review($1, $2, $3, $4, $5)",
+    ["c", BLOCKS, END, REVIEW_DELAY_MS, limit],
+  );
+  const raw = row!["QUERY PLAN"];
+  const [plan] = (typeof raw === "string" ? JSON.parse(raw) : raw) as [{ Plan: Record<string, number> }];
+  return plan.Plan["Shared Hit Blocks"]! + plan.Plan["Shared Read Blocks"]!;
+}
+
+/** The pages the school schema's tables and indexes hold, asked as their owner. */
+const SCHEMA_PAGES = `SELECT sum(pg_relation_size(c.oid) / current_setting('block_size')::int)::int AS n
+  FROM pg_class c JOIN pg_namespace s ON s.oid = c.relnamespace WHERE s.nspname = 'school' AND c.relkind IN ('r', 'i')`;
+
+async function aYear(name: string, history: () => Promise<Year>) {
+  test(`${name}: due review: a year of synthetic history is read touching at most ${PAGES_TOUCHED_PER_PAGE} pages per page of the record, and bounded by the limit`, async () => {
+    const { record, count, pages, sql } = await history();
     expect(await count()).toBeGreaterThan(DAYS * 3 * QUIZZES);
-    const ask = () => record.dueReview({ course: "c", blocks: BLOCKS, now: END, delayMs: REVIEW_DELAY_MS, limit: REVIEW_LIMIT });
-    await ask(); // the first call plans the query
-    const times: number[] = [];
-    let items: Awaited<ReturnType<typeof ask>> = [];
-    for (let i = 0; i < 3; i++) {
-      const t = performance.now();
-      items = await ask();
-      times.push(performance.now() - t);
-    }
+    const items = await record.dueReview({ course: "c", blocks: BLOCKS, now: END, delayMs: REVIEW_DELAY_MS, limit: REVIEW_LIMIT });
     expect(items).toHaveLength(REVIEW_LIMIT);
     expect(items.every((x) => x.rule === "due-review/wrong-first-try")).toBe(true);
-    expect(Math.min(...times)).toBeLessThan(BOUND_MS);
+    const touched = await pagesTouched(sql, REVIEW_LIMIT);
+    expect(touched / pages, `${touched} pages touched; the record holds ${pages}`).toBeLessThanOrEqual(PAGES_TOUCHED_PER_PAGE);
+  });
+
+  // DR-9F. At REVIEW_LIMIT the weak rules fill the list and school.mastery is never read. At a limit
+  // no year of history can fill, the faded rule runs over every settled quiz, so this guards its cost.
+  test(`${name}: due review: a year of history at limit ${FADED_LIMIT} reads mastery for every quiz touching at most ${PAGES_TOUCHED_PER_PAGE} pages per page of the record`, async () => {
+    const { record, pages, sql } = await history();
+    const items = await record.dueReview({ course: "c", blocks: BLOCKS, now: END, delayMs: REVIEW_DELAY_MS, limit: FADED_LIMIT });
+    expect(items.length).toBeLessThan(FADED_LIMIT);
+    expect(items.some((x) => x.rule === "due-review/faded")).toBe(true);
+    const touched = await pagesTouched(sql, FADED_LIMIT);
+    expect(touched / pages, `${touched} pages touched; the record holds ${pages}`).toBeLessThanOrEqual(PAGES_TOUCHED_PER_PAGE);
   });
 }
 
@@ -86,10 +126,13 @@ aYear("postgres (PGlite)", async () => {
   opened.push(db);
   await migrate(db);
   await db.exec(YEAR);
+  await db.exec("ANALYZE"); // plans from the year's statistics, as autovacuum would give a real server
   const count = async () => (await db.query<{ n: number }>("SELECT count(*)::int AS n FROM school.answers")).rows[0]!.n;
   const n = await count();
+  const pages = (await db.query<{ n: number }>(SCHEMA_PAGES)).rows[0]!.n;
   await db.exec("SET ROLE school_app");
-  return { record: postgresRecord(pgliteSql(db)), count: async () => n };
+  const sql = pgliteSql(db);
+  return { record: postgresRecord(sql), count: async () => n, pages, sql };
 });
 
 const scratch = scratchPostgres();
@@ -98,7 +141,10 @@ describe.skipIf(TEST_POSTGRES_URL === undefined)("Bun.SQL on a real Postgres (SC
     const { url, sql } = await scratch.fresh();
     const owner = scratch.track(new Bun.SQL(url));
     await owner.unsafe(YEAR);
-    return { record: postgresRecord(sql), count: async () => (await owner.unsafe("SELECT count(*)::int AS n FROM school.answers"))[0].n };
+    await owner.unsafe("ANALYZE"); // now, so autovacuum cannot change the plan between calls
+    const pages: number = (await owner.unsafe(SCHEMA_PAGES))[0].n;
+    // The record's own connection runs only function calls, so EXPLAIN runs as school_app on the owner's.
+    return { record: postgresRecord(sql), count: async () => (await owner.unsafe("SELECT count(*)::int AS n FROM school.answers"))[0].n, pages, sql: bunSql(owner, "school_app") };
   });
 });
 
