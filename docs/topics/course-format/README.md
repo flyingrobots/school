@@ -56,6 +56,12 @@ A quiz or explain block reused through `ref` counts once. `school.check.done` st
 author, license and format, on lines of their own after the lessons, leaving out any the course
 does not declare.
 
+The checks are also a function for code in `server/`: `checkCourse(folder)` in
+`server/check-course.ts` returns, for a passing course, `ok: true` with the `done` line's fields
+and a `manifest` holding the manifest line's four; for a refused one, `ok: false` with the
+`folder`, `file` and `message` the error line would carry. A folder that does not exist is a
+refusal with `file` null. The program prints its lines from this result.
+
 On 2026-11-25, a one-lesson course in a temporary folder shown as `$DIR`, its quiz with two
 correct choices:
 

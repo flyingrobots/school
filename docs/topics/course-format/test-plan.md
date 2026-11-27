@@ -70,7 +70,7 @@ Fuzz and stress cases are not applicable: the inputs are four short fields with 
 
 ## `school check` (flyingrobots/school#197)
 
-Every case runs the program as a process, and every line it prints is validated against its schema in `server/schemas/check/`.
+CHECK-1 to CHECK-10 run the program as a process, and every line it prints is validated against its schema in `server/schemas/check/`. CHECK-11 to CHECK-16 call `checkCourse(folder)` (flyingrobots/school#231), the function the program prints from.
 
 | ID | Case | Oracle | Status | Test |
 | --- | --- | --- | --- | --- |
@@ -84,6 +84,12 @@ Every case runs the program as a process, and every line it prints is validated 
 | CHECK-8 | Manifest | A full manifest is on a `school.check.manifest` 1.0.0 line between `start` and `done`, the strings trimmed | implemented | `CHECK-8: a course's summary, author, license and format are on the manifest line, trimmed` |
 | CHECK-9 | Manifest in prose | `--human` names the summary, author, license and format | implemented | `CHECK-9: --human names the course's author, license and format` |
 | CHECK-10 | Done unchanged | The `done` line names `school.check.done` 1.0.0, has none of the four manifest keys, validates against main's 1.0.0 schema kept as `server/testing/fixtures/school.check.done.1.0.0.schema.json`, and the published schema is that schema | implemented | `CHECK-10: the done line is still school.check.done 1.0.0, valid against the schema main published, and carries no manifest key` |
+| CHECK-11 | Golden | The skill's `example/` returns `ok: true` with its title, both lessons with their files, ids, titles and counts, the totals, and its summary, author, license and format 1 | implemented | `server/check-course-function.test.ts`: `checkCourse > CHECK-11: the skill's worked example passes, with its lessons, counts and manifest` |
+| CHECK-12 | Bad course.json | A malformed `course.json` returns `ok: false`, `file` `course.json`, a message saying it is not valid JSON | implemented | `CHECK-12: a malformed course.json is refused, naming course.json` |
+| CHECK-13 | Later lesson | A duplicate id in the second lesson names that lesson's file | implemented | `CHECK-13: a problem in a later lesson is refused, naming that lesson's file` |
+| CHECK-14 | Across files | An unknown ref returns `ok: false` with `file` null | implemented | `CHECK-14: a refusal that spans files names no file` |
+| CHECK-15 | Missing folder | A folder that does not exist returns `ok: false`, `file` null, `<folder> is not a folder` | implemented | `CHECK-15: a folder that does not exist is refused, naming no file` |
+| CHECK-16 | No drift | On the example, the program's `done` line carries `checkCourse`'s result without `manifest`, and its `manifest` line carries `manifest` | implemented | `CHECK-16: school check prints checkCourse's result: done is it without the manifest, manifest is the manifest` |
 
 ## The `school` skill (flyingrobots/school#193)
 
