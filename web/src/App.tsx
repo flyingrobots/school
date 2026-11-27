@@ -16,6 +16,7 @@ import {
 
 import { AppShell, type AppShellPage } from "@/components/app-shell-pinned"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   SidebarGroup,
@@ -62,6 +63,7 @@ function Shell() {
 
 // Every course from GET /api/courses, loaded once per visit and shared with the home page
 // (web/src/lib/courses.ts). The course in the address, or the one a page under it belongs to, is marked.
+// An untrusted course carries a neutral Safe mode badge, and its link says so (flyingrobots/school#277).
 function SidebarCourses() {
   const [courses, retry] = useCourses()
   const current = useMatch("/courses/:course/*")?.params.course
@@ -100,9 +102,19 @@ function SidebarCourses() {
                         to={`/courses/${encodeURIComponent(c.name)}`}
                         data-nav
                         data-course={c.name}
+                        aria-label={
+                          c.trusted
+                            ? undefined
+                            : `${c.title}, shown in safe mode`
+                        }
                       >
                         <BookOpenIcon />
-                        <span>{c.title}</span>
+                        <span className="truncate">{c.title}</span>
+                        {!c.trusted && (
+                          <Badge variant="outline" className="ml-auto">
+                            Safe mode
+                          </Badge>
+                        )}
                       </NavLink>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
