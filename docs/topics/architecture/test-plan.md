@@ -4,13 +4,14 @@ The contract ledger for [School's architecture](README.md). Every case runs in `
 
 ## The bridge's output
 
-The cases run the bridge as a real process.
+The cases run the bridge as a real process, except BRIDGE-OUT-3 and BRIDGE-OUT-4, which call the answer validator directly.
 
 | ID | Case | Oracle | Status | Test |
 | --- | --- | --- | --- | --- |
 | BRIDGE-OUT-1 | Logs | Every stdout line parses as JSON with a string `kind`; no line contains the prompt | implemented | `bridge/bridge.test.ts`: `logs are JSON Lines and never contain the prompt` |
 | BRIDGE-OUT-2 | Port taken | With the port held by another socket: every line on stdout and stderr parses as JSON with a string `kind`; exactly one `bridge.error`, last on stdout, naming `host:port` and carrying `host` and `port`; no token in the output; exit 2 | implemented | `bridge/bridge.test.ts`: `a bridge whose port is taken writes one bridge.error line naming it, nothing but JSON Lines, and exits 2` |
 | BRIDGE-OUT-3 | A hostile key | A grading answer with a key the schema does not allow, named `The learner wrote: ...`: its `bridge.attempt` error is `unexpected key at $` and no line holds the key. In the validator: a key inside an array item is `unexpected key at $.items[1]`; keys named like inherited members (`constructor`, `__proto__`) are unexpected too; 500 random keys (seed 289, `SCHOOL_TEST_SEED` to replay) never appear in the problem | implemented | `bridge/bridge.test.ts`: `a grading answer with a hostile unexpected key logs an attempt error that quotes none of it`; `bridge/schema.test.ts` (flyingrobots/school#289) |
+| BRIDGE-OUT-4 | A required key named like a built-in | In the validator: a schema requiring `constructor`, `__proto__` or `toString` answers `$.<key> is missing` for `{}`, since only the answer's own keys count, and accepts an answer that has the key; an ordinary required key is still missing from `{}` and present in `{ ok: true }` | implemented | `bridge/schema.test.ts`: `a schema requiring constructor refuses an answer that lacks it`; `a schema requiring %s refuses an answer that lacks it`; `a schema requiring %s accepts an answer that has it`; `a schema requiring an ordinary key still refuses an answer that lacks it and accepts one that has it` (flyingrobots/school#329) |
 
 ## Asking the bridge a question
 
