@@ -393,6 +393,24 @@ test("a trusted course holding more than DIRECTORY_CAP folders is refused when u
     .toThrow(`trusted course "course" (/mnt/course) from SCHOOL_COURSE holds more than ${DIRECTORY_CAP} folders`);
 });
 
+// A folder School cannot read is never silently skipped: the walk would miss what lies below it, and
+// an untrusted course bind-mounted there would start unsandboxed. One that is gone or is no folder
+// holds nothing to walk.
+const failing = (code: string) => (p: string): string[] => {
+  if (p === "/mnt/course/reference") throw Object.assign(new Error(`${code}: ${p}`), { code });
+  return PART.list(p);
+};
+
+test("a trusted subfolder School cannot read is refused, naming the folder, not skipped", () => {
+  expect(() => part({ SCHOOL_COURSE: "/mnt/course", SCHOOL_UNTRUSTED_COURSES: "guest=/mnt/other" }, { stat: PART.stat, list: failing("EACCES") }))
+    .toThrow("cannot list /mnt/course/reference in trusted course \"course\" (/mnt/course) from SCHOOL_COURSE: EACCES");
+});
+
+test.each(["ENOENT", "ENOTDIR"])("a trusted subfolder that fails to list with %s is skipped, not refused", (code) => {
+  const c = part({ SCHOOL_COURSE: "/mnt/course", SCHOOL_UNTRUSTED_COURSES: "guest=/mnt/other" }, { stat: PART.stat, list: failing(code) });
+  expect(courseNames(c)).toEqual(["course", "guest"]);
+});
+
 test("a trusted course holding more than DIRECTORY_CAP folders is accepted when no untrusted course is set, since nothing is walked", () => {
   expect(courseNames(part({ SCHOOL_COURSE: "/mnt/course" }, wide(DIRECTORY_CAP + 1)))).toEqual(["course"]);
 });
