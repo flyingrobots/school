@@ -1,7 +1,12 @@
 // The SPDX License List's exception identifiers, as `spdx-exceptions` 2.5.0 (CC0-1.0,
 // https://github.com/jslicense/spdx-exceptions) publishes them. A course's `license`
-// (server/course-file.ts) names only these after `WITH`. Copied, not a dependency (ADR 2); to
-// update, copy `index.json` from a newer release into the list below.
+// (server/course-file.ts) names only these after `WITH`. Copied, not a dependency (ADR 2).
+// Generated: to update, run `bun server/scripts/refresh-spdx.ts` (docs/working-notes.md).
+
+import type { Release } from "./spdx-license-ids.ts";
+
+/** The release of `spdx-exceptions` this list is from, and the day it was published. */
+export const EXCEPTION_IDS_RELEASE: Release = { package: "spdx-exceptions", version: "2.5.0", published: "2024-02-15" };
 
 /** The exception identifiers (66). */
 export const EXCEPTION_IDS: readonly string[] = [

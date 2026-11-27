@@ -1,7 +1,13 @@
 // The SPDX License List's license identifiers, current and deprecated, as `spdx-license-ids`
 // 3.0.24 (CC0-1.0, https://github.com/jslicense/spdx-license-ids) publishes them. A course's
 // `license` (server/course-file.ts) names only these, or a `LicenseRef-`. Copied, not a dependency
-// (ADR 2); to update, copy `index.json` and `deprecated.json` from a newer release into the lists below.
+// (ADR 2). Generated: to update, run `bun server/scripts/refresh-spdx.ts` (docs/working-notes.md).
+
+/** The release of an npm package a list was copied from, and the day npm says it was published (YYYY-MM-DD). */
+export type Release = { package: string; version: string; published: string };
+
+/** The release of `spdx-license-ids` this list is from, and the day it was published. */
+export const LICENSE_IDS_RELEASE: Release = { package: "spdx-license-ids", version: "3.0.24", published: "2026-09-17" };
 
 /** The current identifiers (708). */
 export const LICENSE_IDS: readonly string[] = [
