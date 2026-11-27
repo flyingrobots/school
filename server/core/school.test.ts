@@ -155,11 +155,19 @@ describe("due review on opening a lesson (RFC 2 §5; flyingrobots/school#32)", (
     const all = [
       item("q", { shown: ["feedback"] }), item("q"), item("q", { corrected: false }),
       item("q", { rule: "due-review/aided-first-try", shown: ["hint"] }), item("q", { rule: "due-review/unknown-aid" }),
+      item("q", { rule: "due-review/faded", corrected: false }),
     ].map((item) => reviewReason(item));
-    for (const reason of all) expect(reason).not.toMatch(/wrong|fail|mistake|incorrect/i);
+    for (const reason of all) expect(reason).not.toMatch(/wrong|fail|mistake|incorrect|forgot|attempt/i);
     for (const reason of [reviewReason(item("q")), reviewReason(item("q", { rule: "due-review/unknown-aid" }))]) {
       expect(reason).not.toMatch(/[0-9]+ ?%|score|points?\b/i); // results in words, never scores
     }
+  });
+
+  test("a faded quiz's reason recalls the day it was found from memory and asks how it feels now (RFC 5 §4.7; flyingrobots/school#219)", () => {
+    // Oracle: RFC 5 §4.7, which gives this sentence for an answer on 21 November.
+    const faded = item("q", { rule: "due-review/faded", answeredAt: "2026-11-21T12:00:00.000Z", corrected: false, shown: [] });
+    expect(reviewReason(faded, "UTC")).toBe("On 21 November, you found this one from memory. Some time has passed: how does it feel now?");
+    expect(reviewReason(faded, "UTC")).not.toMatch(/[0-9]+ ?%|score|points?\b|strength|half/i); // in words, never the measure
   });
 
   test("help for the whole encounter is named as asking about the lesson (RFC 6 §5.1, Table 5.2; flyingrobots/school#224)", () => {

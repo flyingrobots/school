@@ -162,3 +162,22 @@ test("a caller that hangs up stops the agent, which frees the ask queue for the 
   const ends = stdout.trim().split("\n").map((l) => JSON.parse(l)).filter((l) => l.kind === "bridge.ask.end");
   expect(ends.map((l) => [l.status, l.agent])).toEqual([["failed", "claude"], ["succeeded", "claude"]]);
 }, timeout(1));
+
+// flyingrobots/school#290: an ask agent that cannot be started is a failed attempt, and the next is tried.
+test("a question whose first agent cannot be started falls back to the next and logs that attempt as failed", async () => {
+  const unstartable = join(dir, "no-such-folder", "agent");
+  writeFileSync(join(dir, "bridge.json"), JSON.stringify({ timeout_seconds: 30, agents: [grader("g", "true")], ask: { timeout_seconds: 30, agents: [
+    { name: "unstartable", output: "claude-stream-json", command: `${unstartable} {prompt}` },
+    { name: "claude", output: "claude-stream-json", command: `${fakeAgent(dir, "claude", [{ delta: "Yes." }, { result: "Yes." }])} ${gates} {prompt}` },
+  ] } }));
+  bridge = await startBridge({ ...process.env, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: join(dir, "bridge.json") });
+  const out = await all(await post("/ask", { prompt: "SECRET-LEARNER-TEXT" }));
+  expect(out.map((l) => l.type)).toEqual(["delta", "end"]);
+  expect(out.at(-1)).toMatchObject({ status: "succeeded", agent: "claude" });
+  bridge!.proc.kill();
+  const { stdout } = await bridge!.output();
+  bridge = null;
+  const attempts = stdout.trim().split("\n").map((l) => JSON.parse(l)).filter((l) => l.kind === "bridge.ask.attempt");
+  expect(attempts.map((a) => [a.agent, a.status, a.error])).toEqual([["unstartable", "failed", `could not start ${unstartable} (ENOENT)`], ["claude", "succeeded", null]]);
+  expect(stdout).not.toContain("SECRET-LEARNER-TEXT");
+}, timeout(1));
