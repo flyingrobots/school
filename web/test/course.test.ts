@@ -28,6 +28,9 @@ import {
 } from "playwright-core"
 import { createServer, type ViteDevServer } from "vite"
 
+import { openDatabase } from "../../server/adapters/database.ts"
+import { postgresRecord } from "../../server/adapters/postgres.ts"
+import type { Block } from "../../server/core/model.ts"
 import {
   startSchool,
   timeout,
@@ -97,6 +100,20 @@ const markup = {
   author: "<img src=x onerror=\"window.__fired = 'author'\"><b>Bold</b>",
   license: "MIT",
 }
+
+// The course whose lessons say how they are holding (flyingrobots/school#221).
+const HOUR = 3600_000
+const DAY = 24 * HOUR
+const page = (id: string, title: string, quizzes: string[]): Block => ({
+  type: "page",
+  id,
+  title,
+  subtitle: `About ${title.toLowerCase()}`,
+  children: quizzes.map((q): Block => ({ ...quiz(q), type: "quiz" })),
+})
+const each = page("each", "Each", ["m1", "m2", "m3", "m4"])
+const fresh = page("fresh", "Fresh", ["f1", "f2"])
+const none = page("none", "None", [])
 
 type CourseJson = {
   name: string
@@ -174,12 +191,57 @@ beforeAll(
       )
     }
 
+    // hold: how each lesson is holding (RFC 5 §4.1, Table 4.5; flyingrobots/school#221), each answer
+    // a first try in an encounter of its own, relative to now. In "each": m1 is never answered; m2
+    // is wrong an hour ago, so due review's weak rule still holds it (settling); m3 is clean two
+    // days ago, stability one day, so strength 0.25 now (faded); m4 is clean an hour ago, strength
+    // about 0.97 (holding). "fresh" has two quizzes, neither answered; "none" has no quizzes.
+    mkdirSync(join(root, "hold", "lessons"), { recursive: true })
+    for (const [file, page] of [
+      ["0001.json", each],
+      ["0002.json", fresh],
+      ["0003.json", none],
+    ] as const)
+      writeFileSync(join(root, "hold", "lessons", file), JSON.stringify(page))
+    {
+      const db = await openDatabase({
+        driver: "pglite",
+        dir: join(root, "record"),
+      })
+      const r = postgresRecord(db.sql)
+      const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
+      for (const [blockId, choiceId, ms] of [
+        ["m2", "wrong", HOUR],
+        ["m3", "right", 2 * DAY],
+        ["m4", "right", HOUR],
+      ] as const) {
+        const e = await r.openEncounter({
+          course: "hold",
+          lesson: "each",
+          page: each,
+          now: ago(ms + 1000),
+          aidTracking: 1,
+        })
+        await r.submit(
+          {
+            submissionId: crypto.randomUUID(),
+            encounterId: e.id,
+            blockId,
+            choiceId,
+            ms: 10,
+          },
+          ago(ms)
+        )
+      }
+      await db.close()
+    }
+
     // The helper chooses the port (flyingrobots/school#82). `example` is the school skill's
     // worked example, which declares a summary, an author and a license (flyingrobots/school#277).
     school = await startSchool({
       ...process.env,
       SCHOOL_COURSES: [
-        ...["aion", "empty", "broken", "torn", "wordy"].map(
+        ...["aion", "empty", "broken", "torn", "wordy", "hold"].map(
           (c) => `${c}=${join(root, c)}`
         ),
         `example=${example}`,
@@ -246,9 +308,10 @@ afterAll(async () => {
 
 /** A browser context whose /api requests reach the School server. */
 async function context(
-  viewport = { width: 1280, height: 900 }
+  viewport = { width: 1280, height: 900 },
+  colorScheme: "light" | "dark" = "light"
 ): Promise<BrowserContext> {
-  const c = await browser.newContext({ viewport })
+  const c = await browser.newContext({ viewport, colorScheme })
   await c.route(/\/api\//, async (route) => {
     const u = new URL(route.request().url())
     await route.fulfill({
@@ -838,5 +901,118 @@ describe("the sidebar's safe-mode badge", () => {
       dark.border[0] === dark.border[1],
       light.text[0] !== dark.text[0],
     ]).toEqual([true, true, true, true, true])
+  })
+})
+
+// RFC 5 Table 5.1 step 5 (flyingrobots/school#221): each lesson's card says, in words, how its
+// quizzes are holding, with the registry's Badge in the theme's colours. Oracle: the "hold" record
+// above, worked from RFC 5 §4.1 and Table 4.5, and the words of RFC 5 Table 4.7, which the home
+// timeline's lanes use too (flyingrobots/school#222).
+describe("how each lesson is holding", () => {
+  const card = (p: Page, id: string) => main(p).locator(`[data-lesson=${id}]`)
+  const holding = (p: Page, id: string) =>
+    card(p, id).locator("[data-holding] [data-slot=badge]")
+
+  test.each(["light", "dark"] as const)(
+    "a lesson with a quiz in each state says how each is holding, in Badges in the theme's colours (%s)",
+    async (colorScheme) => {
+      const p = await open(
+        "/courses/hold",
+        await context(undefined, colorScheme)
+      )
+      await holding(p, "each").first().waitFor()
+      expect(await holding(p, "each").allTextContents()).toEqual([
+        "1 of 4 quizzes holding",
+        "1 still settling",
+        "1 ready for another look",
+        "1 not started yet",
+      ])
+      const got = await holding(p, "each")
+        .first()
+        .evaluate((el) => {
+          // The tokens as the browser resolves them, through the same property.
+          const probe = document.createElement("div")
+          probe.style.backgroundColor = "var(--secondary)"
+          probe.style.color = "var(--secondary-foreground)"
+          document.body.append(probe)
+          const want = getComputedStyle(probe)
+          const have = getComputedStyle(el)
+          const out = {
+            background: have.backgroundColor === want.backgroundColor,
+            text: have.color === want.color,
+            dark: document.documentElement.classList.contains("dark"),
+          }
+          probe.remove()
+          return out
+        })
+      expect(got).toEqual({
+        background: true,
+        text: true,
+        dark: colorScheme === "dark",
+      })
+      await close(p.context())
+    }
+  )
+
+  // RFC 5 §4.5: the rollup's mean strength is never for display. Every number a card shows is a
+  // count of quizzes; none is a percentage, a fraction or a strength.
+  test("no card shows a percentage, a fraction or a strength", async () => {
+    const p = await open("/courses/hold")
+    await holding(p, "each").first().waitFor()
+    const text = (await main(p).textContent()) ?? ""
+    expect(text).toContain("ready for another look")
+    expect(text).not.toMatch(/%|\d\.\d|\d+\s*\/\s*\d+|\bscore|\bstrength/i)
+    await close(p.context())
+  })
+
+  test("a lesson none of whose quizzes is answered says it is not started yet", async () => {
+    const p = await open("/courses/hold")
+    await holding(p, "fresh").first().waitFor()
+    expect(await holding(p, "fresh").allTextContents()).toEqual([
+      "Not started yet",
+    ])
+    await close(p.context())
+  })
+
+  test("a lesson with no quizzes says nothing about holding", async () => {
+    const p = await open("/courses/hold")
+    await holding(p, "each").first().waitFor()
+    expect([
+      (await card(p, "none").textContent())?.includes("No quizzes"),
+      await card(p, "none").locator("[data-holding]").count(),
+    ]).toEqual([true, 0])
+    await close(p.context())
+  })
+
+  // The app opens the answer outbox's IndexedDB database on every page (web/src/lib/outbox.ts,
+  // flyingrobots/school#28), so the database may exist; what counts is that nothing is in it.
+  test("nothing is written to browser storage", async () => {
+    const p = await open("/courses/hold")
+    await holding(p, "each").first().waitFor()
+    expect(
+      await p.evaluate(async () => {
+        const kept: Record<string, number> = {}
+        for (const { name } of await indexedDB.databases()) {
+          const db = await new Promise<IDBDatabase>((ok, no) => {
+            const r = indexedDB.open(name!)
+            r.onsuccess = () => ok(r.result)
+            r.onerror = () => no(r.error)
+          })
+          for (const store of Array.from(db.objectStoreNames))
+            kept[`${name}/${store}`] = await new Promise<number>((ok, no) => {
+              const r = db.transaction(store).objectStore(store).count()
+              r.onsuccess = () => ok(r.result)
+              r.onerror = () => no(r.error)
+            })
+          db.close()
+        }
+        return {
+          local: localStorage.length,
+          session: sessionStorage.length,
+          indexedDB: Object.values(kept).reduce((n, k) => n + k, 0),
+        }
+      })
+    ).toEqual({ local: 0, session: 0, indexedDB: 0 })
+    await close(p.context())
   })
 })
