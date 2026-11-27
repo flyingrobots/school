@@ -4,9 +4,9 @@
 // §6 and Table 6.1. Every network case runs against a local https server (server/testing/https-git.ts)
 // on loopback; none reaches the internet. docs/topics/architecture/test-plan.md lists these by ID.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { fetchCommit, isPublicAddress, type FetchRequest, type Network } from "./fetch-commit.ts";
 import { certificate, configFile, git, gitBackend, serveHttps, TestRepo } from "./testing/https-git.ts";
 
@@ -158,8 +158,32 @@ describe("fetchCommit: refused URLs, before git runs", () => {
     ["an IPv4-mapped IPv6 loopback literal", "https://[::ffff:127.0.0.1]/course.git", "private-address"],
     ["the cloud metadata address", "https://169.254.169.254/latest", "private-address"],
     ["a private literal", "https://10.0.0.8/course.git", "private-address"],
+    // A host is letters, digits and hyphens in dot-separated labels (RFC 1123 §2.1): a label
+    // starting with "-" would make the pin `-HOST:443:ADDRESS`, which libcurl reads as "forget
+    // HOST", so git would look the host up itself (RFC 7 Table 6.1, the pin).
+    ["a host label starting with a hyphen", "https://-x.example.com/course.git", "bad-url"],
+    ["a host label starting with a plus", "https://+x.example.com/course.git", "bad-url"],
+    ["a host label ending with a hyphen", "https://x-.example.com/course.git", "bad-url"],
+    ["a host label of 64 characters", `https://${"a".repeat(64)}.example.com/course.git`, "bad-url"],
+    ["a host of 254 characters", `https://${`${"a".repeat(63)}.`.repeat(3)}${"a".repeat(62)}/course.git`, "bad-url"],
+    ["an empty host label", "https://a..example.com/course.git", "bad-url"],
+    ["two trailing dots", "https://example.com../course.git", "bad-url"],
+    ["a comma in the host", "https://a,b.example.com/course.git", "bad-url"],
+    ["a semicolon in the host", "https://a;b.example.com/course.git", "bad-url"],
+    ["an asterisk in the host", "https://*.example.com/course.git", "bad-url"],
+    ["an equals sign in the host", "https://a=b.example.com/course.git", "bad-url"],
+    ["an underscore in the host", "https://a_b.example.com/course.git", "bad-url"],
   ])("FETCH-6: %s is refused", async (_what, raw, reason) => {
     expect(await refused(raw)).toMatchObject({ got: { ok: false, refusal: { reason } }, staged: false });
+  });
+
+  test.each([
+    ["a label of 63 characters", `https://${"a".repeat(63)}.example.com/course.git`],
+    ["a host of 253 characters", `https://${`${"a".repeat(63)}.`.repeat(3)}${"a".repeat(61)}/course.git`],
+    ["a punycode label", "https://xn--bcher-kva.example/course.git"],
+    ["a label with inner hyphens", "https://a--b.example.com/course.git"],
+  ])("FETCH-6: a host at the edge of the rules, %s, passes the URL check and is looked up", async (_what, raw) => {
+    expect(await refused(raw)).toMatchObject({ got: { ok: false, refusal: { reason: "unresolved" } }, staged: false });
   });
 
   test.each([
@@ -288,6 +312,143 @@ describe("fetchCommit: git ignores the user's configuration and credentials", ()
       Object.assign(process.env, saved);
     }
     expect({ seen, asked: [marker, `${marker}.global`, `${marker}.env`].filter(existsSync) }).toEqual({ seen: [], asked: [] });
+  });
+});
+
+describe("fetchCommit: git reaches only the host School checked, at the address it checked", () => {
+  // The pin-bypass probe of the review of flyingrobots/school#309. Each host is looked up by School
+  // alone: a host git could not use through the pin is refused before git runs, so git never makes
+  // a lookup of its own, which `course.test` (never resolvable) would show as "Could not resolve".
+  test.each([
+    ["the host", HOST, { ok: true, commit: second }, [HOST]],
+    ["the host with one trailing dot, the same host", `${HOST}.`, { ok: true, commit: second }, [HOST]],
+    ["a host starting with a hyphen", `-${HOST}`, { ok: false, refusal: { reason: "bad-url" } }, []],
+  ])("FETCH-19: %s is looked up by School only, and git uses the pin", async (_what, host, expected, lookedUp) => {
+    const lookups: string[] = [];
+    const net = { ...network(good.port!), resolve: async (h: string) => { lookups.push(h); return ["127.0.0.1"]; } };
+    const got = await fetchCommit(request({ url: `https://${host}:${good.port}/course.git`, commit: "main", network: net }));
+    expect({ got, lookups }).toMatchObject({ got: expected, lookups: lookedUp });
+    expect(got.ok || !got.refusal.message.includes("resolve host")).toBe(true);
+  });
+});
+
+describe("fetchCommit: git reads no repository around the staging folder", () => {
+  // The parent-repo probe of the review of flyingrobots/school#309: the course store sits inside an
+  // operator's git work tree whose configuration adds a secret header and rewrites the URL.
+  test.each([["a branch", "main"], ["a full hash", second]])("FETCH-20: fetching %s inside another repository uses none of its configuration", async (_what, commit) => {
+    const seen: string[] = [];
+    const backend = gitBackend(repos, home);
+    const watched = server((req) => {
+      const path = new URL(req.url).pathname;
+      const secret = req.headers.get("x-operator-secret");
+      if (secret !== null) seen.push(`${path} x-operator-secret: ${secret}`);
+      if (path.startsWith("/rewritten/")) seen.push(`${path} (rewritten by insteadOf)`);
+      return backend(req);
+    });
+    const store = join(root, `store${++n}`);
+    git(home, ["init", "--quiet", store]);
+    git(home, ["-C", store, "config", "http.extraHeader", "X-Operator-Secret: hunter2"]);
+    const base = `https://${HOST}:${watched.port}/`;
+    git(home, ["-C", store, "config", `url.${base}rewritten/.insteadOf`, base]);
+    const r = request({ url: `${base}course.git`, commit, staging: join(store, "preview"), network: network(watched.port!) });
+    expect({ got: await fetchCommit(r), seen }).toEqual({ got: { ok: true, repository: join(r.staging, "repo.git"), commit: second }, seen: [] });
+  });
+});
+
+describe("fetchCommit: the staging folder", () => {
+  test("FETCH-21: a relative staging path is refused, and nothing is made", async () => {
+    const r = request({ commit: second, staging: relative(process.cwd(), staging()) });
+    expect(await fetchCommit(r)).toMatchObject({ ok: false, refusal: { reason: "bad-staging" } });
+    expect(existsSync(resolve(r.staging))).toBe(false);
+  });
+});
+
+describe("fetchCommit: each protection holds on its own", () => {
+  test("FETCH-22: a large pack sent slowly is stopped while it arrives, not after", async () => {
+    // The drip probe of the review: big.git's 2 MiB pack at 26 KiB every 100 ms, about 8 s in
+    // all, against a 256 KiB limit. The watcher must stop git before the server has sent it all.
+    const backend = gitBackend(repos, home);
+    let total = 0;
+    let sent = 0;
+    const drip = server(async (req) => {
+      const res = await backend(req);
+      if (!new URL(req.url).pathname.endsWith("git-upload-pack")) return res;
+      const body = new Uint8Array(await res.arrayBuffer());
+      total = body.length;
+      const stream = new ReadableStream({
+        async pull(ctl) {
+          if (sent >= body.length) return ctl.close();
+          await Bun.sleep(100);
+          ctl.enqueue(body.subarray(sent, sent + 26 * 1024));
+          sent += 26 * 1024;
+        },
+      });
+      return new Response(stream, { status: res.status, headers: res.headers });
+    });
+    const r = request({ url: `https://${HOST}:${drip.port}/big.git`, commit: bigCommit, network: network(drip.port!), limits: { packBytes: 256 * 1024, gitMs: 30_000 } });
+    expect(await fetchCommit(r)).toMatchObject({ ok: false, refusal: { reason: "too-large" } });
+    expect({ stoppedEarly: total > 0 && sent < total, staged: existsSync(r.staging) }).toEqual({ stoppedEarly: true, staged: false });
+  }, 20_000);
+
+  test("FETCH-23: a process git leaves running when it exits is killed", async () => {
+    // A git that starts a long-lived child in its process group, as a remote helper or index-pack
+    // would be, and exits at once. Each child writes its pid first; none may outlive the fetch.
+    const dir = join(root, `orphans${++n}`);
+    mkdirSync(dir);
+    const fake = join(dir, "git");
+    writeFileSync(fake, `#!/bin/sh\nsh -c 'echo $$ > "$0"; exec sleep 30' "${dir}/pid.$$" </dev/null >/dev/null 2>&1 &\nwhile [ ! -s "${dir}/pid.$$" ]; do :; done\nexit 0\n`);
+    chmodSync(fake, 0o755);
+    await fetchCommit(request({ commit: second, git: fake }));
+    const pids = readdirSync(dir).filter((f) => f.startsWith("pid.")).map((f) => Number(readFileSync(join(dir, f), "utf8")));
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    // A killed child is reaped by init shortly after; allow it two seconds.
+    for (let i = 0; i < 20 && pids.some(alive); i++) await Bun.sleep(100);
+    const left = pids.filter(alive);
+    for (const pid of left) process.kill(pid, "SIGKILL");
+    expect({ children: pids.length > 0, left }).toEqual({ children: true, left: [] });
+  });
+
+  /** A git that runs the real git with `env` added, as a system with its own settings would. */
+  function gitWith(name: string, env: Record<string, string>): string {
+    const path = join(root, `${name}${++n}`);
+    writeFileSync(path, `#!/bin/sh\n${Object.entries(env).map(([k, v]) => `export ${k}='${v}'\n`).join("")}exec git "$@"\n`);
+    chmodSync(path, 0o755);
+    return path;
+  }
+
+  test("FETCH-24: a proxy in git's environment is not used", async () => {
+    const hits: string[] = [];
+    const proxy = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data(s, d) { hits.push(d.toString().split("\r\n")[0] ?? ""); s.end(); } } });
+    try {
+      const at = `http://127.0.0.1:${proxy.port}`;
+      const r = request({ commit: second, git: gitWith("proxied", { https_proxy: at, HTTPS_PROXY: at, all_proxy: at, ALL_PROXY: at }) });
+      expect({ got: await fetchCommit(r), hits }).toMatchObject({ got: { ok: true, commit: second }, hits: [] });
+    } finally {
+      proxy.stop(true);
+    }
+  });
+
+  test("FETCH-25: a configuration that rewrites the URL to file:// does not reach the file", async () => {
+    // Only https is allowed (`protocol.allow=never`), whatever rewrites the URL after School's check.
+    const base = `https://${HOST}:${good.port}/`;
+    const r = request({ commit: second, git: gitWith("rewritten", { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: `url.file://${repos}/.insteadOf`, GIT_CONFIG_VALUE_0: base }) });
+    expect(await fetchCommit(r)).toMatchObject({ ok: false, refusal: { reason: "git-failed", message: expect.stringContaining("transport 'file' not allowed") } });
+    expect(existsSync(r.staging)).toBe(false);
+  });
+
+  test.each([
+    ["a tree", () => git(home, ["--git-dir", course.dir, "rev-parse", `${second}^{tree}`])],
+    ["a blob", () => git(home, ["--git-dir", course.dir, "rev-parse", `${second}:course.json`])],
+  ])("FETCH-26: the hash of %s, which the server serves, is refused as not a commit", async (_what, hash) => {
+    const r = request({ commit: hash() });
+    expect(await fetchCommit(r)).toMatchObject({ ok: false, refusal: { reason: "not-a-commit" } });
+    expect(existsSync(r.staging)).toBe(false);
+  });
+
+  test("FETCH-27: the fetched commit is held by refs/heads/course, so nothing prunes it before it is read", async () => {
+    const r = request({ commit: first });
+    expect(await fetchCommit(r)).toMatchObject({ ok: true, commit: first });
+    expect(git(home, ["--git-dir", join(r.staging, "repo.git"), "rev-parse", "refs/heads/course"])).toBe(first);
   });
 });
 
