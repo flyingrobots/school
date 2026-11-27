@@ -4,7 +4,7 @@ The contract ledger for [School's architecture](README.md). Every case runs in `
 
 ## The bridge's output
 
-The cases run the bridge as a real process.
+The cases run the bridge as a real process, except BRIDGE-OUT-3 and BRIDGE-OUT-4, which call the answer validator directly.
 
 | ID | Case | Oracle | Status | Test |
 | --- | --- | --- | --- | --- |
