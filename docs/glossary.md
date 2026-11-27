@@ -97,6 +97,8 @@ Entries are tagged:
 
 **Mastery** *(School)* — How well one quiz is held at a given time, measured from its first tries by `school.mastery` each time it is asked and never stored ([mastery](topics/mastery/README.md), RFC 5). It is two numbers, **stability** and **strength**.
 
+**Mastery rollup** *(School)* — How a group of quizzes (a lesson, or a whole course) is held at a given time: how many are **not started yet**, **still settling**, **holding** and **ready for another look**, and their mean strength, from `school.mastery_rollup` ([mastery](topics/mastery/README.md#rolling-up-to-lessons-and-courses), RFC 5 §4.5).
+
 **Stability** *(School)* — A quiz's half-life in mastery: one day, multiplied by 2.5 for each clean first try given at least the caller's delay after the previous answer, counted after the latest wrong or aided first try (or after the first answer, if there is none). Unknown aid keeps it; an aided or wrong first try returns it to one day.
 
 **Strength** *(School)* — How far through its half-life a quiz is: 1 just after its latest right first try, one half after one stability, and 0 while its latest first try is wrong. It is not a probability of recall, and is not the teaching model's **fluency strength** or **storage strength**.
