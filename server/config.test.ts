@@ -486,6 +486,25 @@ test("School's own stat reads inodes as bigint, so none is rounded", async () =>
   expect(typeof systemStat?.("/").ino).toBe("bigint");
 });
 
+// The school skill an authoring agent is given (RFC 9 §5.3, flyingrobots/school#257). In a checkout
+// it is the framework's own; compose mounts it at /framework/skills/school and the references at
+// /framework/docs, and sets both. Whether the folders are there is reported, never refused at start.
+test("SCHOOL_SKILL and SCHOOL_SKILL_DOCS default to the framework checkout's skill and its docs/topics", () => {
+  const c = parseConfig({ SCHOOL_STATE: "/srv/state" }, FRAMEWORK);
+  expect(c.skill).toBe("/opt/school/.agents/skills/school");
+  expect(c.skillDocs).toBe("/opt/school/docs/topics");
+});
+
+test("SCHOOL_SKILL and SCHOOL_SKILL_DOCS name the skill and its references, relative paths resolving against the working directory", () => {
+  const c = parseConfig({ SCHOOL_STATE: "/srv/state", SCHOOL_SKILL: "skill", SCHOOL_SKILL_DOCS: "/framework/docs" }, FRAMEWORK);
+  expect(c.skill).toBe(join(process.cwd(), "skill"));
+  expect(c.skillDocs).toBe("/framework/docs");
+});
+
+test("an empty SCHOOL_SKILL means no skill, so authoring is off", () => {
+  expect(parseConfig({ SCHOOL_STATE: "/srv/state", SCHOOL_SKILL: "" }, FRAMEWORK).skill).toBe(null);
+});
+
 // A name is looked up as the maps' own key, never an inherited one (flyingrobots/school#299): `in`
 // sees Object.prototype, so "constructor" was refused as set twice, and a lookup of an unregistered
 // "constructor" found Object's constructor. Oracle: the course-name rule NAME, /^[a-z0-9][a-z0-9-]*$/,

@@ -55,6 +55,31 @@ ask list in the test's process; the `bridge/ask-route.test.ts` cases run the bri
 
 _Table 2. The course store's cases. STORE-9 reads the Dockerfile; no test builds the image._
 
+## The pinned skill (flyingrobots/school#257)
+
+RFC 9 §5.3 and [the pinned skill](README.md#the-pinned-skill). The manifest's oracle is its definition there, with FIPS 180-2's published SHA-256 vectors for `abc` and the empty message. The checkout's digest comes from an independent pipeline: `git ls-files`, `shasum -a 256`, `sed` and `sort` in the C locale. All cases are in `server/skill.test.ts` unless named.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| SKILLPIN-1 | The checkout's skill and references copied where compose mounts them, through the real server | `GET /api/settings/authoring` is on, with the digest and file count the pipeline computes from the checkout | implemented | `SKILLPIN-1: reports authoring on, with the mounted skill's digest equal to the checkout's` |
+| SKILLPIN-2 | A fixture guide | The manifest is exactly the hand-written lines, sorted by path as bytes | implemented | ``SKILLPIN-2: is one `<sha256> <path>` line per file under guide/, sorted by path as bytes`` |
+| SKILLPIN-3 | The same fixture | On, with the SHA-256 of that text and five files | implemented | `SKILLPIN-3: authoring is on with the SHA-256 of the manifest's text and the number of files` |
+| SKILLPIN-4 | One byte changed | A different digest | implemented | `SKILLPIN-4: one changed byte in any file changes the digest` |
+| SKILLPIN-5 | One file renamed, no byte changed | A different digest | implemented | `SKILLPIN-5: a renamed file changes the digest, though no byte changed` |
+| SKILLPIN-6 | The skill folder named through a symlink | The same status as the folder itself | implemented | `SKILLPIN-6: a skill folder named through a symlink is hashed as the folder it names` |
+| SKILLPIN-7 | `SCHOOL_SKILL` empty | Off: `SCHOOL_SKILL is empty` | implemented | `SKILLPIN-7: SCHOOL_SKILL is empty` |
+| SKILLPIN-8 | No skill folder | Off, naming the path and `.agents/skills/school` | implemented | `SKILLPIN-8: the skill folder is not there, naming it and the folder to mount` |
+| SKILLPIN-9 | The skill path is a file | Off: `<path> is not a folder` | implemented | `SKILLPIN-9: the skill path is a file, not a folder` |
+| SKILLPIN-10 | No `SKILL.md` | Off: `<path> has no SKILL.md` | implemented | `SKILLPIN-10: the skill folder holds no SKILL.md` |
+| SKILLPIN-11 | No `course-format/` or no `voice/` | Off, naming the path and `docs/topics/<name>` | implemented | `SKILLPIN-11: the %s reference is not there, naming it and the folder to mount` |
+| SKILLPIN-12 | A symlink in the skill or a reference | Off: `<path> is a symlink` | implemented | `SKILLPIN-12: a symlink inside the %s folder, naming it: only regular files are hashed and sent` |
+| SKILLPIN-13 | No mount, through the real server | It serves; `GET /api/settings/authoring` is off, naming the path | implemented | `SKILLPIN-13: still serves, and reports authoring off with the reason` |
+| SKILLPIN-14 | The same start's output | `school: authoring off: the school skill is not at <path>` on stdout | implemented | `SKILLPIN-14: says at start that authoring is off, and why` |
+| SKILLPIN-15 | Configuration | Defaults to the framework's `.agents/skills/school` and `docs/topics`; relative paths resolve against the working directory; empty `SCHOOL_SKILL` is null | implemented | `server/config.test.ts`: `SCHOOL_SKILL and SCHOOL_SKILL_DOCS default to the framework checkout's skill and its docs/topics`, `SCHOOL_SKILL and SCHOOL_SKILL_DOCS name the skill and its references, relative paths resolving against the working directory`, `an empty SCHOOL_SKILL means no skill, so authoring is off` |
+| SKILLPIN-16 | Compose | The three read-only mounts under `/framework`; `SCHOOL_SKILL: ${SCHOOL_COMPOSE_SKILL-/framework/skills/school}` and `SCHOOL_SKILL_DOCS: /framework/docs`, so a host export never reaches the container | implemented | `server/docker.test.ts`: `compose mounts the checkout's school skill and its references read-only under /framework`, `compose points SCHOOL_SKILL at the mount through SCHOOL_COMPOSE_SKILL, which .env may set empty and a host export never reaches, and SCHOOL_SKILL_DOCS at the references with no variable at all` |
+
+_Table 3. The pinned skill's cases. SKILLPIN-16 reads compose.yaml; no test builds the image or runs compose._
+
 ## Fetching one commit (flyingrobots/school#236)
 
 `fetchCommit` in `server/fetch-commit.ts`, RFC 7 §6, task 6. The oracle for every refusal is §6 and Table 6.1; the limits are Table 6.2's. Every network case runs against a local https server (`server/testing/https-git.ts`: `git http-backend` on loopback, port 0, with a certificate made for `course.test`), never the internet. `course.test` never resolves (RFC 6761), so a good fetch reaching that server shows git used the pinned address.
