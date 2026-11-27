@@ -20,7 +20,7 @@ import { configuredCourses, contentDigest, courseRegistry, installFolder } from 
 import { migrate } from "./db/migrate.ts";
 import type { Network } from "./fetch-commit.ts";
 import { courseInstaller, installPreviewed, sweepCourses, type InstallSources } from "./install-course.ts";
-import { PREVIEW_TTL_MS, previewInstall } from "./install-preview.ts";
+import { PREVIEW_TTL_MS, previewInstall, type PreviewSources, type Previews } from "./install-preview.ts";
 import { certificate, git, gitBackend, serveHttps } from "./testing/https-git.ts";
 
 setDefaultTimeout(30_000); // PGlite starts a whole Postgres in process.
@@ -74,12 +74,14 @@ function newStore(): string {
   mkdirSync(store);
   return store;
 }
-/** A preview of the example course staged in `store` by the real previewInstall; answers its id. */
-async function stage(store: string): Promise<string> {
+/** This process's memory of its previews, as the server keeps one; every test's previews are in it unless it says otherwise. */
+const previews: Previews = new Map();
+/** A preview of the example course staged in `store` by the real previewInstall; answers its id. `o` overrides any source. */
+async function stage(store: string, o: Partial<PreviewSources> = {}): Promise<string> {
   const id = `00000000-0000-4000-8000-${String(++ids).padStart(12, "0")}`;
   const got = await previewInstall({ url, commit: good }, {
     store, configured: [], installedNames: async () => [], progress: async () => ({ encounters: 0, answers: 0, explanations: 0, views: 0 }),
-    now: () => T0, newId: () => id,
+    now: () => T0, newId: () => id, previews, ...o,
   }, { network: network() });
   if (got.status !== "ok") throw new Error(`the preview was refused: ${JSON.stringify(got)}`);
   return got.preview;
@@ -89,7 +91,7 @@ function sources(store: string, o: Partial<InstallSources> = {}): InstallSources
   return {
     store, configured: [], installedNames: async () => (await record.installedCourses()).map((c) => c.course),
     record: (i) => record.installCourse(i, new Date(T0).toISOString()),
-    now: () => T0, newId: () => `11111111-1111-4111-8111-${String(++ids).padStart(12, "0")}`, ...o,
+    now: () => T0, newId: () => `11111111-1111-4111-8111-${String(++ids).padStart(12, "0")}`, previews, ...o,
   };
 }
 /** The course list a School over `store` would serve, with the shared record's installs. */
@@ -196,7 +198,7 @@ describe("installPreviewed: the name", () => {
     const preview = await stage(store);
     const got = await installPreviewed({ preview, name: "own" }, sources(store, { configured: ["own"] }));
     expect({ got, courses: entries(join(store, "courses")), staged: entries(join(store, "staging", preview)), row: await rowFor("own") })
-      .toEqual({ got: { status: "refused", reason: "name-taken", message: expect.stringContaining("own") }, courses: [], staged: ["course", "preview.json"], row: null });
+      .toEqual({ got: { status: "refused", reason: "name-taken", message: expect.stringContaining("own") }, courses: [], staged: ["course"], row: null });
   });
 
   test("INSTALL-9: a name a current install has is refused as taken, and that install stays current", async () => {
@@ -213,7 +215,7 @@ describe("installPreviewed: the name", () => {
     const preview = await stage(store);
     const got = await installPreviewed({ preview, name }, sources(store));
     expect({ got: got.status === "refused" ? got.reason : got.status, courses: entries(join(store, "courses")), staged: entries(join(store, "staging", preview)) })
-      .toEqual({ got: "bad-name", courses: [], staged: ["course", "preview.json"] });
+      .toEqual({ got: "bad-name", courses: [], staged: ["course"] });
   });
 });
 
@@ -230,6 +232,15 @@ describe("installPreviewed: the preview", () => {
     const store = newStore();
     const got = await installPreviewed({ preview: "22222222-2222-4222-8222-222222222222", name: "binary-12" }, sources(store));
     expect({ got, courses: entries(join(store, "courses")) }).toEqual({ got: { status: "refused", reason: "unknown-preview", message: expect.any(String) }, courses: [] });
+  });
+
+  // As after a restart, or a folder another process put in staging: only this process's memory names a preview.
+  test("INSTALL-32: a preview staged in the store that this process does not remember is refused as unknown, and its folder is left alone", async () => {
+    const store = newStore();
+    const preview = await stage(store, { previews: new Map() });
+    const got = await installPreviewed({ preview, name: "binary-32" }, sources(store));
+    expect({ got: got.status === "refused" ? got.reason : got.status, staged: entries(join(store, "staging", preview)), courses: entries(join(store, "courses")), row: await rowFor("binary-32") })
+      .toEqual({ got: "unknown-preview", staged: ["course"], courses: [], row: null });
   });
 
   test.each([
@@ -252,7 +263,7 @@ describe("installPreviewed: the preview", () => {
     symlinkSync(join(elsewhere, "staging", real), join(store, "staging", real));
     const got = await installPreviewed({ preview: real, name: "binary-14" }, sources(store));
     expect({ got: got.status === "refused" ? got.reason : got.status, other: entries(join(elsewhere, "staging", real)), courses: entries(join(store, "courses")) })
-      .toEqual({ got: "unknown-preview", other: ["course", "preview.json"], courses: [] });
+      .toEqual({ got: "unknown-preview", other: ["course"], courses: [] });
   });
 
   test("INSTALL-15: a staging/ that is a symlink to a folder of previews is not followed", async () => {
@@ -262,7 +273,7 @@ describe("installPreviewed: the preview", () => {
     symlinkSync(join(elsewhere, "staging"), join(store, "staging"));
     const got = await installPreviewed({ preview: real, name: "binary-15" }, sources(store));
     expect({ got: got.status === "refused" ? got.reason : got.status, other: entries(join(elsewhere, "staging", real)) })
-      .toEqual({ got: "unknown-preview", other: ["course", "preview.json"] });
+      .toEqual({ got: "unknown-preview", other: ["course"] });
   });
 });
 
@@ -318,8 +329,8 @@ describe("installPreviewed: a preview changed after it was checked", () => {
     const store = newStore();
     const preview = await stage(store);
     const file = join(store, "staging", preview, "preview.json");
-    const was = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
-    writeFileSync(file, JSON.stringify({ ...was, url: "https://evil.example/other.git", commit: "f".repeat(40) }));
+    const digest = contentDigest(join(store, "staging", preview, "course"));
+    writeFileSync(file, JSON.stringify({ url: "https://evil.example/other.git", commit: "f".repeat(40), expires: new Date(T0 + PREVIEW_TTL_MS).toISOString(), contentSha256: digest.ok ? digest.digest : "" }));
     const got = await installPreviewed({ preview, name: "binary-21" }, sources(store));
     const row = await rowFor("binary-21");
     expect({ got: got.status, url: row?.url, commit: row?.commit }).toEqual({ got: "installed", url, commit: good });
@@ -354,6 +365,25 @@ describe("installPreviewed: a preview changed after it was checked", () => {
     const got = await installPreviewed({ preview, name: "binary-30" }, sources(store));
     expect({ got: got.status === "refused" ? got.reason : got.status, mode: statSync(outside).mode & 0o777, courses: entries(join(store, "courses")), row: await rowFor("binary-30") })
       .toEqual({ got: "changed", mode, courses: [], row: null });
+  });
+});
+
+describe("previewInstall: the digest the install compares", () => {
+  // The digest is taken right after the check, before the preview reads the record.
+  test("INSTALL-33: a lesson changed while the preview reads the record is refused as changed when installed", async () => {
+    const store = newStore();
+    let lesson = "";
+    const preview = await stage(store, {
+      progress: async () => {
+        const [id] = entries(join(store, "staging"));
+        lesson = join(store, "staging", id!, "course", "lessons", "0001-places-worth-twice.json");
+        writeFileSync(lesson, readFileSync(lesson, "utf8").replace("Places worth twice", "Places worth thrice"));
+        return { encounters: 0, answers: 0, explanations: 0, views: 0 };
+      },
+    });
+    const got = await installPreviewed({ preview, name: "binary-33" }, sources(store));
+    expect({ changed: lesson !== "", got: got.status === "refused" ? got.reason : got.status, courses: entries(join(store, "courses")), row: await rowFor("binary-33") })
+      .toEqual({ changed: true, got: "changed", courses: [], row: null });
   });
 });
 

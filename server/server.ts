@@ -19,7 +19,7 @@ import { withSecretFiles } from "./secrets.ts";
 import { agentOrder, agentTest } from "./agents.ts";
 import { authoringStatus } from "./skill.ts";
 import { feedbackSpeech, lessonSpeech, SEGMENT, SpeakRequest, toSpeech, UTTERANCE } from "./speak.ts";
-import { PREVIEW_TTL_MS, previewInstall, sweepStaging, type PreviewAnswer } from "./install-preview.ts";
+import { PREVIEW_TTL_MS, previewInstall, sweepStaging, type PreviewAnswer, type Previews } from "./install-preview.ts";
 import { courseInstaller, sweepCourses, type InstallAnswer, type InstallReason } from "./install-course.ts";
 
 let config;
@@ -124,11 +124,14 @@ if (fixedNow !== null) console.warn(`school: warning: the clock is fixed at ${fi
 const school = createSchool({ record: postgresRecord(database.sql), grader, clock: { now: () => fixedNow ?? new Date().toISOString() } });
 
 // The course store (RFC 7 §5.1). Every preview staged before this start is deleted now, and one
-// never confirmed is deleted once its hour is up, by this sweep and before each new preview.
+// never confirmed is deleted once its hour is up, by this sweep and before each new preview. What
+// the install needs to know about each preview is kept here, in this process's memory, and never
+// read from the store (server/install-preview.ts), so no preview outlives a restart.
 const STORE = config.store;
+const previews: Previews = new Map();
 if (STORE !== null) {
-  sweepStaging(STORE, Date.now(), true);
-  setInterval(() => sweepStaging(STORE, Date.now()), PREVIEW_TTL_MS / 6).unref();
+  sweepStaging(STORE, Date.now(), previews, true);
+  setInterval(() => sweepStaging(STORE, Date.now(), previews), PREVIEW_TTL_MS / 6).unref();
   console.log(`school: course store at ${STORE}; installing from a repository is on`);
 } else {
   console.log("school: no course store (SCHOOL_COURSE_STORE); installing courses is off");
@@ -621,7 +624,7 @@ async function installPreviewJson(req: Request): Promise<Response> {
   try {
     answer = await previewInstall(await readJson(req), {
       store: STORE, configured: configured.map((c) => c.name), installedNames: () => school.installedNames(), progress: (c) => school.courseProgress(c),
-      now: () => Date.now(), newId: () => crypto.randomUUID(),
+      now: () => Date.now(), newId: () => crypto.randomUUID(), previews,
     });
   } catch (e) {
     // Not a refusal: the store or the record failed. The reason goes to the log; the answer stays JSON.
@@ -636,7 +639,7 @@ const INSTALL_STATUS: Record<InstallReason, number> = {
 };
 const install = STORE === null ? null : courseInstaller({
   store: STORE, configured: configured.map((c) => c.name), installedNames: () => school.installedNames(),
-  record: (i) => school.installCourse(i), now: () => Date.now(), newId: () => crypto.randomUUID(),
+  record: (i) => school.installCourse(i), now: () => Date.now(), newId: () => crypto.randomUUID(), previews,
 });
 
 /**

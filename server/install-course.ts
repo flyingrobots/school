@@ -1,43 +1,55 @@
 // Installing a previewed course (RFC 7 §4 stages 4 and 5, §5.1 and §5.2; task 8, flyingrobots/school#238).
 //
 // `installPreviewed` takes a request's body, `{preview, name}` and nothing else. The preview is one
-// `previewInstall` (server/install-preview.ts) staged in `<store>/staging/<preview id>/`: its checked
-// `course/` and `preview.json`, which holds the URL, the full commit, when it expires and the content
-// digest of `course/`. In order:
+// `previewInstall` (server/install-preview.ts) staged in `<store>/staging/<preview id>/course/` and
+// remembered in the server's memory (`previews`): the URL, the full commit, when it expires and the
+// content digest of `course/` as checked. None of that is read from disk. In order:
 //
 // 1. The name must be a course name (`CourseName`: the rule and reserved names of server/config.ts),
 //    and neither a configured course's nor a current install's. A refused name keeps the preview, so
 //    the learner can choose another.
-// 2. The preview must still be there, as School left it: `staging/`, the preview's folder and its
-//    `course/` real folders and `preview.json` a real file (no symlink is followed out of the store),
-//    `preview.json` well formed and not expired. An expired preview is deleted.
-// 3. `course/` is moved (one rename, in the same store) to a new folder `courses/<install id>/`, and
-//    the rest of the preview deleted: from here the preview is spent. `courses/` must be a real
-//    folder, and the install's folder must not exist.
+// 2. The preview must be one this process staged and still remembers, or it is `unknown-preview`;
+//    an expired one is deleted and forgotten. Its `staging/`, its folder and its `course/` must be
+//    real folders (lstat; no symlink is followed), or it is `unknown-preview`.
+// 3. The preview is forgotten, so it is spent, and `course/` is moved (one rename, in the same
+//    store) to a new folder `courses/<install id>/`, and the rest of the preview deleted.
+//    `courses/` must be a real folder, and the install's folder must not exist. After the rename,
+//    `courses/<install id>` must be a real folder by lstat: a `course/` swapped for a symlink after
+//    step 2 is moved as the symlink, which is removed, never followed, and the install is `changed`.
 // 4. The moved folder is checked again where it now lies, so nothing changed in staging after the
 //    preview's check is installed: it holds only course.json, lessons/*.json and reference/**, only
-//    regular files and folders, within RFC 7 Table 6.2's limits (`DEFAULT_LIMITS`), sizes read with
-//    lstat before any file is; its content digest is the one `preview.json` recorded; and it passes
-//    `checkCourse`, which also gives the title and format the row records.
-// 5. Every file is made read-only (RFC 7 §5.1), and the install recorded (`school.install_course`),
-//    untrusted, since no trust choice names it yet.
+//    regular files with one link each (no hard link to a file elsewhere) and folders, within RFC 7
+//    Table 6.2's limits (`DEFAULT_LIMITS`), sizes read with lstat before any file is; its content
+//    digest is the one the preview remembered; and it passes `checkCourse`, which also gives the
+//    title and format the row records.
+// 5. Every file is made read-only (RFC 7 §5.1), and the install recorded (`school.install_course`)
+//    with the URL and commit the preview remembered, untrusted, since no trust choice names it yet.
 //
 // Any refusal or failure after step 3 deletes the moved folder. The course list
 // (server/course-registry.ts) serves an install only once the record names it, so a folder in
 // `courses/` is never served before it is recorded; a crash between the move and the record leaves
 // a folder no row names, which `sweepCourses` deletes at the next start.
 //
+// These checks hold against a change made to staging before each one runs. They are not a lock: a
+// process that can write the course store can still change a file between the check of step 4 and
+// the record, which is then recorded with step 4's digest, or change `courses/` after the install;
+// the course list's fingerprint and digest find either (docs/topics/architecture/README.md, the
+// course list). Step 5 opens each file without following a symlink and changes it only while it has
+// one link, but a folder swapped for a symlink between step 4 and step 5 is followed, and the files
+// it leads to are made read-only. What memory holds (the URL, commit and digest) no write to the
+// store can change.
+//
 // `courseInstaller` runs one install at a time, so two installs of one preview, or of one name, do
 // not race between the name check and the record: the second sees what the first did. One School
 // process writes one store; the record's own answer covers anything else.
-import { chmodSync, lstatSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, mkdirSync } from "node:fs";
+import { closeSync, constants, fchmodSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, renameSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { checkCourse } from "./check-course.ts";
 import { CourseInstall, CourseName, type InstallResult } from "./core/model.ts";
 import { contentDigest, installFolder } from "./course-registry.ts";
 import { DEFAULT_LIMITS, type Limits } from "./extract-tree.ts";
-import { PreviewFile } from "./install-preview.ts";
+import type { Previews } from "./install-preview.ts";
 
 /** What an install reads and writes besides the staged preview. */
 export type InstallSources = {
@@ -53,14 +65,16 @@ export type InstallSources = {
   now: () => number;
   /** A new install id, a UUID. */
   newId: () => string;
+  /** The server's memory of the previews it staged (`previewInstall`); an install forgets the one it takes. */
+  previews: Previews;
   /** RFC 7 Table 6.2's limits, for tests to lower; `DEFAULT_LIMITS` otherwise. */
   limits?: Partial<Limits>;
 };
 
 /**
  * Why an install was refused. `bad-name` and `name-taken` keep the preview; `unknown-preview` found
- * none to take; every other reason spends it: `expired`, `changed` (its files or preview.json are not
- * what the preview checked), `over-limit`, `invalid-course`, and `not-recorded` (the record refused it).
+ * none to take; every other reason spends it: `expired`, `changed` (its files are not what the
+ * preview checked), `over-limit`, `invalid-course`, and `not-recorded` (the record refused it).
  */
 export type InstallReason = "bad-name" | "name-taken" | "unknown-preview" | "expired" | "changed" | "over-limit" | "invalid-course" | "not-recorded";
 export type InstallAnswer =
@@ -73,9 +87,6 @@ const InstallRequest = z.object({
   preview: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),
   name: z.string().max(255),
 }).strict();
-
-/** preview.json is a few hundred bytes; anything much larger is not one School wrote. */
-const PREVIEW_FILE_BYTES = 64 * 1024;
 
 const refused = (reason: InstallReason, message: string): InstallAnswer => ({ status: "refused", reason, message });
 
@@ -90,7 +101,7 @@ function kind(p: string): "folder" | "file" | "other" | null {
   }
 }
 
-/** The first problem with the installed folder's shape and size, or null: only what School installs, only regular files and folders, within `limits`. */
+/** The first problem with the installed folder's shape and size, or null: only what School installs, only regular files with one link each and folders, within `limits`. */
 function shapeProblem(folder: string, limits: Limits): { reason: "changed" | "over-limit"; message: string } | null {
   let files = 0;
   let total = 0;
@@ -102,6 +113,8 @@ function shapeProblem(folder: string, limits: Limits): { reason: "changed" | "ov
         ? path === "lessons" || path === "reference" || path.startsWith("reference/")
         : s.isFile() && (path === "course.json" || (prefix === "lessons" && name.endsWith(".json")) || path.startsWith("reference/"));
       if (!allowed) return { reason: "changed", message: `${JSON.stringify(path)} is not one of the files the preview checked` };
+      // A hard link shares its inode with a file elsewhere, which the read-only step would change.
+      if (s.isFile() && s.nlink !== 1) return { reason: "changed", message: `${JSON.stringify(path)} is linked to a file outside the course` };
       if (Buffer.byteLength(path) > limits.pathBytes) return { reason: "over-limit", message: `${JSON.stringify(path)} is longer than ${limits.pathBytes} bytes` };
       if (s.isDirectory()) {
         if (depth + 1 > limits.depth) return { reason: "over-limit", message: `${JSON.stringify(path)} is more than ${limits.depth} folders deep` };
@@ -119,12 +132,28 @@ function shapeProblem(folder: string, limits: Limits): { reason: "changed" | "ov
   return walk(folder, "", 0);
 }
 
-/** Makes every file under `dir` read-only; folders stay writable, so the start sweep can delete them. */
+/**
+ * Makes every file under `dir` read-only; folders stay writable, so the start sweep can delete them.
+ * Each file is opened without following a symlink, and changed only if it is still a regular file
+ * with one link, so a symlink or hard link put there after the check makes the install fail instead
+ * of changing a file elsewhere. A folder swapped for a symlink after its entry was listed is still
+ * followed (Node has no openat); the header says what that leaves.
+ */
 function readOnly(dir: string): void {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, e.name);
-    if (e.isDirectory()) readOnly(p);
-    else chmodSync(p, 0o444);
+    if (e.isDirectory()) {
+      readOnly(p);
+      continue;
+    }
+    const fd = openSync(p, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const s = fstatSync(fd);
+      if (!s.isFile() || s.nlink !== 1) throw new Error(`${p} changed after the install checked it`);
+      fchmodSync(fd, 0o444);
+    } finally {
+      closeSync(fd);
+    }
   }
 }
 
@@ -141,27 +170,22 @@ export async function installPreviewed(body: unknown, sources: InstallSources): 
   if (sources.configured.includes(name)) return refused("name-taken", `a configured course is already called ${JSON.stringify(name)}; would another name suit this one?`);
   if ((await sources.installedNames()).includes(name)) return refused("name-taken", `an installed course is already called ${JSON.stringify(name)}; would another name suit this one?`);
 
-  // 2. The preview, as School left it.
+  // 2. The preview, as this process staged it.
   const gone = refused("unknown-preview", `School holds no preview ${preview}; it may have been installed already, or deleted when School restarted. Would you like to preview the course again?`);
+  const kept = sources.previews.get(preview);
+  if (kept === undefined) return gone;
   const staging = join(sources.store, "staging");
   const folder = join(staging, preview);
   const course = join(folder, "course");
-  const file = join(folder, "preview.json");
-  if (kind(staging) !== "folder" || kind(folder) !== "folder" || kind(course) !== "folder" || kind(file) !== "file") return gone;
-  let kept: PreviewFile;
-  try {
-    if (lstatSync(file).size > PREVIEW_FILE_BYTES) throw new Error("too large");
-    kept = PreviewFile.parse(JSON.parse(readFileSync(file, "utf8")));
-  } catch {
-    rmSync(folder, { recursive: true, force: true });
-    return refused("changed", `preview ${preview} is not as School left it, so it was deleted. Would you like to preview the course again?`);
+  if (kept.expires <= sources.now()) {
+    sources.previews.delete(preview);
+    if (kind(staging) === "folder") rmSync(folder, { recursive: true, force: true });
+    return refused("expired", `preview ${preview} expired at ${new Date(kept.expires).toISOString()}, so it was deleted. Would you like to preview the course again?`);
   }
-  if (Date.parse(kept.expires) <= sources.now()) {
-    rmSync(folder, { recursive: true, force: true });
-    return refused("expired", `preview ${preview} expired at ${kept.expires}, so it was deleted. Would you like to preview the course again?`);
-  }
+  if (kind(staging) !== "folder" || kind(folder) !== "folder" || kind(course) !== "folder") return gone;
 
-  // 3. The move.
+  // 3. The move. From here the preview is spent.
+  sources.previews.delete(preview);
   const courses = join(sources.store, "courses");
   mkdirSync(courses, { recursive: true });
   if (kind(courses) !== "folder") throw new Error("the course store's courses/ is not a folder; School installs nothing through it");
@@ -178,7 +202,9 @@ export async function installPreviewed(body: unknown, sources: InstallSources): 
 
   let recorded = false;
   try {
-    // 4. The folder, checked where it now lies.
+    // 4. The folder, checked where it now lies: a real folder (a symlink moved here is removed in
+    // the finally below, which deletes the link and never what it points at), then its contents.
+    if (kind(dest) !== "folder") return refused("changed", `preview ${preview} is not as School left it, so the course was not installed. Would you like to preview it again?`);
     const shape = shapeProblem(dest, { ...DEFAULT_LIMITS, ...sources.limits });
     if (shape !== null) return refused(shape.reason, `${shape.message}, so the course was not installed`);
     const digest = contentDigest(dest);
@@ -191,7 +217,7 @@ export async function installPreviewed(body: unknown, sources: InstallSources): 
       id, course: name, source: "git", url: kept.url, bundleSha256: null, commit: kept.commit,
       contentSha256: digest.digest, title: check.title ?? name, format: check.manifest.format,
     });
-    if (!install.success) return refused("changed", `preview ${preview} does not name an https URL and a full commit, so the course was not installed`);
+    if (!install.success) throw new Error(`preview ${preview} remembered a URL and commit School cannot record: ${install.error.message}`);
 
     // 5. Read-only, then the record: only now can the course list serve it.
     readOnly(dest);
