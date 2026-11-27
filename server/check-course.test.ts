@@ -137,6 +137,23 @@ describe("school check", () => {
     expect(r.stdout).toContain("format 1");
   });
 
+  // The manifest is printed after the lessons, one line for the summary and one for the rest, each only when declared.
+  // A course with no lessons, so the manifest lines are all that follows the `ok:` line.
+  test.each([
+    ["only a license", { license: "MIT" }, ["license MIT"]],
+    ["only a summary", { summary: "Ring the changes." }, ["summary: Ring the changes."]],
+    ["only an author", { author: "A Ringer" }, ["by A Ringer"]],
+    ["only a format", { format: 1 }, ["format 1"]],
+    ["a summary and a license", { summary: "Ring the changes.", license: "MIT" }, ["summary: Ring the changes.", "license MIT"]],
+    ["an author and a format", { author: "A Ringer", format: 1 }, ["by A Ringer; format 1"]],
+  ])("CHECK-17: --human prints exactly the manifest lines a course with %s declares, and no null", async (_, declared, expected) => {
+    const dir = course({ course: JSON.stringify({ title: "Bells", ...declared }) });
+    const r = await run(["--human", dir]);
+    expect(r.code).toBe(0);
+    expect(r.stdout.trimEnd().split("\n")).toEqual([`checking ${dir}`, "ok: Bells, 0 lessons, 0 quizzes, 0 explain blocks", ...expected]);
+    expect(r.stdout).not.toContain("null");
+  });
+
   test("CHECK-6: --human prints prose, not JSON", async () => {
     const r = await run(["--human", course({ course: JSON.stringify({ title: "Bells" }), lessons: { "0001.json": page("a", [quiz("q")]) } })]);
     expect(r.code).toBe(0);

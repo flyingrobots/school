@@ -177,7 +177,8 @@ contract suite holds every driver under it to the same behaviour.
 
 The record is Postgres, built by the numbered migrations in `server/db/migrations/` (`0001_init.sql`,
 `0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_read_committed.sql`,
-`0006_due_review.sql`, `0007_since_last_here.sql`, `0008_study_days.sql`, `0009_time_zone_choices.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
+`0006_due_review.sql`, `0007_since_last_here.sql`, `0008_study_days.sql`, `0009_time_zone_choices.sql`,
+`0010_course_installs.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -215,7 +216,7 @@ connection, in the record's database. The server refuses to start if any of thes
 | 4 | Owns no schema (schema `school` included), relation, function, type or database | the owner's login, objects it created |
 | 5 | Outside `pg_catalog` and `information_schema`: no privilege on any table, view, materialized view or foreign table (`SELECT` to `MAINTAIN`), no `USAGE`, `SELECT` or `UPDATE` on any sequence, no column privilege | table, column, sequence and `MAINTAIN` grants |
 | 6 | In `pg_catalog` and `information_schema`: no write privilege on any relation (except `UPDATE` on `pg_settings`, which Postgres grants `PUBLIC` and which is `SET`), and no `SELECT` on the relations Postgres withholds from an ordinary role (`RESTRICTED_RELATIONS`: `pg_authid`, `pg_statistic`, `pg_shadow` and 20 more) | catalog grants to it or to `PUBLIC` |
-| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 18 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
+| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 26 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
 | 8 | No privilege granted to it by name on any relation, column, function (but the granted ones), schema (but `USAGE` on `school`), database, type, language, large object, foreign-data wrapper, foreign server or tablespace; no parameter privilege (`pg_parameter_acl`) granted to it or to `PUBLIC` | direct grants, `GRANT SET ON PARAMETER` |
 | 9 | No default privileges (`pg_default_acl`) granting to it or to `PUBLIC`, and none set by it | future grants |
 | 10 | No `CREATE` on any schema; no `CREATE` or `TEMPORARY` on the record's database | creating objects there |
@@ -298,6 +299,18 @@ Migration 0009 (flyingrobots/school#181) adds `time_zone_choices`, append-only l
 table: each time zone the learner chooses in Settings, `NULL` for automatic, the newest by `seq` in
 force. `school.choose_time_zone(zone, at)` appends one and `school.time_zone()` reads the zone in
 force; the port's `chooseTimeZone` and `timeZone`.
+Migration 0010 (RFC 7 §7, flyingrobots/school#232) records installed courses in three more
+append-only tables: `course_installs` (each install under the name the learner chose, with its
+source, `git` with an `https://` URL or `bundle` with the bundle's SHA-256, its commit, the SHA-256
+of its files' manifest, and its title and format), `course_removals`, and `course_trust_choices`
+(per install, so an update starts untrusted). `school.install_course(...)` answers `installed`,
+`updated` (the name had a current install), `duplicate` or `conflict`;
+`school.remove_installed_course(course, at)` answers `removed`, or `not-installed` and stores
+nothing; `school.choose_course_trust(install_id, trusted, at)` answers `stored`, or `rejected` for no
+such install; `school.installed_courses()` lists each name's latest install with no later removal,
+and its latest trust choice (none is untrusted). They are the port's `installCourse`,
+`removeInstalledCourse`, `chooseCourseTrust` and `installedCourses`. Nothing serves an installed
+course yet: the course list is still read from configuration (RFC 7 §10, task 4).
 `school.latest_feedback()` is the succeeded grading with the highest `seq` and where its explanation
 was written; the port's `latestFeedback`. A failed attempt is never feedback.
 
@@ -371,11 +384,38 @@ erDiagram
         bigint_array evidence "cited seqs, each smaller than seq"
         timestamptz at
     }
+    COURSE_INSTALLS ||--o{ COURSE_TRUST_CHOICES : "is trusted by"
+    COURSE_INSTALLS {
+        bigint seq PK
+        uuid id UK "caller UUID"
+        text course "the name the learner chose"
+        text source "git or bundle"
+        text url "https, set for git"
+        text bundle_sha256 "set for bundle"
+        text commit
+        text content_sha256 "the files' manifest"
+        text title
+        integer format "NULL when undeclared"
+        timestamptz at
+    }
+    COURSE_REMOVALS {
+        bigint seq PK
+        uuid id UK
+        text course
+        timestamptz at
+    }
+    COURSE_TRUST_CHOICES {
+        bigint seq PK
+        uuid id UK
+        uuid install_id FK
+        boolean trusted
+        timestamptz at
+    }
 ```
 
 *Figure 3. The learning record's tables, in schema `school`. Every row takes its `seq` from one
-shared sequence, so "before" and "after" across tables compare `seq`, never `at`. `VIEWS` is
-omitted; it records page views only. `EXPOSURES` is written only by `POST /api/exposure`, which the
+shared sequence, so "before" and "after" across tables compare `seq`, never `at`. `VIEWS` (page
+views) and `TIME_ZONE_CHOICES` (the learner's time zone) are omitted. `EXPOSURES` is written only by `POST /api/exposure`, which the
 lesson page calls for each help it shows.*
 
 | Rule | How it is enforced | What it does not cover |
@@ -608,6 +648,7 @@ This check finds a whole folder mounted twice, not part of one. At a bind mount'
 | `SCHOOL_UNTRUSTED_COURSES` | Server | `name=path` pairs, one per course served in safe mode: its files are sandboxed ([trust](#trust-and-known-defects)). A name or folder also trusted is refused | none |
 | `SCHOOL_COURSE` | Server | One unnamed course, named after its folder | none; `/course` under compose, set there by `SCHOOL_COMPOSE_COURSE`, which may be empty |
 | `SCHOOL_STATE` | Server | Learner state; must not be inside a course | `state/` |
+| `SCHOOL_COURSE_STORE` | Server | The course store (RFC 7 §5.1): the folder installed courses will live in, and nothing else. Nothing installs into it yet. Empty means no store, so installing is off. Refused at start (exit 2, naming both paths) when it is, holds or sits inside a course, `SCHOOL_STATE`, `DB_PATH`, a PGlite record, a mount, `SCHOOL_WEB` or the framework folder (`SCHOOL_ROOT`, which holds the server source), and when the path exists but is not a folder, compared on real paths and by device and inode, as for [untrusted courses](#trust-and-known-defects) | none; `/store` under compose, the named volume `course-store`; compose reads it from `SCHOOL_COMPOSE_COURSE_STORE`, so a host export of `SCHOOL_COURSE_STORE` never reaches the container |
 | `SCHOOL_DATABASE_URL` | Server | The record: `postgres://school_app:password@host:port/db` (`Bun.SQL`; `school_app`'s own login, refused if it fails [the login check](#the-login-check)) or `pglite:<dir>` (PGlite on disk, not inside a course) | none: required |
 | `SCHOOL_DATABASE_PASSWORD`, `SCHOOL_DATABASE_PASSWORD_FILE` | Server | `school_app`'s password, for a `SCHOOL_DATABASE_URL` that names none; the file wins. Compose gives the file | none |
 | `SCHOOL_MIGRATE_URL` | Migrate job | The owner's URL: a role that can create roles, in practice the superuser | none: required |
