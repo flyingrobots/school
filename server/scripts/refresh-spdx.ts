@@ -149,7 +149,7 @@ function fetchRelease(pkg: string, version: string | null, scratch: string): Fet
 export type Deps = {
   fetch: (pkg: string, version: string | null, scratch: string) => Fetched;
   fs: Pick<typeof nodeFs, "writeFileSync" | "renameSync" | "rmSync">;
-  paths: { licenses: string; exceptions: string };
+  paths: { licenses: string; exceptions: string; notice: string };
   scratch: string;
 };
 
@@ -216,7 +216,7 @@ function main(argv: string[]): void {
   // The scratch directory is under $TMPDIR, never the repository, and goes when the run ends.
   const scratch = mkdtempSync(join(tmpdir(), "school-refresh-spdx-"));
   try {
-    const paths = { licenses: join(import.meta.dir, "..", "spdx-license-ids.ts"), exceptions: join(import.meta.dir, "..", "spdx-exception-ids.ts") };
+    const paths = { licenses: join(import.meta.dir, "..", "spdx-license-ids.ts"), exceptions: join(import.meta.dir, "..", "spdx-exception-ids.ts"), notice: join(import.meta.dir, "..", "..", "NOTICE") };
     const { licenses, exceptions } = refresh(versions, { fetch: fetchRelease, fs: nodeFs, paths, scratch });
     console.log(`spdx-license-ids ${licenses.version} (${licenses.published}), spdx-exceptions ${exceptions.version} (${exceptions.published}) written.`);
     console.log(`Update the versions named in docs/working-notes.md and docs/topics/course-format/README.md to match.`);
