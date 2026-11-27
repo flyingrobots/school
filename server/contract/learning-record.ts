@@ -1545,6 +1545,42 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     expect(await r.installedCourses()).toEqual([current(aion, at(2700)), current(base, at(0))]);
   });
 
+  t("authoring: an authored install must name its draft's own commit and content digest, or it is rejected and stores nothing", async (r) => {
+    const { base, req } = await requested(r);
+    const d = readyDraft(req);
+    await r.recordDraft(d, at(2000));
+    for (const [why, o] of [
+      ["another commit", { commit: hex(40, "a") }],
+      ["another content digest", { contentSha256: hex(64, "b") }],
+    ] as const) expect({ why, ...(await r.installCourse(authoredInstall(base, d, o), at(3000))) }).toEqual({ why, status: "rejected" });
+    expect(await r.installedCourses()).toEqual([current(base, at(0))]);
+  });
+
+  t("authoring: a draft that has become an install cannot be discarded before its accept is recorded; nothing is stored", async (r) => {
+    const { base, req } = await requested(r);
+    const d = readyDraft(req);
+    await r.recordDraft(d, at(2000));
+    const i = authoredInstall(base, d);
+    await r.installCourse(i, at(3000));
+    expect(await r.decideDraft(discard(d), at(4000))).toEqual({ status: "rejected" });
+    expect((await r.courseAuthoring("bells"))[0]!.drafts[0]!.decision).toBeNull();
+    const decision = accept(d, i);
+    expect(await r.decideDraft(decision, at(5000))).toEqual({ status: "stored" });
+    expect((await r.courseAuthoring("bells"))[0]!.drafts[0]!.decision).toEqual(recordedDecision(decision, at(5000)));
+  });
+
+  t("authoring: round 2 is refused once round 1 has any decision, and stores nothing", async (r) => {
+    const { base, req } = await requested(r);
+    const refused = refusedDraft(req);
+    await r.recordDraft(refused, at(2000));
+    const decision = discard(refused);
+    await r.decideDraft(decision, at(3000));
+    expect(await r.recordDraft(readyDraft(req, { round: 2 }), at(4000))).toEqual({ status: "rejected" });
+    expect(await r.recordDraft(failedDraft(req, { round: 2 }), at(4100))).toEqual({ status: "rejected" });
+    expect(await r.courseAuthoring("bells")).toEqual([recordedRequest(req, at(1000), [recordedDraft(refused, at(2000), recordedDecision(decision, at(3000)))])]);
+    expect(await r.installedCourses()).toEqual([current(base, at(0))]);
+  });
+
   t("authoring: a draft installed once cannot be installed again under another install id", async (r) => {
     const { base, req } = await requested(r);
     const d = readyDraft(req);
