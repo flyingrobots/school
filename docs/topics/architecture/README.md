@@ -236,7 +236,7 @@ The record is Postgres, built by the numbered migrations in `server/db/migration
 `0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_read_committed.sql`,
 `0006_due_review.sql`, `0007_since_last_here.sql`, `0008_study_days.sql`, `0009_time_zone_choices.sql`,
 `0010_course_installs.sql`, `0011_mastery.sql`, `0012_ai_help.sql`, `0013_mastery_rollup.sql`,
-`0014_faded_review.sql`, `0015_course_progress.sql`, `0016_authoring.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
+`0014_faded_review.sql`, `0015_course_progress.sql`, `0016_authoring.sql`, `0017_conversations.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -274,7 +274,7 @@ connection, in the record's database. The server refuses to start if any of thes
 | 4 | Owns no schema (schema `school` included), relation, function, type or database | the owner's login, objects it created |
 | 5 | Outside `pg_catalog` and `information_schema`: no privilege on any table, view, materialized view or foreign table (`SELECT` to `MAINTAIN`), no `USAGE`, `SELECT` or `UPDATE` on any sequence, no column privilege | table, column, sequence and `MAINTAIN` grants |
 | 6 | In `pg_catalog` and `information_schema`: no write privilege on any relation (except `UPDATE` on `pg_settings`, which Postgres grants `PUBLIC` and which is `SET`), and no `SELECT` on the relations Postgres withholds from an ordinary role (`RESTRICTED_RELATIONS`: `pg_authid`, `pg_statistic`, `pg_shadow` and 20 more) | catalog grants to it or to `PUBLIC` |
-| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 34 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
+| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 37 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
 | 8 | No privilege granted to it by name on any relation, column, function (but the granted ones), schema (but `USAGE` on `school`), database, type, language, large object, foreign-data wrapper, foreign server or tablespace; no parameter privilege (`pg_parameter_acl`) granted to it or to `PUBLIC` | direct grants, `GRANT SET ON PARAMETER` |
 | 9 | No default privileges (`pg_default_acl`) granting to it or to `PUBLIC`, and none set by it | future grants |
 | 10 | No `CREATE` on any schema; no `CREATE` or `TEMPORARY` on the record's database | creating objects there |
@@ -420,6 +420,32 @@ One extension beyond RFC 9 Figure 5.2 stays: a `failed` draft may be discarded, 
 `school.latest_feedback()` is the succeeded grading with the highest `seq` and where its explanation
 was written; the port's `latestFeedback`. A failed attempt is never feedback.
 
+Conversations about a passage are migration 0017 (RFC 6 §5.2, flyingrobots/school#225), in three
+more append-only tables. `conversations` holds one row per passage asked about: the course and
+lesson of the encounter it was opened in, the block where the passage begins (any block of the
+lesson but the page itself), and the passage, at most 2,000 characters. `questions` holds each
+question, at most 4,000 characters, with the encounter it was asked in and `exposure_seq`, its own
+`ai-help` exposure of that encounter (`questions_exposure_encounter` holds the two to the same
+encounter, and `questions_exposure` gives each exposure to one question). `replies` holds at most
+one reply per question (`replies_question`): `succeeded` with the answer, or `failed` with the
+reason and whatever text reached the learner, with the sources it quoted, the agent, the model, and
+the token counts when the agent reports them.
+
+`school.ask(conversation_id, question_id, encounter_id, block_id, passage, text, at)` is the port's
+`ask`. In one transaction it opens the conversation on its first question, records the question's
+`ai-help` exposure through `record_lesson_help`, and stores the question, so the exposure's `seq` is
+smaller than that of any answer given after it. It answers `stored`; `duplicate` for the same id and
+the same question; `conflict` for the same id and another question; or `rejected`, storing nothing,
+when the encounter does not exist or does not track aid, when a new conversation has no passage or
+its block is not in the encounter's snapshot, or when a later question gives a passage or is asked
+in an encounter of another lesson. It serialises per conversation and per question on advisory
+locks, so it refuses to run under anything but READ COMMITTED.
+`school.record_reply(question_id, status, text, sources, agent, model, usage, error, at)`, the
+port's `recordReply`, stores the one reply: `stored`, `duplicate`, `conflict`, or `rejected` for no
+such question. `school.lesson_conversations(course, lesson)`, the port's `lessonConversations`,
+reads a lesson's conversations in `seq` order, each with its questions in `seq` order and their
+replies. Nothing calls them over HTTP yet.
+
 **Figure 3. The learning record's tables**
 
 ```mermaid
@@ -475,6 +501,40 @@ erDiagram
         uuid encounter_id FK
         text block_id "NULL exactly for ai-help: the whole encounter"
         text kind "hint, model-answer, feedback, reference, ai-help"
+        timestamptz at
+    }
+    CONVERSATIONS ||--o{ QUESTIONS : "collects"
+    ENCOUNTERS ||--o{ QUESTIONS : "is asked in"
+    QUESTIONS ||--|| EXPOSURES : "records, kind ai-help"
+    QUESTIONS ||--o| REPLIES : "is answered by"
+    CONVERSATIONS {
+        bigint seq PK
+        uuid conversation_id UK "caller UUID"
+        text course
+        text lesson
+        text block_id "where the passage begins"
+        text passage "at most 2,000 characters"
+        timestamptz at
+    }
+    QUESTIONS {
+        bigint seq PK
+        uuid question_id UK "caller UUID"
+        uuid conversation_id FK
+        uuid encounter_id FK
+        text text "at most 4,000 characters"
+        bigint exposure_seq FK "its ai-help exposure, same encounter"
+        timestamptz at
+    }
+    REPLIES {
+        bigint seq PK
+        uuid question_id FK "unique: one reply per question"
+        text status "succeeded or failed"
+        text text
+        jsonb sources "quoted sources, checked"
+        text agent
+        text model
+        jsonb usage "token counts, when reported"
+        text error "set exactly when failed"
         timestamptz at
     }
     ENCOUNTERS |o--o{ DECISION_NOTES : "is chosen for"
@@ -561,12 +621,13 @@ erDiagram
 *Figure 3. The learning record's tables, in schema `school`. Every row takes its `seq` from one
 shared sequence, so "before" and "after" across tables compare `seq`, never `at`. `VIEWS` (page
 views) and `TIME_ZONE_CHOICES` (the learner's time zone) are omitted. `EXPOSURES` is written by `POST /api/exposure`, which the
-lesson page calls for each help it shows, and will be written by the server's `record_lesson_help` for help a model writes once asking lands (RFC 6).*
+lesson page calls for each help it shows, and by `school.ask`, through `record_lesson_help`, for each question about a passage (RFC 6).*
 
 | Rule | How it is enforced | What it does not cover |
 | --- | --- | --- |
 | Rows are never updated, deleted or truncated | `BEFORE UPDATE OR DELETE` row triggers and `BEFORE TRUNCATE` statement triggers on every table | The owner or the superuser can drop a trigger. Guard rails, not tamper-proofing. |
 | The server can only call the public functions | `school_app` has `EXECUTE` on them by name and no table privilege; `EXECUTE` is revoked from `PUBLIC`; the server's record refuses any other statement | A process holding the superuser or owner URL: on Postgres only the migrate job and the backup service do; on PGlite the server's own session is the superuser. A hand grant to `school_app` the login check cannot detect (see [the login check](#the-login-check)) |
+| A question is stored with its aid, or not at all | `school.ask` writes the conversation, the `ai-help` exposure and the question in one transaction; `questions_exposure_encounter` holds the exposure to the question's encounter; advisory locks per conversation and question, so a resend at the same moment is a `duplicate` with no second exposure | A direct `INSERT` by the owner |
 | A resent submission stores nothing | Unique `answers.submission_id`; `school.submit` answers `duplicate`, or `conflict` for a different answer under the same id | Nothing further |
 | `correct` and `first_try` come from the snapshot | `school.submit` derives them from the encounter's stored snapshot; the client's are ignored. A partial unique index allows one first try per block and encounter, even under concurrent answers | A direct `INSERT` by the owner |
 | An acknowledged answer survives the server's crash | The 200 is sent after the function's transaction commits; a test kills the server hard and reads the answer back | On PGlite, an operating-system crash or power cut: PGlite writes through to its folder but does not `fsync`, so the last commits may be lost. Real Postgres `fsync`s each commit. Under compose, the `backup` service dumps the record every six hours and keeps 28 dumps, on the same machine ([backup and restore](../../workflows/backup-and-restore/README.md)); an answer since the last dump is not in any dump. |
@@ -575,7 +636,9 @@ Every adapter of the record passes one contract suite (`server/contract/learning
 replays one learner's history (`server/contract/learner-history.ts`). Both run on PGlite in every
 test run, and in CI also on a real Postgres server through `Bun.SQL`, the driver the server uses;
 CI fails the build if any of the real-Postgres cases skipped or a PGlite case has no `Bun.SQL`
-counterpart (`server/testing/postgres-gate.ts`).
+counterpart (`server/testing/postgres-gate.ts`). The conversation tables' storage rules, no
+direct access for `school_app` and no update, delete or truncate even by the owner, are checked on
+both drivers too (`server/contract/conversation-tables.ts`).
 
 The concurrent cases run against real Postgres too, in the same CI job and under the same gate
 (`server/adapters/bunsql.concurrency.test.ts`). Each race is held inside the database: a
