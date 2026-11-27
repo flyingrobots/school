@@ -39,6 +39,31 @@ ask list in the test's process; the `bridge/ask-route.test.ts` cases run the bri
 | ASK-14 | Nothing received | A hang-up before any delta ends the reply with `agent` null | implemented | `bridge/ask.test.ts`: `a caller that hangs up before any delta is told of no agent` |
 | ASK-15 | Cannot be started | An agent that `Bun.spawn` cannot start (ENOENT, EACCES; E2BIG for a long prompt on Linux) is a failed attempt, `could not start <program> (<code>)`, with no prompt text, and the next agent is tried, for `POST /run` and `POST /ask`; with none startable, the reply fails with every attempt | implemented | `bridge/bridge.test.ts`: `a grading whose first agent cannot be started falls back to the next and logs that attempt as failed`; `bridge/ask-route.test.ts`: `a question whose first agent cannot be started ...`; `bridge/run.test.ts`: `when no agent can be started ...`; `bridge/ask.test.ts`: `when no ask agent can be started ...` (flyingrobots/school#290) |
 
+## Conversations in the record
+
+The conversation tables and `school.ask`, `school.record_reply` and `school.lesson_conversations`
+(RFC 6 §5.2, Figure 5.1, Table 5.3; flyingrobots/school#225). The oracle for each status is RFC 6
+Table 5.3, and for aid §5.1. Every contract case runs on PGlite and on `Bun.SQL`, as
+`postgres (PGlite): conversations: ...` and `postgres (Bun.SQL): conversations: ...`, and the races
+run on `Bun.SQL` only.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| CONV-1 | Golden | One question and its reply round-trip; the conversation, its exposure, the question and the reply take increasing `seq` | implemented | `server/contract/learning-record.ts`: `conversations: golden: one question and its reply round-trip, the question with its own ai-help exposure` |
+| CONV-2 | Question resent | `duplicate`, with no second exposure; the same id with any field changed is `conflict` and stores nothing | implemented | `conversations: a question is stored once: a resend is a duplicate, and stores no second exposure`; `conversations: a question id holding another question is a conflict; the first stands and nothing more is stored` |
+| CONV-3 | Aid | The question's exposure has a smaller `seq` than a later answer, which is aided; an earlier answer is not | implemented | `conversations: the question's exposure has a smaller seq than any later answer, which is aided; an earlier one is not` |
+| CONV-4 | The passage rule | The first question needs a passage and a block of the snapshot (not the page); a later one gives neither and may be asked in a later encounter of the same lesson, never another lesson's | implemented | `conversations: the first question needs a passage and a block in the encounter's snapshot; a later one may give neither`; `conversations: a later question in an encounter of another lesson is rejected; one in a later encounter of the same lesson is stored` |
+| CONV-5 | Untracked or unknown encounter | `rejected`, nothing stored | implemented | `conversations: asking in an untracked or unknown encounter is rejected, and stores nothing` |
+| CONV-6 | Malformed question | Refused; neither the question nor an exposure is stored, also when the table refuses it inside `school.ask` | implemented | `conversations: a malformed question is refused and stores neither it nor an exposure`; `server/db/conversations.test.ts`: `a question the table refuses stores no exposure and opens no conversation` |
+| CONV-7 | Reply stored once | `duplicate` for the same reply, `conflict` for another; the first stands | implemented | `conversations: a reply is stored once: a resend is a duplicate, and another reply a conflict; the first stands` |
+| CONV-8 | Reply to an unknown question | `rejected`, nothing stored | implemented | `conversations: a reply to an unknown question is rejected, and stores nothing` |
+| CONV-9 | Read order | Conversations in `seq` order, each question in `seq` order with its reply, whatever order the replies came in; no other lesson's | implemented | `conversations: a lesson's conversations are read in seq order, each question in seq order with its reply, and no other lesson's` |
+| CONV-10 | Append-only | Every conversation table refuses `UPDATE`, `DELETE` and `TRUNCATE`, even by its owner | implemented | `server/contract/conversation-tables.ts`: `conversations: every conversation table refuses update, delete and truncate, even by its owner` |
+| CONV-11 | No direct path for `school_app` | Insert, update, delete, select and truncate on each table are permission errors | implemented | `server/contract/conversation-tables.ts`: `conversations: school_app may not insert, update, delete, read or truncate a conversation table` |
+| CONV-12 | Many at once | 20 questions in one encounter, 10 follow-ups in one conversation, one question twice, one id for two questions, one reply twice, each held at a gate until all wait: each stored once, with its own exposure before it, read in `seq` order; `ask` and `record_reply` refuse REPEATABLE READ | implemented | `server/adapters/bunsql.concurrency.test.ts`: `20 questions at once in one encounter ...` and the four races after it; `ask and record_reply refuse to run under it, and store nothing`; the contract's `conversations: many questions at once in one encounter ...` |
+
+_Table 1. The conversation cases, on PGlite and Bun.SQL; the races on Bun.SQL only._
+
 ## Killing an agent (flyingrobots/school#285)
 
 A kill sends SIGKILL to the agent's process group, then again every 50 ms until the pipes close,
@@ -57,7 +82,7 @@ the chain returns.
 | KILL-5 | Kill after the pipes closed | A timeout, or a hang-up, landing after the agent's pipes closed and before it exits starts no sweep (the sweep counter is unchanged), for `POST /run` and `POST /ask` | implemented | `bridge/run.test.ts`: `a kill after the agent's pipes closed starts no sweep`; `bridge/ask.test.ts`: `a hang-up after the ask agent's pipes closed starts no sweep` |
 | KILL-6 | Not a group | `sweepGroup` with 0, 1, a negative, fractional or non-finite number sends no signal (the signal function is injected) | implemented | `bridge/run.test.ts`: `sweepGroup signals no group that is not a real one, and a real one once` |
 
-_Table 1. The agent kill's cases. The ask route uses the same sweep (`sweepGroup` in `bridge/run.ts`)._
+_Table 2. The agent kill's cases. The ask route uses the same sweep (`sweepGroup` in `bridge/run.ts`)._
 
 ## The course store (flyingrobots/school#233)
 
@@ -77,7 +102,7 @@ _Table 1. The agent kill's cases. The ask route uses the same sweep (`sweepGroup
 | STORE-10 | Is, holds or sits inside the framework folder (`SCHOOL_ROOT`), which holds the server source | Refused, naming both paths | implemented | `server/config.test.ts`: `a store that %s is refused, naming both paths` (framework cases) |
 | STORE-11 | A path that exists but is a file | Refused, naming the path | implemented | `server/config.test.ts`: `a store path that exists but is a file, not a folder, is refused, naming it` |
 
-_Table 2. The course store's cases. STORE-9 reads the Dockerfile; no test builds the image._
+_Table 3. The course store's cases. STORE-9 reads the Dockerfile; no test builds the image._
 
 ## Stopping the bridge (flyingrobots/school#286)
 
@@ -108,7 +133,13 @@ zombie, 2 s after the bridge exits.
 | REGISTRY-9 | The acceptance test: a folder and its row added while School runs | In `/api/courses` with no restart, the row written through `school_app`'s own connection | implemented | `server/installed-courses.test.ts`: `a course whose folder and row are added while School runs is in /api/courses with no restart (Bun.SQL)` |
 | REGISTRY-10 | The content digest | The SHA-256 of one `<sha256> <path>\n` line per file, sorted by path, over the FIPS 180-2 vectors; a symlink has no digest | implemented | `server/course-registry.test.ts`: `is the SHA-256 of one line per file, its hash and its path, sorted by path`, `refuses a folder holding anything but regular files and folders` |
 
-_Table 3. The course list's cases, on PGlite and, for REGISTRY-9, on Bun.SQL._
+| REGISTRY-11 | A trusted install's file changed or added after start (flyingrobots/school#322, the review of #320's probe) | Not served until its folder is checked again: listed with `lessons: null` and a reason naming the install id and no path, its reference page 404 | implemented | `server/course-registry.test.ts`: `a trusted install whose lesson changes after start is no longer served`, `a trusted install with a file added after start is no longer served`; `server/installed-courses.test.ts`: `a trusted install whose reference page changes after start is not served: its page answers 404 and it is listed with lessons null` |
+| REGISTRY-12 | An untrusted install's file changed after start | Not served; its course JSON still sandboxed | implemented | `server/course-registry.test.ts`: `an untrusted install whose lesson changes after start is no longer served`; `server/installed-courses.test.ts`: `an untrusted install whose reference page changes after start is not served, and its course still answers sandboxed` |
+| REGISTRY-13 | Re-verification after a change | A file put back as recorded is served again; a file rewritten with the same bytes stays served | implemented | `server/course-registry.test.ts`: `a changed file put back as it was installed is served again`, `a file rewritten with the same bytes after start is still served` |
+| REGISTRY-14 | `installed_courses()` fails after start | Configured courses served; installs last seen listed as unavailable, the reason naming the record and no path; a configured course found with no read of the record | implemented | `server/course-registry.test.ts`: `serves the configured courses and lists the installs it last saw as unavailable`, `an install's reason, with the record unreachable, names no path and says it is served again once the record answers`, `finds a configured course by name without reading the record`, `finds an installed course by name through the record` |
+| REGISTRY-15 | The record cut off by a proxy while School runs | A configured course's reference file answers 200; `/api/courses`, the course, a lesson and `/api/resume` answer a JSON 503 with no stack trace | implemented | `server/installed-courses.test.ts`: `a configured course's reference file answers 200, and every other route a JSON answer that is not a 500 (Bun.SQL)` |
+
+_Table 4. The course list's cases, on PGlite and, for REGISTRY-9 and REGISTRY-15, on Bun.SQL._
 
 ## The pinned skill (flyingrobots/school#257)
 
@@ -133,7 +164,7 @@ RFC 9 §5.3 and [the pinned skill](README.md#the-pinned-skill). The manifest's o
 | SKILLPIN-15 | Configuration | Defaults to the framework's `.agents/skills/school` and `docs/topics`; relative paths resolve against the working directory; empty `SCHOOL_SKILL` is null | implemented | `server/config.test.ts`: `SCHOOL_SKILL and SCHOOL_SKILL_DOCS default to the framework checkout's skill and its docs/topics`, `SCHOOL_SKILL and SCHOOL_SKILL_DOCS name the skill and its references, relative paths resolving against the working directory`, `an empty SCHOOL_SKILL means no skill, so authoring is off` |
 | SKILLPIN-16 | Compose | The three read-only mounts under `/framework`; `SCHOOL_SKILL: ${SCHOOL_COMPOSE_SKILL-/framework/skills/school}` and `SCHOOL_SKILL_DOCS: /framework/docs`, so a host export never reaches the container | implemented | `server/docker.test.ts`: `compose mounts the checkout's school skill and its references read-only under /framework`, `compose points SCHOOL_SKILL at the mount through SCHOOL_COMPOSE_SKILL, which .env may set empty and a host export never reaches, and SCHOOL_SKILL_DOCS at the references with no variable at all` |
 
-_Table 4. The pinned skill's cases. SKILLPIN-16 reads compose.yaml; no test builds the image or runs compose._
+_Table 5. The pinned skill's cases. SKILLPIN-16 reads compose.yaml; no test builds the image or runs compose._
 
 ## Fetching one commit (flyingrobots/school#236)
 
@@ -171,7 +202,7 @@ _Table 4. The pinned skill's cases. SKILLPIN-16 reads compose.yaml; no test buil
 | FETCH-28 | A SHA-256 repository, by branch and by full hash | Fetched by its 64-digit hash | implemented | `FETCH-28: a SHA-256 repository's commit, named by %s, is fetched by its 64-digit hash` |
 | FETCH-29 | A request carrying `git`, `limits` and `network` fields, as a spread JSON body would | The fields are ignored; fetched with the test seams given as the second argument | implemented | `FETCH-29: the test seams carried on a request, as a JSON body spread into it would carry them, are ignored` |
 
-_Table 5. The fetch's cases. FETCH-2 to FETCH-29 are in `server/fetch-commit.test.ts`. FETCH-22 to FETCH-27 each fail when the protection they name is deleted. None runs the server image's git; CI runs them on the runner's git._
+_Table 6. The fetch's cases. FETCH-2 to FETCH-29 are in `server/fetch-commit.test.ts`. FETCH-22 to FETCH-27 each fail when the protection they name is deleted. None runs the server image's git; CI runs them on the runner's git._
 
 ## The authoring record (flyingrobots/school#258)
 
@@ -193,7 +224,7 @@ _Table 5. The fetch's cases. FETCH-2 to FETCH-29 are in `server/fetch-commit.tes
 | AUTH-REC-12 | READ COMMITTED | `request_authoring`, `record_draft` and `decide_draft` refuse REPEATABLE READ and store nothing | implemented | `server/adapters/bunsql.concurrency.test.ts`: `request_authoring, record_draft and decide_draft refuse to run under it, and store nothing` |
 | AUTH-REC-13 | Order and course | A course lists only its own requests, by `seq`, each with its drafts by `seq` | implemented | `authoring: each course lists only its own requests, in the record's order, each with its drafts in order` |
 
-_Table 6. The authoring record's cases. State kept outside the Postgres record is the failure mode the issue names: every case reads back through the port, never from a cache._
+_Table 7. The authoring record's cases. State kept outside the Postgres record is the failure mode the issue names: every case reads back through the port, never from a cache._
 
 Every refusal the issue names is a case here, and every case reads the record back through the port on both drivers.
 
@@ -231,4 +262,23 @@ Every refusal the issue names is a case here, and every case reads the record ba
 | PREVIEW-ROUTE-8 | A body declared `text/plain` | 415 | implemented | `PREVIEW-ROUTE-8: a body that is not declared JSON is refused` |
 | PREVIEW-PROGRESS-1 | `courseProgress` on every record adapter: a name with nothing, one with encounters, answers, explanations and views beside another name's, a view alone, a removed install's | The counts written, and none of the other name's | implemented | `server/contract/learning-record.ts`: `course progress: %s`, run on PGlite and Bun.SQL |
 
-_Table 6. The install preview's cases. PREVIEW-3, -4, -5, -8, -12, -14, -16, PREVIEW-ROUTE-1 and the `same-site` and `none` cases of PREVIEW-ROUTE-6 each fail when the behaviour they name is removed. No case previews a course from the internet._
+_Table 8. The install preview's cases. PREVIEW-3, -4, -5, -8, -12, -14, -16, PREVIEW-ROUTE-1 and the `same-site` and `none` cases of PREVIEW-ROUTE-6 each fail when the behaviour they name is removed. No case previews a course from the internet._
+
+## Migrate jobs on one cluster (flyingrobots/school#356)
+
+[Migrate jobs on one cluster](README.md#migrate-jobs-on-one-cluster), in `server/adapters/migrate-cluster.test.ts`, on the real Postgres in `SCHOOL_TEST_POSTGRES_URL` (CI's gate fails a run that skips them). The oracles are the issue's acceptance criteria and Postgres's documented SQLSTATEs. The cases that wait for another session wait on `pg_stat_activity` showing the lock wait, never on time. The bootstrap cases run the runner's own `BOOTSTRAP` text under role names of their own, which they drop, because `school_app` and `school_owner` exist on a shared test server and own every scratch database's schema.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| CLUSTER-1 | One connection per job | While a job waits for the runner's lock, its database has exactly one session of the job's | implemented | `a migrate job holds one connection to its database, even while it waits for the runner's lock` |
+| CLUSTER-2 | Sixteen jobs at once | Sixteen jobs on sixteen databases all succeed on a server with the default `max_connections` of 100, and `school_app` logs in | implemented | `sixteen migrate jobs on sixteen databases of one cluster at once all succeed` |
+| CLUSTER-3 | The bootstrap race, scheduled | The second bootstrap, waiting on the first one's uncommitted roles, succeeds once the first commits, and each role exists once | implemented | `the role bootstrap, run in two databases of a cluster that has neither role yet, creates each role once and fails neither` |
+| CLUSTER-4 | The bootstrap race, sixteen at once | Sixteen bootstraps in sixteen databases at once all succeed | implemented | `the role bootstrap, run at once in sixteen databases of a cluster that has neither role yet, fails none` |
+| CLUSTER-5 | The password changes under the job | Another session's uncommitted password change makes the job wait. Once it commits, the job's password logs in and the other is refused (28P01) | implemented | `a job whose role update meets another session's uncommitted change of school_app's password waits for it, then sets its own` |
+| CLUSTER-6 | The role already exists | After a job with another password, the next job on another database sets its own; the earlier password is refused (28P01) | implemented | `when school_app already exists with another password, the next job on another database sets its own` |
+| CLUSTER-7 | A real error is not retried | A lock timeout (55P03) in the role update is thrown as it is, although the next attempt would have succeeded | implemented | `a role update that fails for any reason but a concurrent update is thrown as it is, not retried into success` |
+| CLUSTER-8 | Locks stay in their database | A job completes while another session holds both of the migrate job's advisory locks on another database of the cluster | implemented | `a job on one database does not wait for the migrate job's locks held on another database of the cluster` |
+| CLUSTER-9 | An unrelated error in the role step | The shipped bootstrap, run as a role without CREATEROLE, fails with 42501 `permission denied to create role`, and no role is made | implemented | `an error in the role step that is not a concurrent create is not swallowed: without CREATEROLE the bootstrap fails with 42501` |
+| CLUSTER-10 | The role committed after the bootstrap's check | A repeatable-read bootstrap whose snapshot predates another job's committed roles meets them at CREATE ROLE (42710) and succeeds, each role once | implemented | `the role bootstrap, whose check saw no role though another job has committed it since, finds it at the CREATE (42710) and succeeds` |
+
+_Table 9. Migrate jobs on one cluster. CLUSTER-1 to -4 failed on the code before the fix: ten sessions, 53300, and 23505 on `pg_authid_rolname_index`. CLUSTER-5 to -10 passed before it and fail when the behaviour they name is removed: no retry, a retry of every error, no password set, or the locks held on the job's own database; and for CLUSTER-9 and -10, a role-step catch of every error (`WHEN OTHERS`) or one without `duplicate_object`._

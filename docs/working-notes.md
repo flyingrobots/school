@@ -49,6 +49,12 @@ Practical notes for anyone — human or agent — changing the framework.
     superuser, migrates, then `SET ROLE school_app`; it has no login to check. The roles are
     cluster-wide: do not pre-create them with other memberships, and never grant `school_app`
     anything by hand.
+  - The migrate job's advisory locks cover one database, but the roles and `max_connections` are
+    the cluster's, so jobs on other databases of the same server run at the same time. The job keeps
+    to one connection (`new Bun.SQL(url, { max: 1 })`); the bootstrap takes a role that another job
+    created first as created; the role update retries only `tuple concurrently updated`
+    (flyingrobots/school#356; docs/topics/architecture/README.md, "Migrate jobs on one cluster").
+    Anything else that touches a cluster-wide object needs the same care.
   - A migration that grants `school_app` a new function also adds it to `GRANTED_FUNCTIONS` in
     `server/adapters/database.ts`; otherwise the server refuses to start, and
     `server/adapters/app-login.test.ts` fails.

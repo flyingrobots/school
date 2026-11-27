@@ -4,8 +4,8 @@
 // tested beside each adapter, since how they are enforced is the adapter's business.
 import { expect, test } from "bun:test";
 import {
-  ExposureKind, type AuthoringDecision, type AuthoringDraft, type AuthoringRequest, type Block, type CourseInstall, type DecisionNoteInput, type DueItem, type GradingRecord,
-  type InstalledCourse, type LessonHelp, type Mastery, type RecordedDecision, type RecordedDraft, type RecordedRequest,
+  ExposureKind, type AskQuestion, type AuthoringDecision, type AuthoringDraft, type AuthoringRequest, type Block, type CourseInstall, type DecisionNoteInput, type DueItem, type GradingRecord,
+  type InstalledCourse, type LessonHelp, type Mastery, type ReplyRecord, type RecordedDecision, type RecordedDraft, type RecordedRequest,
 } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
 
@@ -835,8 +835,8 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
   // number of milliseconds.
 
   /** A case of the mastery measure. */
-  const mm = (title: string, fn: (r: LearningRecord) => Promise<void>) =>
-    test(`${name}: mastery: ${title}`, async () => fn(await make()));
+  const mm = (title: string, fn: (r: LearningRecord) => Promise<void>, timeoutMs?: number) =>
+    test(`${name}: mastery: ${title}`, async () => fn(await make()), timeoutMs);
   const HOUR = 60 * 60 * 1000;
   const DAY = 24 * HOUR;
   const measure = (r: LearningRecord, blocks: string[], now: string) => r.mastery({ course: "c", blocks, now, delayMs: DELAY });
@@ -988,20 +988,30 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     expect((await held(r, at(3650 * DAY))).strength).toBeCloseTo(0, 10);
   });
 
-  // Generated: a year of random first tries for one quiz, each measured at a random time after it,
-  // against a model that moves step by step as RFC 5 Table 4.2 says. Oracle: Table 4.2; the record
-  // computes Table 4.1's closed form, which RFC 5 states is the same measure.
-  mm("under a year of random first tries, strength stays in [0, 1], stability never falls on a spaced clean answer, and both follow Table 4.2", async (r) => {
+  // Generated: a fixed number of random first tries for one quiz, up to three days apart, each
+  // measured at a random time after it, against a model that moves step by step as RFC 5 Table 4.2
+  // says. Oracle: Table 4.2; the record computes Table 4.1's closed form, which RFC 5 states is the
+  // same measure.
+  //
+  // The work is bounded by the count, not by a span of time, and the case's budget is derived from
+  // it, so its outcome does not depend on the machine's speed (flyingrobots/school#354). A year of
+  // first tries was about 250 of them, each five round trips, which outran Bun's default 5 s on a
+  // local Postgres. 64 reaches every kind of first try for every seed from 0 to 1999 (at most 50
+  // were needed); the witnesses below say so for the seed in use.
+  const FIRST_TRIES = 64;
+  /** A first try's budget: its five round trips at 100 ms each, many times their time on a loaded machine. */
+  const PER_FIRST_TRY_MS = 500;
+  mm(`under ${FIRST_TRIES} random first tries, strength stays in [0, 1], stability never falls on a spaced clean answer, and both follow Table 4.2`, async (r) => {
     const seed = FUZZ_SEED;
     const random = seeded(seed);
-    const replay = `replay: SCHOOL_TEST_SEED=${seed} bun test server/adapters/postgres.test.ts -t "mastery: under a year"`;
+    const replay = `replay: SCHOOL_TEST_SEED=${seed} bun test server/adapters/postgres.test.ts -t "mastery: under ${FIRST_TRIES} random first tries"`;
     const kinds = ["clean", "clean", "clean", "aided", "unknown", "wrong"] as const;
     const seen = { spaced: 0, soon: 0, aided: 0, unknown: 0, wrong: 0 };
     let model = { stabilityMs: DAY, refreshedAt: 0, zero: false };
     let afterWrong = false; // the previous first try was wrong: the next right one starts again
     let last: number | null = null;
     let previous: number | null = null;
-    for (let t = 0, step = 0; t < 365 * DAY; t += Math.floor(random() * 3 * DAY), step++) {
+    for (let t = 0, step = 0; step < FIRST_TRIES; t += Math.floor(random() * 3 * DAY), step++) {
       const kind = kinds[Math.floor(random() * kinds.length)]!;
       const spaced = last === null || t - last >= DELAY;
       // Table 4.2, one row per kind of first try; the first answer starts at one day.
@@ -1025,7 +1035,7 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     }
     // Witnesses: the fixed seed reaches every kind of first try.
     for (const [kind, n] of Object.entries(seen)) expect(`${kind}: ${n > 0}`, replay).toBe(`${kind}: true`);
-  });
+  }, 5_000 + FIRST_TRIES * PER_FIRST_TRY_MS); // Bun's default for opening the record, then each first try's budget
 
   // ---- Mastery rollup (RFC 5 §4.5; flyingrobots/school#218) -----------------------------------
   // Per group of quizzes, the four counts of Table 4.5 and the mean strength. Oracle: RFC 5 Table
@@ -1403,6 +1413,269 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     }
     // Witnesses: the fixed seed reaches helps, aided answers and unaided ones.
     for (const [kind, n] of Object.entries(seen)) expect(`${kind}: ${n > 0}`, replay).toBe(`${kind}: true`);
+  });
+
+  // ---- Conversations about a passage (RFC 6 §5.2, Figure 5.1, Table 5.3; flyingrobots/school#225) -
+  // A question is stored with its own `ai-help` exposure in one write, before any model is asked;
+  // its reply after. Oracle: RFC 6 Table 5.3 for each function's statuses, and §5.1 for the aid.
+
+  const cv = (title: string, fn: (r: LearningRecord) => Promise<void>) => t(`conversations: ${title}`, fn);
+  const prose = (id: string): Block => ({ type: "prose", id, html: "<p>Bells ring because the metal vibrates.</p>" });
+  const passagePage = lesson("l1", [prose("p1"), quiz("q1"), explain]);
+  const opening = (encounterId: string, o: Partial<AskQuestion> = {}): AskQuestion => ({
+    conversationId: uuid(), questionId: uuid(), encounterId, blockId: "p1", passage: "the metal vibrates", text: "Why does metal vibrate?", ...o,
+  });
+  const followUp = (encounterId: string, conversationId: string, text = "And then?"): AskQuestion => ({
+    conversationId, questionId: uuid(), encounterId, blockId: null, passage: null, text,
+  });
+  const answered = (questionId: string, text = "Because it is struck."): ReplyRecord => ({
+    questionId, status: "succeeded", text, error: null, sources: [{ sourceId: "p1", quote: "the metal vibrates", checked: true }],
+    agent: "claude", model: "claude-sonnet-5-5", usage: { input_tokens: 812, output_tokens: 95 },
+  });
+  const failedReply = (questionId: string): ReplyRecord => ({
+    questionId, status: "failed", text: "Because", error: "the agent stopped", sources: [], agent: "claude", model: null, usage: null,
+  });
+  /** A reply as the read gives it back: what was stored, at its time and place in the record. */
+  const asStored = (x: ReplyRecord, when: string) => {
+    const { questionId, ...stored } = x;
+    expect(questionId).toBeString();
+    return { ...stored, seq: expect.any(Number), at: when };
+  };
+  /** What the record holds for a lesson, as (question text, reply text or null) per conversation. */
+  const turns = async (r: LearningRecord, lessonId = "l1") =>
+    (await r.lessonConversations("c", lessonId)).map((c) => c.questions.map((q) => [q.text, q.reply?.text ?? null]));
+
+  cv("golden: one question and its reply round-trip, the question with its own ai-help exposure", async (r) => {
+    const e = await tracked(r, passagePage);
+    const q = opening(e.id);
+    expect(await r.ask(q, at(1))).toEqual({ status: "stored" });
+    expect(await r.recordReply(answered(q.questionId), at(2))).toEqual({ status: "stored" });
+    const [helped] = await rowsOf(r, e.id, "exposure", null);
+    const [c] = await r.lessonConversations("c", "l1");
+    expect(c).toEqual({
+      conversationId: q.conversationId, blockId: "p1", passage: "the metal vibrates", seq: expect.any(Number), at: at(1),
+      questions: [{
+        questionId: q.questionId, encounterId: e.id, text: "Why does metal vibrate?", seq: expect.any(Number), exposureSeq: helped!, at: at(1),
+        reply: asStored(answered(q.questionId), at(2)),
+      }],
+    });
+    // The record's order: the conversation, then the question's exposure, then the question, then its reply.
+    const question = c!.questions[0]!;
+    expect([c!.seq < helped!, helped! < question.seq, question.seq < question.reply!.seq]).toEqual([true, true, true]);
+  });
+
+  cv("a failed reply is kept with whatever text reached the learner and the reason", async (r) => {
+    const e = await tracked(r, passagePage);
+    const q = opening(e.id);
+    await r.ask(q, at(1));
+    expect(await r.recordReply(failedReply(q.questionId), at(2))).toEqual({ status: "stored" });
+    const [c] = await r.lessonConversations("c", "l1");
+    expect(c!.questions[0]!.reply).toEqual(asStored(failedReply(q.questionId), at(2)));
+  });
+
+  cv("a question with no reply is read back with reply null", async (r) => {
+    const e = await tracked(r, passagePage);
+    await r.ask(opening(e.id), at(1));
+    expect(await turns(r)).toEqual([[["Why does metal vibrate?", null]]]);
+  });
+
+  cv("a question is stored once: a resend is a duplicate, and stores no second exposure", async (r) => {
+    const e = await tracked(r, passagePage);
+    const q = opening(e.id);
+    expect(await r.ask(q, at(1))).toEqual({ status: "stored" });
+    for (let i = 0; i < 3; i++) expect(await r.ask(q, at(2 + i))).toEqual({ status: "duplicate" });
+    const f = followUp(e.id, q.conversationId);
+    expect(await r.ask(f, at(5))).toEqual({ status: "stored" });
+    expect(await r.ask(f, at(6))).toEqual({ status: "duplicate" });
+    expect(await turns(r)).toEqual([[["Why does metal vibrate?", null], ["And then?", null]]]);
+    expect(await rowsOf(r, e.id, "exposure", null)).toHaveLength(2);
+  });
+
+  cv("a question id holding another question is a conflict; the first stands and nothing more is stored", async (r) => {
+    const e = await tracked(r, passagePage);
+    const other = await r.openEncounter({ course: "c", lesson: "l1", page: passagePage, now: at(10 * RESUME_WINDOW_MS), aidTracking: 1 });
+    expect(other.id).not.toBe(e.id);
+    const q = opening(e.id);
+    await r.ask(q, at(1));
+    const f = followUp(e.id, q.conversationId);
+    await r.ask(f, at(2));
+    for (const changed of [
+      { ...q, text: "Something else?" }, { ...q, passage: "metal" }, { ...q, blockId: "q1" }, { ...q, encounterId: other.id },
+      { ...q, conversationId: uuid() }, { ...f, text: "Something else?" }, { ...f, encounterId: other.id },
+      { ...f, conversationId: uuid(), blockId: "p1", passage: "the metal vibrates" },
+    ]) expect(await r.ask(changed, at(3)), JSON.stringify(changed)).toEqual({ status: "conflict" });
+    expect(await turns(r)).toEqual([[["Why does metal vibrate?", null], ["And then?", null]]]);
+    expect(await rowsOf(r, e.id, "exposure", null)).toHaveLength(2);
+    expect((await r.encounterEvidence(other.id)).map((x) => x.kind)).toEqual(["encounter"]);
+  });
+
+  cv("the question's exposure has a smaller seq than any later answer, which is aided; an earlier one is not", async (r) => {
+    const e = await tracked(r, passagePage);
+    const before = uuid();
+    const after = uuid();
+    const saidAfter = uuid();
+    await r.submit({ submissionId: before, encounterId: e.id, blockId: "q1", choiceId: "wrong", ms: 1 }, at(1));
+    const q = opening(e.id);
+    await r.ask(q, at(2));
+    await r.recordReply(answered(q.questionId), at(3));
+    await r.submit({ submissionId: after, encounterId: e.id, blockId: "q1", choiceId: "right", ms: 1 }, at(4));
+    await r.saveExplanation({ submissionId: saidAfter, encounterId: e.id, blockId: "e1", text: "Because.", ms: 1 }, at(5));
+    const [exposureSeq] = await rowsOf(r, e.id, "exposure", null);
+    const [, answerSeq] = await rowsOf(r, e.id, "answer", "q1");
+    const [c] = await r.lessonConversations("c", "l1");
+    expect(c!.questions[0]!.exposureSeq).toBe(exposureSeq!);
+    expect(exposureSeq! < answerSeq!).toBe(true);
+    expect([await r.aid(before), await r.aid(after), await r.aid(saidAfter)]).toEqual(["no-recorded-aid", "aided", "aided"]);
+  });
+
+  cv("the first question needs a passage and a block in the encounter's snapshot; a later one may give neither", async (r) => {
+    const e = await tracked(r, passagePage);
+    const conversationId = uuid();
+    expect(await r.ask(followUp(e.id, conversationId), at(1))).toEqual({ status: "rejected" });
+    expect(await r.ask(opening(e.id, { conversationId, blockId: "nowhere" }), at(2))).toEqual({ status: "rejected" });
+    expect(await r.ask(opening(e.id, { conversationId, blockId: "l1" }), at(3))).toEqual({ status: "rejected" }); // the page is not a block of itself
+    expect(await r.lessonConversations("c", "l1")).toEqual([]);
+    expect(await rowsOf(r, e.id, "exposure", null)).toEqual([]);
+    // A passage may begin in any block of the lesson: prose, a quiz, an explain block.
+    for (const [k, block] of ["p1", "q1", "e1"].entries()) {
+      expect(await r.ask(opening(e.id, { blockId: block, text: `About ${block}?` }), at(4 + k))).toEqual({ status: "stored" });
+    }
+    const first = (await r.lessonConversations("c", "l1"))[0]!;
+    expect(await r.ask({ ...followUp(e.id, first.conversationId), blockId: "p1", passage: "again" }, at(8))).toEqual({ status: "rejected" });
+    expect(await r.ask(followUp(e.id, first.conversationId), at(9))).toEqual({ status: "stored" });
+    expect((await r.lessonConversations("c", "l1")).map((c) => [c.blockId, c.questions.length])).toEqual([["p1", 2], ["q1", 1], ["e1", 1]]);
+  });
+
+  cv("asking in an untracked or unknown encounter is rejected, and stores nothing", async (r) => {
+    const untracked = await r.openEncounter({ course: "c", lesson: "l1", page: passagePage, now: at(0), aidTracking: null });
+    expect(await r.ask(opening(untracked.id), at(1))).toEqual({ status: "rejected" });
+    expect(await r.ask(opening(uuid()), at(2))).toEqual({ status: "rejected" });
+    expect(await r.lessonConversations("c", "l1")).toEqual([]);
+    expect((await r.encounterEvidence(untracked.id)).map((x) => x.kind)).toEqual(["encounter"]);
+  });
+
+  cv("a later question in an encounter of another lesson is rejected; one in a later encounter of the same lesson is stored", async (r) => {
+    const e = await tracked(r, passagePage);
+    const q = opening(e.id);
+    await r.ask(q, at(1));
+    const elsewhere = await r.openEncounter({ course: "c", lesson: "l2", page: lesson("l2", [prose("p1")]), now: at(2), aidTracking: 1 });
+    const otherCourse = await r.openEncounter({ course: "d", lesson: "l1", page: passagePage, now: at(3), aidTracking: 1 });
+    expect(await r.ask(followUp(elsewhere.id, q.conversationId), at(4))).toEqual({ status: "rejected" });
+    expect(await r.ask(followUp(otherCourse.id, q.conversationId), at(5))).toEqual({ status: "rejected" });
+    const later = await tracked(r, passagePage, at(10 * RESUME_WINDOW_MS));
+    expect(later.id).not.toBe(e.id);
+    expect(await r.ask(followUp(later.id, q.conversationId, "Back again?"), at(10 * RESUME_WINDOW_MS + 1))).toEqual({ status: "stored" });
+    const [c] = await r.lessonConversations("c", "l1");
+    expect(c!.questions.map((x) => [x.text, x.encounterId])).toEqual([["Why does metal vibrate?", e.id], ["Back again?", later.id]]);
+    expect(await rowsOf(r, later.id, "exposure", null)).toEqual([c!.questions[1]!.exposureSeq]);
+  });
+
+  cv("a malformed question is refused and stores neither it nor an exposure", async (r) => {
+    const e = await tracked(r, passagePage);
+    for (const bad of [
+      opening(e.id, { text: "" }), opening(e.id, { text: "   " }), opening(e.id, { text: "x".repeat(4001) }),
+      opening(e.id, { passage: "x".repeat(2001) }), opening(e.id, { passage: "" }), opening(e.id, { passage: null }),
+      opening(e.id, { questionId: "not-a-uuid" }),
+    ]) await expect(r.ask(bad, at(1)), JSON.stringify(bad).slice(0, 120)).rejects.toThrow();
+    expect(await r.lessonConversations("c", "l1")).toEqual([]);
+    expect(await rowsOf(r, e.id, "exposure", null)).toEqual([]);
+    // The longest allowed passage and question are stored.
+    expect(await r.ask(opening(e.id, { passage: "x".repeat(2000), text: "y".repeat(4000) }), at(2))).toEqual({ status: "stored" });
+  });
+
+  cv("a reply is stored once: a resend is a duplicate, and another reply a conflict; the first stands", async (r) => {
+    const e = await tracked(r, passagePage);
+    const q = opening(e.id);
+    await r.ask(q, at(1));
+    const reply = answered(q.questionId);
+    expect(await r.recordReply(reply, at(2))).toEqual({ status: "stored" });
+    expect(await r.recordReply(reply, at(3))).toEqual({ status: "duplicate" });
+    for (const changed of [
+      { ...reply, text: "Another answer." }, failedReply(q.questionId), { ...reply, sources: [] }, { ...reply, agent: "codex" },
+      { ...reply, model: null }, { ...reply, usage: { input_tokens: 1 } },
+    ]) expect(await r.recordReply(changed, at(4)), JSON.stringify(changed)).toEqual({ status: "conflict" });
+    expect(await turns(r)).toEqual([[["Why does metal vibrate?", "Because it is struck."]]]);
+    expect((await r.lessonConversations("c", "l1"))[0]!.questions[0]!.reply!.at).toBe(at(2));
+  });
+
+  cv("a reply to an unknown question is rejected, and stores nothing", async (r) => {
+    expect(await r.recordReply(answered(uuid()), at(1))).toEqual({ status: "rejected" });
+    const e = await tracked(r, passagePage);
+    const q = opening(e.id);
+    await r.ask(q, at(2));
+    expect(await r.recordReply(answered(uuid()), at(3))).toEqual({ status: "rejected" });
+    expect(await turns(r)).toEqual([[["Why does metal vibrate?", null]]]);
+    expect(await r.recordReply(answered(q.questionId), at(4))).toEqual({ status: "stored" });
+  });
+
+  cv("a malformed reply is refused and stores nothing", async (r) => {
+    const e = await tracked(r, passagePage);
+    const q = opening(e.id);
+    await r.ask(q, at(1));
+    const bads: ReplyRecord[] = [
+      { ...answered(q.questionId), text: "" }, { ...failedReply(q.questionId), status: "failed", error: "" },
+      { ...answered(q.questionId), error: "both" } as unknown as ReplyRecord, { ...answered(q.questionId), status: "maybe" } as unknown as ReplyRecord,
+      { ...answered(q.questionId), usage: { input_tokens: -1 } },
+    ];
+    for (const bad of bads) await expect(r.recordReply(bad, at(2)), JSON.stringify(bad)).rejects.toThrow();
+    expect(await turns(r)).toEqual([[["Why does metal vibrate?", null]]]);
+  });
+
+  cv("a lesson's conversations are read in seq order, each question in seq order with its reply, and no other lesson's", async (r) => {
+    const e = await tracked(r, passagePage);
+    const a = opening(e.id, { text: "A1?" });
+    const b = opening(e.id, { blockId: "q1", passage: "Which?", text: "B1?" });
+    await r.ask(a, at(1));
+    await r.ask(b, at(2));
+    const a2 = followUp(e.id, a.conversationId, "A2?");
+    await r.ask(a2, at(3));
+    await r.recordReply(answered(b.questionId, "B1."), at(4));
+    await r.recordReply(answered(a2.questionId, "A2."), at(5));
+    await r.recordReply(answered(a.questionId, "A1."), at(6)); // replies may come in any order; turns stay in question order
+    const b2 = followUp(e.id, b.conversationId, "B2?");
+    await r.ask(b2, at(7));
+    const elsewhere = await r.openEncounter({ course: "c", lesson: "l2", page: lesson("l2", [prose("p1")]), now: at(8), aidTracking: 1 });
+    await r.ask(opening(elsewhere.id, { text: "Other lesson?" }), at(9));
+    const read = await r.lessonConversations("c", "l1");
+    expect(read.map((c) => c.conversationId)).toEqual([a.conversationId, b.conversationId]);
+    expect(await turns(r)).toEqual([[["A1?", "A1."], ["A2?", "A2."]], [["B1?", "B1."], ["B2?", null]]]);
+    for (const c of read) {
+      const seqs = c.questions.map((q) => q.seq);
+      expect(seqs).toEqual([...seqs].sort((x, y) => x - y));
+      for (const q of c.questions) expect(q.exposureSeq < q.seq).toBe(true);
+    }
+    expect(await turns(r, "l2")).toEqual([[["Other lesson?", null]]]);
+    expect(await r.lessonConversations("c", "l3")).toEqual([]);
+    expect(await r.lessonConversations("d", "l1")).toEqual([]);
+  });
+
+  // Stress: many questions at once in one encounter. Oracle: RFC 6 §5.1 and §5.2: each question is
+  // stored once with its own exposure, before it in seq, and the read is in seq order. On Bun.SQL
+  // the calls run on a pool; the proof that they overlap is the race in bunsql.concurrency.test.ts.
+  cv("many questions at once in one encounter are each stored once, with their own exposure before them, and read in seq order", async (r) => {
+    const e = await tracked(r, passagePage);
+    const first = opening(e.id, { text: "Q0?" });
+    await r.ask(first, at(1));
+    const asked = Array.from({ length: 16 }, (_, k) => k % 2 === 0
+      ? opening(e.id, { text: `Q${k + 1}?` })
+      : followUp(e.id, first.conversationId, `Q${k + 1}?`));
+    const told = await Promise.all([...asked, ...asked.slice(0, 4)].map((q, k) => r.ask(q, at(2 + k))));
+    expect(told.slice(0, 16).every((x) => x.status === "stored" || x.status === "duplicate")).toBe(true);
+    expect(told.filter((x) => x.status === "stored")).toHaveLength(16);
+    expect(told.filter((x) => x.status === "duplicate")).toHaveLength(4);
+    const read = await r.lessonConversations("c", "l1");
+    const questions = read.flatMap((c) => c.questions);
+    expect(questions.map((q) => q.text).sort()).toEqual(Array.from({ length: 17 }, (_, k) => `Q${k}?`).sort());
+    const exposures = await rowsOf(r, e.id, "exposure", null);
+    expect(exposures).toHaveLength(17);
+    expect(new Set(questions.map((q) => q.exposureSeq))).toEqual(new Set(exposures));
+    for (const q of questions) expect(q.exposureSeq < q.seq).toBe(true);
+    const conversationSeqs = read.map((c) => c.seq);
+    expect(conversationSeqs).toEqual([...conversationSeqs].sort((x, y) => x - y));
+    for (const c of read) {
+      const seqs = c.questions.map((q) => q.seq);
+      expect(seqs).toEqual([...seqs].sort((x, y) => x - y));
+    }
   });
 
   // ---- Installed courses (RFC 7 §7; flyingrobots/school#232) ----------------------------------

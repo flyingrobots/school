@@ -7,14 +7,15 @@ import { PGlite } from "@electric-sql/pglite";
 import { migrate, readMigrations } from "./migrate.ts";
 
 /** Every table of the record. Asserted equal to the schema's tables, so a new one cannot be missed. */
-const RECORD_TABLES = ["answers", "authoring_decisions", "authoring_drafts", "authoring_requests", "course_installs", "course_removals", "course_trust_choices", "decision_notes", "encounters", "explanations", "exposures", "gradings", "snapshots", "time_zone_choices", "views"];
+const RECORD_TABLES = ["answers", "authoring_decisions", "authoring_drafts", "authoring_requests", "conversations", "course_installs", "course_removals", "course_trust_choices", "decision_notes", "encounters", "explanations", "exposures", "gradings", "questions", "replies", "snapshots", "time_zone_choices", "views"];
 
 /** The functions `school_app` may execute, and nothing else. */
 const APP_FUNCTIONS = [
-  "choice_decision_notes", "choose_course_trust", "choose_time_zone", "course_authoring", "course_progress", "decide_draft", "due_review", "encounter_answers", "encounter_decision_notes", "encounter_evidence",
-  "encounter_explanations", "explanation", "install_course", "installed_courses", "last_studied", "latest_feedback", "lesson_progress", "mastery", "mastery_rollup", "open_encounter", "open_lesson_encounter",
-  "record_decision_note", "record_draft", "record_exposure", "record_grading", "record_lesson_help", "record_view", "remove_installed_course", "request_authoring", "save_explanation", "study_days",
-  "submission_aid", "submit", "time_zone",
+  "ask", "choice_decision_notes", "choose_course_trust", "choose_time_zone", "course_authoring", "course_progress", "decide_draft", "due_review", "encounter_answers",
+  "encounter_decision_notes", "encounter_evidence", "encounter_explanations", "explanation", "install_course", "installed_courses", "last_studied", "latest_feedback",
+  "lesson_conversations", "lesson_progress", "mastery", "mastery_rollup", "open_encounter", "open_lesson_encounter", "record_decision_note", "record_draft", "record_exposure",
+  "record_grading", "record_lesson_help", "record_reply", "record_view", "remove_installed_course", "request_authoring", "save_explanation", "study_days", "submission_aid", "submit",
+  "time_zone",
 ];
 
 const SLOW = 30_000; // PGlite starts a whole Postgres in process.
@@ -97,6 +98,12 @@ async function populate(db: PGlite): Promise<{ encounter: string; submission: st
       [draft, request, "7".repeat(40), "8".repeat(64), at(11)])).rows[0]!.s).toBe("stored");
     expect((await db.query<{ s: string }>("SELECT school.decide_draft($1, $2, 'discarded', NULL, NULL, $3) AS s", [uuid(), draft, at(12)])).rows[0]!.s).toBe("stored");
     expect((await db.query<{ s: string }>("SELECT school.remove_installed_course('bells', $1) AS s", [at(13)])).rows[0]!.s).toBe("removed");
+    // A question about a passage stores its conversation, its ai-help exposure and itself (RFC 6 §5.2).
+    const question = uuid();
+    expect((await db.query<{ s: string }>("SELECT school.ask($1, $2, $3, 'q1', 'Which?', 'Why this one?', $4) AS s",
+      [uuid(), question, e.id, at(14)])).rows[0]!.s).toBe("stored");
+    expect((await db.query<{ s: string }>("SELECT school.record_reply($1, 'succeeded', 'Because.', $2, 'claude', NULL, NULL, NULL, $3) AS s",
+      [question, "[]", at(15)])).rows[0]!.s).toBe("stored");
     return { encounter: e.id, submission };
   });
 }
@@ -131,7 +138,7 @@ describe("acceptance", () => {
     const db = await fresh();
     await populate(db);
     const before = await counts(db);
-    for (const n of Object.values(before)) expect(n).toBe(1); // a row trigger only fires on a row
+    for (const n of Object.values(before)) expect(n).toBeGreaterThan(0); // a row trigger only fires on a row
     await as(db, "school_owner", async () => {
       for (const t of RECORD_TABLES) {
         expect(await error(db.exec(`UPDATE school.${t} SET at = at`))).toBe(`${t} are append-only`);
@@ -225,9 +232,10 @@ describe("acceptance", () => {
     // The snapshot and encounter take the open's at; each later write its own.
     expect(stored).toEqual({
       snapshots: [us(0)], encounters: [us(0)], answers: [us(1)], explanations: [us(2)],
-      gradings: [us(3)], views: [us(4)], exposures: [us(5)], decision_notes: [us(6)], time_zone_choices: [us(7)],
+      gradings: [us(3)], views: [us(4)], exposures: [us(5), us(14)], decision_notes: [us(6)], time_zone_choices: [us(7)],
       course_installs: [us(8)], course_trust_choices: [us(9)], authoring_requests: [us(10)], authoring_drafts: [us(11)], authoring_decisions: [us(12)],
       course_removals: [us(13)],
+      conversations: [us(14)], questions: [us(14)], replies: [us(15)],
     });
   }, SLOW);
 
@@ -476,8 +484,11 @@ describe("functions", () => {
       SELECT 'snapshots' AS t, seq::int FROM school.snapshots UNION ALL SELECT 'encounters', seq::int FROM school.encounters
       UNION ALL SELECT 'answers', seq::int FROM school.answers UNION ALL SELECT 'explanations', seq::int FROM school.explanations
       UNION ALL SELECT 'gradings', seq::int FROM school.gradings UNION ALL SELECT 'views', seq::int FROM school.views
-      UNION ALL SELECT 'exposures', seq::int FROM school.exposures ORDER BY seq`)).rows);
-    expect(seqs.map((r) => r.t)).toEqual(["snapshots", "encounters", "answers", "explanations", "gradings", "views", "exposures"]);
+      UNION ALL SELECT 'exposures', seq::int FROM school.exposures UNION ALL SELECT 'conversations', seq::int FROM school.conversations
+      UNION ALL SELECT 'questions', seq::int FROM school.questions UNION ALL SELECT 'replies', seq::int FROM school.replies ORDER BY seq`)).rows);
+    // A question opens its conversation, then records its exposure, then itself (RFC 6 §5.2).
+    expect(seqs.map((r) => r.t)).toEqual(["snapshots", "encounters", "answers", "explanations", "gradings", "views", "exposures",
+      "conversations", "exposures", "questions", "replies"]);
     expect(new Set(seqs.map((r) => r.seq)).size).toBe(seqs.length);
   }, SLOW);
 

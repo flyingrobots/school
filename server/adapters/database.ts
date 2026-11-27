@@ -123,6 +123,7 @@ type Login = {
  * another adds it here, or the server refuses to start; app-login.test.ts checks the two agree.
  */
 export const GRANTED_FUNCTIONS: readonly string[] = [
+  "school.ask(uuid,uuid,uuid,text,text,text,timestamp with time zone)",
   "school.choice_decision_notes(text,text,text)",
   "school.choose_course_trust(uuid,boolean,timestamp with time zone)",
   "school.choose_time_zone(text,timestamp with time zone)",
@@ -139,6 +140,7 @@ export const GRANTED_FUNCTIONS: readonly string[] = [
   "school.installed_courses()",
   "school.last_studied()",
   "school.latest_feedback()",
+  "school.lesson_conversations(text,text)",
   "school.lesson_progress(text)",
   "school.mastery(text,jsonb,timestamp with time zone,bigint)",
   "school.mastery_rollup(text,jsonb,timestamp with time zone,bigint)",
@@ -149,6 +151,7 @@ export const GRANTED_FUNCTIONS: readonly string[] = [
   "school.record_exposure(uuid,uuid,text,text,timestamp with time zone)",
   "school.record_grading(uuid,text,text,text,text,text,jsonb,text,jsonb,text,timestamp with time zone)",
   "school.record_lesson_help(uuid,uuid,text,timestamp with time zone)",
+  "school.record_reply(uuid,text,text,jsonb,text,text,jsonb,text,timestamp with time zone)",
   "school.record_view(text,text,timestamp with time zone)",
   "school.remove_installed_course(text,timestamp with time zone)",
   "school.request_authoring(uuid,text,uuid,text,text,text,timestamp with time zone)",
@@ -362,7 +365,9 @@ export async function migrateRecord(url: string, appPassword: string, onApplied?
     throw new Error("SCHOOL_APP_PASSWORD must be at least 20 letters and digits (it goes into a URL as it is); " +
       "generate one, e.g. `openssl rand -base64 32 | tr -d '/+='`");
   }
-  const pool = new Bun.SQL(url);
+  // One connection: the job runs on it alone. Bun.SQL's default pool opens ten and keeps them for
+  // the whole job, so a few jobs at once used up a server's max_connections (flyingrobots/school#356).
+  const pool = new Bun.SQL(url, { max: 1 });
   try {
     const conn = await reservedConnection(pool);
     try {

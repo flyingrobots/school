@@ -2,8 +2,8 @@
 title: "School's architecture"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-22
-updated: 2026-11-26
-version: 1.5.1
+updated: 2026-11-27
+version: 1.5.2
 status: "Living reference. Describes flyingrobots/school as read at commit a959505, plus the bridge's `POST /ask` (flyingrobots/school#226), with the record on Postgres since flyingrobots/school#47 and SQLite deleted by flyingrobots/school#49; proposals are in RFCs 2 and 3."
 ---
 
@@ -21,7 +21,7 @@ proposed; for that, read [RFC 2](../../rfc/0002-lessons-written-for-each-learner
 | [The three parts](#the-three-parts) | Framework, course, learner state, and the trust between them |
 | [The server](#the-server) | Routes, the write guard, file serving, the course list |
 | [The pinned skill](#the-pinned-skill) | The `school` skill an authoring agent is given, its manifest digest, and when authoring is off |
-| [The pinned skill](#the-pinned-skill) | The `school` skill an authoring agent is given, its manifest digest, and when authoring is off || [The hexagon](#the-hexagon) | The core, its ports and the adapters that implement them |
+| [The hexagon](#the-hexagon) | The core, its ports and the adapters that implement them |
 | [The learning record](#the-learning-record) | Tables, rules, encounters, what the rules do and do not guarantee |
 | [The bridge](#the-bridge) | How explanations are graded |
 | [The web app](#the-web-app) | What exists of the interface |
@@ -139,8 +139,9 @@ The server serves configured and installed courses together, under one set of na
 - **An install that is listed but not served.** The first time the list sees an install, it
   computes the folder's content digest and compares it with the record's `content_sha256`
   ([a course's folder](../course-format/README.md#an-installed-courses-folder)). Then, on every
-  request, it checks that the folder still exists. A folder that is missing, holds other files, or
-  holds anything but regular files and folders is still listed, with `lessons: null` and its reason
+  request, it checks that the folder still exists and is unchanged (below). A folder that is
+  missing, holds other files, or holds anything but regular files and folders is still listed,
+  with `lessons: null` and its reason
   in `lessonsError`, and none of its files are served. So is a folder the file system cannot read
   (an unreadable subfolder, or one that vanishes while it is read): only that install is affected,
   every other course is still served, and the failure is not remembered, so the install is served
@@ -150,11 +151,30 @@ The server serves configured and installed courses together, under one set of na
 - **A name both configured and installed** stops the start with exit code 2. The message names the
   configured folder and the install id. If such a row is written while School runs, School logs
   it to stderr once and the configured course keeps the name.
+- **When the record cannot be reached.** A configured course is found by name without reading the
+  record, so its lessons and reference files never wait on `installed_courses()`. If a read of the
+  list cannot reach the record, the configured courses are still served, and each install the list
+  last saw is listed with `lessons: null` and a reason saying the record cannot be reached; none of
+  its files are served until the record answers. The server logs the outage once, and again when
+  the record answers.
 
-The digest is computed once per install, because an install's folder is written once and never
-changed. A file changed while School runs is therefore found at the next start, but a folder
-deleted while School runs is found on the next request. Nothing writes into the course store yet:
-the install routes are later tasks of RFC 7.
+An install's folder is written once and never changed, so its digest is not computed on every
+request (flyingrobots/school#322). Just before computing it, the list takes a **fingerprint** of the
+folder: the device, inode, size, and modification and change times, in nanoseconds, of every file
+and folder in it, the folder itself included. Every request compares the fingerprint, one `lstat`
+per entry and no hashing. A file added, removed or renamed changes its folder's times, so the
+entries already listed are enough. On any difference the list computes the digest again: a folder
+whose digest is still the record's is served, with a new fingerprint, and one whose digest is not is
+listed as not served, trusted or not, with a reason naming the install id. So a file changed while
+School runs is checked at each request, and one put back as it was recorded is served again. The
+check is not a lock: a file can change in the small window between the check and the read, which
+takes write access to the course store. A filesystem with coarse timestamps could also miss a
+change made in the same tick as the one before it. Nothing
+writes into the course store yet: the install routes are later tasks of RFC 7.
+
+A request that fails, most often because the record cannot be reached, answers `503` with
+`{ error }` in JSON, a neutral sentence with no stack trace, and the server logs the error's message
+to stderr.
 
 In short: the server is thin. It answers only to its own names, serves files safely, guards
 writes against ordinary cross-site requests, and hands learning-record work to Postgres functions.
@@ -236,7 +256,7 @@ The record is Postgres, built by the numbered migrations in `server/db/migration
 `0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_read_committed.sql`,
 `0006_due_review.sql`, `0007_since_last_here.sql`, `0008_study_days.sql`, `0009_time_zone_choices.sql`,
 `0010_course_installs.sql`, `0011_mastery.sql`, `0012_ai_help.sql`, `0013_mastery_rollup.sql`,
-`0014_faded_review.sql`, `0015_course_progress.sql`, `0016_authoring.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
+`0014_faded_review.sql`, `0015_course_progress.sql`, `0016_authoring.sql`, `0017_conversations.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -251,7 +271,7 @@ start rather than serve from its own copy.
 | Step at startup | What happens |
 | --- | --- |
 | 1. The SQLite check | If `DB_PATH` (default `<SCHOOL_STATE>/progress.db`, the old SQLite record) exists and holds any answer, explanation or view, or cannot be read as SQLite, the server exits with code 2 and names the file, before it opens Postgres. Nothing migrates from SQLite (RFC 3 §3.3). |
-| 2. Migrations, as the owner | On Postgres, not in the server: the migrate job (`server/migrate.ts`; the one-shot `migrate` service in `server/compose.yaml`, which the server waits for with `service_completed_successfully`) connects with `SCHOOL_MIGRATE_URL`, runs `server/db/migrate.ts` on one reserved connection, gives `school_app` `LOGIN` and the password `SCHOOL_APP_PASSWORD` (sent as a SCRAM verifier), clears every setting on the role (`ALTER ROLE school_app RESET ALL`, also per database), revokes `CREATE` and `TEMPORARY` on the database from `PUBLIC`, and exits. On PGlite the server runs the migrations itself, on its one session, which is the superuser. |
+| 2. Migrations, as the owner | On Postgres, not in the server: the migrate job (`server/migrate.ts`; the one-shot `migrate` service in `server/compose.yaml`, which the server waits for with `service_completed_successfully`) connects with `SCHOOL_MIGRATE_URL`, runs `server/db/migrate.ts` on one reserved connection, gives `school_app` `LOGIN` and the password `SCHOOL_APP_PASSWORD` (sent as a SCRAM verifier), clears every setting on the role (`ALTER ROLE school_app RESET ALL`, also per database), revokes `CREATE` and `TEMPORARY` on the database from `PUBLIC`, and exits. Jobs on several databases of one Postgres cluster may run at once ([below](#migrate-jobs-on-one-cluster)). On PGlite the server runs the migrations itself, on its one session, which is the superuser. |
 | 3. The login check | On Postgres the server logs in with `school_app`'s URL and refuses to start (exit 2, naming each reason, and the host, never a password) unless every check in [the login check](#the-login-check) holds. PGlite has no login and skips this. |
 | 4. Requests, as `school_app` | PGlite's session runs `SET ROLE school_app` once. On `Bun.SQL`, every statement still runs in its own transaction that starts with `SET LOCAL ROLE school_app`. The server checks that `current_user` is `school_app` before it serves. |
 | 5. Function calls only | The server's record accepts only `SELECT * FROM school.<function>($1, ...)`; anything else is refused before the driver sees it. |
@@ -260,6 +280,25 @@ On Postgres the server holds only `school_app`'s credentials (flyingrobots/schoo
 stay as defence in depth. PGlite's session is the superuser and takes `school_app`'s role, so there a
 statement that resets the role would get the superuser back; step 5 is what stops it, a guard
 rail, not tamper-proofing. PGlite is for development and tests only.
+
+### Migrate jobs on one cluster
+
+A Postgres server (a cluster) can hold more than one School record, each in a database of its own:
+the test server does, and so could a host that serves more than one learner. Jobs on different
+databases may run at once and all succeed (flyingrobots/school#356). The job's advisory locks cover
+only its own database, while `school_owner`, `school_app` and the server's connection limit
+belong to the whole cluster, so the job handles three things that cross databases:
+
+| Shared by the cluster | What the job does | Before flyingrobots/school#356 |
+| --- | --- | --- |
+| `max_connections` | Opens one connection, and runs the whole job on it | It held ten (Bun.SQL's default pool), so a few jobs at once failed with 53300, `too_many_connections` |
+| The roles, created if absent | When a job on another database creates a role between this job's check and its `CREATE ROLE`, the job waits for that job's transaction and takes the role as created: it catches `unique_violation` (23505) and `duplicate_object` (42710) from that statement only | On a cluster without the roles, every job but one failed with 23505 on `pg_authid_rolname_index` |
+| `school_app`'s catalog row | The role update waits for another transaction's change to the row, then retries on Postgres's `tuple concurrently updated`, up to 20 times with a short random pause. It throws any other error at once | Unchanged |
+
+_Table 1. What a migrate job shares with jobs on other databases of the same cluster, and how it
+handles each. Jobs on different clusters share nothing, and none waits on another._
+
+The cases are in `server/adapters/migrate-cluster.test.ts` (the [test plan](test-plan.md#migrate-jobs-on-one-cluster-flyingrobotsschool356)).
 
 ### The login check
 
@@ -274,7 +313,7 @@ connection, in the record's database. The server refuses to start if any of thes
 | 4 | Owns no schema (schema `school` included), relation, function, type or database | the owner's login, objects it created |
 | 5 | Outside `pg_catalog` and `information_schema`: no privilege on any table, view, materialized view or foreign table (`SELECT` to `MAINTAIN`), no `USAGE`, `SELECT` or `UPDATE` on any sequence, no column privilege | table, column, sequence and `MAINTAIN` grants |
 | 6 | In `pg_catalog` and `information_schema`: no write privilege on any relation (except `UPDATE` on `pg_settings`, which Postgres grants `PUBLIC` and which is `SET`), and no `SELECT` on the relations Postgres withholds from an ordinary role (`RESTRICTED_RELATIONS`: `pg_authid`, `pg_statistic`, `pg_shadow` and 20 more) | catalog grants to it or to `PUBLIC` |
-| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 34 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
+| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 37 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
 | 8 | No privilege granted to it by name on any relation, column, function (but the granted ones), schema (but `USAGE` on `school`), database, type, language, large object, foreign-data wrapper, foreign server or tablespace; no parameter privilege (`pg_parameter_acl`) granted to it or to `PUBLIC` | direct grants, `GRANT SET ON PARAMETER` |
 | 9 | No default privileges (`pg_default_acl`) granting to it or to `PUBLIC`, and none set by it | future grants |
 | 10 | No `CREATE` on any schema; no `CREATE` or `TEMPORARY` on the record's database | creating objects there |
@@ -420,6 +459,32 @@ One extension beyond RFC 9 Figure 5.2 stays: a `failed` draft may be discarded, 
 `school.latest_feedback()` is the succeeded grading with the highest `seq` and where its explanation
 was written; the port's `latestFeedback`. A failed attempt is never feedback.
 
+Conversations about a passage are migration 0017 (RFC 6 §5.2, flyingrobots/school#225), in three
+more append-only tables. `conversations` holds one row per passage asked about: the course and
+lesson of the encounter it was opened in, the block where the passage begins (any block of the
+lesson but the page itself), and the passage, at most 2,000 characters. `questions` holds each
+question, at most 4,000 characters, with the encounter it was asked in and `exposure_seq`, its own
+`ai-help` exposure of that encounter (`questions_exposure_encounter` holds the two to the same
+encounter, and `questions_exposure` gives each exposure to one question). `replies` holds at most
+one reply per question (`replies_question`): `succeeded` with the answer, or `failed` with the
+reason and whatever text reached the learner, with the sources it quoted, the agent, the model, and
+the token counts when the agent reports them.
+
+`school.ask(conversation_id, question_id, encounter_id, block_id, passage, text, at)` is the port's
+`ask`. In one transaction it opens the conversation on its first question, records the question's
+`ai-help` exposure through `record_lesson_help`, and stores the question, so the exposure's `seq` is
+smaller than that of any answer given after it. It answers `stored`; `duplicate` for the same id and
+the same question; `conflict` for the same id and another question; or `rejected`, storing nothing,
+when the encounter does not exist or does not track aid, when a new conversation has no passage or
+its block is not in the encounter's snapshot, or when a later question gives a passage or is asked
+in an encounter of another lesson. It serialises per conversation and per question on advisory
+locks, so it refuses to run under anything but READ COMMITTED.
+`school.record_reply(question_id, status, text, sources, agent, model, usage, error, at)`, the
+port's `recordReply`, stores the one reply: `stored`, `duplicate`, `conflict`, or `rejected` for no
+such question. `school.lesson_conversations(course, lesson)`, the port's `lessonConversations`,
+reads a lesson's conversations in `seq` order, each with its questions in `seq` order and their
+replies. Nothing calls them over HTTP yet.
+
 **Figure 3. The learning record's tables**
 
 ```mermaid
@@ -475,6 +540,40 @@ erDiagram
         uuid encounter_id FK
         text block_id "NULL exactly for ai-help: the whole encounter"
         text kind "hint, model-answer, feedback, reference, ai-help"
+        timestamptz at
+    }
+    CONVERSATIONS ||--o{ QUESTIONS : "collects"
+    ENCOUNTERS ||--o{ QUESTIONS : "is asked in"
+    QUESTIONS ||--|| EXPOSURES : "records, kind ai-help"
+    QUESTIONS ||--o| REPLIES : "is answered by"
+    CONVERSATIONS {
+        bigint seq PK
+        uuid conversation_id UK "caller UUID"
+        text course
+        text lesson
+        text block_id "where the passage begins"
+        text passage "at most 2,000 characters"
+        timestamptz at
+    }
+    QUESTIONS {
+        bigint seq PK
+        uuid question_id UK "caller UUID"
+        uuid conversation_id FK
+        uuid encounter_id FK
+        text text "at most 4,000 characters"
+        bigint exposure_seq FK "its ai-help exposure, same encounter"
+        timestamptz at
+    }
+    REPLIES {
+        bigint seq PK
+        uuid question_id FK "unique: one reply per question"
+        text status "succeeded or failed"
+        text text
+        jsonb sources "quoted sources, checked"
+        text agent
+        text model
+        jsonb usage "token counts, when reported"
+        text error "set exactly when failed"
         timestamptz at
     }
     ENCOUNTERS |o--o{ DECISION_NOTES : "is chosen for"
@@ -561,12 +660,13 @@ erDiagram
 *Figure 3. The learning record's tables, in schema `school`. Every row takes its `seq` from one
 shared sequence, so "before" and "after" across tables compare `seq`, never `at`. `VIEWS` (page
 views) and `TIME_ZONE_CHOICES` (the learner's time zone) are omitted. `EXPOSURES` is written by `POST /api/exposure`, which the
-lesson page calls for each help it shows, and will be written by the server's `record_lesson_help` for help a model writes once asking lands (RFC 6).*
+lesson page calls for each help it shows, and by `school.ask`, through `record_lesson_help`, for each question about a passage (RFC 6).*
 
 | Rule | How it is enforced | What it does not cover |
 | --- | --- | --- |
 | Rows are never updated, deleted or truncated | `BEFORE UPDATE OR DELETE` row triggers and `BEFORE TRUNCATE` statement triggers on every table | The owner or the superuser can drop a trigger. Guard rails, not tamper-proofing. |
 | The server can only call the public functions | `school_app` has `EXECUTE` on them by name and no table privilege; `EXECUTE` is revoked from `PUBLIC`; the server's record refuses any other statement | A process holding the superuser or owner URL: on Postgres only the migrate job and the backup service do; on PGlite the server's own session is the superuser. A hand grant to `school_app` the login check cannot detect (see [the login check](#the-login-check)) |
+| A question is stored with its aid, or not at all | `school.ask` writes the conversation, the `ai-help` exposure and the question in one transaction; `questions_exposure_encounter` holds the exposure to the question's encounter; advisory locks per conversation and question, so a resend at the same moment is a `duplicate` with no second exposure | A direct `INSERT` by the owner |
 | A resent submission stores nothing | Unique `answers.submission_id`; `school.submit` answers `duplicate`, or `conflict` for a different answer under the same id | Nothing further |
 | `correct` and `first_try` come from the snapshot | `school.submit` derives them from the encounter's stored snapshot; the client's are ignored. A partial unique index allows one first try per block and encounter, even under concurrent answers | A direct `INSERT` by the owner |
 | An acknowledged answer survives the server's crash | The 200 is sent after the function's transaction commits; a test kills the server hard and reads the answer back | On PGlite, an operating-system crash or power cut: PGlite writes through to its folder but does not `fsync`, so the last commits may be lost. Real Postgres `fsync`s each commit. Under compose, the `backup` service dumps the record every six hours and keeps 28 dumps, on the same machine ([backup and restore](../../workflows/backup-and-restore/README.md)); an answer since the last dump is not in any dump. |
@@ -575,7 +675,9 @@ Every adapter of the record passes one contract suite (`server/contract/learning
 replays one learner's history (`server/contract/learner-history.ts`). Both run on PGlite in every
 test run, and in CI also on a real Postgres server through `Bun.SQL`, the driver the server uses;
 CI fails the build if any of the real-Postgres cases skipped or a PGlite case has no `Bun.SQL`
-counterpart (`server/testing/postgres-gate.ts`).
+counterpart (`server/testing/postgres-gate.ts`). The conversation tables' storage rules, no
+direct access for `school_app` and no update, delete or truncate even by the owner, are checked on
+both drivers too (`server/contract/conversation-tables.ts`).
 
 The concurrent cases run against real Postgres too, in the same CI job and under the same gate
 (`server/adapters/bunsql.concurrency.test.ts`). Each race is held inside the database: a
@@ -802,7 +904,7 @@ The identity check misses one case: a mount made after School started, since the
 
 ### Fetching a course repository
 
-`fetchCommit` (`server/fetch-commit.ts`, RFC 7 §6) fetches one commit of a course repository into a new bare repository, `<staging>/repo.git`, and answers the commit's full hash. The [install preview](#previewing-an-install) calls it with a staging folder under the course store. The URL and the server are hostile, so School checks the commit, then the URL, then the host's addresses, then the staging folder, and only then runs git. Table 1 lists the rules in that order, and the first rule broken gives the refusal. Any refusal deletes the staging folder, or never makes it.
+`fetchCommit` (`server/fetch-commit.ts`, RFC 7 §6) fetches one commit of a course repository into a new bare repository, `<staging>/repo.git`, and answers the commit's full hash. The [install preview](#previewing-an-install) calls it with a staging folder under the course store. The URL and the server are hostile, so School checks the commit, then the URL, then the host's addresses, then the staging folder, and only then runs git. Table 2 lists the rules in that order, and the first rule broken gives the refusal. Any refusal deletes the staging folder, or never makes it.
 
 | Rule | Refused with |
 | --- | --- |
@@ -819,9 +921,9 @@ The identity check misses one case: a mount made after School started, since the
 | Each git process finishes within 60 seconds. The fetched repository stays within 64 MiB on disk: School measures it every 100 ms while git runs and again when git ends (RFC 7 Table 6.2). Passing either limit kills git's whole process group | `timeout`, `too-large` |
 | git fetches the commit, and the object is a commit, not a tree or blob | `git-failed`, `not-a-commit` |
 
-_Table 1. What `fetchCommit` checks, in the order the code checks it. Every refusal carries a sentence naming what was refused._
+_Table 2. What `fetchCommit` checks, in the order the code checks it. Every refusal carries a sentence naming what was refused._
 
-git is pinned to the addresses School checked. `http.curloptResolve=HOST:443:ADDRESS[,ADDRESS]` hands them to libcurl, so git never looks the host up again, and a second answer from DNS (rebinding) is never used. Only a plain host name can be pinned this way: libcurl reads a name starting with `-` as "remove this entry", so Table 1 refuses such a name before any lookup. Redirects are not followed (`http.followRedirects=false`), because a redirect could lead to a host or port the pin does not cover. git runs with a fresh environment: no system or global configuration, `HOME` set to the staging folder (so no `.netrc`), `GIT_TERMINAL_PROMPT=0`, no askpass, an empty `credential.helper`, an empty `http.proxy` (which also overrides a proxy in the environment), `core.hooksPath=/dev/null`, `transfer.fsckObjects`, no submodules, and `git init --bare --template=`. The bare repository is made first. Every later git command, `ls-remote` included, names that repository with `--git-dir` and starts in it, and `GIT_CEILING_DIRECTORIES` stops git looking above the staging folder. So a git repository around the course store adds no configuration, such as a header, a URL rewrite or a proxy. The fetch is `git fetch --depth=1 --no-tags --no-recurse-submodules <url> <hash>`, so the repository holds that one commit and nothing is checked out. `refs/heads/course` then points at the commit, so nothing prunes it before it is read. When git exits, School kills its process group, so no helper it started outlives it. A host that will not serve a commit by its hash fails as `git-failed`, with git's own message.
+git is pinned to the addresses School checked. `http.curloptResolve=HOST:443:ADDRESS[,ADDRESS]` hands them to libcurl, so git never looks the host up again, and a second answer from DNS (rebinding) is never used. Only a plain host name can be pinned this way: libcurl reads a name starting with `-` as "remove this entry", so Table 2 refuses such a name before any lookup. Redirects are not followed (`http.followRedirects=false`), because a redirect could lead to a host or port the pin does not cover. git runs with a fresh environment: no system or global configuration, `HOME` set to the staging folder (so no `.netrc`), `GIT_TERMINAL_PROMPT=0`, no askpass, an empty `credential.helper`, an empty `http.proxy` (which also overrides a proxy in the environment), `core.hooksPath=/dev/null`, `transfer.fsckObjects`, no submodules, and `git init --bare --template=`. The bare repository is made first. Every later git command, `ls-remote` included, names that repository with `--git-dir` and starts in it, and `GIT_CEILING_DIRECTORIES` stops git looking above the staging folder. So a git repository around the course store adds no configuration, such as a header, a URL rewrite or a proxy. The fetch is `git fetch --depth=1 --no-tags --no-recurse-submodules <url> <hash>`, so the repository holds that one commit and nothing is checked out. `refs/heads/course` then points at the commit, so nothing prunes it before it is read. When git exits, School kills its process group, so no helper it started outlives it. A host that will not serve a commit by its hash fails as `git-failed`, with git's own message.
 
 The request names only the URL, the commit and the staging folder. The git program, the network (resolver, address check, ports, CA file) and the limits are a separate second argument, `FetchTesting`. Only tests pass it, to reach a local server, and no route may build it from a client's input.
 
@@ -842,7 +944,7 @@ A refusal at any stage deletes the preview's folder and answers 422. This one is
   "message": "0001-places-worth-twice.json > places-worth-twice > places-practice > places-q-worth: exactly one choice must be correct" }
 ```
 
-`stage` is `fetch`, `extract` or `check`. `reason` is the fetch's reason (Table 1), the extraction's (`unsafe-name`, `case-collision`, `symlink`, `submodule`, `lfs-pointer`, `too-many-files`, `file-too-large`, `total-too-large`, `path-too-long`, `too-deep`, `not-a-commit`, `bad-destination`, `timeout`, `git-failed`), or `invalid` for the check. `path` is the tree path or course file it concerns, or null. `message` is the stage's own sentence, git's error output included for `git-failed`, with any path inside the store made relative to the course. It is text from the server and from git, and a client shows it as text, never as HTML.
+`stage` is `fetch`, `extract` or `check`. `reason` is the fetch's reason (Table 2), the extraction's (`unsafe-name`, `case-collision`, `symlink`, `submodule`, `lfs-pointer`, `too-many-files`, `file-too-large`, `total-too-large`, `path-too-long`, `too-deep`, `not-a-commit`, `bad-destination`, `timeout`, `git-failed`), or `invalid` for the check. `path` is the tree path or course file it concerns, or null. `message` is the stage's own sentence, git's error output included for `git-failed`, with any path inside the store made relative to the course. It is text from the server and from git, and a client shows it as text, never as HTML.
 
 A course that passes answers 200. This is the example course as PREVIEW-1 and PREVIEW-12 check it, with progress already under its name; the URL is illustrative, and the preview id and hash are shortened:
 
