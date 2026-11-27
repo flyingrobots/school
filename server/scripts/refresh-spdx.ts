@@ -71,7 +71,7 @@ export function renderExceptionIds(release: Release, ids: readonly string[]): st
 // (server/course-file.ts) names only these after \`WITH\`. Copied, not a dependency (ADR 2).
 // Generated: to update, run \`bun server/scripts/refresh-spdx.ts\` (docs/working-notes.md).
 
-import type { Release } from "./spdx-license-ids.ts";
+import type { Release } from ${JSON.stringify("./spdx-license-ids.ts")};
 
 ${stamp("EXCEPTION_IDS_RELEASE", release)}
 
