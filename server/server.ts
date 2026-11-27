@@ -344,14 +344,17 @@ const lessonOf = (pages: Extract<Block, { type: "page" }>[], blockId: string) =>
   return p === undefined ? null : { id: p.id, title: p.title };
 };
 
-/** The newest succeeded grading, where its explanation was written, and the prompt it answered. */
+/**
+ * The newest succeeded grading, where its explanation was written, and the prompt it answered, with
+ * its course's `trusted` (flyingrobots/school#272). A course no longer served is not trusted.
+ */
 async function feedbackJson(): Promise<Response> {
   const f = await school.latestFeedback();
   if (f === null) return json(null, 200, { "cache-control": "no-store" });
   const c = served.find((x) => x.name === f.course);
   const page = c === undefined ? undefined : readablePages(c).find((p) => p.id === f.lesson);
   return json({
-    course: f.course, courseTitle: c === undefined ? f.course : titleOf(c), lesson: { id: f.lesson, title: page?.title ?? f.lesson },
+    course: f.course, courseTitle: c === undefined ? f.course : titleOf(c), trusted: c?.trusted ?? false, lesson: { id: f.lesson, title: page?.title ?? f.lesson },
     blockId: f.blockId, prompt: f.prompt, model: f.model, findings: f.findings, at: f.at,
   }, 200, { "cache-control": "no-store" });
 }
@@ -383,7 +386,10 @@ async function speakJson(body: unknown): Promise<Response> {
   return toSpeech(currentBridge(), noSpeech(), "POST", "/speak", { body: { text } });
 }
 
-/** The questions due for review now, across served courses, each with where it lives and why it's back. */
+/**
+ * The questions due for review now, across served courses, each with where it lives, why it's back
+ * and its course's `trusted` (flyingrobots/school#272).
+ */
 async function reviewJson(params: URLSearchParams): Promise<Response> {
   const tz = await zoneParam(params);
   if (tz === null) return json(BAD_ZONE, 400);
@@ -391,14 +397,17 @@ async function reviewJson(params: URLSearchParams): Promise<Response> {
     const pages = readablePages(c);
     const quizzesById = new Map(pages.flatMap((p) => quizzes(p).map((q) => [q.id, q] as const)));
     return (await school.dueNow(c.name, [...quizzesById.keys()], tz)).map(({ item, reason }) => ({
-      course: c.name, courseTitle: titleOf(c), lesson: lessonOf(pages, item.blockId), blockId: item.blockId,
+      course: c.name, courseTitle: titleOf(c), trusted: c.trusted, lesson: lessonOf(pages, item.blockId), blockId: item.blockId,
       question: quizzesById.get(item.blockId)?.q ?? null, answeredAt: item.answeredAt, rule: item.rule, reason,
     }));
   }));
   return json(due.flat(), 200, { "cache-control": "no-store" });
 }
 
-/** Each course's study days in the last `days`, and how many questions come back on each day ahead. */
+/**
+ * Each course's study days in the last `days`, and how many questions come back on each day ahead,
+ * with the course's `trusted` (flyingrobots/school#272).
+ */
 async function activityJson(params: URLSearchParams): Promise<Response> {
   const given = params.get("days");
   const days = given === null ? 14 : /^[0-9]+$/.test(given) ? Number(given) : NaN;
@@ -409,7 +418,10 @@ async function activityJson(params: URLSearchParams): Promise<Response> {
   const a = await school.activity(courses, days, tz);
   return json({
     today: a.today, tz, days,
-    courses: a.courses.map((x) => ({ course: x.course, courseTitle: titleOf(served.find((c) => c.name === x.course)!), studied: x.studied, due: x.due })),
+    courses: a.courses.map((x) => {
+      const c = served.find((s) => s.name === x.course)!;
+      return { course: x.course, courseTitle: titleOf(c), trusted: c.trusted, studied: x.studied, due: x.due };
+    }),
   }, 200, { "cache-control": "no-store" });
 }
 
@@ -446,11 +458,16 @@ async function showcaseJson(): Promise<Response> {
   return json(ahead.flat(), 200, { "cache-control": "no-store" });
 }
 
-/** What to study now: where the learner left off and the next step from it (core/school.ts, resumeFrom). */
+/**
+ * What to study now: where the learner left off and the next step from it (core/school.ts,
+ * resumeFrom), with its course's `trusted` when it names one (flyingrobots/school#272).
+ */
 async function resumeJson(): Promise<Response> {
   const outlines = await Promise.all(served.map(outline));
   const readable = outlines.filter((o): o is CourseOutline => o !== null);
-  return json(resumeFrom(await school.lastStudied(), readable), 200, { "cache-control": "no-store" });
+  const r = resumeFrom(await school.lastStudied(), readable);
+  const body = r.kind === "nothing" ? r : { ...r, trusted: served.find((c) => c.name === r.course)?.trusted ?? false };
+  return json(body, 200, { "cache-control": "no-store" });
 }
 
 /**
