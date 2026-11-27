@@ -13,8 +13,8 @@
 import { z } from "zod";
 import {
   AuthoringDecision, AuthoringDraft, AuthoringRequest, AuthoringResult, DecisionResult, DraftResult, RecordedRequest,
-  CourseInstall, Aid, Block, DecisionNote, InstallResult, InstalledCourse, RemovalResult, TrustResult, DecisionNoteResult, DueItem, Encounter, EvidenceKind, EvidenceRow, ExplanationState, ExposureResult, Grading,
-  Findings, LastStudied, LatestFeedback, LessonProgress, Mastery, Recorded, SaveResult, Seq, StudyDay, SubmitResult, type ExplainBlock,
+  CourseInstall, CourseProgress, Aid, Block, DecisionNote, InstallResult, InstalledCourse, RemovalResult, TrustResult, DecisionNoteResult, DueItem, Encounter, EvidenceKind, EvidenceRow, ExplanationState, ExposureResult, Grading,
+  Findings, LastStudied, LatestFeedback, LessonProgress, Mastery, MasteryRollup, Recorded, SaveResult, Seq, StudyDay, SubmitResult, type ExplainBlock,
 } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
 import type { Sql } from "./sql.ts";
@@ -53,6 +53,7 @@ const NoteRow = z.object({ note: DecisionNote });
 const OpenedLesson = Opened.extend({ content: Block });
 const Due = z.object({ item: DueItem });
 const Held = z.object({ item: Mastery });
+const Rolled = z.object({ item: MasteryRollup });
 const Studied = z.object({ course: z.string(), lesson: z.string(), at: time });
 const InstalledRow = z.object({
   id: z.string(), course: z.string(), source: z.string(), url: z.string().nullable(), bundle_sha256: z.string().nullable(), commit: z.string(),
@@ -180,6 +181,8 @@ export function postgresRecord(sql: Sql): LearningRecord {
 
     courseAuthoring: async (course) => (await rows("course_authoring", course)).map((row) => RequestRow.parse(row).request),
 
+    courseProgress: async (course) => CourseProgress.parse(await one("course_progress", course)),
+
     saveExplanation: async (s, now) =>
       SaveResult.parse({ status: await value("save_explanation", s.submissionId, s.encounterId, s.blockId, s.text, s.ms, now) }),
 
@@ -242,5 +245,9 @@ export function postgresRecord(sql: Sql): LearningRecord {
     // blocks goes as a value for its jsonb parameter, as for due review.
     mastery: async (q) =>
       (await rows("mastery", q.course, q.blocks, q.now, q.delayMs)).map((row) => Held.parse(row).item),
+
+    // groups goes as a value for its jsonb parameter, an object from key to blocks.
+    masteryRollup: async (q) =>
+      (await rows("mastery_rollup", q.course, q.groups, q.now, q.delayMs)).map((row) => Rolled.parse(row).item),
   };
 }

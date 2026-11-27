@@ -175,3 +175,39 @@ _Table 5. The fetch's cases. FETCH-2 to FETCH-29 are in `server/fetch-commit.tes
 _Table 6. The authoring record's cases. State kept outside the Postgres record is the failure mode the issue names: every case reads back through the port, never from a cache._
 
 Every refusal the issue names is a case here, and every case reads the record back through the port on both drivers.
+
+## Previewing an install (flyingrobots/school#237)
+
+`POST /api/installs/preview` and `previewInstall` in `server/install-preview.ts`, RFC 7 §4, §5.2 and §8, task 7. The oracles are the issue's acceptance criteria, RFC 7's pipeline (Figure 4.1, Listing 5.1) and §5.2's naming rule, the example course's own `course.json`, and `checkCourse` on the same files. Every case that fetches runs against the local https server of the fetch cases through `FetchTesting`, which the route never passes; the route's cases are refused before git runs and reach no network.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| PREVIEW-1 | The example course at its full hash | Its title, summary, author, license `Apache-2.0`, format 1, both lessons with their quiz and explain counts, 3 distinct quizzes, the suggested name `counting-in-binary`, nothing taken, no progress, the preview id and an expiry an hour on | implemented | `server/install-preview.test.ts`: `PREVIEW-1: the example course answers its title, lessons, quizzes, license and format` |
+| PREVIEW-2 | The example course by branch | Answered with the full hash the branch resolved to | implemented | `PREVIEW-2: a branch is answered as the full hash it resolved to` |
+| PREVIEW-3 | What a good preview leaves | `staging/<id>/` holds only `course/` (course.json, two lessons, the glossary) and `preview.json` (URL, full commit, expiry); no `repo.git`, no `courses/` | implemented | `PREVIEW-3: the preview is kept in staging as the course School reads and its source, with no repository and nothing in courses/` |
+| PREVIEW-4 | The example with a quiz that has no correct choice | `check` refusal with `checkCourse`'s own file and message; only an empty `staging/` left | implemented | `PREVIEW-4: a bad course answers the check's own message, and leaves nothing in the store but an empty staging/` |
+| PREVIEW-5 | A `course.json` that is not JSON | Named `course.json` in `path` and `message`; the answer holds no path in the store | implemented | `PREVIEW-5: a course.json the check refuses is named as course.json, never by its path in the store` |
+| PREVIEW-6 | A branch the repository lacks | `fetch` refusal, `no-such-ref`; nothing staged | implemented | `PREVIEW-6: a fetch refusal answers its reason, and leaves nothing staged` |
+| PREVIEW-7 | A symlink under `reference/` | `extract` refusal, `symlink`, at `reference/secret`; nothing staged | implemented | `PREVIEW-7: an extraction refusal answers its reason and path, and leaves nothing staged` |
+| PREVIEW-8 | No body, an array, no `url` or `commit`, a number for the URL, test seams beside the request | `invalid`; `staging/` never made | implemented | `PREVIEW-8: a request with %s is invalid, and nothing is fetched or staged` |
+| PREVIEW-9 | RFC 7 §5.2's example URL, a trailing slash and `.GIT`, percent-encoding, a reserved name, no path, nothing usable | `school-bells`, `some-course`, `caf-notes`, the title's name, then `course` | implemented | `PREVIEW-9: %s with title %p suggests %s` |
+| PREVIEW-10 | A suggested name a configured course has | `taken: "configured"` | implemented | `PREVIEW-10: a suggested name a configured course has is answered as taken by it` |
+| PREVIEW-11 | A suggested name a current install has | `taken: "installed"` | implemented | `PREVIEW-11: a suggested name a current install has is answered as taken by it` |
+| PREVIEW-12 | A name with an encounter and an answer on a real PGlite record | `progress` is those counts; every row of every table in schema `school` is the same after the preview | implemented | `PREVIEW-12: a name the record already has progress under is answered with that progress, and the record is unchanged` |
+| PREVIEW-13 | A staged preview past its `expires`, one within it | The first deleted, the second kept | implemented | `PREVIEW-13: a preview past its time is deleted and one within it is kept` |
+| PREVIEW-14 | Staging folders with no `preview.json`, an hour old and a second old | The first deleted, the second kept | implemented | `PREVIEW-14: a staging folder with no preview.json is deleted once it is older than a preview's lifetime, and kept while it may still be in progress` |
+| PREVIEW-15 | Sweeping everything | Every preview deleted; `staging/` and `courses/` kept | implemented | `PREVIEW-15: sweeping everything, as at start, deletes every preview and keeps courses/` |
+| PREVIEW-16 | An expired preview, then a new preview | The expired one is gone | implemented | `PREVIEW-16: an expired preview is swept by the next preview` |
+| PREVIEW-17 | A `staging/` that is a symlink to a folder holding an expired preview | Neither sweep (expired only, or everything) deletes anything there | implemented | `PREVIEW-17: staging/ that is a symlink is not swept, and what it points at is left alone` |
+| PREVIEW-18 | The record throws after the course passed its check | The error reaches the caller and `staging/` is empty | implemented | `PREVIEW-18: a preview that throws after the course passed its check still deletes its staging, and the error reaches the caller` |
+| PREVIEW-ROUTE-1 | A preview left in `staging/` before start | Gone once School is up | implemented | `server/install-preview-route.test.ts`: `PREVIEW-ROUTE-1: School sweeps staging/ at start, so a preview left behind is gone` |
+| PREVIEW-ROUTE-2 | No course store | 503, naming `SCHOOL_COURSE_STORE` | implemented | `PREVIEW-ROUTE-2: without a course store, the answer is a 503 that names SCHOOL_COURSE_STORE` |
+| PREVIEW-ROUTE-3 | An `http` URL, a loopback address, credentials, a commit given as an option | 422 JSON with `stage: "fetch"` and the fetch's reason; `courses/` never made | implemented | `PREVIEW-ROUTE-3: %s is refused as JSON with its reason, and courses/ is never made` |
+| PREVIEW-ROUTE-4 | A body that is not JSON, lacks `commit`, or carries another field | 400 JSON | implemented | `PREVIEW-ROUTE-4: a body that is %s is a 400` |
+| PREVIEW-ROUTE-5 | A Host not in `SCHOOL_ALLOWED_HOSTS` | 403; nothing staged | implemented | `PREVIEW-ROUTE-5: a Host not among School's names is refused before routing, and nothing is staged`; also `server/host.test.ts`: `a request with Host %p is refused on every route` |
+| PREVIEW-ROUTE-6 | `Sec-Fetch-Site` `cross-site`, `same-site`, `none` | 403 | implemented | `PREVIEW-ROUTE-6: Sec-Fetch-Site %s is refused; only School's own pages may ask` |
+| PREVIEW-ROUTE-7 | `Sec-Fetch-Site: same-origin` | Reaches the route | implemented | `PREVIEW-ROUTE-7: Sec-Fetch-Site same-origin reaches the route` |
+| PREVIEW-ROUTE-8 | A body declared `text/plain` | 415 | implemented | `PREVIEW-ROUTE-8: a body that is not declared JSON is refused` |
+| PREVIEW-PROGRESS-1 | `courseProgress` on every record adapter: a name with nothing, one with encounters, answers, explanations and views beside another name's, a view alone, a removed install's | The counts written, and none of the other name's | implemented | `server/contract/learning-record.ts`: `course progress: %s`, run on PGlite and Bun.SQL |
+
+_Table 6. The install preview's cases. PREVIEW-3, -4, -5, -8, -12, -14, -16, PREVIEW-ROUTE-1 and the `same-site` and `none` cases of PREVIEW-ROUTE-6 each fail when the behaviour they name is removed. No case previews a course from the internet._

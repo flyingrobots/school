@@ -14,9 +14,10 @@ setDefaultTimeout(30_000); // PGlite starts a whole Postgres in process.
 
 /** The functions the port calls: every one granted to school_app. */
 const PORT_FUNCTIONS = [
-  "choice_decision_notes", "choose_course_trust", "choose_time_zone", "course_authoring", "decide_draft", "due_review", "encounter_answers", "encounter_decision_notes", "encounter_evidence", "encounter_explanations",
-  "explanation", "install_course", "installed_courses", "last_studied", "latest_feedback", "lesson_progress", "mastery", "open_encounter", "open_lesson_encounter", "record_decision_note", "record_draft", "record_exposure", "record_grading", "record_lesson_help",
-  "record_view", "remove_installed_course", "request_authoring", "save_explanation", "study_days", "submission_aid", "submit", "time_zone",
+  "choice_decision_notes", "choose_course_trust", "choose_time_zone", "course_authoring", "course_progress", "decide_draft", "due_review", "encounter_answers", "encounter_decision_notes", "encounter_evidence",
+  "encounter_explanations", "explanation", "install_course", "installed_courses", "last_studied", "latest_feedback", "lesson_progress", "mastery", "mastery_rollup", "open_encounter", "open_lesson_encounter",
+  "record_decision_note", "record_draft", "record_exposure", "record_grading", "record_lesson_help", "record_view", "remove_installed_course", "request_authoring", "save_explanation", "study_days",
+  "submission_aid", "submit", "time_zone",
 ];
 
 /** A function call and nothing else: no table, no second statement, every argument a parameter. */
@@ -99,6 +100,7 @@ test("every port method is one call of its function, as school_app", async () =>
   await r.decideDraft({ id: crypto.randomUUID(), draftId, decision: "discarded", installId: null, patch: null }, "2026-11-21T10:00:01.730Z");
   await r.courseAuthoring("bells");
   await r.removeInstalledCourse("bells", "2026-11-21T10:00:01.800Z");
+  await r.courseProgress("bells");
   const id = crypto.randomUUID();
   await r.saveExplanation({ submissionId: id, encounterId: e.id, blockId: "e1", text: "Because.", ms: 1 }, "2026-11-21T10:00:02.000Z");
   await r.recordGrading({ status: "failed", findings: null, error: "down", submissionId: id, rubricVersion: "r", promptVersion: "p",
@@ -115,6 +117,7 @@ test("every port method is one call of its function, as school_app", async () =>
   expect(await r.encounterDecisionNotes(e.id)).toHaveLength(1);
   await r.dueReview({ course: "c", blocks: ["q1"], now: "2026-11-23T10:00:00.000Z", delayMs: 1, limit: 3 });
   await r.mastery({ course: "c", blocks: ["q1"], now: "2026-11-23T10:00:00.000Z", delayMs: 1 });
+  await r.masteryRollup({ course: "c", groups: { l1: ["q1"] }, now: "2026-11-23T10:00:00.000Z", delayMs: 1 });
   await r.openLessonEncounter({ course: "c", lesson: "l1", lessonPage: page, page, notes: [], now: "2026-11-21T10:00:06.000Z", aidTracking: 1 });
   expect(seen.map((s) => FUNCTION_CALL.exec(s)![1]).sort()).toEqual(PORT_FUNCTIONS);
 });

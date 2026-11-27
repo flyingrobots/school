@@ -263,9 +263,10 @@ export type DecisionNoteResult = z.infer<typeof DecisionNoteResult>;
 
 /**
  * Why a block came back: its latest weak first try was wrong; right, but after help shown for it in
- * that encounter; or right while School was not recording help, so its aid is unknown.
+ * that encounter; or right while School was not recording help, so its aid is unknown. Or, ranked
+ * after those three, it had settled and its mastery has faded below one half (RFC 5 §4.6).
  */
-export const ReviewRule = z.enum(["due-review/wrong-first-try", "due-review/aided-first-try", "due-review/unknown-aid"]);
+export const ReviewRule = z.enum(["due-review/wrong-first-try", "due-review/aided-first-try", "due-review/unknown-aid", "due-review/faded"]);
 export type ReviewRule = z.infer<typeof ReviewRule>;
 
 /**
@@ -336,6 +337,37 @@ export const Mastery = z.object({
   evidence: z.array(Seq).max(100),
 });
 export type Mastery = z.infer<typeof Mastery>;
+
+/**
+ * What to ask the rollup (RFC 5 §4.5): the course, groups from a key (a lesson, or the whole
+ * course) to quiz block ids, and the time and delay as for the measure. A block may sit in more than
+ * one group, and counts in each.
+ */
+export const MasteryRollupQuery = z.object({
+  course: z.string().min(1).max(200),
+  groups: z.record(z.string().min(1).max(200), z.array(blockId).max(10_000)),
+  now: timestamp,
+  delayMs: ms,
+});
+export type MasteryRollupQuery = z.infer<typeof MasteryRollupQuery>;
+
+/**
+ * How one group of quizzes is held at the query's time (RFC 5 Table 4.5). `quizzes` is the number
+ * of distinct blocks in the group, and the four counts partition them: never answered, answered but
+ * not settled, settled with strength one half or more, settled with strength below one half.
+ * `strength` is the mean strength over the group, a quiz not started counting 0, and null for an
+ * empty group; it is for ranking, never for display.
+ */
+export const MasteryRollup = z.object({
+  key: z.string(),
+  quizzes: z.int().nonnegative(),
+  notStarted: z.int().nonnegative(),
+  settling: z.int().nonnegative(),
+  holding: z.int().nonnegative(),
+  faded: z.int().nonnegative(),
+  strength: z.number().min(0).max(1).nullable(),
+});
+export type MasteryRollup = z.infer<typeof MasteryRollup>;
 
 // ---- Installed courses (RFC 7 §7; flyingrobots/school#232) -------------------------------------
 
@@ -506,3 +538,13 @@ export type RecordedDraft = z.infer<typeof RecordedDraft>;
 /** A request as recorded, with its drafts in the record's order. */
 export const RecordedRequest = AuthoringRequest.extend({ at: timestamp, drafts: z.array(RecordedDraft) });
 export type RecordedRequest = z.infer<typeof RecordedRequest>;
+
+/**
+ * What the record already holds under a course name (RFC 7 §5.2, flyingrobots/school#237): its
+ * encounters, the quiz answers and explanations given in them, and its recorded views. A name with
+ * all four zero has no progress; any other is progress an install under that name would continue.
+ */
+export const CourseProgress = z.object({
+  encounters: z.int().nonnegative(), answers: z.int().nonnegative(), explanations: z.int().nonnegative(), views: z.int().nonnegative(),
+});
+export type CourseProgress = z.infer<typeof CourseProgress>;

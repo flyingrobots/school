@@ -1,8 +1,10 @@
 // The ports: what School's core needs from the world, defined by the core (RFC 3, §4).
 // Adapters implement them; the core never imports an adapter.
 import type {
-  Aid, AidTracking, AuthoringDecision, AuthoringDraft, AuthoringRequest, AuthoringResult, DecisionResult, DraftResult, RecordedRequest, Block, CourseInstall, DecisionChoice, DueItem, DueReviewQuery, ReviewNote, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingInput,
-  GradingRecord, InstallResult, InstalledCourse, LastStudied, LatestFeedback, LessonHelp, LessonProgress, Mastery, MasteryQuery, Outcome, Recorded, RemovalResult, SaveResult, SavedExplanation, StudyDay, Submission, SubmitResult, TrustResult, ViewEvent,
+  Aid, AidTracking, Block, CourseInstall, CourseProgress, DecisionChoice, DueItem, DueReviewQuery, ReviewNote, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission,
+  Exposure, ExposureResult, Grading, GradingInput, GradingRecord, InstallResult, InstalledCourse, LastStudied, LatestFeedback, LessonHelp, LessonProgress, Mastery, MasteryQuery, MasteryRollup, MasteryRollupQuery, Outcome,
+  Recorded, RemovalResult, SaveResult, SavedExplanation, StudyDay, Submission, SubmitResult, TrustResult, ViewEvent, AuthoringDecision, AuthoringDraft, AuthoringRequest, AuthoringResult, DecisionResult, DraftResult,
+  RecordedRequest,
 } from "./model.ts";
 
 /**
@@ -72,6 +74,11 @@ export interface LearningRecord {
   decideDraft(d: AuthoringDecision, now: string): Promise<DecisionResult>;
   /** The course's authoring requests, each with its drafts and their decisions, in the record's order. */
   courseAuthoring(course: string): Promise<RecordedRequest[]>;
+  /**
+   * What the record holds under `course`, whether or not anything serves it now: a course removed
+   * earlier, or configured before, keeps its progress under its name (RFC 7 §5.2).
+   */
+  courseProgress(course: string): Promise<CourseProgress>;
   saveExplanation(s: ExplanationSubmission, now: string): Promise<SaveResult>;
   /** A saved explanation, its block from the snapshot and its latest grading; null if there is none. */
   explanation(submissionId: string): Promise<SavedExplanation | null>;
@@ -112,6 +119,12 @@ export interface LearningRecord {
    * mastery, and is the record's.
    */
   mastery(q: MasteryQuery): Promise<Mastery[]>;
+  /**
+   * How each group in `q.groups` is held at `q.now`, one row per group key, in byte order of the key
+   * (RFC 5 §4.5): reads only. The rollup is in server/db/migrations/0013_mastery_rollup.sql,
+   * mastery_rollup, and is the record's.
+   */
+  masteryRollup(q: MasteryRollupQuery): Promise<MasteryRollup[]>;
 }
 
 /** Turns an explanation into findings, or an honest failure. Never throws for a grading failure. */
