@@ -175,7 +175,11 @@ export class LessonUnavailable extends Error {
  */
 export const AID_CAPTURE_VERSION = 1
 
-/** Opens the lesson in the web view, which opens or resumes the learner's tracked encounter. */
+/**
+ * Opens the lesson in the web view, which opens or resumes the learner's tracked encounter. A JSON
+ * POST: it writes to the record, so the write guard covers it, and no other page's GET can open one
+ * (flyingrobots/school#321). Opening twice resumes the one encounter.
+ */
 export async function openLesson(
   course: string,
   lesson: string,
@@ -184,19 +188,33 @@ export async function openLesson(
   return lessonRequest(
     `/api/courses/${encodeURIComponent(course)}/lessons/${encodeURIComponent(lesson)}?aid=${AID_CAPTURE_VERSION}&${tzParam()}`,
     LessonReply,
-    signal
+    signal,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }
   )
 }
 
-/** One GET of a lesson, in either view, parsed with `reply`; rejects with LessonUnavailable. */
+/** One request for a lesson, a GET unless `init` says otherwise, parsed with `reply`; rejects with LessonUnavailable. */
 async function lessonRequest<T>(
   path: string,
   reply: z.ZodType<T>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  init: {
+    method?: "POST"
+    headers?: Record<string, string>
+    body?: string
+  } = {}
 ): Promise<T> {
   let res: Response
   try {
-    res = await fetch(path, { headers: { accept: "application/json" }, signal })
+    res = await fetch(path, {
+      ...init,
+      headers: { ...init.headers, accept: "application/json" },
+      signal,
+    })
   } catch (e) {
     if (signal?.aborted) throw e
     throw new LessonUnavailable("failed", "School could not be reached.")

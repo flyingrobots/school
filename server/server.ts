@@ -217,24 +217,6 @@ function guardApi(req: Request): Response | null {
   return null;
 }
 
-/**
- * The guard on opening a lesson, the one GET that writes to the record: the web view opens or
- * resumes the learner's encounter (flyingrobots/school#306). Any page in the learner's browser can
- * make a GET without script or a preflight, such as an untrusted course page's
- * `<img src="/api/courses/c/lessons/l">`. So when the browser sends fetch metadata, only School's
- * own `fetch()` is answered: `Sec-Fetch-Site: same-origin` and `Sec-Fetch-Dest: empty`. A sandboxed
- * page's requests are `cross-site` (its origin is opaque), another port's on this host `same-site`,
- * an image `image`, a link or a typed address `document`. A request with no metadata, from curl or
- * a browser too old to send it, is answered as before (Chrome and Edge send it since 2020, Firefox
- * since 2021, Safari since 16.4 in 2023).
- */
-function guardLessonOpen(req: Request): Response | null {
-  const site = req.headers.get("sec-fetch-site");
-  const dest = req.headers.get("sec-fetch-dest");
-  if ((site === null || site === "same-origin") && (dest === null || dest === "empty")) return null;
-  return json({ status: "refused", error: "a lesson is opened only by School's own pages" }, 403);
-}
-
 async function serveMount(pathname: string): Promise<Response> {
   const [, top = "", ...rest] = pathname.split("/");
   const base = MOUNTS[top];
@@ -507,21 +489,38 @@ function aidParam(params: URLSearchParams): { aid: AidTracking } | null {
   return v?.success ? { aid: v.data } : null;
 }
 
-/**
- * One lesson. In the web view this opens or resumes the learner's encounter and includes what is
- * already answered in it, which is what opening the page used to do, and any items due for review.
- * The slides view records nothing.
- */
-async function lessonJson(c: Course, id: string, viewParam: string | null, aidTracking: AidTracking, tz: string): Promise<Response> {
-  const view = isView(viewParam) ? viewParam : "web";
+/** The lesson `id` of `c` with its neighbours and its course's pages, or the reply that says why not. */
+function findLesson(c: Course, id: string) {
   const { library, error } = lessons(c);
   if (library === null) return json({ error: error?.message ?? "the lessons could not be loaded" }, 500);
   const { pages } = library;
   const i = pages.findIndex((p) => p.id === id);
   const page = pages[i];
   if (page === undefined) return json({ error: "no such lesson" }, 404);
-  const base = { course: c.name, view, lesson: page, prev: summary(pages[i - 1]), next: summary(pages[i + 1]), hasReference: referenceDocs(c).length > 0 };
-  if (view !== "web") return json(base);
+  return { library, page, base: { lesson: page, prev: summary(pages[i - 1]), next: summary(pages[i + 1]), hasReference: referenceDocs(c).length > 0 } };
+}
+
+/**
+ * One lesson, read: in either view it writes nothing to the record, so no page that can make a GET,
+ * such as another page's `<img>`, can change it (flyingrobots/school#321). The web view's encounter
+ * is opened with a POST (openLessonJson).
+ */
+function lessonJson(c: Course, id: string, viewParam: string | null): Response {
+  const view = isView(viewParam) ? viewParam : "web";
+  const found = findLesson(c, id);
+  if (found instanceof Response) return found;
+  return json({ course: c.name, view, ...found.base });
+}
+
+/**
+ * Opens one lesson in the web view: opens or resumes the learner's encounter and includes what is
+ * already answered in it, and any items due for review. A POST, so the write guard covers it.
+ */
+async function openLessonJson(c: Course, id: string, aidTracking: AidTracking, tz: string): Promise<Response> {
+  const found = findLesson(c, id);
+  if (found instanceof Response) return found;
+  const { library, page, base } = found;
+  const { pages } = library;
   // Any quiz of the course may come back for review at the top of this lesson (RFC 2 §5). `lesson` is
   // then what the encounter snapshotted, review included, and `review` holds each item's reason.
   const opened = await school.openLesson(c.name, page, aidTracking, [...library.byId.values()], tz);
@@ -531,7 +530,7 @@ async function lessonJson(c: Course, id: string, viewParam: string | null, aidTr
     return p?.type === "page" ? { id: p.id, title: p.title } : null;
   };
   const review = opened.review.map((r) => ({ ...r, from: home(r.blockId) }));
-  return json({ ...base, lesson: opened.page, encounterId: opened.encounter.id, answers: opened.answers, explanations: opened.explanations, review },
+  return json({ course: c.name, view: "web", ...base, lesson: opened.page, encounterId: opened.encounter.id, answers: opened.answers, explanations: opened.explanations, review },
     200, { "cache-control": "no-store" });
 }
 
@@ -680,6 +679,19 @@ const http = Bun.serve({
       await school.recordView(v.data);
       return new Response(null, { status: 204 });
     }
+    const lessonPath = /^\/api\/courses\/([a-z0-9][a-z0-9-]*)\/lessons\/([\w-]+)$/.exec(pathname);
+    if (req.method === "POST" && lessonPath !== null) {
+      // Opens the lesson in the web view; its body is not read (flyingrobots/school#321).
+      const c = course(config, lessonPath[1]!);
+      if (c === null) return json({ error: "no such course" }, 404);
+      const view = url.searchParams.get("view");
+      if (view !== null && view !== "web") return contained(c, json({ status: "invalid", error: "a lesson is opened in the web view; the slides view is read with a GET" }, 400));
+      const aid = aidParam(url.searchParams);
+      if (aid === null) return contained(c, json({ status: "invalid", error: `aid must be a known capture version: ${AID_CAPTURE_VERSIONS.join(", ")}` }, 400));
+      const tz = await zoneParam(url.searchParams);
+      if (tz === null) return contained(c, json(BAD_ZONE, 400));
+      return contained(c, await openLessonJson(c, lessonPath[2]!, aid.aid, tz));
+    }
     if (req.method === "POST" && pathname.startsWith("/api/")) return notFound();
     if (req.method !== "GET") return new Response("Method not allowed", { status: 405 });
 
@@ -722,14 +734,7 @@ const http = Bun.serve({
       const c = course(config, api[1]!);
       if (c === null) return json({ error: "no such course" }, 404);
       if (api[2] === undefined) return contained(c, await courseJson(c));
-      const aid = aidParam(url.searchParams);
-      if (aid === null) return json({ status: "invalid", error: `aid must be a known capture version: ${AID_CAPTURE_VERSIONS.join(", ")}` }, 400);
-      const tz = await zoneParam(url.searchParams);
-      if (tz === null) return json(BAD_ZONE, 400);
-      const view = url.searchParams.get("view");
-      const refused = isView(view) && view !== "web" ? null : guardLessonOpen(req);
-      if (refused !== null) return contained(c, refused);
-      return contained(c, await lessonJson(c, api[2], view, aid.aid, tz));
+      return contained(c, lessonJson(c, api[2], url.searchParams.get("view")));
     }
     if (pathname.startsWith("/api/")) return json({ error: "not found" }, 404);
 

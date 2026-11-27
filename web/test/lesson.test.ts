@@ -644,12 +644,20 @@ describe("aid tracking (flyingrobots/school#51)", () => {
   })
 })
 
-/** Every POST the page sends to School, in order, with its JSON body. */
+/**
+ * Every POST the page sends to School, in order, with its JSON body, except the POST that opens
+ * the lesson (flyingrobots/school#321): what the learner did in the encounter.
+ */
 function posts(p: Page) {
   const sent: { path: string; body: Record<string, string> }[] = []
   p.on("request", (r) => {
-    if (r.method() === "POST" && r.url().includes("/api/"))
-      sent.push({ path: new URL(r.url()).pathname, body: r.postDataJSON() })
+    const { pathname } = new URL(r.url())
+    if (
+      r.method() === "POST" &&
+      pathname.startsWith("/api/") &&
+      !pathname.startsWith("/api/courses/")
+    )
+      sent.push({ path: pathname, body: r.postDataJSON() })
   })
   const exposures = () =>
     sent.filter((x) => x.path === "/api/exposure").map((x) => x.body)
