@@ -13,7 +13,7 @@ import { fakeAgent, USAGE } from "./testing/fake-agent.ts";
 const BRIDGE = join(import.meta.dir, "bridge.ts");
 const TOKEN = "output-token-0123456789";
 const bridgeSchemas = publishedIn(join(import.meta.dir, "schemas"));
-const TYPES = ["ask.attempt", "ask.end", "ask.start", "attempt", "config.saved", "error", "help", "listening", "run.end", "run.start", "schema", "speak.cancel", "speak.failed", "speak.submit", "start", "test"];
+const TYPES = ["ask.attempt", "ask.end", "ask.start", "attempt", "author.attempt", "author.end", "author.start", "config.saved", "error", "help", "listening", "run.end", "run.start", "schema", "speak.cancel", "speak.failed", "speak.submit", "start", "test"];
 const IDS = TYPES.map((t) => `school.bridge.${t}`);
 
 let dir = "";
@@ -83,6 +83,31 @@ describe("the bridge's output", () => {
     expect(stdout).not.toContain(TOKEN);
     expect(stdout).not.toContain("SECRET-LEARNER-TEXT");
     expect(stdout).not.toContain("SECRET-ANSWER");
+  }, timeout(1));
+
+  test("bridge, a draft: author.start, an author.attempt per agent tried, author.end with the counts and the guide's digest, every line valid, no prompt and no file", async () => {
+    const fails = fakeAgent(dir, "fails", [{ stderr: "SECRET-LEARNER-TEXT" }, { exit: 1 }]);
+    const claude = fakeAgent(dir, "claude", [{ tool: "Read", input: { file_path: "course/lessons/SECRET-FILE-NAME.json" } }, { sh: "printf 'SECRET-FILE-TEXT' > course/OBJECTIVES.md" }, { result: "SECRET-ANSWER" }]);
+    writeFileSync(join(dir, "bridge.json"), JSON.stringify({ agents: [{ name: "grader", command: "true" }], author: { agents: [
+      { name: "missing", command: "no-such-cli-qqq {prompt}" },
+      { name: "fails", command: `${fails} ${dir} {prompt}`, output: "claude-stream-json" },
+      { name: "claude", command: `${claude} ${dir} {prompt}`, output: "claude-stream-json" }] } }));
+    const b = await startBridge({ PATH: process.env.PATH, HOME: dir, SCHOOL_BRIDGE_TOKEN: TOKEN, SCHOOL_BRIDGE_CONFIG: join(dir, "bridge.json") });
+    const b64 = (s: string) => Buffer.from(s).toString("base64");
+    const r = await fetch(b.url + "/author", { method: "POST", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ prompt: "SECRET-LEARNER-TEXT", files: [{ path: "lessons/SECRET-FILE-NAME.json", base64: b64("SECRET-FILE-TEXT") }], guide: [{ path: "SKILL.md", base64: b64("SECRET-SKILL") }] }) });
+    expect(await r.text()).toContain('"type":"files"');
+    b.proc.kill();
+    const { stdout, stderr } = await b.output();
+    expect(stderr).toBe("");
+    const out = bridgeSchemas.validated(stdout);
+    expect(out.map((l) => l.kind)).toEqual(["bridge.start", "bridge.listening", "bridge.author.start", "bridge.author.attempt", "bridge.author.attempt", "bridge.author.attempt", "bridge.author.end"]);
+    expect(out.at(2)).toMatchObject({ files: 1, guide_files: 1 });
+    expect(out.filter((l) => l.kind === "bridge.author.attempt").map((l) => [l.agent, l.status, l.steps])).toEqual([["missing", "skipped", 0], ["fails", "failed", 0], ["claude", "succeeded", 1]]);
+    expect(out.at(-1)).toMatchObject({ status: "succeeded", agent: "claude", steps: 1, files: 2, bytes: 32, refusal: null, guide_sha256: expect.stringMatching(/^[0-9a-f]{64}$/), usage: USAGE });
+    expect(new Set(out.filter((l) => "id" in l).map((l) => l.id)).size).toBe(1);
+    expect(stdout).not.toContain(TOKEN);
+    expect(stdout.match(/SECRET-[A-Z-]+/g)).toBeNull();
   }, timeout(1));
 
   test("bridge, a refusal to start (short token, bad port, unreadable configuration, unknown argument): one valid bridge.error line, exit 2, no token", async () => {

@@ -14,7 +14,9 @@ export type OutputKind = (typeof OUTPUTS)[number];
 export type Agent = { name: string; argv: string[]; output: OutputKind; timeoutMs: number; enabled: boolean };
 /** The agents that answer a learner's question (RFC 6 §5.4): a list of their own, with their own timeout. */
 export type AskConfig = { timeoutMs: number; agents: Agent[] };
-export type BridgeConfig = { timeoutMs: number; agents: Agent[]; ask: AskConfig | null };
+/** The agents that draft a course (RFC 9 §5.1): a list of their own, with their own timeout. */
+export type AuthorConfig = { timeoutMs: number; agents: Agent[] };
+export type BridgeConfig = { timeoutMs: number; agents: Agent[]; ask: AskConfig | null; author: AuthorConfig | null };
 
 const MAX_OUTPUT = 1024 * 1024;
 const TAIL = 4000;
@@ -34,7 +36,7 @@ export function loadConfig(raw: unknown): BridgeConfig {
     const askTimeout = seconds(a.timeout_seconds, 90, "ask: ");
     ask = { timeoutMs: askTimeout, agents: agentList(a.agents, askTimeout, "ask", "ask agent") };
   }
-  return { timeoutMs, agents, ask };
+  return { timeoutMs, agents, ask, author: null };
 }
 
 const fail = (m: string): never => { throw new BridgeConfigError(m); };
