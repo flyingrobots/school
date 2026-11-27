@@ -18,7 +18,7 @@ const page = (children: Block[]): Block => ({ type: "page", id: "l1", title: "Le
 // with none, and a block outside any section.
 const lesson = page([
   prose("intro"),
-  section("s1", [prose("p1"), quiz("q1"), explainBlock("e1"), section("s1a", [quiz("q2")])]),
+  section("s1", [prose("p1"), quiz("q1"), explainBlock("e1"), section("s1a", [quiz("q2"), explainBlock("e3")]), section("s1b", [explainBlock("e4")])]),
   section("s2", [prose("p2"), explainBlock("e2")]),
   section("s3", [quiz("q3")]),
 ]);
@@ -104,6 +104,21 @@ describe("the scope of each kind of block (RFC 8 Table 4.1)", () => {
 
   test("an explain block's scope is the quizzes of the section that holds it", () => {
     expect(explainScope(lesson, "e1")).toEqual({ quizzes: ["q1", "q2"], from: "block" });
+  });
+
+  test("an explain block in a nested section takes that section's quizzes, not the outer one's", () => {
+    // s1 holds q1 and q2, s1a only q2: the nearest section, not the outermost, is the one asked.
+    expect(explainScope(lesson, "e3")).toEqual({ quizzes: ["q2"], from: "block" });
+  });
+
+  test("an explain block in a nested section with no quiz uses the lesson's quizzes, though the outer section has some", () => {
+    expect(explainScope(lesson, "e4")).toEqual({ quizzes: LESSON_QUIZZES, from: "lesson" });
+  });
+
+  test("a quiz id the lesson repeats is listed once", () => {
+    const repeated = page([prose("intro"), section("a", [quiz("q1")]), section("b", [quiz("q1"), quiz("q2")])]);
+    expect(explainScope(repeated, "intro")).toEqual({ quizzes: ["q1", "q2"], from: "lesson" });
+    expect(explainScope(repeated, "b")).toEqual({ quizzes: ["q1", "q2"], from: "block" });
   });
 
   test("a section with no quiz uses the lesson's quizzes", () => {
