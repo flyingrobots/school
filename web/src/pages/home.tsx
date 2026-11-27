@@ -390,7 +390,7 @@ function Day({ mark }: { mark: Exclude<Mark, { kind: "today" }> }) {
       <CardContent className="text-muted-foreground">
         {mark.kind === "studied"
           ? `A day of ${mark.title}.`
-          : "Questions you've met before that took a second go or a little help come back after a day, so the answer comes from memory."}
+          : "Questions you've met before come back so the answer comes from memory: after a day when one took a second go or a little help, and later, once some time has passed, when you found it from memory."}
       </CardContent>
       <CardFooter>
         <Button asChild variant="outline" data-nav>

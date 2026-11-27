@@ -19,6 +19,7 @@ import { withSecretFiles } from "./secrets.ts";
 import { agentOrder, agentTest } from "./agents.ts";
 import { authoringStatus } from "./skill.ts";
 import { feedbackSpeech, lessonSpeech, SEGMENT, SpeakRequest, toSpeech, UTTERANCE } from "./speak.ts";
+import { PREVIEW_TTL_MS, previewInstall, sweepStaging, type PreviewAnswer } from "./install-preview.ts";
 
 let config;
 let bridgeCfg;
@@ -116,7 +117,21 @@ console.log(authoring.authoring === "on" ? `school: authoring on: the school ski
 
 // The hexagon (RFC 3, §4): this file is the composition root and the HTTP adapter. It parses
 // every request with the core's Zod schemas and reaches the record only through the use cases.
-const school = createSchool({ record: postgresRecord(database.sql), grader, clock: { now: () => new Date().toISOString() } });
+// SCHOOL_TEST_CLOCK fixes now for a test over HTTP (server/config.ts); only on a PGlite record.
+const fixedNow = config.clock;
+if (fixedNow !== null) console.warn(`school: warning: the clock is fixed at ${fixedNow} by SCHOOL_TEST_CLOCK; every answer is recorded at that time. Use it for tests only.`);
+const school = createSchool({ record: postgresRecord(database.sql), grader, clock: { now: () => fixedNow ?? new Date().toISOString() } });
+
+// The course store (RFC 7 §5.1). Every preview staged before this start is deleted now, and one
+// never confirmed is deleted once its hour is up, by this sweep and before each new preview.
+const STORE = config.store;
+if (STORE !== null) {
+  sweepStaging(STORE, Date.now(), true);
+  setInterval(() => sweepStaging(STORE, Date.now()), PREVIEW_TTL_MS / 6).unref();
+  console.log(`school: course store at ${STORE}; installing from a repository is on`);
+} else {
+  console.log("school: no course store (SCHOOL_COURSE_STORE); installing courses is off");
+}
 
 // The course list (RFC 7 §5 and §7; flyingrobots/school#234): the configured courses and the
 // record's current installs, read again from the record by every request that needs it, so an
@@ -281,9 +296,11 @@ type View = "web" | "slides";
 const isView = (v: string | null): v is View => v === "web" || v === "slides";
 const summary = (p: Block | undefined) => (p === undefined || p.type !== "page" ? null : { id: p.id, title: p.title, subtitle: p.subtitle });
 
+const missing = (lesson: string): never => { throw new Error(`the mastery rollup returned no row for lesson ${lesson}`); };
+
 /**
- * A course: its lessons, each with how many of its quizzes have been answered correctly, and its
- * reference documents. Lessons that cannot be read do not hide the documents
+ * A course: its lessons, each with how many of its quizzes have been answered correctly and how
+ * they are holding now (RFC 5 §4.5, flyingrobots/school#220), and its reference documents. Lessons that cannot be read do not hide the documents
  * (flyingrobots/school#115): `lessons` is then null and `lessonsError` says why, in a 200.
  */
 async function courseJson(c: ServedCourse): Promise<Response> {
@@ -291,16 +308,20 @@ async function courseJson(c: ServedCourse): Promise<Response> {
   const reference = referenceDocs(c);
   if (library === null) return json({ name: c.name, title: c.title, trusted: c.trusted, ...c.manifest, reference, lessons: null, lessonsError: error?.message ?? "the lessons could not be loaded" });
   const done = await school.lessonProgress(c.name);
+  const quizzesOf = library.pages.map((p) => ({ page: p, ids: quizIds(p) }));
+  // One group per lesson, at the server's clock: a lesson with no quizzes counts zero in each state.
+  const rolled = new Map((await school.masteryNow(c.name, Object.fromEntries(quizzesOf.map(({ page, ids }) => [page.id, [...ids]]))))
+    .map((r) => [r.key, { notStarted: r.notStarted, settling: r.settling, holding: r.holding, faded: r.faded }]));
   return json({
     name: c.name,
     title: c.title,
     trusted: c.trusted,
     ...c.manifest,
     reference,
-    lessons: library.pages.map((p) => {
-      const ids = quizIds(p);
-      return { ...summary(p), quizzes: ids.size, answeredCorrectly: [...ids].filter((id) => done[p.id]?.includes(id)).length };
-    }),
+    lessons: quizzesOf.map(({ page: p, ids }) => ({
+      ...summary(p), quizzes: ids.size, answeredCorrectly: [...ids].filter((id) => done[p.id]?.includes(id)).length,
+      mastery: rolled.get(p.id) ?? missing(p.id),
+    })),
   });
 }
 
@@ -458,8 +479,9 @@ async function reviewJson(params: URLSearchParams): Promise<Response> {
 }
 
 /**
- * Each course's study days in the last `days`, and how many questions come back on each day ahead,
- * with the course's `trusted` (flyingrobots/school#272).
+ * Each course's study days in the last `days`, how many questions come back on each day ahead, and
+ * how its quizzes are holding today (RFC 5 §4.8, flyingrobots/school#222), with the course's
+ * `trusted` (flyingrobots/school#272).
  */
 async function activityJson(params: URLSearchParams): Promise<Response> {
   const given = params.get("days");
@@ -474,7 +496,7 @@ async function activityJson(params: URLSearchParams): Promise<Response> {
     today: a.today, tz, days,
     courses: a.courses.map((x) => {
       const c = served.find((s) => s.name === x.course)!;
-      return { course: x.course, courseTitle: c.title, trusted: c.trusted, studied: x.studied, due: x.due };
+      return { course: x.course, courseTitle: c.title, trusted: c.trusted, studied: x.studied, due: x.due, quizzes: x.quizzes, mastery: x.mastery };
     }),
   }, 200, { "cache-control": "no-store" });
 }
@@ -576,6 +598,33 @@ async function serveApp(pathname: string): Promise<Response> {
   const index = Bun.file(join(WEB, "index.html"));
   if (!(await index.exists())) return json({ error: "the web app is not built; run `npm run build` in web/" }, 503);
   return new Response(index, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+}
+
+const NO_STORE = "Installing courses needs a course store. It is set with SCHOOL_COURSE_STORE, described in Configuration.";
+const PREVIEW_STATUS: Record<PreviewAnswer["status"], number> = { ok: 200, refused: 422, invalid: 400 };
+
+/**
+ * POST /api/installs/preview (RFC 7 task 7, flyingrobots/school#237): fetch, extract and check one
+ * commit in staging and answer what was found. It makes School fetch a URL, so beyond the guard
+ * every write has, it answers only School's own pages: a `Sec-Fetch-Site` other than
+ * `same-origin` is refused (RFC 7 §8). previewInstall is called without its test seams.
+ */
+async function installPreviewJson(req: Request): Promise<Response> {
+  const site = req.headers.get("sec-fetch-site");
+  if (site !== null && site !== "same-origin") return json({ status: "forbidden", error: "only School's own pages may preview an install" }, 403);
+  if (STORE === null) return json({ status: "unavailable", error: NO_STORE }, 503);
+  let answer: PreviewAnswer;
+  try {
+    answer = await previewInstall(await readJson(req), {
+      store: STORE, configured: configured.map((c) => c.name), installedNames: () => school.installedNames(), progress: (c) => school.courseProgress(c),
+      now: () => Date.now(), newId: () => crypto.randomUUID(),
+    });
+  } catch (e) {
+    // Not a refusal: the store or the record failed. The reason goes to the log; the answer stays JSON.
+    console.error(`school: install preview failed: ${e instanceof Error ? e.message : String(e)}`);
+    return json({ status: "failed", error: "School could not preview this course; the reason is in School's log" }, 500);
+  }
+  return json(answer, PREVIEW_STATUS[answer.status], { "cache-control": "no-store" });
 }
 
 async function readJson(req: Request): Promise<unknown> {
@@ -688,6 +737,7 @@ const http = Bun.serve({
       return json(r.body, r.status);
     }
     if (req.method === "POST" && pathname === "/api/speak") return speakJson(await readJson(req));
+    if (req.method === "POST" && pathname === "/api/installs/preview") return installPreviewJson(req);
     const cancel = /^\/api\/speak\/([^/]+)\/cancel$/.exec(pathname);
     if (req.method === "POST" && cancel !== null) {
       if (!UTTERANCE.test(cancel[1]!)) return json({ status: "invalid", error: "not an utterance id" }, 400);

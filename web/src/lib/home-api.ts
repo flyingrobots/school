@@ -75,6 +75,15 @@ export const ActivityJson = z.object({
       trusted: z.boolean(),
       studied: z.array(Day),
       due: z.array(z.object({ day: Day, items: z.number().int().positive() })),
+      // How the course's quizzes are holding today (RFC 5 §4.8, flyingrobots/school#222): the four
+      // counts sum to quizzes.
+      quizzes: z.number().int().nonnegative(),
+      mastery: z.object({
+        notStarted: z.number().int().nonnegative(),
+        settling: z.number().int().nonnegative(),
+        holding: z.number().int().nonnegative(),
+        faded: z.number().int().nonnegative(),
+      }),
     })
   ),
 })

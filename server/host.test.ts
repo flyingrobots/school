@@ -49,6 +49,7 @@ const ROUTES: [string, string, unknown?][] = [
   ["POST", "/api/answer", {}], ["POST", "/api/explanation", {}], ["POST", "/api/grade", {}], ["POST", "/api/view", { course: "c", lesson: "l1" }],
   ["POST", "/api/settings/bridge", { url: "http://127.0.0.1:9", token: "attacker-token-0123456789" }],
   ["POST", "/api/settings/agents", { agents: [{ name: "x", command: "touch /tmp/pwned" }] }], ["POST", "/api/settings/agents/test", { agent: "x" }],
+  ["POST", "/api/installs/preview", { url: "https://example.com/c.git", commit: "main" }],
   ["PUT", "/api/settings/agents", {}], ["DELETE", "/api/courses"],
 ];
 

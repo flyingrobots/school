@@ -439,3 +439,13 @@ export const InstalledCourse = z.discriminatedUnion("source", [
   CourseInstall.options[1].extend({ at: timestamp, trusted: z.boolean() }),
 ]);
 export type InstalledCourse = z.infer<typeof InstalledCourse>;
+
+/**
+ * What the record already holds under a course name (RFC 7 §5.2, flyingrobots/school#237): its
+ * encounters, the quiz answers and explanations given in them, and its recorded views. A name with
+ * all four zero has no progress; any other is progress an install under that name would continue.
+ */
+export const CourseProgress = z.object({
+  encounters: z.int().nonnegative(), answers: z.int().nonnegative(), explanations: z.int().nonnegative(), views: z.int().nonnegative(),
+});
+export type CourseProgress = z.infer<typeof CourseProgress>;

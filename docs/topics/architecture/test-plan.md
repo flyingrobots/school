@@ -4,13 +4,14 @@ The contract ledger for [School's architecture](README.md). Every case runs in `
 
 ## The bridge's output
 
-The cases run the bridge as a real process.
+The cases run the bridge as a real process, except BRIDGE-OUT-3 and BRIDGE-OUT-4, which call the answer validator directly.
 
 | ID | Case | Oracle | Status | Test |
 | --- | --- | --- | --- | --- |
 | BRIDGE-OUT-1 | Logs | Every stdout line parses as JSON with a string `kind`; no line contains the prompt | implemented | `bridge/bridge.test.ts`: `logs are JSON Lines and never contain the prompt` |
 | BRIDGE-OUT-2 | Port taken | With the port held by another socket: every line on stdout and stderr parses as JSON with a string `kind`; exactly one `bridge.error`, last on stdout, naming `host:port` and carrying `host` and `port`; no token in the output; exit 2 | implemented | `bridge/bridge.test.ts`: `a bridge whose port is taken writes one bridge.error line naming it, nothing but JSON Lines, and exits 2` |
 | BRIDGE-OUT-3 | A hostile key | A grading answer with a key the schema does not allow, named `The learner wrote: ...`: its `bridge.attempt` error is `unexpected key at $` and no line holds the key. In the validator: a key inside an array item is `unexpected key at $.items[1]`; keys named like inherited members (`constructor`, `__proto__`) are unexpected too; 500 random keys (seed 289, `SCHOOL_TEST_SEED` to replay) never appear in the problem | implemented | `bridge/bridge.test.ts`: `a grading answer with a hostile unexpected key logs an attempt error that quotes none of it`; `bridge/schema.test.ts` (flyingrobots/school#289) |
+| BRIDGE-OUT-4 | A required key named like a built-in | In the validator: a schema requiring `constructor`, `__proto__` or `toString` answers `$.<key> is missing` for `{}`, since only the answer's own keys count, and accepts an answer that has the key; an ordinary required key is still missing from `{}` and present in `{ ok: true }` | implemented | `bridge/schema.test.ts`: `a schema requiring constructor refuses an answer that lacks it`; `a schema requiring %s refuses an answer that lacks it`; `a schema requiring %s accepts an answer that has it`; `a schema requiring an ordinary key still refuses an answer that lacks it and accepts one that has it` (flyingrobots/school#329) |
 
 ## Asking the bridge a question
 
@@ -37,6 +38,26 @@ ask list in the test's process; the `bridge/ask-route.test.ts` cases run the bri
 | ASK-13 | Escaped child | A child outside the agent's process group that holds the pipes does not keep the reply waiting: the readers are cancelled 500 ms after the kill | implemented | `bridge/ask.test.ts`: `a child that escaped the process group ...` (`bridge/testing/escaping-agent.ts`) |
 | ASK-14 | Nothing received | A hang-up before any delta ends the reply with `agent` null | implemented | `bridge/ask.test.ts`: `a caller that hangs up before any delta is told of no agent` |
 | ASK-15 | Cannot be started | An agent that `Bun.spawn` cannot start (ENOENT, EACCES; E2BIG for a long prompt on Linux) is a failed attempt, `could not start <program> (<code>)`, with no prompt text, and the next agent is tried, for `POST /run` and `POST /ask`; with none startable, the reply fails with every attempt | implemented | `bridge/bridge.test.ts`: `a grading whose first agent cannot be started falls back to the next and logs that attempt as failed`; `bridge/ask-route.test.ts`: `a question whose first agent cannot be started ...`; `bridge/run.test.ts`: `when no agent can be started ...`; `bridge/ask.test.ts`: `when no ask agent can be started ...` (flyingrobots/school#290) |
+
+## Killing an agent (flyingrobots/school#285)
+
+A kill sends SIGKILL to the agent's process group, then again every 50 ms until the pipes close,
+for at most 500 ms. The fake agent in `bridge/run.test.ts` forks without pause in four loops, so a
+kill nearly always lands mid-fork: on the machine the tests were written on, one kill of its group
+left a child running in 15 of 20 tries. Each child sleeps 600 s, so only a kill ends one in time.
+A child counts as left if `ps` shows it in the agent's group, running and not a zombie, 2 s after
+the chain returns.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| KILL-1 | Golden | A grading agent that forks as its timeout kill lands: the chain returns, the next agent answers, and no process is left in the agent's group; three conclusive runs | implemented | `bridge/run.test.ts`: `a grading agent that forks as its kill lands leaves no child running, and the next agent runs` |
+| KILL-2 | Exits normally | An agent that answers and exits is not timed out, and its answer stands | implemented | `bridge/run.test.ts`: `an agent that answers and exits is not timed out: its answer stands` |
+| KILL-3 | Unrelated group | A process group running beside the killed agent survives the kill and the sweep | implemented | `bridge/run.test.ts`: `the kill reaches only the agent's own process group: another group running beside it survives` |
+| KILL-4 | Under load | Five forking agents killed at once, three rounds: every chain returns and no child is left | implemented | `bridge/run.test.ts`: `five forking agents killed at once, three rounds over: every chain returns and no child is left` |
+| KILL-5 | Kill after the pipes closed | A timeout, or a hang-up, landing after the agent's pipes closed and before it exits starts no sweep (the sweep counter is unchanged), for `POST /run` and `POST /ask` | implemented | `bridge/run.test.ts`: `a kill after the agent's pipes closed starts no sweep`; `bridge/ask.test.ts`: `a hang-up after the ask agent's pipes closed starts no sweep` |
+| KILL-6 | Not a group | `sweepGroup` with 0, 1, a negative, fractional or non-finite number sends no signal (the signal function is injected) | implemented | `bridge/run.test.ts`: `sweepGroup signals no group that is not a real one, and a real one once` |
+
+_Table 1. The agent kill's cases. The ask route uses the same sweep (`sweepGroup` in `bridge/run.ts`)._
 
 ## The course store (flyingrobots/school#233)
 
@@ -151,3 +172,39 @@ _Table 4. The pinned skill's cases. SKILLPIN-16 reads compose.yaml; no test buil
 | FETCH-29 | A request carrying `git`, `limits` and `network` fields, as a spread JSON body would | The fields are ignored; fetched with the test seams given as the second argument | implemented | `FETCH-29: the test seams carried on a request, as a JSON body spread into it would carry them, are ignored` |
 
 _Table 5. The fetch's cases. FETCH-2 to FETCH-29 are in `server/fetch-commit.test.ts`. FETCH-22 to FETCH-27 each fail when the protection they name is deleted. None runs the server image's git; CI runs them on the runner's git._
+
+## Previewing an install (flyingrobots/school#237)
+
+`POST /api/installs/preview` and `previewInstall` in `server/install-preview.ts`, RFC 7 §4, §5.2 and §8, task 7. The oracles are the issue's acceptance criteria, RFC 7's pipeline (Figure 4.1, Listing 5.1) and §5.2's naming rule, the example course's own `course.json`, and `checkCourse` on the same files. Every case that fetches runs against the local https server of the fetch cases through `FetchTesting`, which the route never passes; the route's cases are refused before git runs and reach no network.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| PREVIEW-1 | The example course at its full hash | Its title, summary, author, license `Apache-2.0`, format 1, both lessons with their quiz and explain counts, 3 distinct quizzes, the suggested name `counting-in-binary`, nothing taken, no progress, the preview id and an expiry an hour on | implemented | `server/install-preview.test.ts`: `PREVIEW-1: the example course answers its title, lessons, quizzes, license and format` |
+| PREVIEW-2 | The example course by branch | Answered with the full hash the branch resolved to | implemented | `PREVIEW-2: a branch is answered as the full hash it resolved to` |
+| PREVIEW-3 | What a good preview leaves | `staging/<id>/` holds only `course/` (course.json, two lessons, the glossary) and `preview.json` (URL, full commit, expiry); no `repo.git`, no `courses/` | implemented | `PREVIEW-3: the preview is kept in staging as the course School reads and its source, with no repository and nothing in courses/` |
+| PREVIEW-4 | The example with a quiz that has no correct choice | `check` refusal with `checkCourse`'s own file and message; only an empty `staging/` left | implemented | `PREVIEW-4: a bad course answers the check's own message, and leaves nothing in the store but an empty staging/` |
+| PREVIEW-5 | A `course.json` that is not JSON | Named `course.json` in `path` and `message`; the answer holds no path in the store | implemented | `PREVIEW-5: a course.json the check refuses is named as course.json, never by its path in the store` |
+| PREVIEW-6 | A branch the repository lacks | `fetch` refusal, `no-such-ref`; nothing staged | implemented | `PREVIEW-6: a fetch refusal answers its reason, and leaves nothing staged` |
+| PREVIEW-7 | A symlink under `reference/` | `extract` refusal, `symlink`, at `reference/secret`; nothing staged | implemented | `PREVIEW-7: an extraction refusal answers its reason and path, and leaves nothing staged` |
+| PREVIEW-8 | No body, an array, no `url` or `commit`, a number for the URL, test seams beside the request | `invalid`; `staging/` never made | implemented | `PREVIEW-8: a request with %s is invalid, and nothing is fetched or staged` |
+| PREVIEW-9 | RFC 7 §5.2's example URL, a trailing slash and `.GIT`, percent-encoding, a reserved name, no path, nothing usable | `school-bells`, `some-course`, `caf-notes`, the title's name, then `course` | implemented | `PREVIEW-9: %s with title %p suggests %s` |
+| PREVIEW-10 | A suggested name a configured course has | `taken: "configured"` | implemented | `PREVIEW-10: a suggested name a configured course has is answered as taken by it` |
+| PREVIEW-11 | A suggested name a current install has | `taken: "installed"` | implemented | `PREVIEW-11: a suggested name a current install has is answered as taken by it` |
+| PREVIEW-12 | A name with an encounter and an answer on a real PGlite record | `progress` is those counts; every row of every table in schema `school` is the same after the preview | implemented | `PREVIEW-12: a name the record already has progress under is answered with that progress, and the record is unchanged` |
+| PREVIEW-13 | A staged preview past its `expires`, one within it | The first deleted, the second kept | implemented | `PREVIEW-13: a preview past its time is deleted and one within it is kept` |
+| PREVIEW-14 | Staging folders with no `preview.json`, an hour old and a second old | The first deleted, the second kept | implemented | `PREVIEW-14: a staging folder with no preview.json is deleted once it is older than a preview's lifetime, and kept while it may still be in progress` |
+| PREVIEW-15 | Sweeping everything | Every preview deleted; `staging/` and `courses/` kept | implemented | `PREVIEW-15: sweeping everything, as at start, deletes every preview and keeps courses/` |
+| PREVIEW-16 | An expired preview, then a new preview | The expired one is gone | implemented | `PREVIEW-16: an expired preview is swept by the next preview` |
+| PREVIEW-17 | A `staging/` that is a symlink to a folder holding an expired preview | Neither sweep (expired only, or everything) deletes anything there | implemented | `PREVIEW-17: staging/ that is a symlink is not swept, and what it points at is left alone` |
+| PREVIEW-18 | The record throws after the course passed its check | The error reaches the caller and `staging/` is empty | implemented | `PREVIEW-18: a preview that throws after the course passed its check still deletes its staging, and the error reaches the caller` |
+| PREVIEW-ROUTE-1 | A preview left in `staging/` before start | Gone once School is up | implemented | `server/install-preview-route.test.ts`: `PREVIEW-ROUTE-1: School sweeps staging/ at start, so a preview left behind is gone` |
+| PREVIEW-ROUTE-2 | No course store | 503, naming `SCHOOL_COURSE_STORE` | implemented | `PREVIEW-ROUTE-2: without a course store, the answer is a 503 that names SCHOOL_COURSE_STORE` |
+| PREVIEW-ROUTE-3 | An `http` URL, a loopback address, credentials, a commit given as an option | 422 JSON with `stage: "fetch"` and the fetch's reason; `courses/` never made | implemented | `PREVIEW-ROUTE-3: %s is refused as JSON with its reason, and courses/ is never made` |
+| PREVIEW-ROUTE-4 | A body that is not JSON, lacks `commit`, or carries another field | 400 JSON | implemented | `PREVIEW-ROUTE-4: a body that is %s is a 400` |
+| PREVIEW-ROUTE-5 | A Host not in `SCHOOL_ALLOWED_HOSTS` | 403; nothing staged | implemented | `PREVIEW-ROUTE-5: a Host not among School's names is refused before routing, and nothing is staged`; also `server/host.test.ts`: `a request with Host %p is refused on every route` |
+| PREVIEW-ROUTE-6 | `Sec-Fetch-Site` `cross-site`, `same-site`, `none` | 403 | implemented | `PREVIEW-ROUTE-6: Sec-Fetch-Site %s is refused; only School's own pages may ask` |
+| PREVIEW-ROUTE-7 | `Sec-Fetch-Site: same-origin` | Reaches the route | implemented | `PREVIEW-ROUTE-7: Sec-Fetch-Site same-origin reaches the route` |
+| PREVIEW-ROUTE-8 | A body declared `text/plain` | 415 | implemented | `PREVIEW-ROUTE-8: a body that is not declared JSON is refused` |
+| PREVIEW-PROGRESS-1 | `courseProgress` on every record adapter: a name with nothing, one with encounters, answers, explanations and views beside another name's, a view alone, a removed install's | The counts written, and none of the other name's | implemented | `server/contract/learning-record.ts`: `course progress: %s`, run on PGlite and Bun.SQL |
+
+_Table 6. The install preview's cases. PREVIEW-3, -4, -5, -8, -12, -14, -16, PREVIEW-ROUTE-1 and the `same-site` and `none` cases of PREVIEW-ROUTE-6 each fail when the behaviour they name is removed. No case previews a course from the internet._
