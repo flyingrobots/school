@@ -224,7 +224,7 @@ function tree(root: string, what: string, stat: Stat, list: List): Map<string, s
       throw new ConfigError(`cannot list ${dir} in ${what}: ${code(e) ?? String(e)}`);
     }
     if (queue.length - 1 + names.length > DIRECTORY_CAP) {
-      throw new ConfigError(`${what} holds more than ${DIRECTORY_CAP} folders; with SCHOOL_UNTRUSTED_COURSES set, School walks every folder of each trusted course, mount and the web folder to find one bind-mounted where an untrusted course lives, and walks at most ${DIRECTORY_CAP} in each`);
+      throw new ConfigError(`${what} holds more than ${DIRECTORY_CAP} folders; with SCHOOL_UNTRUSTED_COURSES set, School walks every folder of each trusted course, mount and the web folder to find one bind-mounted where an untrusted course lives, and walks at most ${DIRECTORY_CAP} in each. To start, unset SCHOOL_UNTRUSTED_COURSES, or point ${/SCHOOL_[A-Z_]+/.exec(what)?.[0] ?? "the variable named above"} at a folder holding fewer`);
     }
     for (const name of names) queue.push(join(dir, name));
   }

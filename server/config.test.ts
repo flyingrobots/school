@@ -391,6 +391,8 @@ test("a trusted course holding exactly DIRECTORY_CAP folders is walked and accep
 test("a trusted course holding more than DIRECTORY_CAP folders is refused when untrusted courses are set, naming it and the cap", () => {
   expect(() => part({ SCHOOL_COURSE: "/mnt/course", SCHOOL_UNTRUSTED_COURSES: "guest=/mnt/other" }, wide(DIRECTORY_CAP + 1)))
     .toThrow(`trusted course "course" (/mnt/course) from SCHOOL_COURSE holds more than ${DIRECTORY_CAP} folders`);
+  expect(() => part({ SCHOOL_COURSE: "/mnt/course", SCHOOL_UNTRUSTED_COURSES: "guest=/mnt/other" }, wide(DIRECTORY_CAP + 1)))
+    .toThrow(/unset SCHOOL_UNTRUSTED_COURSES, or point SCHOOL_COURSE at a folder holding fewer/);
 });
 
 // A folder School cannot read is never silently skipped: the walk would miss what lies below it, and
