@@ -433,7 +433,7 @@ erDiagram
 *Figure 3. The learning record's tables, in schema `school`. Every row takes its `seq` from one
 shared sequence, so "before" and "after" across tables compare `seq`, never `at`. `VIEWS` (page
 views) and `TIME_ZONE_CHOICES` (the learner's time zone) are omitted. `EXPOSURES` is written by `POST /api/exposure`, which the
-lesson page calls for each help it shows, and by the server's `record_lesson_help` for help a model wrote.*
+lesson page calls for each help it shows, and will be written by the server's `record_lesson_help` for help a model writes once asking lands (RFC 6).*
 
 | Rule | How it is enforced | What it does not cover |
 | --- | --- | --- |

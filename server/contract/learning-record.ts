@@ -1082,6 +1082,16 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     expect((await due(r, ["q1", "q2"], at(4 + DELAY))).map((x) => [x.blockId, x.rule])).toEqual([["q2", "due-review/aided-first-try"]]);
   });
 
+  dr("ai-help: help in one encounter does not make a clean first try in another due as aided", async (r) => {
+    const page = lesson("l1", [quiz("q1")]);
+    const a = await tracked(r, page);
+    await r.recordLessonHelp(help(a.id), at(1));
+    const b = await tracked(r, page, at(10 * RESUME_WINDOW_MS));
+    expect(b.id).not.toBe(a.id);
+    await answer(r, b.id, "q1", "right", at(10 * RESUME_WINDOW_MS + 1));
+    expect(await due(r, ["q1"], at(10 * RESUME_WINDOW_MS + 1 + DELAY))).toEqual([]);
+  });
+
   dr("ai-help: two helps before a first try are both cited, and named once", async (r) => {
     const e = await tracked(r, lesson("l1", [quiz("q1")]));
     await r.recordLessonHelp(help(e.id), at(1));
@@ -1110,6 +1120,20 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     }]);
   });
 
+  dr("ai-help: a wrong first try in one encounter does not cite help from another", async (r) => {
+    const page = lesson("l1", [quiz("q1")]);
+    const a = await tracked(r, page);
+    await r.recordLessonHelp(help(a.id), at(1));
+    const b = await tracked(r, page, at(10 * RESUME_WINDOW_MS));
+    await answer(r, b.id, "q1", "wrong", at(10 * RESUME_WINDOW_MS + 1));
+    await answer(r, b.id, "q1", "right", at(10 * RESUME_WINDOW_MS + 2));
+    const [wrong, right] = await rowsOf(r, b.id, "answer", "q1");
+    expect(await due(r, ["q1"], at(10 * RESUME_WINDOW_MS + 2 + DELAY))).toEqual([{
+      blockId: "q1", rule: "due-review/wrong-first-try", answeredAt: at(10 * RESUME_WINDOW_MS + 1), corrected: true, shown: [],
+      lastSeen: at(10 * RESUME_WINDOW_MS + 2), evidence: [wrong!, right!],
+    }]);
+  });
+
   mm("ai-help: a first try after help for the whole encounter is aided there too: stability returns to one day", async (r) => {
     await episode(r, "clean", 0);
     await episode(r, "clean", DAY);
@@ -1118,6 +1142,19 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     await answer(r, e.id, "q1", "right", at(2 * DAY));
     const [first] = await rowsOf(r, e.id, "answer", "q1");
     expect(await held(r, at(2 * DAY))).toEqual({ blockId: "q1", strength: 1, stabilityMs: DAY, refreshedAt: at(2 * DAY), settled: false, evidence: [first!] });
+  });
+
+  mm("ai-help: help in one encounter does not make a first try in another aided", async (r) => {
+    const page = lesson("l-help", [quiz("q1")]);
+    const a = await r.openEncounter({ course: "c", lesson: "l-help", page, now: at(0), aidTracking: 1 });
+    await r.recordLessonHelp(help(a.id), at(0));
+    const b = await r.openEncounter({ course: "c", lesson: "l-help", page, now: at(10 * RESUME_WINDOW_MS), aidTracking: 1 });
+    expect(b.id).not.toBe(a.id);
+    await answer(r, b.id, "q1", "right", at(10 * RESUME_WINDOW_MS));
+    const [first] = await rowsOf(r, b.id, "answer", "q1");
+    expect(await held(r, at(10 * RESUME_WINDOW_MS))).toEqual({
+      blockId: "q1", strength: 1, stabilityMs: DAY, refreshedAt: at(10 * RESUME_WINDOW_MS), settled: true, evidence: [first!],
+    });
   });
 
   // Generated: random interleavings of help and answers in one encounter. Oracle: RFC 6 §5.1, as a
