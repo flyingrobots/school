@@ -14,9 +14,9 @@ setDefaultTimeout(30_000); // PGlite starts a whole Postgres in process.
 
 /** The functions the port calls: every one granted to school_app. */
 const PORT_FUNCTIONS = [
-  "choice_decision_notes", "choose_time_zone", "due_review", "encounter_answers", "encounter_decision_notes", "encounter_evidence", "encounter_explanations",
-  "explanation", "last_studied", "latest_feedback", "lesson_progress", "open_encounter", "open_lesson_encounter", "record_decision_note", "record_exposure", "record_grading",
-  "record_view", "save_explanation", "study_days", "submission_aid", "submit", "time_zone",
+  "choice_decision_notes", "choose_course_trust", "choose_time_zone", "due_review", "encounter_answers", "encounter_decision_notes", "encounter_evidence", "encounter_explanations",
+  "explanation", "install_course", "installed_courses", "last_studied", "latest_feedback", "lesson_progress", "open_encounter", "open_lesson_encounter", "record_decision_note", "record_exposure", "record_grading",
+  "record_view", "remove_installed_course", "save_explanation", "study_days", "submission_aid", "submit", "time_zone",
 ];
 
 /** A function call and nothing else: no table, no second statement, every argument a parameter. */
@@ -84,6 +84,12 @@ test("every port method is one call of its function, as school_app", async () =>
   await r.latestFeedback();
   await r.chooseTimeZone("UTC", "2026-11-21T10:00:01.500Z");
   await r.timeZone();
+  const installId = crypto.randomUUID();
+  await r.installCourse({ id: installId, course: "bells", source: "git", url: "https://example.com/bells.git", bundleSha256: null,
+    commit: "a".repeat(40), contentSha256: "c".repeat(64), title: "Bells", format: null }, "2026-11-21T10:00:01.600Z");
+  await r.chooseCourseTrust(installId, true, "2026-11-21T10:00:01.700Z");
+  await r.installedCourses();
+  await r.removeInstalledCourse("bells", "2026-11-21T10:00:01.800Z");
   const id = crypto.randomUUID();
   await r.saveExplanation({ submissionId: id, encounterId: e.id, blockId: "e1", text: "Because.", ms: 1 }, "2026-11-21T10:00:02.000Z");
   await r.recordGrading({ status: "failed", findings: null, error: "down", submissionId: id, rubricVersion: "r", promptVersion: "p",

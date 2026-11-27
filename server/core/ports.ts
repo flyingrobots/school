@@ -1,8 +1,8 @@
 // The ports: what School's core needs from the world, defined by the core (RFC 3, §4).
 // Adapters implement them; the core never imports an adapter.
 import type {
-  Aid, AidTracking, Block, DecisionChoice, DueItem, DueReviewQuery, ReviewNote, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingInput,
-  GradingRecord, LastStudied, LatestFeedback, LessonProgress, Outcome, Recorded, SaveResult, SavedExplanation, StudyDay, Submission, SubmitResult, ViewEvent,
+  Aid, AidTracking, Block, CourseInstall, DecisionChoice, DueItem, DueReviewQuery, ReviewNote, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingInput,
+  GradingRecord, InstallResult, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, Outcome, Recorded, RemovalResult, SaveResult, SavedExplanation, StudyDay, Submission, SubmitResult, TrustResult, ViewEvent,
 } from "./model.ts";
 
 /**
@@ -47,6 +47,17 @@ export interface LearningRecord {
   timeZone(): Promise<string | null>;
   /** Append a choice of time zone; null goes back to automatic. */
   chooseTimeZone(zone: string | null, now: string): Promise<void>;
+  /**
+   * Record an install (RFC 7 §7): it becomes its name's current install. Stored once per install id;
+   * see InstallResult. The course's files are the caller's business; the record keeps where they came from.
+   */
+  installCourse(i: CourseInstall, now: string): Promise<InstallResult>;
+  /** Record that `course` is no longer installed. Its progress is untouched; refused when it has no current install. */
+  removeInstalledCourse(course: string, now: string): Promise<RemovalResult>;
+  /** Append the learner's trust choice for one install; a later install of the same name starts untrusted. */
+  chooseCourseTrust(installId: string, trusted: boolean, now: string): Promise<TrustResult>;
+  /** Each name's current install, by name. */
+  installedCourses(): Promise<InstalledCourse[]>;
   saveExplanation(s: ExplanationSubmission, now: string): Promise<SaveResult>;
   /** A saved explanation, its block from the snapshot and its latest grading; null if there is none. */
   explanation(submissionId: string): Promise<SavedExplanation | null>;

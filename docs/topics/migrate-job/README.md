@@ -46,7 +46,7 @@ bun migrate.ts --help | --schema [--human]
 | --- | --- |
 | `--help`, `-h` | Prints a `help` line, then a `schema` line for every message type; exit 0. Reads no setting, touches no database |
 | `--schema` | Prints a `schema` line for every message type; exit 0. Reads no setting, touches no database |
-| `--rename-course <from>=<to>` | After the migrations, renames course `<from>` to `<to>` in the record and prints a `renamed` line (below) |
+| `--rename-course <from>=<to>` | After the migrations, renames course `<from>` to `<to>` in the record and prints a `renamed` line and a `renamed_installs` line (below) |
 | `--human`, `--humanize` | Prose instead of JSON Lines. With `--help`, the prose names the message types rather than printing their schemas; `--schema --human` prints each schema indented |
 
 Any other argument, or `--rename-course` without one `<from>=<to>` pair or given twice, is an
@@ -70,6 +70,7 @@ prints them.
 | `school.migrate.start` | `start` | stdout | `where`, `role` | Settings accepted, before connecting |
 | `school.migrate.applied` | `applied` | stdout | `version`, `name` | Each migration, once committed |
 | `school.migrate.renamed` | `renamed` | stdout | `from`, `to`, `rows` (`encounters`, `views`, `decision_notes`) | `--rename-course`, once the rename commits |
+| `school.migrate.renamed.installs` | `renamed_installs` | stdout | `course_installs`, `course_removals` | `--rename-course`, right after `renamed` |
 | `school.migrate.done` | `done` | stdout | `ok: true`, `where`, `applied` (versions, in order), `role` | Last line of a good run |
 | `school.migrate.captured` | `captured` | either | `stream`, `text` | A library printed something |
 | `school.migrate.error.usage` | `error` | stderr | `error: "usage"`, `code: 2`, `message` | Unknown argument |
@@ -130,7 +131,8 @@ To check a run in a script, read the last line and its `event`, for example with
 ## Renaming a course
 
 A course's name files the learner's progress in the record: every encounter, view and decision
-note names its course. A deployment names its main course after the folder it is mounted at
+note names its course, and so does every install and removal of an installed course (RFC 7 §7,
+flyingrobots/school#232). A trust choice names its install by id, so it follows the install. A deployment names its main course after the folder it is mounted at
 (`/course`, so `course`) unless `SCHOOL_COURSES` names it. Renaming one changes where that progress
 is filed, so School must be stopped while it happens: a running server goes on writing under the
 name it started with. From `server/`:
@@ -138,7 +140,8 @@ name it started with. From `server/`:
 1. Stop School, leaving the database up: `../school compose stop school`.
 2. Take a backup and copy it out (docs/workflows/backup-and-restore, steps 2 and 3).
 3. Rename: `../school compose run --rm migrate bun migrate.ts --rename-course course=aion`. It
-   prints `start`, `renamed` with the rows moved per table, then `done`.
+   prints `start`, `renamed` with the rows moved per table, `renamed_installs` with the install and
+   removal rows moved (a message of its own, so `renamed` is the 1.0.0 line it always was), then `done`.
 4. Name the course in `server/.env`: `SCHOOL_COMPOSE_COURSE=` (empty) and
    `SCHOOL_COURSES=aion=/course,...` with any other courses.
 5. Start School again: `../school up`.
@@ -162,7 +165,7 @@ refusal gives the login back. `school_app` is a role of the whole Postgres serve
 every database on it: rehearsing on a restored copy beside the live record (the backup drill's
 `school_restore`) also keeps the live School from logging in until `../school up`, so stop School
 for a rehearsal too. It lifts the
-append-only trigger on the three tables that name a course only inside the transaction, and commits
+append-only trigger on the five tables that name a course only inside the transaction, and commits
 only if every record table's row count is unchanged, every trigger is enabled again and no row names
 `<from>`. A refusal or failure rolls all of it back, triggers included, and exits 1 with the reason.
 Snapshots hold page content and name no course, so they are not touched. Links to the old course's
@@ -170,8 +173,8 @@ lessons stop working.
 
 If it refused because `<to>` already has rows, nothing changed: find out where those rows came from
 before choosing another name. To check the outcome, compare each table's count per course before and
-after (`SELECT course, count(*) FROM school.encounters GROUP BY 1`, and the same for `views` and
-`decision_notes`), through `../school compose exec postgres psql -U postgres -d school`.
+after (`SELECT course, count(*) FROM school.encounters GROUP BY 1`, and the same for `views`,
+`decision_notes`, `course_installs` and `course_removals`), through `../school compose exec postgres psql -U postgres -d school`.
 
 ## What the contract cannot cover
 

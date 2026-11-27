@@ -7,13 +7,13 @@ import { PGlite } from "@electric-sql/pglite";
 import { migrate, readMigrations } from "./migrate.ts";
 
 /** Every table of the record. Asserted equal to the schema's tables, so a new one cannot be missed. */
-const RECORD_TABLES = ["answers", "decision_notes", "encounters", "explanations", "exposures", "gradings", "snapshots", "time_zone_choices", "views"];
+const RECORD_TABLES = ["answers", "course_installs", "course_removals", "course_trust_choices", "decision_notes", "encounters", "explanations", "exposures", "gradings", "snapshots", "time_zone_choices", "views"];
 
 /** The functions `school_app` may execute, and nothing else. */
 const APP_FUNCTIONS = [
-  "choice_decision_notes", "choose_time_zone", "due_review", "encounter_answers", "encounter_decision_notes", "encounter_evidence", "encounter_explanations",
-  "explanation", "last_studied", "latest_feedback", "lesson_progress", "open_encounter", "open_lesson_encounter", "record_decision_note", "record_exposure", "record_grading",
-  "record_view", "save_explanation", "study_days", "submission_aid", "submit", "time_zone",
+  "choice_decision_notes", "choose_course_trust", "choose_time_zone", "due_review", "encounter_answers", "encounter_decision_notes", "encounter_evidence", "encounter_explanations",
+  "explanation", "install_course", "installed_courses", "last_studied", "latest_feedback", "lesson_progress", "open_encounter", "open_lesson_encounter", "record_decision_note", "record_exposure", "record_grading",
+  "record_view", "remove_installed_course", "save_explanation", "study_days", "submission_aid", "submit", "time_zone",
 ];
 
 const SLOW = 30_000; // PGlite starts a whole Postgres in process.
@@ -84,6 +84,11 @@ async function populate(db: PGlite): Promise<{ encounter: string; submission: st
     expect((await db.query<{ status: string }>("SELECT * FROM school.record_decision_note($1, 'c', 'l1', 'q1', $2, 'due-review/wrong-first-try', 'Because.', $3, $4)",
       [uuid(), e.id, evidence, at(6)])).rows[0]!.status).toBe("stored");
     await db.query("SELECT school.choose_time_zone('Pacific/Auckland', $1)", [at(7)]);
+    const install = uuid();
+    expect((await db.query<{ s: string }>("SELECT school.install_course($1, 'bells', 'git', 'https://example.com/bells.git', NULL, $2, $3, 'Bells', 1, $4) AS s",
+      [install, "a".repeat(40), "c".repeat(64), at(8)])).rows[0]!.s).toBe("installed");
+    expect((await db.query<{ s: string }>("SELECT school.choose_course_trust($1, true, $2) AS s", [install, at(9)])).rows[0]!.s).toBe("stored");
+    expect((await db.query<{ s: string }>("SELECT school.remove_installed_course('bells', $1) AS s", [at(10)])).rows[0]!.s).toBe("removed");
     return { encounter: e.id, submission };
   });
 }
@@ -213,6 +218,7 @@ describe("acceptance", () => {
     expect(stored).toEqual({
       snapshots: [us(0)], encounters: [us(0)], answers: [us(1)], explanations: [us(2)],
       gradings: [us(3)], views: [us(4)], exposures: [us(5)], decision_notes: [us(6)], time_zone_choices: [us(7)],
+      course_installs: [us(8)], course_trust_choices: [us(9)], course_removals: [us(10)],
     });
   }, SLOW);
 

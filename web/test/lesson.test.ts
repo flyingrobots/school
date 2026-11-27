@@ -48,6 +48,7 @@ import { createServer, type ViteDevServer } from "vite"
 import { loadLibrary } from "../../server/blocks.ts"
 import { openDatabase } from "../../server/adapters/database.ts"
 import { postgresRecord } from "../../server/adapters/postgres.ts"
+import { ownerQuery } from "../../server/testing/record.ts"
 import {
   startSchool,
   timeout,
@@ -75,6 +76,7 @@ const NAMES = [
   "down",
   "feedback",
   "model",
+  "graded",
   "source",
   "trace",
   "figure4",
@@ -714,27 +716,111 @@ describe("every exposure the page shows is recorded once per showing (flyingrobo
           .querySelector("[data-explain-id=seasons]")
           ?.getAttribute("data-state") === "graded"
     )
-    const once = await exposed(p, seen, 1)
-    expect(once).toEqual([
-      {
+    // The graded findings are feedback, a showing of their own (RFC 8 §4.6); the model answer is not shown again.
+    const once = await exposed(p, seen, 2)
+    expect(once).toEqual(
+      ["model-answer", "feedback"].map((kind) => ({
         exposureId: expect.stringMatching(UUID),
         encounterId: encounterOf(seen),
         blockId: "seasons",
-        kind: "model-answer",
-      },
-    ])
+        kind,
+      }))
+    )
     expect(await x.locator("[data-explain=error]").count()).toBe(0)
 
     await open(main, lessonPath("model"), "Orbits", p)
     expect(await stateOf(explain(p, "seasons"))).toBe("graded")
-    expect((await exposed(p, seen, 2)).map((e) => [e.blockId, e.kind])).toEqual(
+    expect((await exposed(p, seen, 4)).map((e) => [e.blockId, e.kind])).toEqual(
       [
         ["seasons", "model-answer"],
+        ["seasons", "feedback"],
         ["seasons", "model-answer"],
+        ["seasons", "feedback"],
       ]
     )
     await p.context().close()
   })
+
+  test(
+    "feedback for an explanation: one to its block in the record when a succeeded grading shows, none for a failed one, a second on reload, and none to any other block",
+    async () => {
+      // Its own School, so the test can stop it and read the record it wrote (server/testing/record.ts).
+      const state = join(root, "graded-state")
+      const s = await stack(state, `graded=${COURSE}`)
+      try {
+        const p = await newPage(s)
+        const seen = posts(p)
+        // An exposure the record has answered, so stopping School loses none in flight.
+        let stored = 0
+        p.on("response", (r) => {
+          if (new URL(r.url()).pathname === "/api/exposure" && r.ok())
+            stored += 1
+        })
+        const settled = async (n: number) => {
+          await exposed(p, seen, n)
+          const until = Date.now() + 5_000
+          while (stored < n && Date.now() < until) await p.waitForTimeout(25)
+          expect(stored).toBe(n)
+        }
+        /** The encounter's exposures, oldest first, read as the owner with School stopped; then School again. */
+        const inRecord = async (encounterId: string) => {
+          await stop(s)
+          const rows = await ownerQuery<{ block_id: string; kind: string }>(
+            join(state, "record"),
+            "SELECT block_id, kind FROM school.exposures WHERE encounter_id = $1 ORDER BY seq",
+            [encounterId]
+          )
+          s.school = await startSchool(s.env)
+          return rows.map((r) => [r.block_id, r.kind])
+        }
+        const waitFor = (status: string) =>
+          p.waitForFunction(
+            (want) =>
+              document
+                .querySelector("[data-explain-id=seasons]")
+                ?.getAttribute("data-state") === want,
+            status
+          )
+
+        await open(s, lessonPath("graded"), "Orbits", p)
+        const x = explain(p, "seasons")
+        await x.locator("[data-explain=draft]").fill("The tilt of the axis.")
+        await x.locator("[data-explain=save]").click()
+        await waitFor("saved")
+        replies.push("fail", "succeed")
+        await x.locator("[data-explain=grade]").click()
+        await waitFor("failed")
+        await settled(1) // the model answer only: a failed grading is no feedback
+        await x.locator("[data-explain=grade]").click()
+        await waitFor("graded")
+        await settled(2)
+        const encounterId = encounterOf(seen)
+        // Oracle: RFC 8 §4.6, each showing of a succeeded grading is one `feedback` exposure to its block.
+        expect(await inRecord(encounterId)).toEqual([
+          ["seasons", "model-answer"],
+          ["seasons", "feedback"],
+        ])
+
+        await open(s, lessonPath("graded"), "Orbits", p)
+        expect(await stateOf(explain(p, "seasons"))).toBe("graded")
+        await settled(4)
+        // The reload resumed the same encounter, and its exposures name only the explain block.
+        expect(new Set(seen.exposures().map((e) => e.encounterId))).toEqual(
+          new Set([encounterId])
+        )
+        expect(await inRecord(encounterId)).toEqual([
+          ["seasons", "model-answer"],
+          ["seasons", "feedback"],
+          ["seasons", "model-answer"],
+          ["seasons", "feedback"],
+        ])
+        await p.context().close()
+      } finally {
+        await stop(s)
+      }
+    },
+    timeout(3) + 20_000
+  )
 
   test("reference: once each time one of an explain block's sources is opened", async () => {
     const p = await newPage()
