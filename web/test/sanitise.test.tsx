@@ -24,50 +24,13 @@ const { createRoot } = await import("react-dom/client")
 const { LessonAside, LessonCard, LessonProse, LessonQuote } =
   await import("@/components/lesson")
 const { safeFigure } = await import("@/lib/figure")
+const { CORPUS } = await import("./xss-corpus")
 
 // Every payload calls this; a call means script ran.
 let fired = 0
 ;(globalThis as { pwn?: () => void }).pwn = () => {
   fired++
 }
-
-const CORPUS = [
-  "<script>pwn()</script>",
-  '<img src=x onerror="pwn()">',
-  '<a href="javascript:pwn()">a link</a>',
-  '<a href="JaVaScRiPt:pwn()">mixed case</a>',
-  '<a href=" javascript:pwn()">leading space</a>',
-  '<a href="jav&#x09;ascript:pwn()">tab entity</a>',
-  '<a href="&#106;&#97;&#118;&#97;&#115;&#99;&#114;&#105;&#112;&#116;&#58;pwn()">entities</a>',
-  '<a href="vbscript:pwn()">vbscript</a>',
-  '<a href="data:text/html,<script>pwn()</script>">data</a>',
-  '<svg onload="pwn()"><circle r="1"/></svg>',
-  "<svg><script>pwn()</script></svg>",
-  '<svg><a xlink:href="javascript:pwn()"><text>x</text></a></svg>',
-  '<iframe src="javascript:pwn()"></iframe>',
-  '<iframe srcdoc="<script>parent.pwn()</script>"></iframe>',
-  '<object data="javascript:pwn()"></object>',
-  '<embed src="javascript:pwn()">',
-  '<body onload="pwn()">',
-  '<div onmouseover="pwn()">hover</div>',
-  '<details open ontoggle="pwn()">x</details>',
-  '<input autofocus onfocus="pwn()">',
-  '<form action="javascript:pwn()"><button>go</button></form>',
-  '<button formaction="javascript:pwn()">go</button>',
-  '<math><mi xlink:href="javascript:pwn()">x</mi></math>',
-  '<base href="javascript:pwn()//">',
-  '<meta http-equiv="refresh" content="0;url=javascript:pwn()">',
-  '<link rel="stylesheet" href="javascript:pwn()">',
-  '<video><source onerror="pwn()"></video>',
-  '<img src="x" ONERROR="pwn()">',
-  "<scr<script>ipt>pwn()</script>",
-  '<<img src=x onerror="pwn()">',
-  "<img src=`x` onerror=pwn()>",
-  '<a href="&#0000106&#0000097&#0000118&#0000097&#0000115&#0000099&#0000114&#0000105&#0000112&#0000116&#0000058pwn()">padded</a>',
-  '<noscript><p title="</noscript><img src=x onerror=pwn()>"></noscript>',
-  "<style>@import 'javascript:pwn()';</style>",
-  '<template><img src=x onerror="pwn()"></template>',
-]
 
 const BLOCKS = [
   ["prose", LessonProse],

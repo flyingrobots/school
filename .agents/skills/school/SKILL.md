@@ -66,6 +66,22 @@ In a School checkout the same pages are under `docs/`.
    The check proves structure only. It cannot tell whether a claim is true, a source supports it,
    or the copy keeps School's voice. Read the course back for those yourself.
 
+## When School runs you
+
+School's authoring page can run you itself, in a folder made for one request and deleted after it.
+There:
+
+- The course is under `course/`: `course/course.json`, `course/lessons/`, `course/reference/`, and
+  `course/OBJECTIVES.md` and `course/RESOURCES.md` when it has them. Only your changes under
+  `course/` come back to School.
+- This skill is under `guide/`, read-only, with the references it links under
+  `guide/docs/course-format/` and `guide/docs/voice/`. Read those copies rather than the links
+  above: they are the version School checks the course against.
+- You have file tools only. There is no shell and no web, so you cannot run `./school check`
+  (step 9) or fetch a source; mark unsourced claims as step 2 says.
+- School runs `school check` on `course/` after you finish. If it finds a problem, School sends
+  back the first problem, with its file, and asks you to fix it. Step 9 is for a terminal.
+
 ## Revise a course
 
 - **Keep every id a learner may have used**: block ids and choice ids. A changed id loses that

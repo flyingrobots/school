@@ -280,6 +280,7 @@ describe("reading the latest feedback aloud", () => {
     const feedback = {
       course: "astro",
       courseTitle: "Astronomy",
+      trusted: true,
       lesson: { id: "orbits", title: "Orbits" },
       blockId: "seasons-explain",
       prompt: "How would you explain the seasons?",
