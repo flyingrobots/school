@@ -131,7 +131,7 @@ A course in `SCHOOL_COURSES` or `SCHOOL_COURSE` is trusted, as it always was. An
 | What | For an untrusted course |
 | --- | --- |
 | Its reference documents and every other file under `reference/` | Served with `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`: a page opened from it runs no script and cannot use School's API. An SVG file is served as `image/svg+xml` under the same sandbox |
-| `GET /api/courses` and `GET /api/courses/:course` | `trusted: false` (a trusted course gives `trusted: true`); the course and lesson JSON carry the same two headers |
+| `GET /api/courses` and `GET /api/courses/:course` | `trusted: false` (a trusted course gives `trusted: true`); the course and lesson JSON carry the same two headers. The replies that mix courses, `/api/showcase`, `/api/review`, `/api/feedback`, `/api/resume` and `/api/activity`, give each item its course's `trusted` |
 | Its hook figures on the home page | Drawn as an image, not inline SVG, so nothing in them runs; `GET /api/showcase` gives each item `trusted` |
 | The course page | A note: "This course is shown in safe mode: its pages can’t run scripts." ([the course page](../course-page/README.md)) |
 
