@@ -241,7 +241,13 @@ license under its heading ([the course page](../course-page/README.md)).
   or a `LicenseRef-<name>` for a license of your own.
 - `AND`, `OR` and `WITH` join them, in capitals. `WITH` binds tightest, then `AND`, then `OR`;
   parentheses group. The name after `WITH` is an id on the SPDX exceptions list, matched without
-  regard to case; a `LicenseRef-` is not an exception.
+  regard to case; a `LicenseRef-` is not an exception. A license takes at most one `WITH`, and
+  `WITH` cannot follow a parenthesised group. A `LicenseRef-` takes no `+`.
+
+A refusal names the rule the expression broke: a lowercase `and`, `or` or `with` where an operator
+belongs, at the top level or inside parentheses, is refused as an operator that is not in capitals;
+where a license belongs (`MIT OR and`), the refusal says a license is expected, with no hint about
+capitals; an empty `license` is refused as empty, and so on.
 
 The lists are `server/spdx-license-ids.ts`, copied from the `spdx-license-ids` package (3.0.24,
 CC0-1.0), and `server/spdx-exception-ids.ts`, from `spdx-exceptions` (2.5.0, CC0-1.0), rather than
