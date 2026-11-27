@@ -8,7 +8,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runAsk } from "./ask.ts";
-import { loadConfig, type AskConfig } from "./run.ts";
+import { loadConfig, sweeps, type AskConfig } from "./run.ts";
 import { fakeAgent, plainAgent, USAGE, type Step } from "./testing/fake-agent.ts";
 
 // Bun's own 5 s limit would race process start-up on a loaded machine; each test ends on its own
@@ -330,4 +330,14 @@ test("when no ask agent can be started, the reply fails with each attempt failed
     { agent: "gone", status: "failed", error: `could not start ${gone} (ENOENT)`, exitCode: null, ms: expect.any(Number), deltas: 0 },
     { agent: "denied", status: "failed", error: `could not start ${notExecutable} (EACCES)`, exitCode: null, ms: expect.any(Number), deltas: 0 },
   ] });
+});
+
+// flyingrobots/school#348: a caller hanging up after the agent's pipes closed starts no sweep.
+test("a hang-up after the ask agent's pipes closed starts no sweep", async () => {
+  const cfg = ask([{ name: "quiet", command: `sh -c 'exec >&- 2>&-; sleep 3'` }]);
+  const gone = new AbortController();
+  setTimeout(() => gone.abort(), 1000);
+  const before = sweeps.started;
+  await runAsk(cfg, { prompt: "p", signal: gone.signal }, () => {});
+  expect(sweeps.started - before).toBe(0);
 });

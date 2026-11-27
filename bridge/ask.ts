@@ -9,7 +9,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentEnded, agentStarted, answerText, claudeStreamLine, spawnFailure, usageOf, type Agent, type AskConfig, type StreamLine, type Usage } from "./run.ts";
+import { agentEnded, agentStarted, answerText, claudeStreamLine, spawnFailure, sweepGroup, usageOf, type Agent, type AskConfig, type StreamLine, type Usage } from "./run.ts";
 import { expand, usesPlaceholder } from "./template.ts";
 
 export type { Usage } from "./run.ts";
@@ -110,14 +110,12 @@ async function askAgent(agent: Agent, job: AskJob, timeoutMs: number, onDelta: (
     }
     agentStarted(pid = proc.pid);
     let why: string | null = null;
-    let sweep: ReturnType<typeof setInterval> | null = null;
-    const hit = () => { try { process.kill(-proc.pid, "SIGKILL"); } catch {} };
+    const sweep: { stop?: () => void } = {};
+    let done = false; // set once the pipes have closed: the group may be empty, so no sweep starts
     const kill = (reason: string) => {
       why ??= reason;
-      hit();
-      // A child the agent forks just as the signal lands can miss it, still in the group, and hold
-      // the pipes open until the timeout: sweep the group until they close.
-      sweep ??= setInterval(hit, 50);
+      if (done) { proc.kill("SIGKILL"); return; } // the agent itself, still unreaped; not its group
+      sweep.stop ??= sweepGroup(proc.pid);
       grace ??= setTimeout(() => { for (const r of readers) r.cancel().catch(() => {}); }, PIPE_GRACE_MS);
     };
     // A child that left the group holds the pipes open however often the group is killed. Once
@@ -141,7 +139,8 @@ async function askAgent(agent: Agent, job: AskJob, timeoutMs: number, onDelta: (
       readLines(proc.stdout, onLine, !streaming, () => kill("produced more than 8 MiB of output"), readers),
       readLines(proc.stderr, () => {}, false, () => kill("produced more than 8 MiB of error output"), readers),
     ]);
-    if (sweep !== null) clearInterval(sweep);
+    done = true;
+    sweep.stop?.();
     if (grace !== null) clearTimeout(grace);
     const exitCode = await proc.exited;
     clearTimeout(timer);
