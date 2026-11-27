@@ -136,7 +136,7 @@ function verify(row: InstalledCourse, folder: string): Verified {
  * installed; `current` reads it again, from the record, for each request that needs it.
  */
 export function courseRegistry(opts: { config: Config; configured: ServedCourse[]; installed: () => Promise<InstalledCourse[]>; log: (line: string) => void }):
-  { start(): Promise<Registry>; current(): Promise<Registry> } {
+  { start(): Promise<Registry>; current(): Promise<Registry>; find(name: string): Promise<Listed | null> } {
   const { config, configured, installed, log } = opts;
   const byName = new Map(configured.map((c) => [c.name, c]));
   /** Each install id's verification, made once: its folder never changes. */
@@ -191,5 +191,5 @@ export function courseRegistry(opts: { config: Config; configured: ServedCourse[
       find: (name) => index.get(name) ?? null,
     };
   };
-  return { start: () => read(true), current: () => read(false) };
+  return { start: () => read(true), current: () => read(false), find: () => { throw new Error("not implemented"); } };
 }
