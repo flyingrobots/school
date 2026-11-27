@@ -1,6 +1,6 @@
 // Where the framework finds a course, the learner's state, and any extra source material.
 // Nothing here names a subject: a course is configured, never compiled in (ADR 6).
-import { lstatSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { withPassword } from "./secrets.ts";
 
@@ -265,7 +265,9 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
   // real paths and then by identity, as the untrusted checks above are.
   const store = env.SCHOOL_COURSE_STORE === undefined || env.SCHOOL_COURSE_STORE === "" ? null : abs(env.SCHOOL_COURSE_STORE, cwd);
   if (store !== null) {
+    if (existsSync(store) && !statSync(store).isDirectory()) throw new ConfigError(`SCHOOL_COURSE_STORE (${store}) exists but is not a folder; the course store is a folder`);
     const apart: [string, string][] = [
+      [`the framework (${framework}), which holds the server source`, framework],
       ...Object.entries(courses).map(([name, root]): [string, string] => [Object.hasOwn(untrusted, name)
         ? `untrusted course ${JSON.stringify(name)} (${root}) from SCHOOL_UNTRUSTED_COURSES`
         : `trusted course ${JSON.stringify(name)} (${root}) from ${name === single ? "SCHOOL_COURSE" : "SCHOOL_COURSES"}`, root]),
