@@ -131,3 +131,11 @@ test("the configuration is checked when loaded", () => {
   expect(() => loadConfig({ agents: [{ name: "x", command: "a" }, { name: "x", command: "b" }] })).toThrow(/twice/);
   expect(() => loadConfig({ timeout_seconds: 0, agents: [{ name: "x", command: "a" }] })).toThrow(/timeout/);
 });
+
+// An attempt's error is logged (bridge.attempt), and the log never holds an answer. A JSON parser's
+// own message quotes the text it choked on, so it must not become the error.
+test("a claude-json agent whose output is not JSON fails with an error that quotes none of it", async () => {
+  const prose = agent("prose", "echo 'SECRETWORD is what I would say'");
+  const r = await runChain(cfg([{ name: "prose", command: prose, output: "claude-json" }]), { prompt: "p", schema });
+  expect(r.attempts[0]).toMatchObject({ status: "failed", error: "claude-json output was not JSON" });
+});
