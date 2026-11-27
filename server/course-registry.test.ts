@@ -5,7 +5,7 @@
 // contract checks on PGlite and Bun.SQL (server/contract/learning-record.ts); here it is a list the
 // test changes, so a refresh can be seen without a database.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, readdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, mkdtempSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseConfig, type Config } from "./config.ts";
@@ -326,6 +326,21 @@ describe("an install whose files change while School runs", () => {
     const during = summary(await registry.current())[0]?.kind;
     writeFileSync(file, LESSON);
     expect({ during, after: summary(await registry.current())[0]?.kind }).toEqual({ during: "unavailable", after: "served" });
+  });
+
+  // The cheap check compares size and times; a same-size rewrite with the mtime put back is caught
+  // only because the change time cannot be reset (flyingrobots/school#346, F1).
+  test("a same-size rewrite with the modification time put back is no longer served", async () => {
+    const row = installed("bells", "Bells", { trusted: true });
+    const file = join(installFolder(join(root, "store"), row.id), "lessons", "0001.json");
+    const registry = registryOf(configWith({}), [row]);
+    await registry.start();
+    const before = statSync(file);
+    const rewritten = LESSON.replace("Which?", "Whom??");
+    expect(rewritten.length).toBe(LESSON.length);
+    writeFileSync(file, rewritten);
+    utimesSync(file, before.atime, before.mtime);
+    expect(summary(await registry.current())).toEqual([{ name: "bells", title: "Bells", trusted: true, kind: "unavailable" }]);
   });
 
   test("a file rewritten with the same bytes after start is still served", async () => {
