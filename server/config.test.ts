@@ -315,6 +315,157 @@ test("folders with different device and inode stay accepted under the same fake 
   expect([course(c, "course")?.trusted, course(c, "guest")?.trusted]).toEqual([true, false]);
 });
 
+// The course store (RFC 7 §5.1, flyingrobots/school#233): the one folder School may write, which
+// will hold installed courses and nothing else. It is content, not learner state, and School
+// writes there, so it must not be, hold or sit inside a course, learner state, a mount or the web
+// app's folder, compared on real paths and by device and inode, and a refusal names both paths.
+// Oracle: RFC 7 §5.1, "Start refuses (exit 2, naming both paths ...) a store inside a configured
+// course, inside SCHOOL_STATE, holding SCHOOL_STATE or a PGlite record, or the same as a
+// configured course".
+test("SCHOOL_COURSE_STORE names the course store", () => {
+  expect(parseConfig({ SCHOOL_COURSE_STORE: "/srv/store", SCHOOL_COURSES: "own=/srv/own", SCHOOL_STATE: "/srv/state" }, FRAMEWORK).store).toBe("/srv/store");
+});
+
+test.each([
+  ["unset", undefined],
+  ["empty", ""],
+])("SCHOOL_COURSE_STORE %s means no store, so installing is off", (_, value) => {
+  expect(parseConfig({ SCHOOL_COURSE_STORE: value, SCHOOL_STATE: "/srv/state" }, FRAMEWORK).store).toBe(null);
+});
+
+test("a relative SCHOOL_COURSE_STORE resolves against the working directory, as every other path does, not the framework's", () => {
+  expect(parseConfig({ SCHOOL_COURSE_STORE: "store", SCHOOL_STATE: "/srv/state" }, FRAMEWORK).store).toBe(join(process.cwd(), "store"));
+});
+
+test("a relative SCHOOL_COURSE_STORE inside a relative course is refused, both resolved from the working directory", () => {
+  const cwd = process.cwd();
+  expect(() => parseConfig({ SCHOOL_COURSE_STORE: "own/store", SCHOOL_COURSES: "own=own", SCHOOL_STATE: "/srv/state" }, FRAMEWORK))
+    .toThrow(`SCHOOL_COURSE_STORE (${join(cwd, "own", "store")}) overlaps trusted course "own" (${join(cwd, "own")}) from SCHOOL_COURSES`);
+});
+
+// Two cheap refusals (review of #296): a store that is, holds or sits inside the framework (the
+// server's source is inside it), and a store path that exists but is not a folder.
+test.each([
+  ["is the framework folder", "/opt/school"],
+  ["sits inside the framework folder", "/opt/school/store"],
+  ["sits inside the server's source folder", "/opt/school/server/store"],
+  ["holds the framework folder", "/opt"],
+])("a store that %s is refused, naming both paths", (_, store) => {
+  expect(() => parseConfig({ SCHOOL_COURSE_STORE: store, SCHOOL_STATE: "/srv/state" }, FRAMEWORK))
+    .toThrow(`SCHOOL_COURSE_STORE (${store}) overlaps the framework (/opt/school)`);
+});
+
+test("a store path that exists but is a file, not a folder, is refused, naming it", () => {
+  const { writeFileSync } = require("node:fs") as typeof import("node:fs");
+  const { root, done } = scratch();
+  try {
+    const file = join(root, "store");
+    writeFileSync(file, "not a folder");
+    expect(() => parseConfig({ SCHOOL_COURSE_STORE: file, SCHOOL_STATE: join(root, "state") }, FRAMEWORK))
+      .toThrow(`SCHOOL_COURSE_STORE (${file}) exists but is not a folder`);
+  } finally {
+    done();
+  }
+});
+
+/** Every folder the store must stay apart from, each on its own path under /srv. */
+const PLACED = {
+  SCHOOL_COURSES: "own=/srv/own",
+  SCHOOL_UNTRUSTED_COURSES: "guest=/srv/guest",
+  SCHOOL_MOUNTS: "papers=/srv/papers",
+  SCHOOL_WEB: "/srv/web",
+  SCHOOL_STATE: "/srv/state",
+  DB_PATH: "/srv/legacy/progress.db",
+  SCHOOL_DATABASE_URL: "pglite:/srv/record",
+};
+
+test("a store beside every other folder, over none of them, is accepted", () => {
+  expect(parseConfig({ ...PLACED, SCHOOL_COURSE_STORE: "/srv/store" }, FRAMEWORK).store).toBe("/srv/store");
+});
+
+test.each([
+  ["is a trusted course", "/srv/own", 'trusted course "own" (/srv/own) from SCHOOL_COURSES'],
+  ["sits inside a trusted course", "/srv/own/store", 'trusted course "own" (/srv/own) from SCHOOL_COURSES'],
+  ["is an untrusted course", "/srv/guest", 'untrusted course "guest" (/srv/guest) from SCHOOL_UNTRUSTED_COURSES'],
+  ["sits inside an untrusted course", "/srv/guest/reference/store", 'untrusted course "guest" (/srv/guest) from SCHOOL_UNTRUSTED_COURSES'],
+  ["is SCHOOL_STATE", "/srv/state", "SCHOOL_STATE (/srv/state)"],
+  ["sits inside SCHOOL_STATE", "/srv/state/store", "SCHOOL_STATE (/srv/state)"],
+  ["holds DB_PATH", "/srv/legacy", "DB_PATH (/srv/legacy/progress.db)"],
+  ["holds the PGlite record", "/srv/record", "the record in SCHOOL_DATABASE_URL (/srv/record)"],
+  ["sits inside the PGlite record", "/srv/record/store", "the record in SCHOOL_DATABASE_URL (/srv/record)"],
+  ["is a mount", "/srv/papers", 'SCHOOL_MOUNTS mount "papers" (/srv/papers)'],
+  ["sits inside a mount", "/srv/papers/store", 'SCHOOL_MOUNTS mount "papers" (/srv/papers)'],
+  ["is the web folder", "/srv/web", "SCHOOL_WEB (/srv/web)"],
+  ["sits inside the web folder", "/srv/web/store", "SCHOOL_WEB (/srv/web)"],
+])("a store that %s is refused, naming both paths", (_, store, other) => {
+  expect(() => parseConfig({ ...PLACED, SCHOOL_COURSE_STORE: store }, FRAMEWORK)).toThrow(`SCHOOL_COURSE_STORE (${store}) overlaps ${other}`);
+});
+
+test.each([
+  ["a trusted course", { SCHOOL_COURSES: "own=/srv/all/own" }, 'trusted course "own" (/srv/all/own) from SCHOOL_COURSES'],
+  ["an untrusted course", { SCHOOL_UNTRUSTED_COURSES: "guest=/srv/all/guest" }, 'untrusted course "guest" (/srv/all/guest) from SCHOOL_UNTRUSTED_COURSES'],
+  ["SCHOOL_STATE", { SCHOOL_STATE: "/srv/all/state" }, "SCHOOL_STATE (/srv/all/state)"],
+  ["a mount", { SCHOOL_MOUNTS: "papers=/srv/all/papers" }, 'SCHOOL_MOUNTS mount "papers" (/srv/all/papers)'],
+  ["the web folder", { SCHOOL_WEB: "/srv/all/web" }, "SCHOOL_WEB (/srv/all/web)"],
+])("a store that holds %s is refused, naming both paths", (_, env, other) => {
+  expect(() => parseConfig({ ...PLACED, ...env, SCHOOL_COURSE_STORE: "/srv/all" }, FRAMEWORK)).toThrow(`SCHOOL_COURSE_STORE (/srv/all) overlaps ${other}`);
+});
+
+test("a store that is a symlink into a course is refused, since paths are compared resolved", () => {
+  const { mkdirSync, symlinkSync } = require("node:fs") as typeof import("node:fs");
+  const { root, done } = scratch();
+  try {
+    mkdirSync(join(root, "course", "inner"), { recursive: true });
+    symlinkSync(join(root, "course", "inner"), join(root, "store"));
+    expect(() => parseConfig({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_COURSE_STORE: join(root, "store") }, FRAMEWORK))
+      .toThrow(`SCHOOL_COURSE_STORE (${join(root, "store")}) overlaps trusted course "c" (${join(root, "course")}) from SCHOOL_COURSES`);
+  } finally {
+    done();
+  }
+});
+
+test("a store that is a symlink into SCHOOL_STATE is refused, since paths are compared resolved", () => {
+  const { mkdirSync, symlinkSync } = require("node:fs") as typeof import("node:fs");
+  const { root, done } = scratch();
+  try {
+    mkdirSync(join(root, "state", "inner"), { recursive: true });
+    symlinkSync(join(root, "state", "inner"), join(root, "store"));
+    expect(() => parseConfig({ SCHOOL_STATE: join(root, "state"), SCHOOL_COURSE_STORE: join(root, "store") }, FRAMEWORK))
+      .toThrow(`SCHOOL_COURSE_STORE (${join(root, "store")}) overlaps SCHOOL_STATE (${join(root, "state")})`);
+  } finally {
+    done();
+  }
+});
+
+// The same rules by identity: under compose a folder can be bind-mounted under two names, which
+// realpath cannot see. /mnt/course and /mnt/library are one folder (inode 42); /mnt/state and
+// /mnt/vol are one folder (inode 60).
+const STORE_ALIASED = fakeStat({
+  "/": { dev: 1, ino: 2 },
+  "/mnt/course": { dev: 7, ino: 42 },
+  "/mnt/library": { dev: 7, ino: 42 },
+  "/mnt/course/store": { dev: 7, ino: 44 },
+  "/mnt/library/store": { dev: 7, ino: 44 },
+  "/mnt/state": { dev: 7, ino: 60 },
+  "/mnt/vol": { dev: 7, ino: 60 },
+  "/mnt/store": { dev: 7, ino: 70 },
+});
+const storeAliased = (env: Record<string, string>) =>
+  parseConfigFrom({ SCHOOL_DATABASE_URL: "postgres://db/school", SCHOOL_COURSE: "/mnt/course", SCHOOL_STATE: "/mnt/state", ...env }, FRAMEWORK, STORE_ALIASED);
+
+test.each([
+  ["the trusted course under another name", "/mnt/library", 'trusted course "course" \\(/mnt/course\\) from SCHOOL_COURSE'],
+  ["inside the trusted course under another name", "/mnt/library/store", 'trusted course "course" \\(/mnt/course\\) from SCHOOL_COURSE'],
+  ["SCHOOL_STATE under another name", "/mnt/vol", "SCHOOL_STATE \\(/mnt/state\\)"],
+])("a store that is %s, by device and inode, is refused, naming both paths", (_, store, other) => {
+  expect(() => storeAliased({ SCHOOL_COURSE_STORE: store }))
+    .toThrow(new RegExp(`SCHOOL_COURSE_STORE \\(${store}\\) and ${other} are the same folder under two names, or one holds the other`));
+});
+
+test("a store with its own device and inode is accepted under the same fake stat", () => {
+  expect(storeAliased({ SCHOOL_COURSE_STORE: "/mnt/store" }).store).toBe("/mnt/store");
+});
+
 // Inodes above 2^53 (CodeRabbit on #213): a Number cannot hold them exactly, so two folders could
 // round to one identity. Identities are compared as exact integers, and School's own stat asks the
 // filesystem for bigint inodes. Oracle: Node's fs.statSync, "bigint: true" gives BigInt fields.
