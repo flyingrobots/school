@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Block } from "./blocks.ts";
 import { NotStarted, probePort, startSchool, timeout } from "./testing/processes.ts";
+import { openLesson } from "./testing/lessons.ts";
 import { ownerQuery } from "./testing/record.ts";
 
 async function boot(env: Record<string, string | undefined>): Promise<{ code: number | null; up: boolean; err: string }> {
@@ -75,7 +76,7 @@ test("a second server on the same pglite: record refuses to start before serving
   const first = await startSchool({ ...process.env, HOST: "127.0.0.1", ...env }, { record: "server" });
   try {
     const answer = async () => {
-      const { encounterId } = await (await fetch(`${first.url}/api/courses/c/lessons/l1`)).json();
+      const { encounterId } = await (await openLesson(first.url, "c", "l1")).json();
       const submissionId = crypto.randomUUID();
       const r = await fetch(`${first.url}/api/answer`, { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ submissionId, encounterId, blockId: "q1", choiceId: "a", ms: 5 }) });

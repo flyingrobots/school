@@ -4,8 +4,13 @@ Reference: what `/courses/:course/lessons/:lesson` in the web app (`web/`) does.
 
 ## What it shows
 
-The page asks `GET /api/courses/:course/lessons/:lesson` for the lesson in the web view, which
-opens or resumes the learner's encounter, and renders the lesson's blocks in order:
+The page opens the lesson in the web view with `POST /api/courses/:course/lessons/:lesson`, a
+JSON request with `?aid=1` and the browser's `?tz=`. That opens the learner's encounter, or
+resumes the one already open. The open is a POST so that no other page can open an encounter
+with a GET, such as an `<img>` (flyingrobots/school#321). Opening twice, as a reload or React's
+development double effect does, resumes the same encounter.
+
+The page renders the lesson's blocks in order:
 
 | Block | Rendered with |
 | --- | --- |

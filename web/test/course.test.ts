@@ -33,6 +33,7 @@ import {
   timeout,
   type Started,
 } from "../../server/testing/processes.ts"
+import { openLesson } from "../../server/testing/lessons.ts"
 import { heldIntro, opacities, pressJ, stops } from "./intro.ts"
 import { close } from "./routes.ts"
 import { warm } from "./vite.ts"
@@ -195,7 +196,7 @@ beforeAll(
     // l2 has q3 and q4 right and q5 wrong.
     const answer = async (lessonId: string, picks: [string, string][]) => {
       const opened = await (
-        await fetch(`${school.url}/api/courses/aion/lessons/${lessonId}`)
+        await openLesson(school.url, "aion", lessonId)
       ).json()
       for (const [blockId, choiceId] of picks) {
         const r = await fetch(`${school.url}/api/answer`, {

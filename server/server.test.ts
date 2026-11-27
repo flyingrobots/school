@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startSchool, timeout, type Started } from "./testing/processes.ts";
+import { openLesson } from "./testing/lessons.ts";
 import { ownerQuery } from "./testing/record.ts";
 
 // Every test gets its own server, state and port, and sets up what it needs: none depends on
@@ -46,7 +47,9 @@ afterEach(async () => {
 });
 
 type Lesson = { encounterId?: string; answers?: { blockId: string; choiceId: string; correct: boolean }[] };
-const page = async (view = "web"): Promise<Lesson> => (await fetch(`${base}/api/courses/demo/lessons/l1?view=${view}`)).json();
+/** The lesson in `view`: opened as the page opens it in the web view, read in the slides view. */
+const page = async (view = "web"): Promise<Lesson> =>
+  (await (view === "web" ? openLesson(base, "demo", "l1") : fetch(`${base}/api/courses/demo/lessons/l1?view=${view}`))).json();
 const encounterOf = (lesson: Lesson) => lesson.encounterId ?? null;
 const answer = (body: Record<string, unknown>) =>
   fetch(base + "/api/answer", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });

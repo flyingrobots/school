@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { allowedHosts, hostAllowed } from "./hosts.ts";
 import { startSchool, type Started } from "./testing/processes.ts";
+import { openLesson } from "./testing/lessons.ts";
 
 const root = mkdtempSync(join(tmpdir(), "school-host-"));
 const TAILNET = "school.tail1234.ts.net";
@@ -46,7 +47,7 @@ const ROUTES: [string, string, unknown?][] = [
   ["GET", "/"], ["GET", "/some/page"], ["GET", "/api/courses"], ["GET", "/api/courses/c"], ["GET", "/api/courses/c/lessons/l1"],
   ["GET", "/api/settings/status"], ["GET", "/api/settings/bridge"], ["GET", "/api/settings/agents"], ["GET", "/api/nothing"],
   ["GET", "/courses/c/reference/r.html"], ["GET", "/papers/p.html"],
-  ["POST", "/api/answer", {}], ["POST", "/api/explanation", {}], ["POST", "/api/grade", {}], ["POST", "/api/view", { course: "c", lesson: "l1" }],
+  ["POST", "/api/courses/c/lessons/l1", {}], ["POST", "/api/answer", {}], ["POST", "/api/explanation", {}], ["POST", "/api/grade", {}], ["POST", "/api/view", { course: "c", lesson: "l1" }],
   ["POST", "/api/settings/bridge", { url: "http://127.0.0.1:9", token: "attacker-token-0123456789" }],
   ["POST", "/api/settings/agents", { agents: [{ name: "x", command: "touch /tmp/pwned" }] }], ["POST", "/api/settings/agents/test", { agent: "x" }],
   ["PUT", "/api/settings/agents", {}], ["DELETE", "/api/courses"],
@@ -66,13 +67,13 @@ test.each(REBOUND)("a request with Host %p is refused on every route", async (ho
 });
 
 test("a refused request changes nothing", async () => {
-  const opened = await (await fetch(base + "/api/courses/c/lessons/l1")).json();
+  const opened = await (await openLesson(base, "c", "l1")).json();
   const answer = { submissionId: crypto.randomUUID(), encounterId: opened.encounterId, blockId: "q1", choiceId: "a", ms: 1 };
   expect((await as("evil.example", "/api/answer", { method: "POST", headers: JSONH, body: JSON.stringify(answer) })).status).toBe(403);
   expect((await as("evil.example", "/api/settings/bridge", { method: "POST", headers: JSONH,
     body: JSON.stringify({ url: "http://127.0.0.1:9", token: "attacker-token-0123456789" }) })).status).toBe(403);
   expect(existsSync(join(root, "state", "settings.json"))).toBe(false);
-  const again = await (await fetch(base + "/api/courses/c/lessons/l1")).json();
+  const again = await (await openLesson(base, "c", "l1")).json();
   expect(again.encounterId).toBe(opened.encounterId);
   expect(again.answers).toEqual(opened.answers);
   expect(await (await fetch(base + "/api/settings/bridge")).json()).toMatchObject({ url: null, tokenSet: false });

@@ -4,6 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startBridge, startSchool, timeout, type Started } from "./testing/processes.ts";
+import { openLesson } from "./testing/lessons.ts";
 import { ownerQuery, recordBytes } from "./testing/record.ts";
 
 // Every test gets its own server, bridge, state and ports, and sets up what it needs: none
@@ -54,7 +55,7 @@ afterEach(async () => {
 const post = (path: string, body: unknown) =>
   fetch(base + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 type Lesson = { encounterId: string; lesson: { children: { type: string; id: string }[] }; explanations: { text: string; grading: { status: string; findings?: { summary: string } } | null }[] };
-const lesson = async (): Promise<Lesson> => (await fetch(base + "/api/courses/c/lessons/l1")).json();
+const lesson = async (): Promise<Lesson> => (await openLesson(base, "c", "l1")).json();
 
 const ANSWER = "You keep the changes; state is a replay. <script>x</script>";
 

@@ -48,6 +48,7 @@ import { createServer, type ViteDevServer } from "vite"
 import { loadLibrary } from "../../server/blocks.ts"
 import { openDatabase } from "../../server/adapters/database.ts"
 import { postgresRecord } from "../../server/adapters/postgres.ts"
+import { openLesson } from "../../server/testing/lessons.ts"
 import { ownerQuery } from "../../server/testing/record.ts"
 import {
   startSchool,
@@ -96,6 +97,7 @@ const NAMES = [
   "slides-keys",
   "slides-motion",
   "slides-trip",
+  "opens",
 ] as const
 type Name = (typeof NAMES)[number]
 
@@ -282,12 +284,10 @@ const explain = (p: Page, id: string) =>
 const stateOf = async (l: ReturnType<Page["locator"]>) =>
   l.getAttribute("data-state")
 
-/** The lesson as the API returns it, read straight from School, bypassing the page. */
+/** The lesson as the API returns it, opened straight from School as the page opens it, bypassing the page. */
 const record = async (s: Stack, course: Name, lesson = "orbits") =>
   // With the page's ?aid=1, so it resumes the page's encounter: a different aid opens another (RFC 2 §3).
-  (await (
-    await fetch(`${s.school.url}/api/courses/${course}/lessons/${lesson}?aid=1`)
-  ).json()) as {
+  (await (await openLesson(s.school.url, course, lesson, "?aid=1")).json()) as {
     encounterId: string
     answers: { blockId: string; choiceId: string; correct: boolean }[]
     explanations: {
@@ -441,6 +441,36 @@ describe("golden path", () => {
         .textContent()
     ).toContain("not its distance")
     expect((await record(main, "golden")).answers).toHaveLength(2) // the reload recorded nothing new
+    await p.context().close()
+  })
+})
+
+describe("opening the lesson (flyingrobots/school#321)", () => {
+  test("the page opens it with POSTs only, never a GET of the web view, and every open, a reload's too, resumes one encounter", async () => {
+    const p = await newPage()
+    const asked: string[] = []
+    const encounters: Promise<string>[] = []
+    p.on("request", (r) => {
+      const u = new URL(r.url())
+      if (u.pathname === "/api/courses/opens/lessons/orbits")
+        asked.push(`${r.method()} ${u.searchParams.get("view") ?? "web"}`)
+    })
+    p.on("response", (r) => {
+      const u = new URL(r.url())
+      if (u.pathname === "/api/courses/opens/lessons/orbits" && r.ok())
+        encounters.push(
+          r.json().then((b) => (b as { encounterId: string }).encounterId)
+        )
+    })
+    await open(main, lessonPath("opens"), "Orbits", p)
+    await open(main, lessonPath("opens"), "Orbits", p)
+    // React's development double effect may open it twice per visit; each open is a POST.
+    expect(asked.length).toBeGreaterThanOrEqual(2)
+    expect(new Set(asked)).toEqual(new Set(["POST web"]))
+    const { encounterId } = await record(main, "opens")
+    expect(new Set(await Promise.all(encounters))).toEqual(
+      new Set([encounterId])
+    )
     await p.context().close()
   })
 })
@@ -614,12 +644,20 @@ describe("aid tracking (flyingrobots/school#51)", () => {
   })
 })
 
-/** Every POST the page sends to School, in order, with its JSON body. */
+/**
+ * Every POST the page sends to School, in order, with its JSON body, except the POST that opens
+ * the lesson (flyingrobots/school#321): what the learner did in the encounter.
+ */
 function posts(p: Page) {
   const sent: { path: string; body: Record<string, string> }[] = []
   p.on("request", (r) => {
-    if (r.method() === "POST" && r.url().includes("/api/"))
-      sent.push({ path: new URL(r.url()).pathname, body: r.postDataJSON() })
+    const { pathname } = new URL(r.url())
+    if (
+      r.method() === "POST" &&
+      pathname.startsWith("/api/") &&
+      !pathname.startsWith("/api/courses/")
+    )
+      sent.push({ path: pathname, body: r.postDataJSON() })
   })
   const exposures = () =>
     sent.filter((x) => x.path === "/api/exposure").map((x) => x.body)
