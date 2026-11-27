@@ -1,5 +1,5 @@
 // The bridge over HTTP, as the real process (flyingrobots/school#10).
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -170,3 +170,80 @@ test("a bridge whose port is taken writes one bridge.error line naming it, nothi
     holder.stop(true);
   }
 }, timeout(1));
+
+// flyingrobots/school#287: the `ask` list (RFC 6 §5.4) is reported by /health and reordered by
+// PUT /config as the grading list is: every declared agent named once, only `name` and `enabled`.
+describe("the ask list in /health and PUT /config", () => {
+  const send = (method: string, path: string, body?: unknown) =>
+    fetch(base + path, { method, headers: { ...auth, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const file = () => join(dir, "bridge.json");
+  /** A configuration of one grading agent and the ask agents `ask` (a list that is not checked here). */
+  function write(ask: unknown): string {
+    const config = { timeout_seconds: 5, agents: [{ name: "good", command: `${join(dir, "good")} {prompt}` }], ...(ask === undefined ? {} : { ask }) };
+    writeFileSync(file(), JSON.stringify(config, null, 2) + "\n");
+    return readFileSync(file(), "utf8");
+  }
+  const two = { timeout_seconds: 60, agents: [{ name: "first", command: "no-such-cli-qqq {prompt}", output: "claude-stream-json" }, { name: "second", command: `${join(dir, "good")} {prompt}`, output: "text" }] };
+
+  test("health lists the ask agents and whether each program was found", async () => {
+    write(two);
+    expect(await (await send("GET", "/health")).json()).toMatchObject({ status: "ok",
+      ask: [{ name: "first", enabled: true, found: false }, { name: "second", enabled: true, found: true }] });
+  });
+
+  test("health reports no ask list as null", async () => {
+    write(undefined);
+    expect(await (await send("GET", "/health")).json()).toMatchObject({ status: "ok", ask: null });
+  });
+
+  test("health reports an empty ask list as misconfigured, with its reason", async () => {
+    write({ agents: [] });
+    expect(await (await send("GET", "/health")).json()).toMatchObject({ status: "misconfigured", error: 'list at least one agent under "ask"' });
+  });
+
+  test("golden: PUT /config reorders two ask agents and saves them to bridge.json, the grading list as written", async () => {
+    write(two);
+    const before = JSON.parse(readFileSync(file(), "utf8"));
+    const r = await send("PUT", "/config", { ask: { agents: [{ name: "second" }, { name: "first", enabled: false }] } });
+    expect(await r.json()).toEqual({ status: "saved", agents: [{ name: "good", enabled: true, found: true }],
+      ask: [{ name: "second", enabled: true, found: true }, { name: "first", enabled: false, found: false }] });
+    expect(JSON.parse(readFileSync(file(), "utf8"))).toEqual({ ...before, ask: { timeout_seconds: 60, agents: [two.agents[1], { ...two.agents[0], enabled: false }] } });
+  });
+
+  test("PUT /config can reorder both lists in one request", async () => {
+    write(two);
+    writeFileSync(file(), JSON.stringify({ ...JSON.parse(readFileSync(file(), "utf8")), agents: [{ name: "good", command: "true" }, { name: "other", command: "true" }] }));
+    const r = await send("PUT", "/config", { agents: [{ name: "other" }, { name: "good" }], ask: { agents: [{ name: "second" }, { name: "first" }] } });
+    expect((await r.json()).status).toBe("saved");
+    const saved = JSON.parse(readFileSync(file(), "utf8"));
+    expect([saved.agents.map((a: { name: string }) => a.name), saved.ask.agents.map((a: { name: string }) => a.name)]).toEqual([["other", "good"], ["second", "first"]]);
+  });
+
+  test("a grading-only PUT /config keeps the ask list as written", async () => {
+    write(two);
+    const before = JSON.parse(readFileSync(file(), "utf8"));
+    expect((await send("PUT", "/config", { agents: [{ name: "good", enabled: false }] })).status).toBe(200);
+    expect(JSON.parse(readFileSync(file(), "utf8")).ask).toEqual(before.ask);
+  });
+
+  test("PUT /config refuses an ask list that does not name every declared ask agent once, by name and enabled only, and leaves the file as written", async () => {
+    const written = write(two);
+    for (const body of [
+      { ask: { agents: [] } }, { ask: { agents: [{ name: "second" }] } }, { ask: { agents: [{ name: "first" }, { name: "first" }, { name: "second" }] } },
+      { ask: { agents: [{ name: "first" }, { name: "second" }, { name: "new" }] } }, { ask: { agents: [{ name: "first", command: "touch x" }, { name: "second" }] } },
+      { ask: { agents: [{ name: "first", enabled: "yes" }, { name: "second" }] } }, { ask: { timeout_seconds: 900, agents: [{ name: "first" }, { name: "second" }] } },
+      { ask: [{ name: "first" }, { name: "second" }] }, { ask: null },
+    ]) {
+      const r = await send("PUT", "/config", body);
+      expect([JSON.stringify(body), r.status]).toEqual([JSON.stringify(body), 400]);
+    }
+    expect(readFileSync(file(), "utf8")).toBe(written);
+  });
+
+  test("PUT /config refuses an ask list when the file declares none, and leaves the file as written", async () => {
+    const written = write(undefined);
+    const r = await send("PUT", "/config", { ask: { agents: [{ name: "first" }] } });
+    expect([r.status, (await r.json()).error]).toEqual([400, `no "ask" list is declared in ${file()}`]);
+    expect(readFileSync(file(), "utf8")).toBe(written);
+  });
+});
