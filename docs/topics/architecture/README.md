@@ -21,7 +21,7 @@ proposed; for that, read [RFC 2](../../rfc/0002-lessons-written-for-each-learner
 | [The three parts](#the-three-parts) | Framework, course, learner state, and the trust between them |
 | [The server](#the-server) | Routes, the write guard, file serving, the course list |
 | [The pinned skill](#the-pinned-skill) | The `school` skill an authoring agent is given, its manifest digest, and when authoring is off |
-| [The pinned skill](#the-pinned-skill) | The `school` skill an authoring agent is given, its manifest digest, and when authoring is off || [The hexagon](#the-hexagon) | The core, its ports and the adapters that implement them |
+| [The hexagon](#the-hexagon) | The core, its ports and the adapters that implement them |
 | [The learning record](#the-learning-record) | Tables, rules, encounters, what the rules do and do not guarantee |
 | [The bridge](#the-bridge) | How explanations are graded, and how a question about a passage is answered |
 | [The web app](#the-web-app) | What exists of the interface |
