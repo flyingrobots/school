@@ -67,7 +67,9 @@ $$;
 --
 --   An episode is spaced when its first try came at least delay_ms after the previous episode's
 --   last answer; the first episode is spaced. The anchor is the latest episode whose first try was
---   wrong or aided; if there is none, the first episode.
+--   wrong or aided, or came right after a wrong one (a wrong first try starts the chain again: the
+--   next right first try is one day, however long after, and anchors the next); if there is none,
+--   the first episode.
 --
 --   stabilityMs  one day x 2.5^k, k the spaced clean episodes after the anchor. k stops at 100
 --                (2.5^100 days is about 10^37 years), so stability stays a finite number.
@@ -96,7 +98,8 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = school, pg_temp AS $$
   ),
   episode AS (
     SELECT q.block_id, q.first_seq, q.first_at, q.first_correct, q.last_at, q.weakness,
-           coalesce(q.weakness IN ('wrong-first-try', 'aided-first-try'), false) AS resets,
+           coalesce(q.weakness IN ('wrong-first-try', 'aided-first-try'), false)
+             OR coalesce(NOT lag(q.first_correct) OVER (PARTITION BY q.block_id ORDER BY q.first_seq), false) AS resets,
            q.first_seq = min(q.first_seq) OVER (PARTITION BY q.block_id) AS is_first,
            coalesce(q.first_at - lag(q.last_at) OVER (PARTITION BY q.block_id ORDER BY q.first_seq)
                       >= p_delay_ms * interval '1 millisecond', true) AS spaced
