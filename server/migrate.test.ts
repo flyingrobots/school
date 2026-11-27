@@ -55,8 +55,11 @@ async function run(args: string[], env: Record<string, string | undefined> = {})
 
 /** The message types the command can print, as the schema files name them. */
 const IDS = ["school.migrate.applied", "school.migrate.captured", "school.migrate.done", "school.migrate.error.failed",
-  "school.migrate.error.settings", "school.migrate.error.usage", "school.migrate.help", "school.migrate.renamed", "school.migrate.schema",
+  "school.migrate.error.settings", "school.migrate.error.usage", "school.migrate.help", "school.migrate.renamed.installs", "school.migrate.renamed", "school.migrate.schema",
   "school.migrate.start"];
+
+/** `school.migrate.renamed` 1.0.0 as it was published, frozen: existing consumers validate against exactly this. */
+const RENAMED_1_0_0 = JSON.parse(readFileSync(join(import.meta.dir, "testing", "fixtures", "school.migrate.renamed.1.0.0.schema.json"), "utf8"));
 
 describe("the migrate command's schemas (server/schemas/)", () => {
   test("every message type has one schema file, named for its id, whose $id is id/version and whose _schema pins both", () => {
@@ -81,6 +84,17 @@ describe("the migrate command's schemas (server/schemas/)", () => {
     expect(renamed.properties.to.pattern).toBe(NAME.source);
   });
 
+  test("the renamed message is still exactly 1.0.0, and the install and removal counts are a message of their own", () => {
+    const get = (id: string) => published.find((p) => p.file === `${id}.schema.json`)!.schema;
+    expect(get("school.migrate.renamed")).toEqual(RENAMED_1_0_0);
+    expect(get("school.migrate.renamed").properties.rows.properties.course_installs).toBeUndefined();
+    const extra = get("school.migrate.renamed.installs");
+    expect(extra.$id).toBe("school.migrate.renamed.installs/1.0.0");
+    expect(Object.keys(extra.properties.course_installs ? extra.properties : {}).sort()).toEqual(
+      ["_schema", "at", "course_installs", "course_removals", "event", "kind", "run"]);
+    expect(extra.required).toEqual(expect.arrayContaining(["course_installs", "course_removals"]));
+  });
+
   test("a line naming a database cannot carry a user or password: `where` admits no user info", () => {
     const start = validators.get(published.find((p) => p.file === "school.migrate.start.schema.json")!.schema.$id)!;
     const base = { _schema: { id: "school.migrate.start", version: "1.0.0" }, kind: "school.migrate", event: "start",
@@ -98,7 +112,7 @@ describe("the migrate command without a database", () => {
     const out = validated(r.stdout);
     expect(out[0]).toMatchObject({ event: "help", command: "migrate" });
     const help = out[0] as Line & { output: string[]; exit: { code: number }[]; environment: { name: string }[] };
-    expect(help.output.sort()).toEqual(IDS);
+    expect(help.output).toEqual(IDS); // in the schema files' order
     expect(help.exit.map((e) => e.code)).toEqual([0, 1, 2]);
     expect(help.environment.map((e) => e.name)).toEqual(["SCHOOL_MIGRATE_URL", "SCHOOL_APP_PASSWORD", "SCHOOL_MIGRATE_PASSWORD_FILE", "SCHOOL_APP_PASSWORD_FILE"]);
     const schemas = out.slice(1) as (Line & { id: string; version: string; schema: { $id: string } })[];
@@ -230,14 +244,30 @@ describe.skipIf(URL_ === undefined)("the migrate command on a real Postgres thro
     const db = new Bun.SQL(url);
     try {
       await db.unsafe(`INSERT INTO school.views (course, lesson, at) VALUES ('course', 'l1', now()), ('course', 'l2', now()), ('bells', 'l1', now())`);
+      const install = (course: string) => db.unsafe(
+        `INSERT INTO school.course_installs (id, course, source, url, commit, content_sha256, title, at)
+         VALUES (gen_random_uuid(), $1, 'git', 'https://example.com/c.git', repeat('a', 40), repeat('c', 64), 'Course', now())`, [course]);
+      await install("course"); await install("course"); await install("bells");
+      await db.unsafe("INSERT INTO school.course_removals (id, course, at) VALUES (gen_random_uuid(), 'course', now())");
       const r = await run(["--rename-course", "course=aion"], env);
       expect({ code: r.code, stderr: r.stderr }).toEqual({ code: 0, stderr: "" });
       const out = validated(r.stdout);
-      expect(out.map((l) => l.event)).toEqual(["start", "renamed", "done"]);
-      expect(out[1]).toMatchObject({ from: "course", to: "aion", rows: { encounters: 0, views: 2, decision_notes: 0 } });
+      expect(out.map((l) => l.event)).toEqual(["start", "renamed", "renamed_installs", "done"]);
+      // The renamed line is the 1.0.0 line it always was; a validator of exactly that schema accepts it.
+      expect(out[1]).toMatchObject({ _schema: { id: "school.migrate.renamed", version: "1.0.0" }, from: "course", to: "aion", rows: { encounters: 0, views: 2, decision_notes: 0 } });
+      expect(Object.keys((out[1] as Line & { rows: object }).rows).sort()).toEqual(["decision_notes", "encounters", "views"]);
+      expect(new Ajv2020({ strict: true }).compile(RENAMED_1_0_0)(out[1])).toBe(true);
+      expect(out[2]).toMatchObject({ _schema: { id: "school.migrate.renamed.installs", version: "1.0.0" }, course_installs: 2, course_removals: 1 });
       expect(await db.unsafe("SELECT course, count(*)::int AS n FROM school.views GROUP BY 1 ORDER BY 1")).toEqual([
         { course: "aion", n: 2 }, { course: "bells", n: 1 }]);
       expect(await db.unsafe("SELECT rolcanlogin AS l FROM pg_roles WHERE rolname = 'school_app'")).toEqual([{ l: false }]);
+      const human = await run(["--rename-course", "aion=cairn", "--human"], env);
+      expect(human.code).toBe(0);
+      const prose = human.stdout.split("\n").filter((x) => x.includes("renamed") || x.includes("installs"));
+      expect(prose).toEqual([
+        "renamed course aion to cairn: 0 encounters, 2 views, 0 decision notes",
+        "  and 2 installs, 1 removals",
+      ]);
       const again = await run(["--rename-course", "course=aion"], env);
       expect(again.code).toBe(1);
       expect(validated(again.stderr).at(-1)).toMatchObject({ error: "failed", message: 'the record has nothing for course "course"' });
