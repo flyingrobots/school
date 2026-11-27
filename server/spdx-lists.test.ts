@@ -6,12 +6,13 @@
 // suite red on a day nothing changed (the exceptions release is already older than a year, and upstream
 // has published nothing since). docs/topics/course-format/test-plan.md lists the cases by ID.
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import * as realFs from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EXCEPTION_IDS } from "./spdx-exception-ids.ts";
 import { DEPRECATED_LICENSE_IDS, LICENSE_IDS } from "./spdx-license-ids.ts";
-import { isStale, readRelease, REFRESH_AFTER_MONTHS, renderExceptionIds, renderLicenseIds, type Release } from "./scripts/refresh-spdx.ts";
+import { isStale, readRelease, refresh, Refusal, type Fetched, REFRESH_AFTER_MONTHS, renderExceptionIds, renderLicenseIds, type Release } from "./scripts/refresh-spdx.ts";
 
 const LICENSE_FILE = join(import.meta.dir, "spdx-license-ids.ts");
 const EXCEPTION_FILE = join(import.meta.dir, "spdx-exception-ids.ts");
@@ -45,6 +46,21 @@ describe.each(lists)("the vendored $name", ({ file, pkg, render }) => {
   test("LISTS-3: the course-format page and the working notes name the same release", () => {
     const { package: name, version } = readRelease(source);
     for (const [where, text] of Object.entries(docs)) expect(text, `${where} names ${name} ${version}`).toMatch(new RegExp(`${name}\`?[^\\n]{0,20}\\b${version.replaceAll(".", "\\.")}\\b|${name}\`?[\\s\\S]{0,30}\\b${version.replaceAll(".", "\\.")}\\b`));
+  });
+
+  test("LISTS-11: it records the licence of the package it was copied from, and its header says that licence", () => {
+    const release = readRelease(source);
+    expect(release.license).toBe(pkg === "spdx-exceptions" ? "CC-BY-3.0" : "CC0-1.0");
+    expect(source.split("\n\n")[0]).toContain(`(${release.license},`);
+    if (pkg === "spdx-exceptions") expect(source.split("\n\n")[0]).toContain("attributed in NOTICE");
+  });
+
+  test("LISTS-12: NOTICE names the package, the version and the licence the file records", () => {
+    const { package: name, version, license } = readRelease(source);
+    const notice = read(join(import.meta.dir, "..", "NOTICE")).replace(/\s+/g, " ");
+    expect(notice).toContain(`${name} ${version}`);
+    const entry = notice.split(" - ").find((part) => part.includes(`${name} ${version}`))!;
+    expect(entry).toContain(`(${license}`);
   });
 
   test("LISTS-4: its header points at the refresh script", () => {
@@ -116,5 +132,92 @@ describe("the refresh script", () => {
     expect(r.code).toBe(2);
     expect(r.stderr).toMatch(/^refresh-spdx: /);
     expect(r.stderr).toContain("usage");
+  });
+});
+
+describe("refreshing, with the fetch and the file system injected", () => {
+  const root = mkdtempSync(join(tmpdir(), "school-refresh-seam-"));
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+  let n = 0;
+  /** A scratch tree: copies of the two vendored files, and fetched packages for `licenses` and `exceptions`. */
+  function setup(fetchedLicense: { licenses?: string; exceptions?: string } = {}) {
+    const dir = join(root, `t${n++}`);
+    mkdirSync(join(dir, "files"), { recursive: true });
+    const paths = { licenses: join(dir, "files", "spdx-license-ids.ts"), exceptions: join(dir, "files", "spdx-exception-ids.ts") };
+    copyFileSync(LICENSE_FILE, paths.licenses);
+    copyFileSync(EXCEPTION_FILE, paths.exceptions);
+    const fetched = (pkg: string, version: string, license: string, files: Record<string, unknown>): Fetched => {
+      const pkgDir = join(dir, "fetched", pkg);
+      mkdirSync(pkgDir, { recursive: true });
+      for (const [name, value] of Object.entries(files)) writeFileSync(join(pkgDir, name), JSON.stringify(value));
+      return { release: { package: pkg, version, published: "2027-01-02", license }, dir: pkgDir };
+    };
+    const fetch = (pkg: string): Fetched =>
+      pkg === "spdx-license-ids"
+        ? fetched(pkg, "9.9.9", fetchedLicense.licenses ?? "CC0-1.0", { "index.json": ["MIT", "Zzz-1.0"], "deprecated.json": ["Old-1.0"] })
+        : fetched(pkg, "8.8.8", fetchedLicense.exceptions ?? "CC-BY-3.0", { "index.json": ["Classpath-exception-2.0"] });
+    const snapshot = () => Object.fromEntries(readdirSync(join(dir, "files")).sort().map((f) => [f, read(join(dir, "files", f))]));
+    return { dir, paths, fetch, snapshot };
+  }
+
+  test("LISTS-13: a fetched package with a different licence from the recorded one is refused with one message, files untouched", () => {
+    const { paths, fetch, snapshot } = setup({ exceptions: "CC0-1.0" });
+    const before = snapshot();
+    let refusal: unknown;
+    try {
+      refresh({ "--license-ids": null, "--exceptions": null }, { fetch, fs: realFs, paths, scratch: root });
+    } catch (e) {
+      refusal = e;
+    }
+    expect(refusal).toBeInstanceOf(Refusal);
+    const message = (refusal as Refusal).message;
+    expect(message).toContain("spdx-exceptions 8.8.8");
+    expect(message).toContain("CC0-1.0");
+    expect(message).toContain("CC-BY-3.0");
+    expect(message).toContain("NOTICE");
+    expect(message).not.toContain("\n");
+    expect(snapshot()).toEqual(before);
+  });
+
+  test("LISTS-14: a refresh whose licences match the recorded ones writes both files, each with the licence in its header", () => {
+    const { paths, fetch } = setup();
+    const done = refresh({ "--license-ids": null, "--exceptions": null }, { fetch, fs: realFs, paths, scratch: root });
+    expect(done.licenses.version).toBe("9.9.9");
+    const exceptions = read(paths.exceptions);
+    expect(readRelease(exceptions)).toEqual({ package: "spdx-exceptions", version: "8.8.8", published: "2027-01-02", license: "CC-BY-3.0" });
+    expect(exceptions).toContain("(CC-BY-3.0,");
+    expect(exceptions).toContain('"Classpath-exception-2.0",');
+    expect(read(paths.licenses)).toContain('"Zzz-1.0",');
+  });
+
+  test("LISTS-15: when writing the second file fails, neither vendored file changes and no temporary file is left", () => {
+    const { paths, fetch, snapshot } = setup();
+    const before = snapshot();
+    let writes = 0;
+    const fs = {
+      ...realFs,
+      writeFileSync: ((path: string, data: string) => {
+        if (++writes === 2) throw new Error("disk full");
+        return realFs.writeFileSync(path, data);
+      }) as typeof realFs.writeFileSync,
+    };
+    expect(() => refresh({ "--license-ids": null, "--exceptions": null }, { fetch, fs, paths, scratch: root })).toThrow("disk full");
+    expect(writes).toBe(2);
+    expect(snapshot()).toEqual(before);
+  });
+
+  test("LISTS-16: when renaming the second file fails, the first is put back and no temporary file is left", () => {
+    const { paths, fetch, snapshot } = setup();
+    const before = snapshot();
+    let renames = 0;
+    const fs = {
+      ...realFs,
+      renameSync: ((from: string, to: string) => {
+        if (++renames === 2) throw new Error("rename failed");
+        return realFs.renameSync(from, to);
+      }) as typeof realFs.renameSync,
+    };
+    expect(() => refresh({ "--license-ids": null, "--exceptions": null }, { fetch, fs, paths, scratch: root })).toThrow("rename failed");
+    expect(snapshot()).toEqual(before);
   });
 });
