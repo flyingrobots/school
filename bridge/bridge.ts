@@ -186,30 +186,53 @@ const ONLY = `agent commands and settings are set only in ${configPath} on this 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /**
- * The file's configuration with its declared agents in a new order and switched on or off as
- * `body` says (flyingrobots/school#18). Every agent must be named exactly once, and nothing but
- * a name and `enabled` may be sent: every command, and every other field, stays as written.
+ * One declared list in a new order, its agents switched on or off as `sent` says
+ * (flyingrobots/school#18): every agent must be named exactly once, and nothing but a name and
+ * `enabled` may be sent, so every command, and every other field, stays as written.
  */
-function reorder(file: Record<string, unknown>, body: unknown): Record<string, unknown> {
-  if (!isObject(body) || !Array.isArray(body.agents)) throw new OrderError('send { "agents": [{ "name": ..., "enabled": true }] }');
-  if (Object.keys(body).some((k) => k !== "agents")) throw new OrderError(ONLY);
+function reorderList(declaredList: unknown, sent: unknown[], what: string): Record<string, unknown>[] {
   const declared = new Map<string, Record<string, unknown>>();
-  for (const a of (Array.isArray(file.agents) ? file.agents : []) as unknown[]) if (isObject(a) && typeof a.name === "string") declared.set(a.name, a);
+  for (const a of (Array.isArray(declaredList) ? declaredList : []) as unknown[]) if (isObject(a) && typeof a.name === "string") declared.set(a.name, a);
   const seen = new Set<string>();
-  const agents = (body.agents as unknown[]).map((a) => {
-    if (!isObject(a) || typeof a.name !== "string") throw new OrderError('each agent is named by its "name"');
+  const agents = sent.map((a) => {
+    if (!isObject(a) || typeof a.name !== "string") throw new OrderError(`each ${what} is named by its "name"`);
     if (Object.keys(a).some((k) => k !== "name" && k !== "enabled")) throw new OrderError(ONLY);
     const was = declared.get(a.name);
-    if (was === undefined) throw new OrderError(`no agent "${a.name}" is declared in ${configPath}`);
-    if (seen.has(a.name)) throw new OrderError(`agent "${a.name}" is named twice`);
+    if (was === undefined) throw new OrderError(`no ${what} "${a.name}" is declared in ${configPath}`);
+    if (seen.has(a.name)) throw new OrderError(`${what} "${a.name}" is named twice`);
     seen.add(a.name);
-    if (a.enabled !== undefined && typeof a.enabled !== "boolean") throw new OrderError(`agent "${a.name}": "enabled" is true or false`);
+    if (a.enabled !== undefined && typeof a.enabled !== "boolean") throw new OrderError(`${what} "${a.name}": "enabled" is true or false`);
     return a.enabled === undefined ? was : { ...was, enabled: a.enabled };
   });
   const left = [...declared.keys()].filter((n) => !seen.has(n));
-  if (left.length > 0) throw new OrderError(`name every declared agent; missing ${left.map((n) => JSON.stringify(n)).join(", ")}`);
-  return { ...file, agents };
+  if (left.length > 0) throw new OrderError(`name every declared ${what}; missing ${left.map((n) => JSON.stringify(n)).join(", ")}`);
+  return agents;
 }
+
+/**
+ * The file's configuration with the grading list (`agents`), the ask list (`ask.agents`), or both
+ * reordered as `body` says (flyingrobots/school#287). A list the body leaves out stays as written.
+ */
+function reorder(file: Record<string, unknown>, body: unknown): Record<string, unknown> {
+  const usage = 'send { "agents": [{ "name": ..., "enabled": true }] }, { "ask": { "agents": [...] } }, or both';
+  if (!isObject(body) || (body.agents === undefined && body.ask === undefined)) throw new OrderError(usage);
+  if (Object.keys(body).some((k) => k !== "agents" && k !== "ask")) throw new OrderError(ONLY);
+  let next = file;
+  if (body.agents !== undefined) {
+    if (!Array.isArray(body.agents)) throw new OrderError(usage);
+    next = { ...next, agents: reorderList(file.agents, body.agents, "agent") };
+  }
+  if (body.ask !== undefined) {
+    if (!isObject(body.ask) || !Array.isArray(body.ask.agents)) throw new OrderError(usage);
+    if (Object.keys(body.ask).some((k) => k !== "agents")) throw new OrderError(ONLY);
+    if (!isObject(file.ask)) throw new OrderError(`no "ask" list is declared in ${configPath}`);
+    next = { ...next, ask: { ...file.ask, agents: reorderList(file.ask.agents, body.ask.agents, "ask agent") } };
+  }
+  return next;
+}
+
+/** A list's agents as /health and PUT /config report them: no command, only whether its program is found. */
+const listed = (agents: BridgeConfig["agents"]) => agents.map((a) => ({ name: a.name, enabled: a.enabled, found: found(a.argv[0]!) }));
 
 try {
   const c = config();
@@ -381,7 +404,7 @@ const server = listen({
       try {
         const c = config();
         if (c === null) return json({ status: "unconfigured", config: configPath, agents: [] });
-        return json({ status: "ok", config: configPath, agents: c.agents.map((a) => ({ name: a.name, enabled: a.enabled, found: found(a.argv[0]!) })) });
+        return json({ status: "ok", config: configPath, agents: listed(c.agents), ask: c.ask === null ? null : listed(c.ask.agents) });
       } catch (e) {
         return json({ status: "misconfigured", config: configPath, error: e instanceof Error ? e.message : String(e) }, 500);
       }
@@ -414,7 +437,7 @@ const server = listen({
       try {
         const c = saveConfig(reorder(file, body));
         log("config.saved", { config: configPath, agents: c.agents.map((a) => a.name) });
-        return json({ status: "saved", agents: c.agents.map((a) => ({ name: a.name, enabled: a.enabled, found: found(a.argv[0]!) })) });
+        return json({ status: "saved", agents: listed(c.agents), ask: c.ask === null ? null : listed(c.ask.agents) });
       } catch (e) {
         if (e instanceof OrderError || e instanceof BridgeConfigError) return json({ status: "invalid", error: e.message }, 400);
         throw e;
