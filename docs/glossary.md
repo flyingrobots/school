@@ -95,6 +95,12 @@ Entries are tagged:
 
 **First try** *(School)* — The first response to a block within one encounter, decided by the server rather than the browser.
 
+**Mastery** *(School)* — How well one quiz is held at a given time, measured from its first tries by `school.mastery` each time it is asked and never stored ([mastery](topics/mastery/README.md), RFC 5). It is two numbers, **stability** and **strength**.
+
+**Stability** *(School)* — A quiz's half-life in mastery: one day, multiplied by 2.5 for each clean first try given at least the caller's delay after the previous answer, counted after the latest wrong or aided first try (or after the first answer, if there is none). Unknown aid keeps it; an aided or wrong first try returns it to one day.
+
+**Strength** *(School)* — How far through its half-life a quiz is: 1 just after its latest right first try, one half after one stability, and 0 while its latest first try is wrong. It is not a probability of recall, and is not the teaching model's **fluency strength** or **storage strength**.
+
 ## The framework
 
 **School**, or **the framework** *(School)* — This repository: the server, the block model, the renderers, the shared components and the docs. It is subject-agnostic. It renders lessons, records evidence, and runs assessments; it does not know what any course is about.
