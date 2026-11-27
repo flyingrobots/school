@@ -12,7 +12,8 @@ export function validate(value: unknown, schema: Schema, path = "$"): string | n
     case "object": {
       if (typeof value !== "object" || value === null || Array.isArray(value)) return `${path} must be an object`;
       const props = (schema.properties ?? {}) as Record<string, Schema>;
-      for (const k of (schema.required ?? []) as string[]) if (!(k in value)) return `${path}.${k} is missing`;
+      // Only the answer's own keys count, so a required `constructor` is missing from `{}` (flyingrobots/school#329).
+      for (const k of (schema.required ?? []) as string[]) if (!Object.hasOwn(value, k)) return `${path}.${k} is missing`;
       for (const [k, v] of Object.entries(value)) {
         // The answer's keys are the model's choice and its problems are logged, so a key the
         // schema does not declare is reported by where it is, never by its text (flyingrobots/school#289). Only the

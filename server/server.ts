@@ -479,8 +479,9 @@ async function reviewJson(params: URLSearchParams): Promise<Response> {
 }
 
 /**
- * Each course's study days in the last `days`, and how many questions come back on each day ahead,
- * with the course's `trusted` (flyingrobots/school#272).
+ * Each course's study days in the last `days`, how many questions come back on each day ahead, and
+ * how its quizzes are holding today (RFC 5 §4.8, flyingrobots/school#222), with the course's
+ * `trusted` (flyingrobots/school#272).
  */
 async function activityJson(params: URLSearchParams): Promise<Response> {
   const given = params.get("days");
@@ -495,7 +496,7 @@ async function activityJson(params: URLSearchParams): Promise<Response> {
     today: a.today, tz, days,
     courses: a.courses.map((x) => {
       const c = served.find((s) => s.name === x.course)!;
-      return { course: x.course, courseTitle: c.title, trusted: c.trusted, studied: x.studied, due: x.due };
+      return { course: x.course, courseTitle: c.title, trusted: c.trusted, studied: x.studied, due: x.due, quizzes: x.quizzes, mastery: x.mastery };
     }),
   }, 200, { "cache-control": "no-store" });
 }

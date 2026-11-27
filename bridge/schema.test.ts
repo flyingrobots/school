@@ -57,3 +57,26 @@ test("no random unexpected key appears in the problem, which is always its path"
   }
   expect(checked).toBe(500);
 });
+
+// flyingrobots/school#329. Oracle: JSON Schema's `required` names keys the instance itself must
+// have; a member every object inherits is not one the answer has. The schemas are parsed, so a
+// declared `__proto__` is an own key of `properties`, as it would be in a schema file.
+function requiring(key: string): Record<string, unknown> {
+  return JSON.parse(`{"type": "object", "required": [${JSON.stringify(key)}], "properties": {${JSON.stringify(key)}: {"type": "boolean"}}}`);
+}
+
+test("a schema requiring constructor refuses an answer that lacks it", () => {
+  expect(validate({}, requiring("constructor"))).toBe("$.constructor is missing");
+});
+
+test.each(["__proto__", "toString"])("a schema requiring %s refuses an answer that lacks it", (key) => {
+  expect(validate({}, requiring(key))).toBe(`$.${key} is missing`);
+});
+
+test.each(["constructor", "__proto__", "toString"])("a schema requiring %s accepts an answer that has it", (key) => {
+  expect(validate(JSON.parse(`{${JSON.stringify(key)}: true}`), requiring(key))).toBeNull();
+});
+
+test("a schema requiring an ordinary key still refuses an answer that lacks it and accepts one that has it", () => {
+  expect([validate({}, closed), validate({ ok: true }, closed)]).toEqual(["$.ok is missing", null]);
+});

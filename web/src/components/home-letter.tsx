@@ -122,7 +122,7 @@ export function FeedbackCard({ feedback: f }: { feedback: Feedback }) {
 }
 
 const RULE =
-  "School brings back questions you've met before that took a second go or a little help. It waits at least a day, so this time the answer comes from memory, which is what makes it stick."
+  "School brings back questions you've met before that took a second go or a little help, and ones you found from memory a while ago, to see how they feel now. It waits at least a day, so this time the answer comes from memory, which is what makes it stick."
 
 /** "Why am I being asked this?", on hover with a pointer and on tap with a finger. */
 function WhyAsked({ item }: { item: ReviewItem }) {
