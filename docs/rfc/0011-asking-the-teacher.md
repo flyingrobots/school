@@ -3,8 +3,8 @@ title: "RFC 11: Asking the teacher, who can change the lesson"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-27
 updated: 2026-11-27
-version: 0.1.0
-status: "Proposed; decisions 1-5 made by the maintainer 2026-11-27, open questions listed. Extends RFC 6 (asking about a passage) and absorbs flyingrobots/school#228. Builds on flyingrobots/school at commit 502304a."
+version: 0.2.0
+status: "Proposed; decisions 1-5 made by the maintainer 2026-11-27, open questions listed. Extends RFC 6 (asking about a passage) and absorbs flyingrobots/school#228. Builds on flyingrobots/school at commit 502304a. v0.2.0 applies the maintainer's review of 2026-11-27."
 ---
 
 # RFC 11: Asking the teacher, who can change the lesson
@@ -18,9 +18,9 @@ RFC 6 lets a learner ask about a selected passage, and the agent that answers se
 | Decision (2026-11-27) | What this RFC builds |
 | --- | --- |
 | 1. Ask the teacher from any lesson, about the whole lesson; every turn carries the full chat, tool calls included | A teacher conversation kind beside RFC 6's, with the passage optional; each turn is a question and a reply in RFC 6's tables, its tool calls in a new append-only table (§5.1, §5.6) |
-| 2. Context is everything: the course, the learner's quizzes and answers with correct answers and `why`, the teacher's notes | The teacher can give answers away, and this RFC says so to the learner. RFC 6's encounter-wide `ai-help` exposure covers each turn; a new **disclosure** rule makes the next try of any quiz whose answer reached the teacher count as aided, wherever it is answered (§5.7) |
+| 2. Context is everything: the course, the learner's quizzes and answers with correct answers and `why`, the teacher's notes | The teacher can give answers away, and this RFC says so to the learner. RFC 6's encounter-wide `ai-help` exposure covers each turn; a new **disclosure** rule makes the next try of any quiz whose answer reached the teacher, its chat history or a note the learner was shown count as aided, wherever it is answered (§5.7) |
 | 3. Fetched by key, not packed into the prompt | Six tools on a School endpoint bound to the host's loopback: read the course, read progress, read and write notes, search the web, propose a change. MCP for claude, codex and agy; the bridge runs the tool loop for the `openai` kind (lms-qwen). The key goes in the transport, never in the prompt text. The server checks it, scopes it to one conversation, accepts it only while a turn runs, and logs every call (§5.3 to §5.5) |
-| 4. Teacher notes, append-only, per course, written by tool, read on the next lesson, visible to the learner | A `teacher_notes` table; notes checked against School's voice before they are stored; shown in the panel's **Notes** tab and on the course page under an AI label (§5.8) |
+| 4. Teacher notes, append-only, per course, written by tool, read on the next lesson, visible to the learner | A `teacher_notes` table; notes checked against School's voice, and refused when they hold a quiz's answer, before they are stored; shown in the panel's **Notes** tab and on the course page under an AI label, each showing recorded as a disclosure (§5.8) |
 | 5. The teacher can change the current lesson | A proposal School checks with `checkCourse`, with quiz-id rules that keep progress lined up; the learner sees what would change and takes it or not; a taken change becomes the learner's own version, kept in the record and snapshotted like any lesson shown; the course's original is one tap away; folding a version back into the course is RFC 9's **Accept** (§5.9) |
 
 _Table 0.1. The maintainer's decisions and what this RFC builds for each. Rows 2 and 5 change what the record means, so they get the most space._
@@ -197,7 +197,7 @@ sequenceDiagram
     participant A as Agent CLI
     participant T as Teacher tools (server, 127.0.0.1)
     L->>S: POST /api/teacher {conversationId, questionId, encounterId, text, passage?}
-    S->>D: school.ask_teacher: the turn, its ai-help exposure, the lesson's disclosures
+    S->>D: school.ask_teacher: the turn, its ai-help exposure, the lesson's and the history's disclosures
     S->>S: Mark the turn running, build the turn (lesson with answers, message, history)
     S->>B: POST /teach {turn, key, tools_url}, with the bridge token
     B->>A: Run the first enabled teach agent, its MCP config naming the tools and the key
@@ -222,7 +222,8 @@ _Figure 5.1. One teacher turn, end to end. The record holds the turn and its aid
 | --- | --- |
 | `POST /api/teacher` | JSON, guarded like every `POST /api/*` and, as RFC 7 §8 adds, `same-origin` when `Sec-Fetch-Site` is sent. Answers `application/x-ndjson`: `stored`, `tool`, `delta`, `proposal`, `sources`, `done`, or `failed` with a reason in words, each line with a Zod schema as `AskLine` has in flyingrobots/school#363. Refused (409) while another turn of the same conversation runs, and (403) for an untrusted course, as asking is |
 | `GET /api/courses/:c/lessons/:id/teacher` | The lesson's teacher conversations with their turns, tool calls (name, arguments, status, and a summary of each result), replies and proposals, from the record |
-| The bridge's `POST /teach` | `{ turn, key, tools_url, deadline_ms }`. The bridge renders `turn` into each agent's prompt, fitting it to that agent's budget (§5.2), and gives the agent its tools (§5.5). It answers NDJSON `delta`, `tool` (a tool's name and status, never its arguments or result) and one `end` line with the agent, status, usage and how many earlier turns were left out. It uses the new `teach` list in `bridge.json` and shares the `ask` queue, so one interactive job runs at a time and never waits behind a grading |
+| `GET /api/courses/:c/teacher-notes` | The course's notes for the **Notes** tab and the course page (`?newest=3`). Before it answers, the server records a `note-shown` disclosure for every block a returned note names (R4, §5.7), so no note is shown unrecorded. Because it writes, it is guarded as `guardLessonOpen` is: `same-origin` and `Sec-Fetch-Dest: empty` when fetch metadata is sent |
+| The bridge's `POST /teach` | `{ turn, key, tools_url, deadline_ms }`. `tools_url` is the server's `SCHOOL_TEACHER_TOOLS_URL`, which holds the tool endpoint's address as the host sees it, `http://127.0.0.1:4750/mcp` by default, because the agents that call it run on the host; it is never the container's own view of its listener (`0.0.0.0:4750` inside Docker). The bridge renders `turn` into each agent's prompt, fitting it to that agent's budget (§5.2), and gives the agent its tools (§5.5). It answers NDJSON `delta`, `tool` (a tool's name and status, never its arguments or result) and one `end` line with the agent, status, usage and how many earlier turns were left out. It uses the new `teach` list in `bridge.json` and shares the `ask` queue, so one interactive job runs at a time and never waits behind a grading; a passage question asked during a teacher turn therefore waits for it (§9) |
 | Timeout | `timeout_seconds: 180` for the `teach` list: a turn makes several model calls |
 | After the turn | The server stores the reply whether or not the browser is still there, as RFC 6 does, then marks the turn ended, which closes the key until the next turn |
 | Logs | `bridge.teach.start`, `bridge.teach.attempt`, `bridge.teach.end` and the server's `school.teacher.tool` (tool, status, milliseconds, sizes), each with a schema; never a prompt, an argument, a result or the key (C7) |
@@ -241,7 +242,7 @@ The prompt carries only what decision 3 lists: the lesson, the message and the h
 | The lesson as served | 60,000 characters | The lesson the learner is reading (the course's or their own version), with quiz choices, which is correct, `why` and model answers. A longer lesson is sent as its outline, with each section's blocks fetched by `read_course` |
 | The passage | 2,000 characters | Only when the learner opened the panel from a selection (RFC 6's `PASSAGE_MAX`) |
 | The message | 4,000 characters | RFC 6's `QUESTION_MAX` |
-| History | The rest | Every earlier turn in order: the learner's message, each tool call with its arguments and a result summary of at most 2,000 characters ("the full result can be read again by tool"), and the teacher's reply. When the whole does not fit, the oldest whole turns are dropped first and the prompt says how many, as `fitPrompt` does today |
+| History | The rest | Every earlier turn in order: the learner's message, each tool call with its arguments and a result summary, and the teacher's reply. Arguments are capped like results: at most 2,000 characters each, cut with a marker, and a `propose_lesson_change` call's arguments (up to 64 KiB) are replaced by its `summary` and its counts of blocks kept, changed, added and removed. A result summary is at most 2,000 characters ("the full result can be read again by tool"). When the whole does not fit, the oldest whole turns are dropped first and the prompt says how many, as `fitPrompt` does today. Every block any earlier turn disclosed is disclosed again for this turn, dropped or not (R2) |
 | Conversation | 36 characters | The conversation's id, so the teacher can tell the learner what it refers to. The key is never in the text (§5.4) |
 
 _Table 5.2. The prompt budget for one turn. The fixed parts take at most 74,000 characters, which leaves at least 126,000 of the bridge's 200,000 for history._
@@ -260,12 +261,12 @@ The teacher has six tools. Four only read. `write_note` is the one write decisio
 | --- | --- | --- | --- |
 | `read_course` | none, `{ lesson }` or `{ reference, offset? }` | With none: the course outline (each lesson's id and title, its sections, its quiz and explain block ids, the reference documents' titles). With a lesson: that lesson as served to this learner, with answers. With a reference document: up to 32 KiB of its text from `offset` | A disclosure for each quiz and explain block returned with its answer |
 | `read_progress` | none or `{ lesson }` | RFC 5's state in words per quiz, the due-review items with their reasons, the learner's answers (choice, right or not, first try, aid, date), explanations and gradings | A disclosure for each block whose answers it returned |
-| `read_notes` | none | This course's teacher notes, newest first, at most 50, with any the learner set aside marked | Nothing |
-| `write_note` | `{ text, lesson?, block?, replaces? }` | `stored`, or the reason it was refused | One note (§5.8) |
+| `read_notes` | none | This course's teacher notes, newest first, at most 50, with any the learner set aside marked | A disclosure for each block a returned note names |
+| `write_note` | `{ text, lesson?, block?, replaces? }` | `stored`, or the reason it was refused: a word School's voice avoids, or a quiz's answer (§5.8) | One note (§5.8) |
 | `web_search` | `{ query }` | At most five results: title, URL, and a snippet of at most 300 characters | The query and results, as unchecked sources (§5.10) |
 | `propose_lesson_change` | `{ summary, edits }`, each edit replacing, inserting after or removing one block of the current lesson | The proposal's id and what changed, or `checkCourse`'s first problem so the teacher can try again | One proposal (§5.9) |
 
-_Table 5.3. The teacher's tools. Disclosures are written by the read tools before they answer, so the record knows what the teacher saw before the teacher does._
+_Table 5.3. The teacher's tools. Disclosures are written by the three read tools before they answer, so the record knows what the teacher saw before the teacher does._
 
 Each turn has limits, enforced by the server when the call arrives. A call over a limit is refused with a reason the teacher can read, and is still stored.
 
@@ -281,6 +282,8 @@ Each turn has limits, enforced by the server when the call arrives. A call over 
 
 _Table 5.4. The limits on one turn. They bound cost and the reach of a steered teacher, and each is a constant in one place in the server._
 
+Only one of these limits revokes the key: a `write_note` after a `web_search` in the same turn, because that is the path by which a steered teacher would carry a web result into later lessons (§6), not a matter of cost. Every other limit refuses the call and leaves the key open, so a teacher that reaches one can still answer in text, and the 180-second timeout ends a turn that keeps calling. Outside this table, the key is also revoked by the scope breaches of Table 5.5 and by a note or query that holds a live key's text (§6).
+
 In short: four reads, a note, a search and a proposal, each bounded per turn and each stored with its turn.
 
 ### 5.4 The conversation key
@@ -292,14 +295,14 @@ stateDiagram-v2
     [*] --> Idle: conversation opened, key minted
     Idle --> Open: a turn is stored
     Open --> Idle: the turn ends (reply stored, failed or timed out)
-    Open --> Revoked: a limit breach the server treats as abuse
+    Open --> Revoked: a note after a search, a scope breach, or key text in a note or query
     Idle --> Revoked: the learner ends the chat, or the course is updated or removed
     Idle --> Expired: six hours with no turn
     Revoked --> [*]
     Expired --> [*]
 ```
 
-_Figure 5.2. A conversation key's life. Tools answer only in `Open`; in every other state a call is refused and stored._
+_Figure 5.2. A conversation key's life. Tools answer only in `Open`; in every other state a call is refused and stored, and of Table 5.4's limits only a note after a search moves a key to `Revoked`._
 
 | Rule | Proposed |
 | --- | --- |
@@ -308,12 +311,12 @@ _Figure 5.2. A conversation key's life. Tools answer only in `Open`; in every ot
 | Scope | Reads only the conversation's course, as installed now, and this School's record for that course; writes only notes and proposals for that course, each naming the turn |
 | Where it travels | Server to bridge in `POST /teach`'s body, over loopback with the bridge token; bridge to agent in a per-run MCP configuration (§5.5); agent to tools in the `Authorization` header. Never in argv, the prompt text, a log line, a response to the browser, or the record |
 | Expiry | Six hours after the last turn ends, the encounter resume window (the six hours of `open_encounter` in `0001_init.sql`, `RESUME_WINDOW_MS` in `server/contract/learning-record.ts`). A conversation continued after that gets a new key |
-| Revocation | The learner ends the chat; the course is updated or uninstalled (RFC 7); the server sees a call for another course, a forged turn, or a limit breach. Each is an appended row, never an update |
+| Revocation | The learner ends the chat; the course is updated or uninstalled (RFC 7); the server sees a call for another course, a forged turn, a `write_note` after a `web_search` in the same turn, or a note or query holding a live key's text. No other limit of Table 5.4 revokes. Each is an appended row, never an update |
 | Logging | Every call, refused or not, is a row in `teacher_tool_calls` with its turn, tool, arguments, status, result and timing. The server's log line names the tool and status only |
 
 _Table 5.5. The key's rules. Its power is one conversation's tools during one running turn, and only on the host's loopback._
 
-The tool endpoint listens on its own port, `SCHOOL_TEACHER_TOOLS_PORT` (4750 by default). Compose publishes it as `127.0.0.1:4750:4750`, so it is reachable from the host's loopback, where the agents run, and never through the tailnet port School is served on. It refuses a `Host` other than `127.0.0.1:4750` or `localhost:4750`, and any request carrying `Origin` or a `Sec-Fetch-*` header, before it checks the key, as RFC 10's control agent does. No browser can reach it, and no other machine can. In short: one hashed key per conversation, checked by the server on every call, alive only while a turn runs.
+The tool endpoint listens on its own port, `SCHOOL_TEACHER_TOOLS_PORT` (4750 by default). Compose publishes it as `127.0.0.1:4750:4750`, so it is reachable from the host's loopback, where the agents run, and never through the tailnet port School is served on. The address the server hands the bridge is `SCHOOL_TEACHER_TOOLS_URL`, the host's view of that published port (`http://127.0.0.1:4750/mcp`), set in compose next to that port mapping, so a change to one is made beside the other. It refuses a `Host` other than `127.0.0.1:4750` or `localhost:4750`, and any request carrying `Origin` or a `Sec-Fetch-*` header, before it checks the key, as RFC 10's control agent does. No browser can reach it, and no other machine can. In short: one hashed key per conversation, checked by the server on every call, alive only while a turn runs.
 
 ### 5.5 How each agent kind gets its tools, and fallback
 
@@ -322,12 +325,14 @@ The agents in the `teach` list differ in how they take tools. The bridge writes 
 | Agent | Kind | Tools through | The key | Built-in tools | Verified |
 | --- | --- | --- | --- | --- | --- |
 | `claude` | command, `claude-stream-json` | `--mcp-config <folder>/mcp.json --strict-mcp-config`, naming one streamable HTTP server, `school`, at `tools_url` | In `mcp.json`'s `headers`, a file of mode 0600 in the run folder | Off: `--tools ""`; `--allowedTools` names only `mcp__school__*` | Flags listed by Claude Code 2.1.323; whether `--tools ""` still allows MCP tools is Open (Q5) |
-| `codex` | command, `text` | `-c mcp_servers.school.url=<tools_url>` and `-c mcp_servers.school.bearer_token_env_var=SCHOOL_TEACHER_KEY` | In the child's environment only | Its shell runs under `--sandbox read-only`, in the empty folder | The configuration keys are listed by codex-cli 0.171.0; a run is Open (Q5) |
-| `agy` | command, `text` | Per-run MCP settings through `--settings <folder>/settings.json`, if agy reads MCP servers there | In that file, mode 0600 | `--mode plan` | Open (Q5), with RFC 10 Q5 |
+| `codex` | command, `text` | `-c mcp_servers.school.url=<tools_url>` and `-c mcp_servers.school.bearer_token_env_var=SCHOOL_TEACHER_KEY` | In the child's environment only | Its shell, under `--sandbox read-only`, which stops writes and network but still reads every file the user can (§6). It gets School's tools only once Q5 shows the shell can be turned off; until then it is `"tools": "none"` | The configuration keys are listed by codex-cli 0.171.0; a run is Open (Q5) |
+| `agy` | command, `text` | Per-run MCP settings through `--settings <folder>/settings.json`, if agy reads MCP servers there | In that file, mode 0600 | `--mode plan`, whose file and shell access is unknown. It gets School's tools only once Q5 shows its built-in tools are off; until then it is `"tools": "none"` | Open (Q5), with RFC 10 Q5 |
 | `lms-qwen` | `openai` | The bridge's own tool loop: the tools as OpenAI `tools` functions; each `tool_calls` entry is sent by the bridge to `tools_url` with the key, and its result returned as a `tool` message, until the model answers in text | In the bridge's memory only | None; the model has no other way out | Open (Q6), with RFC 10 Q6: whether the model and LM Studio support tool calls |
-| Any agent marked `"tools": "none"` | either | No tools: the server packs the newest notes and a progress summary into the prompt within the budget | None | As configured | Not applicable |
+| Any agent marked `"tools": "none"` | either | No School tools: the server packs the newest notes and a progress summary into the prompt within the budget, and records a disclosure for every block they name, as `read_notes` and `read_progress` would | None | As configured; its only output is its reply, so it is a plain-text teacher | Not applicable |
 
-_Table 5.6. How each default agent gets the teacher's tools. Every kind reaches the same endpoint with the same key; only the delivery differs._
+_Table 5.6. How each default agent gets the teacher's tools. Every kind reaches the same endpoint with the same key; only the delivery differs, and an agent whose own tools cannot be shown off gets none of School's._
+
+An agent is given School's tools only when its own built-in tools are shown to be off: for claude by `--tools ""` (Q5), for codex by turning off its shell, and for agy by turning off whatever `--mode plan` leaves on. Task 15 checks each in a recorded run. An agent that fails the check stays in the `teach` list marked `"tools": "none"`, so it runs as a plain-text teacher: it can still read files through its own tools, but it has no note, search or proposal through which to carry what it read beyond the reply, which only the learner sees and the record keeps (§6).
 
 Fallback follows RFC 6's rule with one addition. The bridge tries the next agent only before the first `delta` reaches the learner and before the first tool call that writes, which is `write_note`, `web_search` or `propose_lesson_change`. Reads may be repeated by the next agent, and they are stored again under the same turn. Once text or a write has happened, a failure ends the turn as failed, so the learner never sees two voices or a note written twice. The `end` line names the agent that answered, and the reply row stores it.
 
@@ -362,6 +367,7 @@ erDiagram
     QUESTIONS ||--o{ TEACHER_TOOL_CALLS : "makes"
     QUESTIONS ||--o{ TEACHER_DISCLOSURES : "shows the teacher"
     QUESTIONS ||--o{ TEACHER_NOTES : "writes"
+    TEACHER_NOTES ||--o{ TEACHER_DISCLOSURES : "is read or shown in"
     QUESTIONS ||--o{ LESSON_PROPOSALS : "proposes"
     LESSON_PROPOSALS ||--o{ LESSON_CHOICES : "is taken in"
     CONVERSATIONS {
@@ -391,10 +397,12 @@ erDiagram
     }
     TEACHER_DISCLOSURES {
         bigint seq PK
-        uuid question_id FK
+        uuid question_id FK "NULL exactly for note-shown"
+        uuid note_id "for read_notes and note-shown"
         text course
         text block_id
-        text via "prompt, read_course or read_progress"
+        text via "prompt, history, read_course, read_progress, read_notes or note-shown"
+        timestamptz at
     }
     TEACHER_NOTES {
         bigint seq PK
@@ -430,12 +438,12 @@ erDiagram
     }
 ```
 
-_Figure 5.4. The teacher's tables beside RFC 6's. Every row names its turn, so the record can say which turn read, wrote, disclosed or proposed what._
+_Figure 5.4. The teacher's tables beside RFC 6's. Every row names its turn, except a disclosure recorded when a note is shown outside one, so the record can say which turn read, wrote, disclosed or proposed what._
 
 | Migration | Adds | Task |
 | --- | --- | --- |
 | Teacher conversations | `conversations.kind` gains `teacher` (after flyingrobots/school#248 adds the column); for `teacher`, `block_id` is NULL and `passage` is optional. `teacher_keys` and `teacher_tool_calls`. `school.ask_teacher` (opens the conversation and its key, stores the turn and its `ai-help` exposure through `record_lesson_help`, refuses an untracked encounter, as `school.ask` does), `school.record_tool_call`, `school.teacher_key_event`, `school.teacher_conversations(course, lesson)` | 1 |
-| Disclosures | `teacher_disclosures`, `school.record_disclosures`, and `submission_aid`, `quiz_episodes` and `due_review` replaced with the same signatures to read them (§5.7) | 2 |
+| Disclosures | `teacher_disclosures` with all six `via` values, `school.record_disclosures` (for a turn) and `school.record_notes_shown` (for notes shown, with no turn), and `submission_aid`, `quiz_episodes` and `due_review` replaced with the same signatures to read them under R2's definition (§5.7). `note_id` is a plain column here, because `teacher_notes` comes in task 3 | 2 |
 | Notes | `teacher_notes`, `school.write_teacher_note`, `school.course_teacher_notes(course)`, and a `teacher_note_dismissals` table for notes the learner sets aside | 3 |
 | Learner versions | `lesson_proposals` and `lesson_choices`, `school.propose_lesson`, `school.choose_lesson_version`, `school.lesson_version(course, lesson)` | 10 |
 
@@ -445,19 +453,23 @@ _Table 5.7. The four migrations, each with its task in §7. Each takes the next 
 
 ### 5.7 Aid: what the teacher's context costs the record
 
-**The teacher can give answers away.** By the maintainer's decision it sees every quiz's correct choice and `why`, and every answer the learner has given, and it may tell the learner. The record has to say so, and three rules do. Each errs toward marking aid, never away from it.
+**The teacher can give answers away.** By the maintainer's decision it sees every quiz's correct choice and `why`, and every answer the learner has given, and it may tell the learner. The record has to say so, and four rules do. Each errs toward marking aid, never away from it.
 
 | # | Rule | Where it comes from |
 | --- | --- | --- |
 | R1 | Every teacher turn records one encounter-wide `ai-help` exposure in the learner's current encounter, on the server, before the bridge is called. Every quiz and explain block answered after it in that encounter is aided | RFC 6 §5.1, unchanged |
-| R2 | A **disclosure** is recorded for each quiz or explain block whose answer reached the teacher: every block of the lesson in the prompt, before the bridge is called, and every block a `read_course` or `read_progress` call returns, before the tool answers. An answer to that block, in any encounter, is aided when a disclosure of the block has a smaller `seq` and no first try of the block in another encounter comes between them. So the next episode after a disclosure is aided, wherever it happens, and the one after that can be clean | New; option B of §4.3 |
+| R2 | A **disclosure** is recorded for each quiz or explain block whose answer reached the teacher: every block of the lesson in the prompt (`via: "prompt"`) and every block any earlier turn of the conversation disclosed (`via: "history"`, below), both before the bridge is called; and every block a `read_course`, `read_progress` or `read_notes` call returns, before the tool answers. **A disclosure is used up by the first episode of its block, in any encounter, whose first try has a larger `seq` than the disclosure. That episode is aided, and no other episode is aided by that disclosure.** So the next episode after a disclosure is aided, wherever it happens, and the one after that can be clean | New; option B of §4.3 |
 | R3 | Every encounter that shows a learner's version records one `ai-help` exposure when it opens, because the version is text a model wrote in answer to the learner's request for help | RFC 6 §5.1's own wording, applied to a lesson |
+| R4 | Showing a note, on the course page or in the **Notes** tab, records a disclosure (`via: "note-shown"`) for every block the note names, before the note is served. It is used up exactly as R2 says | New: a note is model text about a block, read by the learner |
+_Table 5.8. The four aid rules for the teacher. R1 covers the encounter, R2 covers the course, R3 covers a version shown later, and R4 covers a note._
 
-_Table 5.8. The three aid rules for the teacher. R1 covers the encounter, R2 covers the course, and R3 covers a version shown later._
+**History.** A turn's history carries earlier turns' tool results and replies, so an answer the teacher read in turn 1 is in front of it again in turn 5. A disclosure from turn 1 may already be used up, because the learner answered that quiz in between; without more, turn 5 could tell the learner the answer again and the next try would read as clean. So before each turn the server writes again, under that turn and with `via: "history"`, the union of every block the conversation's earlier turns disclosed, by any `via`. It writes the whole union even when `fitPrompt` drops the oldest turns, because the teacher's replies in the turns kept may still repeat an answer from a dropped one.
 
-The effect follows from RFC 5 §4.2 with no rule of its own. A right answer after any of these is an aided first try. Its strength refreshes, its stability returns to one day, and due review brings it back the next day for an answer from memory. A learner who talks to the teacher in every lesson will see more review items, which is the honest cost. R2 is checked by `seq` alone (RFC 3 §3.4), so it needs no time window. In the SQL, `submission_aid` and `quiz_episodes` gain one `EXISTS` over `teacher_disclosures` joined to the answer's course and block, as 0012 added one for `ai-help`.
+**R4 and the `ai-help` exposure.** A note can name a block of another lesson, and the course page has no encounter. An `ai-help` exposure needs an encounter and may not name a block (`exposures.encounter_id` is `NOT NULL` in `0001_init.sql`; `exposures_block` in `0012_ai_help.sql` requires `block_id` to be NULL for `ai-help`), so it would aid the wrong blocks or none. A disclosure names the course and block and is used up by that block's next episode, which is what showing a note costs.
 
-The learner is told, in neutral words, before their first turn and under the panel: "Your teacher can see this whole course, its answers and your progress, and may share answers when that helps. Anything it shows you counts as help, so those quizzes come back for another look later." In short: the teacher may tell the learner anything, and the record marks every quiz it could have told them about, once.
+The effect follows from RFC 5 §4.2 with no rule of its own. A right answer after any of these is an aided first try. Its strength refreshes, its stability returns to one day, and due review brings it back the next day for an answer from memory. A learner who talks to the teacher in every lesson will see more review items, which is the honest cost. R2 is checked by `seq` alone (RFC 3 §3.4), so it needs no time window. In the SQL, `submission_aid` and `quiz_episodes` gain one `EXISTS` over `teacher_disclosures`, as 0012 added one for `ai-help`: an episode `e` of a block is aided by a disclosure `d` of the same course and block exactly when `d.seq < e.first_seq` and no other episode `e'` of that block, in any encounter, has `d.seq < e'.first_seq < e.first_seq`. Two disclosures before one episode are both used up by it. A disclosure inside an episode that has already had its first try is used up by the block's next episode, not by that one, and R1 already aids the rest of the encounter.
+
+The learner is told, in neutral words, before their first turn and under the panel: "Your teacher can see this whole course, its answers and your progress, and may share answers when that helps. Anything it shows you counts as help, so those quizzes come back for another look later." In short: the teacher may tell the learner anything, and the record marks every quiz it could have told them about, once for each turn or note that could have told them.
 
 ### 5.8 Teacher notes
 
@@ -468,21 +480,23 @@ Notes are the teacher's memory of the learner across lessons: what they find har
 | Scope | Per course. A note may name a lesson and a block it is about |
 | Length | 1 to 1,000 characters, plain text, rendered inert |
 | Voice | Before it is stored, the server checks a note against School's voice test: none of "wrong", "fail", "mistake", "incorrect", "forgot" or "attempt" (the [voice reference](../topics/voice/README.md)). A note that fails is refused with the reason, so the teacher can say it another way. The instructions ask for notes written to the learner, in the second person, about what helps |
+| Answers | A note is shown where no quiz is being asked, so it must not carry an answer. Before it is stored, the server refuses a note that contains the text of any quiz's correct choice in the course or in the learner's versions, or a run of `NOTE_ANSWER_RUN` (8) or more consecutive words from any quiz's `why` or any explain block's model answer. The check is the one the search-query refusal uses (§6, there with `QUERY_RECORD_RUN`, 6 words, against the learner's own work): both texts are lower-cased, punctuation is dropped and spaces are squashed, then whole words are compared, so a correct choice matches only as whole words. The reason names the quiz, never the answer, so the teacher can describe the help without the answer |
 | Revision | A note may name one it `replaces`; reads show only the newest of a chain, and the record keeps every one |
-| Read as context | By `read_notes`; the instructions ask the teacher to read them at the start of each conversation. An agent with `"tools": "none"` is given the newest notes within the budget instead. RFC 2's preparation and RFC 8's explain mode may read them later; neither is changed here |
+| Read as context | By `read_notes`, which records a disclosure for every block a returned note names; the instructions ask the teacher to read them at the start of each conversation. An agent with `"tools": "none"` is given the newest notes within the budget instead, with the same disclosures. RFC 2's preparation and RFC 8's explain mode may read them later; neither is changed here |
 | Setting a note aside | The learner may set a note aside, which appends a dismissal row; the teacher no longer reads it, and the learner can still see it under **Set aside** |
-| Where the learner sees them | The panel's **Notes** tab, newest first, each with the date and the lesson it is about; and a **From your teacher** card on the course page with the three newest. Each carries the **AI teacher** badge with `BotIcon` |
+| Where the learner sees them | The panel's **Notes** tab, newest first, each with the date and the lesson it is about; and a **From your teacher** card on the course page with the three newest. Each carries the **AI teacher** badge with `BotIcon`. Both read `GET /api/courses/:c/teacher-notes`, which records R4's disclosure for every block a shown note names before it answers |
 
 _Table 5.9. The rules for teacher notes. A note is written for the learner to read, so it is held to the same voice as everything else School says._
 
 | A note School would store (illustrative) | A note School would refuse, and why |
 | --- | --- |
-| "Plain hunt is settling well. Ring three's place in the second lead is still settling; a drawn grid helped on 27 November." | "You got ring three wrong again." It uses "wrong" |
-| "You like a worked example before a definition. Next time, I'll try one first." | "You forgot the dodge rule." It uses "forgot" |
+| "Your plain hunt is settling well. You're still finding ring three's place in the second lead; drawing the grid helped you on 27 November." | "You got ring three wrong again." It uses "wrong" |
+| "You like to see a worked example before a definition, so next time you'll get one first." | "You forgot the dodge rule." It uses "forgot" |
+| | "Remember that ring three makes thirds and goes back to the front." It holds the correct choice of a quiz in the course |
 
-_Table 5.10. Notes in School's voice, and notes the voice check refuses. The check is mechanical; the instructions make it rare._
+_Table 5.10. Notes in School's voice, and notes the voice and answer checks refuse. The checks are mechanical; the instructions make a refusal rare._
 
-In short: notes are short, kept forever, written to the learner, checked for School's voice, and shown wherever the learner looks at their progress.
+In short: notes are short, kept forever, written to the learner, checked for School's voice and for answers, and shown wherever the learner looks at their progress, with every block they name disclosed when they are.
 
 ### 5.9 Changing the lesson
 
@@ -508,10 +522,10 @@ _Figure 5.5. A proposed change's life. Only the learner moves it from Proposed t
 | # | Check | Why |
 | --- | --- | --- |
 | 1 | Every edit names a block of the current lesson; the result is a lesson of the same id | A change is to this lesson only |
-| 2 | No `html` block, and prose in RFC 2's inert subset; no image | RFC 2 §2: generated lessons are untrusted content (C6) |
+| 2 | Prose is plain text. A proposed prose, card, quote or aside block carries `text`, never `html`; School escapes it and wraps each paragraph in `<p>` to make the block's `html` field. An edit with an `html` field, or any image, is refused | Generated lessons are untrusted content (C6). RFC 2 §2's inert Markdown subset is still Draft, so the first slice allows nothing that needs a cleaner; task 17 adds one (Q11) |
 | 3 | The quiz-id rules below | Progress lines up |
 | 4 | `checkCourse` on the course with this lesson in place of the course's own, in a scratch folder | The same check every course passes (flyingrobots/school#231) |
-| 5 | Every changed or added quiz quotes, for its correct choice, a source in the course | RFC 2's answer-key rule: a model-written key is checked against a source |
+| 5 | Every changed or added quiz names, for its correct choice, a quote and the reference document or explain-block source it comes from; the quote must appear in that source under `checkQuotes`'s rule (`server/grade.ts`: both squashed, then a substring). The quote is kept in `lesson_proposals.changes`, because a quiz block has no field for it | A model-written key is checked against the course, by the mechanical check gradings already use; this is RFC 2's answer-key rule, built here on code that exists, so it does not wait on RFC 2 |
 | 6 | Within 64 KiB as lesson JSON | Table 5.4 |
 
 _Table 5.11. What a proposal must pass before the learner sees it. A proposal that fails is never stored as a proposal; the teacher gets the reason and one more try._
@@ -524,7 +538,7 @@ _Table 5.11. What a proposal must pass before the learner sees it. A proposal th
 | A changed quiz or explain block | Any change to its question, choices, correct choice, `why`, model answer or sources makes it a new block. The teacher gives no id; School assigns `<original id>~<first 8 hex digits of the new block's canonical SHA-256>`, checks that it is unique in the course, and records the original in `lesson_proposals.changes` as the block it varies |
 | An added quiz | A new block, with an id assigned the same way from the block it follows |
 | A removed quiz | Allowed. The course's quiz stays in mastery and due review (below) |
-| Prose | Sections, prose, cards and asides may change freely; their ids stay if the block stays |
+| Prose | Sections, prose, cards and asides may change freely, as plain text (check 2); their ids stay if the block stays |
 
 _Table 5.12. The quiz-id rules. An id never changes meaning, so an answer recorded against it always means the same question._
 
@@ -589,16 +603,19 @@ The teacher adds three kinds of new surface. Tools can read the learner's whole 
 | The tool endpoint from a browser | A web page, or a course's reference page, calls the endpoint | Loopback only, published to the host and not the tailnet; refuses foreign `Host` (DNS rebinding) and any `Origin` or `Sec-Fetch-*`; sends no CORS headers; needs the key |
 | Prompt injection from course text | A course's lesson or reference text tells the teacher to write a note, propose a change or search for something | Untrusted courses are refused (403), as asking is (flyingrobots/school#363). The instructions mark course text as material. The writes are low-power: a note is short, voice-checked, visible, and can be set aside; a proposal is checked, inert, and changes nothing until the learner takes it after seeing the diff |
 | Prompt injection from web results | A result's snippet steers the teacher into a note that persists into later lessons | No `write_note` after a `web_search` in the same turn (Table 5.4); a proposal made after a search is labelled "made after a web search" on its card; snippets are capped at 300 characters and no page is fetched |
-| The learner's record leaving through a search | The teacher puts the learner's answers, notes or name into a query, which goes to the search provider | Queries are at most 200 characters; the server refuses a query holding any run of six or more words from the learner's answers, explanations or notes; every query is shown in the chat as it is made and stored; at most three per turn; search is off until a provider is configured (Q3) |
+| The learner's record leaving through a search | The teacher puts the learner's answers, notes or name into a query, which goes to the search provider | Queries are at most 200 characters; the server refuses a query holding any run of `QUERY_RECORD_RUN` (6) or more words from the learner's answers, explanations or notes, compared as whole words after both are lower-cased, stripped of punctuation and squashed, the same check notes get with `NOTE_ANSWER_RUN` (§5.8); every query is shown in the chat as it is made and stored; at most three per turn; search is off until a provider is configured (Q3) |
 | Exfiltration through the reply | A reply holds an image or link whose address carries record text, fetched when it renders | Images are removed from teacher output; links render as text with their full address and open only on a click, with `rel="noopener noreferrer"`; raw HTML is inert, as RFC 6 tests |
+| Answers reaching the learner around the aid rules | A note holds a quiz's answer and is read on the course page before that quiz; a later turn repeats an answer from its history after the first disclosure was used up; a later conversation's teacher reads a note holding an answer | A note holding a correct choice's text, or 8 words in a row from a model answer or `why`, is refused before it is stored (§5.8); every note shown records a disclosure for the blocks it names (R4), and so does every note `read_notes` returns; every turn discloses again all its conversation's earlier disclosures (`via: "history"`, §5.7). Each errs toward marking aid |
 | A teacher writing from injected text | Many notes, or a hostile lesson, written in one turn | Two notes and one proposal per turn; twelve calls in all; the learner's OK for every change (Q1); a version never reaches the course without RFC 9's review |
-| The key in the model's hands | The model echoes the key into a note, a query or a reply | The model never reads it (§5.4). The server also refuses any note or query containing a live key's text |
-| Cost and denial | A steered teacher loops on tools | Table 5.4's limits, the 180-second timeout, one interactive job at a time, and usage stored per turn |
+| The key in the model's hands | The model echoes the key into a note, a query or a reply | The model never reads it (§5.4). The server also refuses any note or query containing a live key's text, and revokes that key |
+| An agent's own tools | A steered teacher uses its CLI's built-in tools to read files on the Mac and carry them out through a note, a search or a proposal | codex's `--sandbox read-only` stops writes and network but not reads: it can read every file the user can, such as `~/.ssh`, `~/.config/school/bridge.json`, other courses and other programs' data. On codex-cli 0.171.0, a command run under `codex sandbox` with its default policy read the start of `~/.gitconfig`, while a write to the home folder failed with "Operation not permitted" (run on 2026-11-27); `codex exec --sandbox read-only` itself is checked in task 15. That matters because read-only is not the same as harmless: anything read can leave through School's own tools, `web_search` above all, whose query check looks only for the learner's work. agy's `--mode plan` is not yet known to be any narrower. So an agent gets School's tools only after Q5 shows its built-in tools are off, and otherwise runs as `"tools": "none"` with no channel but its reply (Table 5.6, task 15) |
+| The notes route writing on a `GET` | Another site makes the learner's browser load `/api/courses/:c/teacher-notes`, adding disclosures | It is guarded as `guardLessonOpen` is, so a cross-site load is refused when fetch metadata is sent; without metadata, a forged load can only add disclosures, which marks more aid, never less |
+| Cost and denial | A steered teacher loops on tools | Table 5.4's limits, the 180-second timeout, one interactive job at a time, and usage stored per turn; limits refuse without revoking, except a note after a search (§5.3) |
 | Logs | Tool arguments or results leak into a log | The server and bridge log the tool name, status, timing and sizes only (C7); the record holds the content, and the record is as private as the learner |
 
 _Table 6.1. Threats to the teacher and their mitigations. The design keeps every write visible to the learner and every read inside one conversation's scope._
 
-In short: a hashed key alive only during a turn and only on loopback, writes the learner can always see and undo, no notes after a search, and search queries checked against the record before they leave.
+In short: a hashed key alive only during a turn and only on loopback, writes the learner can always see and undo, no notes after a search and no answers in notes, every route by which an answer reaches the learner recorded as aid, School's tools only for agents whose own tools are off, and search queries checked against the record before they leave.
 
 ## 7. Order of work
 
@@ -607,23 +624,24 @@ Each row is one task issue with one observable outcome, mergeable on its own. No
 | # | Task | Depends on | Done when |
 | --- | --- | --- | --- |
 | 1 | **Record teacher conversations, keys and tool calls.** The first migration of Table 5.7 | flyingrobots/school#248 | Contract cases on PGlite and Bun.SQL: a teacher turn stores its `ai-help` exposure before anything else; a conversation's key events and tool calls are append-only; a call names its turn; an untracked encounter is rejected |
-| 2 | **Answers the teacher saw count as aided next time.** The disclosures migration (R2) | 1 | Contract cases: a disclosure makes the next episode of its block aided in another encounter and leaves the one after clean; mastery and due review read it; DR-F-5's differential still holds for histories with no disclosure |
-| 3 | **Teacher notes in the record.** The notes migration, the voice check, replacement and setting aside | 1 | Contract cases: a note is stored once per id; a replaced note is hidden from reads and kept; a set-aside note is not read by the teacher; the server refuses a note with any banned word |
-| 4 | **The teacher's tools on a loopback endpoint.** The MCP endpoint, the key check and states of §5.4, `read_course`, `read_progress`, `read_notes`, `write_note`, the limits of Table 5.4, disclosures before results | 1, 2, 3 | HTTP tests: a call outside a running turn, with a revoked key or for another course is refused and stored; a browser-shaped request is refused before the key; each tool's result; each limit; every call is in the record; no log line holds an argument or result |
+| 2 | **Answers the teacher saw count as aided next time.** The disclosures migration (R2) | 1 | Contract cases: a disclosure is used up by the first episode of its block, in any encounter, whose first try has a larger `seq`, which is aided, and leaves the one after clean; two disclosures before one episode are both used up by it; a disclosure after an episode's first try waits for the next episode; every `via`, `note-shown` with no turn included, is accepted; mastery and due review read it. A seeded differential in DR-F-5's style (`SCHOOL_TEST_SEED`, PGlite): on random histories with disclosures, the aid that `submission_aid` and `quiz_episodes` give every answer equals an independent TypeScript reading of R2's definition. DR-F-5's own differential still holds for histories with no disclosure |
+| 3 | **Teacher notes in the record.** The notes migration, the voice check, replacement and setting aside | 1 | Contract cases: a note is stored once per id; a replaced note is hidden from reads and kept; a set-aside note is not read by the teacher; the server refuses a note with any banned word, and one holding a correct choice's text or 8 words in a row from a `why` or model answer, while 7 words in a row are stored |
+| 4 | **The teacher's tools on a loopback endpoint.** The MCP endpoint, the key check and states of §5.4, `read_course`, `read_progress`, `read_notes`, `write_note`, the limits of Table 5.4, disclosures before results | 1, 2, 3 | HTTP tests: a call outside a running turn, with a revoked key or for another course is refused and stored; a browser-shaped request is refused before the key; each tool's result; `read_notes` records a disclosure for every block its notes name; each limit refuses, and only a note after a search revokes the key; every call is in the record; no log line holds an argument or result |
 | 5 | **The bridge teaches.** The `teach` list sharing the ask queue, `POST /teach`, per-agent fitting, MCP configuration for claude and codex, `tool` lines, the fallback rule of Figure 5.3, three log messages | none | Bridge tests with a fake MCP-calling agent: tool lines reach the caller; the key is in no argv, log line or prompt text; a smaller `max_prompt_chars` drops more history; a failure after a write does not fall back; `--schema` lists the new messages |
-| 6 | **The server runs a teacher turn.** `POST /api/teacher` and `GET .../teacher` of Table 5.1, the prompt of Table 5.2, the turn stored before the bridge is called | 4, 5, flyingrobots/school#227 | HTTP tests with a fake bridge: the turn, its exposure and its lesson's disclosures are in the record before the bridge is asked; the prompt holds the lesson, message and history and no key; the reply is stored when the browser goes away; the key closes when the turn ends |
+| 6 | **The server runs a teacher turn.** `POST /api/teacher` and `GET .../teacher` of Table 5.1, the prompt of Table 5.2, the turn stored before the bridge is called | 4, 5, flyingrobots/school#227 | HTTP tests with a fake bridge: the turn, its exposure, its lesson's disclosures and its history disclosures are in the record before the bridge is asked; the prompt holds the lesson, message and history and no key; history arguments are capped at 2,000 characters and a proposal's are its summary and counts; `tools_url` is `SCHOOL_TEACHER_TOOLS_URL`; the reply is stored when the browser goes away; the key closes when the turn ends. A known-failure-mode case: turn 1 reads lesson 3 by `read_course`, the learner then answers lesson 3's quiz (using that disclosure up), and turn 2, whose history still holds the answer, makes that quiz's next episode aided again |
 | 7 | **Prove the teacher's tools on Claude Code.** A recorded run against the installed CLI | 5, 6 | The run shows the teacher calling `read_progress`, the call in the record, no built-in tool available, and the key absent from `ps` |
-| 8 | **A learner asks the teacher on the lesson page.** The panel of §5.10 with **Chat** and **Notes**, `T`, the phone drawer beside RFC 10's chip, the passage from a selection. Absorbs flyingrobots/school#228 | 6 | Browser tests, light and dark, at 1280 px and 390 px: a turn streams in with its tool rows and AI label; a reload shows it; the help line shows before the first turn; every string passes the voice test; nothing in browser storage. **The first slice is complete** |
+| 8 | **A learner asks the teacher on the lesson page.** The panel of §5.10 with **Chat** and **Notes**, `T`, the phone drawer beside RFC 10's chip, the passage from a selection. Absorbs flyingrobots/school#228 | 6 | Browser tests, light and dark, at 1280 px and 390 px: a turn streams in with its tool rows and AI label; a reload shows it; the help line shows before the first turn; opening the **Notes** tab records a disclosure for every block its notes name; every string passes the voice test; nothing in browser storage. **The first slice is complete** |
 | 9 | **The teacher searches the web.** `web_search`, the provider secret, the query check, unchecked sources in the panel | 4, 8 | Tests with a fake provider: a query with a run from the learner's answers is refused; results are stored and shown as **From the web, not checked**; no note after a search in that turn |
 | 10 | **Learner versions in the record.** The learner-versions migration | 1 | Contract cases: a proposal and choices are append-only; the latest choice decides the version; a stale base is marked |
-| 11 | **The teacher proposes a lesson change.** `propose_lesson_change` with the checks of Table 5.11 and the id rules of Table 5.12 | 4, 10 | Tests: an `html` block, a reused id with new content, or a failing `checkCourse` is refused with its reason; a swapped quiz gets a derived, unique id; a good proposal is stored |
+| 11 | **The teacher proposes a lesson change.** `propose_lesson_change` with the checks of Table 5.11 and the id rules of Table 5.12 | 4, 10 | Tests: an edit carrying an `html` field, an image, a reused id with new content, a changed quiz whose quote is not in its named source, or a failing `checkCourse` is refused with its reason; plain-text prose with `<script>` in it is stored escaped; a swapped quiz gets a derived, unique id; a good proposal is stored |
 | 12 | **The learner takes a change, or keeps the original.** The proposal card, the diff, **Use this version**, the header switch, serving the version, R3 at open, stale bases | 8, 11, flyingrobots/school#264 | Browser tests: taking a change opens an encounter on the version's snapshot with an `ai-help` exposure; the original is one tap away; mastery and due review read the course's quizzes only; a course update marks the version stale |
-| 13 | **Notes on the course page.** The **From your teacher** card | 3, 8 | A browser test shows the three newest notes with the AI label, and set-aside notes under **Set aside** |
-| 14 | **The bridge runs the tool loop for `openai` agents.** Tools as functions, calls sent to the endpoint with the key | 5, and RFC 10's `openai` kind (its task 8, not yet filed) | Tests against a fake loopback model: tool calls are made through the endpoint; the loop ends on text; limits hold |
-| 15 | **Prove the teacher on codex, agy and lms-qwen.** Recorded runs on the Mac that hosts School | 5, 14 | Each agent either calls a tool through the endpoint with the key outside argv, or the run records why not and the agent is marked `"tools": "none"` |
+| 13 | **Notes on the course page.** The **From your teacher** card | 3, 8 | A browser test shows the three newest notes with the AI label, and set-aside notes under **Set aside**; loading the course page records a disclosure for every block a shown note names |
+| 14 | **The bridge runs the tool loop for `openai` agents.** Tools as functions, calls sent to the endpoint with the key | 5, and RFC 10's `openai` kind (flyingrobots/school#379) | Tests against a fake loopback model: tool calls are made through the endpoint; the loop ends on text; limits hold |
+| 15 | **Prove the teacher on codex, agy and lms-qwen.** Recorded runs on the Mac that hosts School | 5, 14 | For codex and agy, the run first shows whether the agent's built-in tools are off (codex's shell, agy's plan mode), by asking it to read a file outside its run folder. An agent whose built-ins are off calls a tool through the endpoint with the key outside argv. An agent whose built-ins are not shown off, or that cannot reach the endpoint, is marked `"tools": "none"` in the host's `bridge.json` and in `bridge.example.json`, which a new install starts from, and the run records why |
 | 16 | **Suggest a version for the course.** **Suggest this for the course** as an RFC 9 authoring request | 12, flyingrobots/school#262 | A test starts an authoring request from a version, and its draft's diff matches the version |
+| 17 | **A prose cleaner for proposals.** A server-side cleaner that keeps only RFC 2's inert subset (Q11), so a proposal may carry prose as HTML; task 11's HTML case moves from "refused" to "cleaned" | 11, RFC 2's inert subset decided | Tests: every element and attribute outside the subset is removed, links keep only `http(s)`, images and raw scripts never survive; a proposal with HTML prose is stored cleaned, and cleaning twice changes nothing |
 
-_Table 7.1. The build, as task issues. Tasks 1 and 5 can start at once; 2, 3 and 10 follow 1; task 8 completes the first slice; 9 and 11 to 16 follow._
+_Table 7.1. The build, as task issues. Tasks 1 and 5 can start at once; 2, 3 and 10 follow 1; task 8 completes the first slice; 9 and 11 to 16 follow; 17 waits on RFC 2._
 
 In short: the record first, then the tools and the bridge, then the route and the panel; search, lesson changes and the other agent kinds after the first slice.
 
@@ -652,7 +670,7 @@ The main risk is a teacher that tells too much and a record that does not notice
 
 | Risk | Mitigation |
 | --- | --- |
-| The record overstates mastery after the teacher has shown answers | R1, R2 and R3 (Table 5.8), all on the server, all before the help is shown |
+| The record overstates mastery after the teacher has shown answers | R1 to R4 (Table 5.8), all on the server, all before the help is shown |
 | Review fills up for a learner who talks to the teacher often | Due review shows at most three items a lesson (`REVIEW_LIMIT`); accepted as the honest cost, as RFC 6 accepted it |
 | The learner relies on the teacher's answers | The line before the first turn says so, and the aided quizzes come back for an answer from memory |
 | A model-written quiz key is wrong | RFC 2's source-quote check on every changed quiz; version quizzes stay out of mastery |
@@ -660,6 +678,8 @@ The main risk is a teacher that tells too much and a record that does not notice
 | An agent's MCP flags differ from what is declared | Tasks 7 and 15 record real runs; an agent that cannot take tools runs with `"tools": "none"` |
 | A local model is too small for the history | Per-agent `max_prompt_chars`; the oldest turns are dropped and the prompt says so |
 | Stored tool results grow the record | Results are bounded (Table 5.4); Q8 |
+| A slow teacher turn delays passage asking | The `teach` list shares the `ask` queue (Table 5.1), so a passage question asked during a teacher turn waits for it, up to the turn's 180-second timeout. Accepted for one learner, who is in one conversation at a time; the panel shows "Your teacher is looking…" meanwhile, and a separate queue is one change in the bridge if the wait shows up in use |
+| The answer check refuses ordinary notes | A correct choice of one or two common words blocks those words in every note. The reason names the quiz so the teacher can write around it, and refused notes are counted in `teacher_tool_calls`, so the cost can be read after a week of use |
 
 _Table 9.1. Risks and their mitigations. The aid rules carry the most weight, so they are built and tested before the teacher can answer._
 
@@ -672,22 +692,23 @@ Decisions 1 to 5 are the maintainer's. These questions remain, each with a recom
 | # | Question | Recommendation |
 | --- | --- | --- |
 | Q1 | Could small changes apply on their own, without the learner's OK, such as a typo, an added example, or a reworded sentence? | Not in the first slice: every change needs the learner's OK. Revisit once the record shows how often learners take proposals; a later rule could let prose-only changes with no quiz change apply with an **Undo**, still as a version and still snapshotted |
-| Q2 | Is R2's "next episode" the right length for a disclosure's effect? | Yes. RFC 5 already resets an aided quiz to one day and brings it back, so one aided episode is enough to keep the record honest |
+| Q2 | Is R2's "next episode" the right length for a disclosure's effect? | Yes. Under R2's definition a disclosure aids exactly the first episode whose first try comes after it. RFC 5 already resets an aided quiz to one day and brings it back, so one aided episode is enough to keep the record honest. The teacher can only repeat an answer after that while it still has it in front of it, and each such turn and each note shown records a new disclosure (`history`, R4), which aids the next episode again |
 | Q3 | Which search provider, and is search on by default? | Off until a provider key is stored in the Keychain and passed as a compose secret, as RFC 10 does for its tokens. A provider with a no-retention API term is preferred; the choice is the maintainer's |
 | Q4 | Should a kept quiz already answered in the sitting be shown as answered in the new version, rather than asked again? | Show the earlier answer beside it and let the learner answer again if they want (§5.9); measure whether learners re-answer |
-| Q5 | Do the CLIs take per-run MCP configuration as Table 5.6 declares, and does Claude Code's `--tools ""` leave MCP tools callable? | Verify in tasks 7 and 15. If `--tools ""` also removes MCP tools, name the built-in tools to deny with `--disallowedTools` instead |
+| Q5 | Do the CLIs take per-run MCP configuration as Table 5.6 declares; does Claude Code's `--tools ""` leave MCP tools callable; and can codex's shell and agy's plan-mode tools be turned off? | Verify in tasks 7 and 15. If `--tools ""` also removes MCP tools, name the built-in tools to deny with `--disallowedTools` instead. An agent whose built-in tools cannot be shown off runs as `"tools": "none"` |
 | Q6 | Does lms-qwen support tool calls through LM Studio's OpenAI-compatible server? | Verify in task 15; if not, it runs with `"tools": "none"` at the end of the list |
 | Q7 | Should the teacher see RFC 8's explain-mode requests and RFC 6's passage conversations? | Yes, through `read_progress`, in a later task; they are the learner's own questions |
 | Q8 | Store each read tool's whole result, or a digest of it? | The whole result, bounded, so each turn can be replayed from the record; revisit if the record grows by more than 10 MiB a month |
 | Q9 | Does a teacher turn keep the encounter open or make a study day? | As RFC 6 Q8: it keeps the encounter open and is not a study day, because talking is not retrieval |
 | Q10 | Should `T` also open the panel from the course page? | Not now; the teacher is about a lesson. The course page shows notes only |
+| Q11 | Which inert subset does task 17's prose cleaner keep? | It waits on RFC 2, which is still Draft and defines the subset (RFC 2 §2, Prose). Until RFC 2 is decided, proposals carry plain text only (check 2 of Table 5.11) |
 
-_Table 10.1. Open questions and recommendations. Q1 and Q3 are the maintainer's choices; Q5 and Q6 are facts about the Mac that hosts School._
+_Table 10.1. Open questions and recommendations. Q1 and Q3 are the maintainer's choices; Q5 and Q6 are facts about the Mac that hosts School; Q11 waits on RFC 2._
 
 In short: changes need the learner's OK for now, search waits for a provider, and two agents' tool support is checked where they run.
 
 ## 11. Decision
 
-The maintainer decided the five points of Table 0.1 on 2026-11-27. The rest of this RFC is Proposed, and the questions in §10 are Open. The tasks of §7 are drafted as issue specifications and not yet filed; this section will list their issue numbers once they are. flyingrobots/school#228 is absorbed by task 8.
+The maintainer decided the five points of Table 0.1 on 2026-11-27. The rest of this RFC is Proposed, and the questions in §10 are Open. Tasks 1 to 16 of §7 are filed as flyingrobots/school#385 to flyingrobots/school#400, task 1 as #385 through task 16 as #400, in order; task 17 is drafted and not yet filed. flyingrobots/school#228 is absorbed by task 8 (flyingrobots/school#392).
 
 In short: the teacher's shape is decided, and its details, the search provider and two agents' tools are still to settle.
