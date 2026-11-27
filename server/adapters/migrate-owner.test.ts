@@ -104,4 +104,22 @@ describe.skipIf(URL_ === undefined)("Bun.SQL: the migrate job forces school_owne
       await admin.unsafe(`DROP ROLE IF EXISTS ${owner}`);
     }
   }, SLOW);
+
+  // Every other test names its own owner, so none would notice the default changing. This one runs
+  // the job as the server runs it, with no owner argument, against the real school_owner (OWNER in
+  // server/db/migrate.ts). Roles are cluster-wide: it needs a server that is the test's alone,
+  // which SCHOOL_TEST_POSTGRES_URL is, and it leaves school_owner as the job does, NOLOGIN.
+  test("with no owner argument, the job corrects the real school_owner", async () => {
+    const admin = track(new Bun.SQL(URL_!, { max: 1 }));
+    const url = await database();
+    try {
+      await migrateRecord(url, TEST_APP_PASSWORD);
+      await admin.unsafe(`ALTER ROLE school_owner SUPERUSER LOGIN CREATEROLE CREATEDB REPLICATION BYPASSRLS`);
+      expect((await read(admin, "school_owner"))?.attributes).toEqual({ super: true, login: true, createrole: true, createdb: true, replication: true, bypassrls: true });
+      expect(await migrateRecord(url, TEST_APP_PASSWORD)).toEqual({ applied: [] });
+      expect((await read(admin, "school_owner"))?.attributes).toEqual(NONE);
+    } finally {
+      await admin.unsafe(`ALTER ROLE school_owner NOLOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS`);
+    }
+  }, SLOW);
 });
