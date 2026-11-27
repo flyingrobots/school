@@ -1,5 +1,5 @@
-// The SPDX License List's exception identifiers, as `spdx-exceptions` 2.5.0 (CC0-1.0,
-// https://github.com/jslicense/spdx-exceptions) publishes them. A course's `license`
+// The SPDX License List's exception identifiers, as `spdx-exceptions` 2.5.0 (CC-BY-3.0,
+// https://github.com/kemitchell/spdx-exceptions.json; attributed in NOTICE) publishes them. A course's `license`
 // (server/course-file.ts) names only these after `WITH`. Copied, not a dependency (ADR 2); to
 // update, copy `index.json` from a newer release into the list below.
 

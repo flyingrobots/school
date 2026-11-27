@@ -243,7 +243,7 @@ its `manifest` line, and the title on `done`.
   regard to case; a `LicenseRef-` is not an exception.
 
 The lists are `server/spdx-license-ids.ts`, copied from the `spdx-license-ids` package (3.0.24,
-CC0-1.0), and `server/spdx-exception-ids.ts`, from `spdx-exceptions` (2.5.0, CC0-1.0), rather than
+CC0-1.0), and `server/spdx-exception-ids.ts`, from `spdx-exceptions` (2.5.0, CC-BY-3.0, attributed in `NOTICE`), rather than
 added as dependencies; a license or exception published after those releases is refused until the
 lists are updated. School has no preference among licenses: any listed id is accepted.
 
