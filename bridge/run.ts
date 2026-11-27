@@ -200,6 +200,13 @@ export function spawnFailure(program: string, e: unknown): string {
   return `could not start ${program} (${typeof code === "string" && /^E[A-Z0-9]+$/.test(code) ? code : "unknown error"})`;
 }
 
+/**
+ * How long after a kill the agent's pipes are read before the readers are cancelled. A child that
+ * left the agent's process group (setsid) holds the pipes open however often the group is killed;
+ * this is as long as the sweep runs, so a child still in the group has been killed by then.
+ */
+export const PIPE_GRACE_MS = 500;
+
 /** How many sweeps have started: a seam for tests that a kill after the pipes closed starts none. */
 export const sweeps = { started: 0 };
 
@@ -222,10 +229,15 @@ export function sweepGroup(group: number, signal: (group: number) => void = (g) 
   return stop;
 }
 
-async function readCapped(stream: ReadableStream<Uint8Array>, onOverflow: () => void): Promise<string> {
+/** Read `stream` whole, up to MAX_OUTPUT; its reader is added to `readers`, so a cut-off can cancel it. */
+async function readCapped(stream: ReadableStream<Uint8Array>, onOverflow: () => void, readers: ReadableStreamDefaultReader<Uint8Array>[]): Promise<string> {
   const chunks: Uint8Array[] = [];
   let size = 0;
-  for await (const c of stream) {
+  const reader = stream.getReader();
+  readers.push(reader);
+  for (;;) {
+    const { done, value: c } = await reader.read();
+    if (done) break;
     size += c.length;
     if (size > MAX_OUTPUT) { onOverflow(); break; }
     chunks.push(c);
@@ -265,14 +277,20 @@ async function runAgent(agent: Agent, job: Job, timeoutMs: number): Promise<Atte
       why ??= reason;
       if (done) { proc.kill("SIGKILL"); return; } // the agent itself, still unreaped; not its group
       sweep.stop ??= sweepGroup(proc.pid);
+      grace ??= setTimeout(() => { for (const r of readers) r.cancel().catch(() => {}); }, PIPE_GRACE_MS);
     };
+    // A child that left the group holds the pipes open however often the group is killed. Once
+    // the kill has had this long to close them, stop reading, so the next agent can run (#349).
+    const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+    let grace: ReturnType<typeof setTimeout> | null = null;
     const timer = setTimeout(() => kill(`timed out after ${Math.round(timeoutMs / 1000)} s`), timeoutMs);
     const [stdout, stderr] = await Promise.all([
-      readCapped(proc.stdout, () => kill("produced more than 1 MiB of output")),
-      readCapped(proc.stderr, () => kill("produced more than 1 MiB of error output")),
+      readCapped(proc.stdout, () => kill("produced more than 1 MiB of output"), readers),
+      readCapped(proc.stderr, () => kill("produced more than 1 MiB of error output"), readers),
     ]);
     done = true;
     sweep.stop?.();
+    if (grace !== null) clearTimeout(grace);
     const exitCode = await proc.exited;
     clearTimeout(timer);
     try { process.kill(-proc.pid, "SIGKILL"); } catch {} // anything it left running in the background
