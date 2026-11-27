@@ -153,6 +153,25 @@ test("compose mounts the course-store volume at /store and points SCHOOL_COURSE_
   expect(school?.environment?.SCHOOL_COURSE_STORE).toBe("${SCHOOL_COMPOSE_COURSE_STORE-/store}");
 });
 
+// The pinned school skill (RFC 9 §5.3, flyingrobots/school#257): the image is built from server/ and
+// cannot reach .agents/, so compose mounts the checkout's skill and the references it links, read-only,
+// beside /framework/assets, and points the server at them.
+test("compose mounts the checkout's school skill and its references read-only under /framework", () => {
+  const school = compose.services.school;
+  expect(school?.volumes).toEqual(expect.arrayContaining([
+    "../.agents/skills/school:/framework/skills/school:ro",
+    "../docs/topics/course-format:/framework/docs/course-format:ro",
+    "../docs/topics/voice:/framework/docs/voice:ro",
+  ]));
+});
+
+test("compose points SCHOOL_SKILL at the mount through SCHOOL_COMPOSE_SKILL, which .env may set empty and a host export never reaches, and SCHOOL_SKILL_DOCS at the references with no variable at all", () => {
+  const school = compose.services.school;
+  // `-`, not `:-`: unset means the mount, and an empty value in .env means no skill, so authoring is off.
+  expect(school?.environment?.SCHOOL_SKILL).toBe("${SCHOOL_COMPOSE_SKILL-/framework/skills/school}");
+  expect(school?.environment?.SCHOOL_SKILL_DOCS).toBe("/framework/docs");
+});
+
 test("the image ships the migrate command", () => {
   expect(shipped).toContain("migrate.ts");
 });

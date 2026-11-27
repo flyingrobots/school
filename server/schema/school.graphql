@@ -304,3 +304,21 @@ type ReviewReason {
   rule: String!
   reason: String!
 }
+
+# ---- Mastery -----------------------------------------------------------------------------------
+
+type MasteryQuery {
+  course: String!
+  blocks: [String!]!
+  now: String!
+  delayMs: Int!
+}
+
+type Mastery {
+  blockId: String!
+  strength: Float
+  stabilityMs: Float
+  refreshedAt: String
+  settled: Boolean!
+  evidence: [Int!]!
+}
