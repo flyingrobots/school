@@ -4,7 +4,10 @@ The contract ledger for [the course page](README.md). Every case runs in `bun te
 cases are in `web/test/course.test.ts`: Chrome through playwright-core, the Vite dev server, and a
 real School server whose progress the test records through `POST /api/answer`. The API's mastery
 cases (COURSE-25 to COURSE-27) are in `server/course-mastery.test.ts`: a real School server at a
-fixed clock (`SCHOOL_TEST_CLOCK`) over a record the test writes through the port.
+fixed clock (`SCHOOL_TEST_CLOCK`) over a record the test writes through the port. The page's
+mastery cases (COURSE-28 to COURSE-32) are in `web/test/course.test.ts`, over a course whose record
+the test writes through the port relative to now, and the shared words' sweep (COURSE-33) is in
+`web/test/holding.test.ts`.
 
 | ID | Case | Oracle | Status | Test |
 | --- | --- | --- | --- | --- |
@@ -35,3 +38,9 @@ fixed clock (`SCHOOL_TEST_CLOCK`) over a record the test writes through the port
 | COURSE-25 | Mastery, one of each | At the server's day 2, a lesson whose quizzes are never answered, wrong at day 0, clean at day 1.5 and clean at day 0 gives `mastery: {notStarted: 1, settling: 1, holding: 1, faded: 1}`, with `id`, `title`, `subtitle`, `quizzes` and `answeredCorrectly` as before (RFC 5 Table 4.5; flyingrobots/school#220) | implemented | `a lesson with one quiz in each state reports one of each, beside its fields as they were` |
 | COURSE-26 | Mastery, no quizzes | A lesson with no quizzes gives zero in every state | implemented | `a lesson with no quizzes reports zero in every state` |
 | COURSE-27 | Mastery at the server's clock | A request whose `Date` header and `now`, `at` and `clock` parameters name the server's day 1 or 2031 gets the same counts as COURSE-25 | implemented | `the counts are at the server's clock, whatever time the client says it is` |
+| COURSE-28 | Holding words, one of each | A lesson with a quiz never answered, one wrong an hour ago, one clean two days ago and one clean an hour ago says "1 of 4 quizzes holding", "1 still settling", "1 ready for another look" and "1 not started yet", each a registry Badge whose background and text are the resolved `--secondary` and `--secondary-foreground`, in a light and a dark colour scheme (RFC 5 Table 4.7; flyingrobots/school#221) | implemented | `how each lesson is holding > a lesson with a quiz in each state says how each is holding, in Badges in the theme's colours (light)`, `(dark)` |
+| COURSE-29 | No percentage or strength | The page with holding words shows no `%`, decimal, `N/M`, "score" or "strength" | implemented | `how each lesson is holding > no card shows a percentage, a fraction or a strength` |
+| COURSE-30 | Not started | A lesson none of whose quizzes is answered says "Not started yet" alone | implemented | `how each lesson is holding > a lesson none of whose quizzes is answered says it is not started yet` |
+| COURSE-31 | No quizzes | A lesson with no quizzes says "No quizzes" and has no holding words | implemented | `how each lesson is holding > a lesson with no quizzes says nothing about holding` |
+| COURSE-32 | No browser storage | After the page shows holding words, `localStorage`, `sessionStorage` and every IndexedDB store are empty | implemented | `how each lesson is holding > nothing is written to browser storage` |
+| COURSE-33 | Voice | For every split of up to three quizzes into the four states, each phrase is one of Table 4.7's and contains no "wrong", "fail", "mistake", "incorrect", "forgot", "attempt", `%`, "score", "strength" or decimal; a lesson says something exactly when it has quizzes | implemented | `web/test/holding.test.ts`: `every phrase for every lesson of up to three quizzes is one of RFC 5's four words and passes the voice test` |

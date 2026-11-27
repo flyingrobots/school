@@ -26,8 +26,9 @@ and reads one endpoint, `GET /api/courses/:course`.
   | `quizzes: 1, answeredCorrectly: 0` | 0 of 1 quiz answered correctly |
   | `quizzes: 0` | No quizzes |
 
-  A lesson whose quizzes are all answered correctly carries a check mark. Progress is never a
-  percentage, a letter or a score, and there is no progress bar.
+  A lesson whose quizzes are all answered correctly carries a check mark. Under its progress, a
+  lesson with quizzes says how they are holding now ([below](#how-each-lesson-is-holding)).
+  Progress is never a percentage, a letter or a score, and there is no progress bar.
 
 The lessons fill a grid of one column on a phone, two from `sm`, three from `xl` and four from
 `2xl`. A line under the grid shows the keys: `j` and `k` move between lessons (the shell's focus
@@ -37,7 +38,7 @@ in), unless the viewer prefers reduced motion.
 
 ## Each lesson's mastery
 
-`GET /api/courses/:course` also gives each lesson `mastery`, how its quizzes are holding now (RFC 5 §4.5; flyingrobots/school#220). The page does not show it yet; RFC 5 step 5 puts it in words on each lesson's card.
+`GET /api/courses/:course` also gives each lesson `mastery`, how its quizzes are holding now (RFC 5 §4.5; flyingrobots/school#220). Each lesson's card says it in words ([below](#how-each-lesson-is-holding)).
 
 | Field | Counts the lesson's quizzes that are | The learner will read it as |
 | --- | --- | --- |
@@ -59,6 +60,25 @@ The server reads the counts from `school.mastery_rollup`, one group per lesson, 
 
 In short: each lesson says how many of its quizzes are not started, settling, holding or faded, now, by the server's clock.
 
+## How each lesson is holding
+
+Each lesson's card says how its quizzes are holding, under its progress, with one Badge (the registry's, `secondary`) per state that has any, in the words of [mastery](../mastery/README.md#rolling-up-to-lessons-and-courses) (RFC 5 §4.7, §4.8; flyingrobots/school#221). The words are the ones each home timeline lane uses ([the home page](../home-page/README.md#how-each-course-is-holding)), in the same order.
+
+| `mastery` | The card says |
+| --- | --- |
+| `holding` | "2 of 3 quizzes holding" |
+| `settling` | "1 still settling" |
+| `faded` | "1 ready for another look" |
+| `notStarted`, some quizzes answered | "1 not started yet" |
+| `notStarted`, no quiz answered | "Not started yet", alone |
+| No quizzes | Nothing: the card's progress already says "No quizzes" |
+
+_Table 2. The words for each count of a lesson's `mastery`. Each number is a count of quizzes, never a percentage, a score or a strength._
+
+The words come from `lessonHoldingWords` in `web/src/lib/holding.ts`, and the Badges from `HoldingBadges` in `web/src/components/holding-badges.tsx`; the home timeline shares both. They come from the server's counts each time the page loads, and nothing is kept in browser storage.
+
+In short: each card says, in four kinds of words, how its lesson's quizzes are holding now.
+
 ## States
 
 | When | The page shows |
@@ -74,7 +94,7 @@ row, never a half-drawn page.
 
 ## Code and tests
 
-The page is `web/src/pages/course.tsx`, composed of stock shadcn components (Breadcrumb, Button,
+The page is `web/src/pages/course.tsx`, with `web/src/lib/holding.ts` and `web/src/components/holding-badges.tsx` for how each lesson is holding, composed of stock shadcn components (Breadcrumb, Button,
 Item, Badge, Empty, Alert, Skeleton, Spinner, Kbd). `web/test/course.test.ts` drives it in Chrome
 against the Vite dev server, with the page's `/api` requests answered by a real School server over
 course folders written by the test; [the test plan](test-plan.md) lists its cases.
