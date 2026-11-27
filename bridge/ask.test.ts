@@ -319,3 +319,15 @@ test("a caller that hangs up before any delta is told of no agent", async () => 
   expect(r).toMatchObject({ status: "failed", agent: null, error: "the caller went away" });
   expect(r.attempts[0]).toMatchObject({ agent: "claude", deltas: 0 });
 }, 15_000);
+
+// flyingrobots/school#290: when no ask agent can be started, the reply fails with every attempt.
+test("when no ask agent can be started, the reply fails with each attempt failed and no prompt in any error", async () => {
+  const notExecutable = join(dir, "not-executable");
+  writeFileSync(notExecutable, "#!/bin/sh\necho Yes.\n");
+  const gone = join(dir, "no-such-folder", "agent");
+  const r = await runAsk(ask([{ name: "gone", command: `${gone} {prompt}` }, { name: "denied", command: `${notExecutable} {prompt}`, output: "text" }]), { prompt: "SECRET-PROMPT" }, () => {});
+  expect(r).toEqual({ status: "failed", agent: null, error: "every ask agent failed", attempts: [
+    { agent: "gone", status: "failed", error: `could not start ${gone} (ENOENT)`, exitCode: null, ms: expect.any(Number), deltas: 0 },
+    { agent: "denied", status: "failed", error: `could not start ${notExecutable} (EACCES)`, exitCode: null, ms: expect.any(Number), deltas: 0 },
+  ] });
+});

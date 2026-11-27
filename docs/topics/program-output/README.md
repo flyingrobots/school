@@ -174,7 +174,9 @@ SCHOOL_BRIDGE_TOKEN=<shared secret> bun bridge/bridge.ts [--help | --schema] [--
 | `school.bridge.error` | `bridge.error` | `message`; for a port it cannot listen on also `host`, `port` and `code` (`EADDRINUSE` for a taken port, else the system's code or null) | A refusal to start, an uncaught throw or rejection, or a request handler's throw (answered 500) |
 
 No line holds a prompt, an answer or text to speak: a question's lines count the answer's pieces
-and tokens, never its words. Before flyingrobots/school#135 the lines had no `_schema` and no
+and tokens, never its words. An answer that does not match its schema is reported by where the
+problem is, such as `unexpected key at $.items[1]`, never by the answer's own keys or values
+(flyingrobots/school#289). Before flyingrobots/school#135 the lines had no `_schema` and no
 `run`, and arguments were ignored.
 
 ### What the bridge printed
@@ -231,7 +233,9 @@ the question nor the answer.
 A consumer must go by the exit status when a stream ends without the line it expected.
 
 - **A signal kill.** `SIGKILL` ends any of them with no last line. The backup job handles `TERM`
-  and `INT` (a `stopped` line); the gate and the bridge install no handler for them.
+  and `INT` (a `stopped` line). The bridge handles them too, with no last line: it kills every
+  running agent's process group, gradings and questions alike, then exits 0. The gate installs no
+  handler for them.
 - **The backup job's own tools.** The script redirects or captures the stderr of `pg_dump`, `ln`,
   `mktemp`, `chmod`, `ls` and `rm`. If `sh` itself, `od`, `sed`, `awk`, `tr`, `date` or `wc` failed
   (a broken image), their own messages would reach stderr as raw text. A failed `rm` during the

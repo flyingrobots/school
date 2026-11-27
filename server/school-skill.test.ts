@@ -56,6 +56,23 @@ describe("the school skill", () => {
     expect(prompts.length).toBeGreaterThan(0);
     expect(prompts.filter((p) => !p.trim().endsWith("?"))).toEqual([]);
   });
+  // RFC 9 §5.3, flyingrobots/school#257: when School's authoring page runs the agent, it works in a
+  // folder with file tools only, and School, not the agent, runs the check.
+  test("SKILL-6: a section for when School runs it says the course is under course/, there is no shell, and School runs the check and sends back the first problem", () => {
+    const text = readFileSync(join(SKILL, "SKILL.md"), "utf8");
+    const section = /^## When School runs you\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(text)?.[1] ?? "";
+    expect(section).toContain("`course/`");
+    expect(section).toContain("`guide/`");
+    expect(section).toMatch(/no shell/);
+    expect(section).toContain("`school check`");
+    expect(section).toMatch(/first problem/);
+  });
+
+  test("SKILL-7: step 9 still tells an agent in a terminal to run ./school check", () => {
+    const text = readFileSync(join(SKILL, "SKILL.md"), "utf8");
+    expect(text).toMatch(/^9\. \*\*Check it\.\*\* From a School checkout run `\.\/school check <course-folder>`/m);
+  });
+
   test("SKILL-5: .claude/skills/school links to it, so agents in a clone find it", () => {
     const link = join(import.meta.dir, "..", ".claude", "skills", "school");
     let isLink = false;
