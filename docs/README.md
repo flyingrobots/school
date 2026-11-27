@@ -32,6 +32,7 @@ Start here. Each page has one job; this page routes to all of them.
 | [RFC 7: Installing courses](rfc/0007-installing-courses.md) | Decided 2026-11-26: a course store of write-once installs, added from Settings by git URL at a pinned commit or by git bundle, checked as hostile input and recorded in the database. |
 | [RFC 8: Explain mode](rfc/0008-explain-mode.md) | Decided 2026-11-26: Explain more on a section or block, pitched from the learner's recorded mastery (RFC 5) through the ask path (RFC 6), and recorded as help. |
 | [RFC 9: Authoring a course in the browser](rfc/0009-authoring-in-the-browser.md) | Decided 2026-11-26: a confined agent drafts a course change from a request; the author previews the diff and accepts it as a new write-once install. |
+| [RFC 12: Adapting to the learner](rfc/0012-adapting-to-the-learner.md) | Proposed 2026-11-27: six teaching styles the learner chooses within the course's bounds, a four-level ladder per idea moved by mastery, each answer recorded with its level so mastery says where an idea is holding, and suggestions stored and shown in words. |
 | [ADRs](adr/) | The decisions, in order, with what each cost. |
 
 Living pages describe only what exists on the default branch. Proposals live in RFCs until they
