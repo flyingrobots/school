@@ -1,7 +1,7 @@
 # A course's folder
 
-Reference: what School reads from a course's folder, the one `SCHOOL_COURSES` (or `SCHOOL_COURSE`)
-names. School reads the folder and never writes to it ([ADR 6](../../adr/0006-separate-framework-lessons-and-learner-state.md)).
+Reference: what School reads from a course's folder, the one `SCHOOL_COURSES` (or `SCHOOL_COURSE`,
+or `SCHOOL_UNTRUSTED_COURSES` for [an untrusted course](#trusted-and-untrusted-courses)) names. School reads the folder and never writes to it ([ADR 6](../../adr/0006-separate-framework-lessons-and-learner-state.md)).
 
 | Path | Required | Holds | Read |
 | --- | --- | --- | --- |
@@ -115,6 +115,30 @@ For a folder holding several courses, point `SCHOOL_LIBRARY_DIR` at the folder a
 is the course folder again, and nothing reads it unless `SCHOOL_COURSES` says so. Run `./school up`
 again after changing either line.
 
+## Trusted and untrusted courses
+
+A course from someone else can be served in safe mode, so its HTML cannot act as School. Name it in `SCHOOL_UNTRUSTED_COURSES` instead of `SCHOOL_COURSES`; the syntax is the same `name=path` pairs:
+
+```sh
+SCHOOL_COURSES=bells=/library/bells
+SCHOOL_UNTRUSTED_COURSES=guest=/library/guest
+```
+
+_Listing 1. Two courses in `server/.env` (illustrative): `bells` is trusted, `guest` is in safe mode. Compose passes `SCHOOL_UNTRUSTED_COURSES` to the server as it does `SCHOOL_COURSES`._
+
+A course in `SCHOOL_COURSES` or `SCHOOL_COURSE` is trusted, as it always was. An untrusted course is read from the same folder layout and works the same way, with four differences:
+
+| What | For an untrusted course |
+| --- | --- |
+| Its reference documents and every other file under `reference/` | Served with `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`: a page opened from it runs no script and cannot use School's API. An SVG file is served as `image/svg+xml` under the same sandbox |
+| `GET /api/courses` and `GET /api/courses/:course` | `trusted: false` (a trusted course gives `trusted: true`); the course and lesson JSON carry the same two headers |
+| Its hook figures on the home page | Drawn as an image, not inline SVG, so nothing in them runs; `GET /api/showcase` gives each item `trusted` |
+| The course page | A note: "This course is shown in safe mode: its pages can’t run scripts." ([the course page](../course-page/README.md)) |
+
+Lesson blocks are unchanged: their HTML is sanitised for every course, trusted or not ([lesson blocks](blocks.md)). A name in both lists, or a folder that is, contains or sits inside a trusted course's, stops the server at start with exit code 2, since the trusted course would serve the same files unsandboxed. So does a `SCHOOL_MOUNTS` or `SCHOOL_WEB` folder that is, contains or sits inside an untrusted course's. The headers and their reasons are in [trust and known defects](../architecture/README.md#trust-and-known-defects).
+
+The choice is the operator's, never the course's: nothing in a course's folder can mark it trusted.
+
 ## `course.json`
 
 ```json
@@ -225,15 +249,15 @@ optional picture. The home page shows hooks for the lessons still ahead (`GET /a
 | --- | --- | --- |
 | `question` | yes | The question the lesson answers, in [School's voice](../voice/README.md) |
 | `teaser` | yes | One line that makes the question worth answering |
-| `figure` | no | SVG markup, trusted like a prose block's HTML |
+| `figure` | no | SVG markup, kept to drawing; an untrusted course's is drawn as an image ([trusted and untrusted courses](#trusted-and-untrusted-courses)) |
 
-A figure follows the light and dark themes when it is coloured with the theme's CSS variables:
+A figure loses its `style` and `class` attributes and any `<style>` element before it is shown, so colour it with presentation attributes such as `fill="var(--primary)"` and `stroke="var(--chart-1)"`. A figure follows the light and dark themes when it is coloured with the theme's CSS variables:
 `var(--primary)`, `var(--chart-1)` to `var(--chart-5)`, `var(--foreground)`,
 `var(--muted-foreground)` and `var(--background)`. A hook missing its question or teaser, or with a
 figure that is not a string, stops the lesson set from loading, like any other malformed block.
 
 `GET /api/showcase` lists, in course order, every lesson with a quiz not yet answered correctly:
-its course, the course's title, whether the course is started (any of its quizzes answered
+its course, the course's title, whether the course is trusted (`trusted`), whether the course is started (any of its quizzes answered
 correctly), the lesson's id, title, subtitle and place, and its hook. A lesson without a hook
 offers its title as the question and its subtitle as the teaser, with no figure. A lesson with no
 quizzes is left out, as is a course whose lessons can't be read.
