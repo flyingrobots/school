@@ -163,7 +163,7 @@ const dumps = (dir: string) => readdirSync(dir).filter((f) => /^school-\d{8}T\d{
 /** The read methods of the LearningRecord port: the contract suite's reads. */
 const READS = [
   "encounterAnswers", "lessonProgress", "lastStudied", "explanation", "encounterExplanations",
-  "aid", "encounterEvidence", "decisionNotes", "encounterDecisionNotes", "dueReview",
+  "aid", "encounterEvidence", "decisionNotes", "encounterDecisionNotes", "dueReview", "mastery",
 ] as const;
 type Call = { method: string; args: unknown[]; result: unknown };
 
@@ -194,7 +194,7 @@ afterAll(() => { for (const d of cleanup) rmSync(d, { recursive: true, force: tr
 describe.skipIf(TEST_POSTGRES_URL === undefined)("backup and restore on a real Postgres (Bun.SQL, SCHOOL_TEST_POSTGRES_URL)", () => {
   test("Bun.SQL: a dump taken after real writes restores into an empty database, and every read of the record returns the same", async () => {
     // Real writes, through the server's functions as school_app: the learner-history story, then a
-    // view and a decision note, which the story does not make.
+    // view and a decision note, which the story does not make, and the reads it does not make.
     const original = await scratch.fresh();
     const calls: Call[] = [];
     const r = noting(postgresRecord(original.sql), calls);
@@ -209,6 +209,7 @@ describe.skipIf(TEST_POSTGRES_URL === undefined)("backup and restore on a real P
     await r.decisionNotes({ course: "astronomy", lesson: "orbits", blockId: "moons" });
     await r.encounterDecisionNotes(encounter);
     await r.lastStudied();
+    await r.mastery({ course: "astronomy", blocks: ["closest", "moons", "rings"], now: "2026-11-24T09:00:00.000Z", delayMs: 20 * 60 * 60 * 1000 });
 
     const dir = folder();
     cleanup.push(dir);
