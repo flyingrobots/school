@@ -210,6 +210,24 @@ function guardApi(req: Request): Response | null {
   return null;
 }
 
+/**
+ * The guard on opening a lesson, the one GET that writes to the record: the web view opens or
+ * resumes the learner's encounter (flyingrobots/school#306). Any page in the learner's browser can
+ * make a GET without script or a preflight, such as an untrusted course page's
+ * `<img src="/api/courses/c/lessons/l">`. So when the browser sends fetch metadata, only School's
+ * own `fetch()` is answered: `Sec-Fetch-Site: same-origin` and `Sec-Fetch-Dest: empty`. A sandboxed
+ * page's requests are `cross-site` (its origin is opaque), another port's on this host `same-site`,
+ * an image `image`, a link or a typed address `document`. A request with no metadata, from curl or
+ * a browser too old to send it, is answered as before (Chrome and Edge send it since 2020, Firefox
+ * since 2021, Safari since 16.4 in 2023).
+ */
+function guardLessonOpen(req: Request): Response | null {
+  const site = req.headers.get("sec-fetch-site");
+  const dest = req.headers.get("sec-fetch-dest");
+  if ((site === null || site === "same-origin") && (dest === null || dest === "empty")) return null;
+  return json({ status: "refused", error: "a lesson is opened only by School's own pages" }, 403);
+}
+
 async function serveMount(pathname: string): Promise<Response> {
   const [, top = "", ...rest] = pathname.split("/");
   const base = MOUNTS[top];
@@ -672,7 +690,10 @@ const http = Bun.serve({
       if (aid === null) return json({ status: "invalid", error: `aid must be a known capture version: ${AID_CAPTURE_VERSIONS.join(", ")}` }, 400);
       const tz = await zoneParam(url.searchParams);
       if (tz === null) return json(BAD_ZONE, 400);
-      return contained(c, await lessonJson(c, api[2], url.searchParams.get("view"), aid.aid, tz));
+      const view = url.searchParams.get("view");
+      const refused = isView(view) && view !== "web" ? null : guardLessonOpen(req);
+      if (refused !== null) return contained(c, refused);
+      return contained(c, await lessonJson(c, api[2], view, aid.aid, tz));
     }
     if (pathname.startsWith("/api/")) return json({ error: "not found" }, 404);
 
