@@ -207,6 +207,22 @@ export interface MasteryQuery {
   delayMs: number;
 }
 
+export interface MasteryRollup {
+  key: string;
+  quizzes: number;
+  notStarted: number;
+  settling: number;
+  holding: number;
+  faded: number;
+  strength: number | null;
+}
+
+export interface MasteryRollupQuery {
+  course: string;
+  now: string;
+  delayMs: number;
+}
+
 export interface NoteAccepted {
   status: NoteAcceptedStatus;
   note: DecisionNote;

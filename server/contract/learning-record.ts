@@ -1050,15 +1050,15 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     const replay = `replay: SCHOOL_TEST_SEED=${seed} bun test server/adapters/postgres.test.ts -t "mastery rollup: under random groups"`;
     const pick = <T>(xs: readonly T[]) => xs[Math.floor(random() * xs.length)]!;
     const pool = ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8"];
-    const kinds = ["clean", "clean", "aided", "unknown", "wrong"] as const;
-    for (let t = 0; t < 12 * DAY; t += Math.floor(random() * DAY)) await episode(r, pick(kinds), t, pick(pool.slice(0, 7))); // q8 is never answered
+    const kinds = ["clean", "clean", "clean", "clean", "aided", "unknown", "wrong"] as const;
+    for (let t = 0; t < 20 * DAY; t += Math.floor(random() * DAY)) await episode(r, pick(kinds), t, pick(pool.slice(0, 7))); // q8 is never answered
     const state = (m: Mastery) => m.strength === null ? "notStarted" : !m.settled ? "settling" : m.strength >= 0.5 ? "holding" : "faded";
     const seen = { notStarted: 0, settling: 0, holding: 0, faded: 0, empty: 0, shared: 0 };
     for (let round = 0; round < 40; round++) {
       const groups: Record<string, string[]> = {};
       const n = 1 + Math.floor(random() * 4);
       for (let g = 0; g < n; g++) groups[`g${g}`] = Array.from({ length: Math.floor(random() * 6) }, () => pick(pool));
-      const now = at(Math.floor(random() * 20 * DAY));
+      const now = at(Math.floor(random() * 30 * DAY)); // during the history, and up to ten days after it
       const rows = await rollup(r, groups, now);
       expect({ round, keys: rows.map((row) => row.key) }, replay).toEqual({ round, keys: Object.keys(groups).sort() });
       const members = Object.values(groups).flat();
