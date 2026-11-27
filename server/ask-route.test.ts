@@ -10,7 +10,7 @@ import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Block } from "./blocks.ts";
-import { AskLine, askRoute, type AskDeps } from "./ask.ts";
+import { AskLine, askRoute, BRIDGE_MAX_PROMPT, type AskDeps } from "./ask.ts";
 import { Conversation, type ReplyRecord } from "./core/model.ts";
 import { startSchool, timeout, type Started } from "./testing/processes.ts";
 
@@ -72,6 +72,8 @@ const bridge = Bun.serve({
     if (new URL(req.url).pathname !== "/ask") return Response.json({ status: "not found" }, { status: 404 });
     if (req.headers.get("authorization") !== `Bearer ${TOKEN}`) return Response.json({ status: "unauthorised" }, { status: 401 });
     const body = await req.json() as { prompt: string; deadline_ms?: unknown };
+    // As bridge/bridge.ts does: a prompt over its cap is a 400, which School can only pass on as a 502.
+    if (body.prompt.length > BRIDGE_MAX_PROMPT) return Response.json({ status: "invalid", error: `prompt must be 1 to ${BRIDGE_MAX_PROMPT} characters` }, { status: 400 });
     // What School's record holds at the moment the bridge is asked, read back through School.
     const before = Conversation.array().parse(await (await fetch(`${school.url}/api/courses/astro/lessons/orbits/conversations`)).json());
     asked.push({ authorization: req.headers.get("authorization"), prompt: body.prompt, deadline: body.deadline_ms, before });
@@ -415,6 +417,57 @@ describe("POST /api/ask in process, at the bridge's edges", () => {
     expect(r.status).toBe(400);
     expect(asked.length).toBe(count);
     expect(replies).toMatchObject([{ questionId: body.questionId, status: "failed", text: "" }]);
+  });
+
+  /** `n` earlier turns of the conversation `filedHere` files, each answered with `size` characters starting `T<i>-`. */
+  const withTurns = (n: number, size: number) => (q: { conversationId: string; questionId: string; encounterId: string }): Conversation[] => {
+    const turn = (i: number) => ({ questionId: crypto.randomUUID(), encounterId: q.encounterId, text: `EARLIER-QUESTION-${i}`, seq: 3 + 2 * i, exposureSeq: 2 + 2 * i, at,
+      reply: { status: "succeeded" as const, error: null, text: `ANSWER-${i}-`.padEnd(size, "x"), sources: [], agent: "fake-claude", model: null, usage: null, seq: 4 + 2 * i, at } });
+    const earlier = Array.from({ length: n }, (_, i) => turn(i + 1));
+    return [{ conversationId: q.conversationId, blockId: "p1", passage: "Nothing stops a planet", seq: 1, at,
+      questions: [...earlier, { ...q, text: "[plain] Edges?", seq: 99, exposureSeq: 98, at, reply: null }] }];
+  };
+
+  test("a long conversation keeps the newest whole turns that fit, says earlier ones were left out, and the answer still streams", async () => {
+    const { deps, body, replies } = inProcess({}, withTurns(5, 60_000));
+    const r = await askRoute(deps, body);
+    expect(r.status).toBe(200);
+    const all = await lines(r).rest();
+    expect(all.at(-1)).toEqual({ type: "done", agent: "fake-claude" });
+    const { prompt } = asked.at(-1)!;
+    expect(prompt.length).toBeLessThanOrEqual(BRIDGE_MAX_PROMPT);
+    expect(prompt).toContain("ANSWER-5-");
+    expect(prompt).toContain("EARLIER-QUESTION-5");
+    expect(prompt).not.toContain("ANSWER-1-");
+    expect(prompt).not.toContain("EARLIER-QUESTION-1");
+    expect(prompt).toContain("left out");
+    expect(replies).toMatchObject([{ status: "succeeded", text: "Plain answer." }]);
+  });
+
+  test("a conversation that fits is sent whole, with no note about turns left out", async () => {
+    const { deps, body } = inProcess({}, withTurns(3, 1_000));
+    await (await askRoute(deps, body)).text();
+    const { prompt } = asked.at(-1)!;
+    for (const i of [1, 2, 3]) expect(prompt).toContain(`ANSWER-${i}-`);
+    expect(prompt).not.toContain("left out");
+  });
+
+  test("a lesson too long to send with the question is refused (400) in words, with nothing stored and the bridge not asked", async () => {
+    const long: Block = { type: "page", id: "orbits", title: "Orbits", subtitle: "Why planets keep going", children: [
+      { type: "prose", id: "p1", html: `<p>Nothing stops a planet. ${"Planets keep going. ".repeat(11_000)}</p>` },
+    ] };
+    const stored: unknown[] = [];
+    const count = asked.length;
+    const { deps, body, replies } = inProcess({ lesson: async () => ({ page: long, references: [] }) }, withTurns(0, 0));
+    deps.school.ask = async (q) => { stored.push(q); return { status: "stored" }; };
+    const r = await askRoute(deps, body);
+    expect(r.status).toBe(400);
+    const { error } = await r.json() as { error: string };
+    expect(error).toMatch(/lesson/i);
+    expect(error).not.toMatch(/wrong|attempt|forgot|you must|you should/i);
+    expect(stored).toEqual([]);
+    expect(replies).toEqual([]);
+    expect(asked.length).toBe(count);
   });
 
   test("a bridge that refuses School's token is a 502 in words, and the reply is stored as failed", async () => {

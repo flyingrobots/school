@@ -22,6 +22,13 @@ export type Turn = { question: string; answer: string | null };
 export type PromptInput = { page: Block; references: readonly AskSource[]; passage: string; question: string; earlier: readonly Turn[] };
 export type Quote = { sourceId: string; quote: string };
 
+/**
+ * The longest prompt the bridge accepts, in characters: bridge/bridge.ts's MAX_PROMPT. The server
+ * image holds no bridge code, so the number is written here too; `server/ask.test.ts` fails when
+ * the two differ.
+ */
+export const BRIDGE_MAX_PROMPT = 200_000;
+
 /** The reference documents' text given whole, in characters; after that only their titles (RFC 6 Table 5.5). */
 export const REFERENCE_MAX = 100_000;
 

@@ -5,8 +5,9 @@
 // answer, explain source or nest diagram (Table 5.5); the sources block is stripped from the text
 // shown and each quote is checked as grading's `checkQuotes` checks one (Table 5.7).
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import type { Block } from "./blocks.ts";
-import { askPrompt, checkSources, citations, lessonSources, passageInLesson, REFERENCE_MAX } from "./ask.ts";
+import { BRIDGE_MAX_PROMPT, askPrompt, checkSources, citations, lessonSources, passageInLesson, REFERENCE_MAX } from "./ask.ts";
 
 const lesson: Block = {
   type: "page", id: "orbits", title: "Orbits", subtitle: "Why planets keep going", children: [
@@ -252,5 +253,14 @@ describe("the quote check", () => {
       { sourceId: "orbits", quote: "  " },
     ];
     expect(checkSources(quotes, sources).map((q) => q.checked)).toEqual([false, false, false, false]);
+  });
+});
+
+describe("the bridge's prompt cap", () => {
+  test("the server's copy of the cap is the bridge's MAX_PROMPT", () => {
+    const source = readFileSync(new URL("../bridge/bridge.ts", import.meta.url), "utf8");
+    const m = /^const MAX_PROMPT = ([\d_]+);/m.exec(source);
+    expect(m).not.toBeNull();
+    expect(BRIDGE_MAX_PROMPT).toBe(Number(m![1]!.replace(/_/g, "")));
   });
 });
