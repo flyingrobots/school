@@ -314,3 +314,23 @@ test("folders with different device and inode stay accepted under the same fake 
   const c = aliased({ SCHOOL_COURSE: "/mnt/course", SCHOOL_MOUNTS: "lib=/mnt/course", SCHOOL_UNTRUSTED_COURSES: "guest=/mnt/other" });
   expect([course(c, "course")?.trusted, course(c, "guest")?.trusted]).toEqual([true, false]);
 });
+
+// Inodes above 2^53 (CodeRabbit on #213): a Number cannot hold them exactly, so two folders could
+// round to one identity. Identities are compared as exact integers, and School's own stat asks the
+// filesystem for bigint inodes. Oracle: Node's fs.statSync, "bigint: true" gives BigInt fields.
+test("two folders whose inodes differ only above 2^53 are told apart", () => {
+  const big = 2n ** 60n;
+  const stat = fakeStat({
+    "/": { dev: 1, ino: 2 },
+    "/mnt/course": { dev: 7, ino: big } as unknown as Id,
+    "/mnt/library": { dev: 7, ino: big + 1n } as unknown as Id,
+  });
+  const c = parseConfigFrom({ SCHOOL_DATABASE_URL: "postgres://db/school", SCHOOL_STATE: "/var/school", SCHOOL_COURSE: "/mnt/course", SCHOOL_UNTRUSTED_COURSES: "guest=/mnt/library" }, FRAMEWORK, stat);
+  expect(course(c, "guest")?.trusted).toBe(false);
+});
+
+test("School's own stat reads inodes as bigint, so none is rounded", async () => {
+  const config = (await import("./config.ts")) as Record<string, unknown>;
+  const systemStat = config.systemStat as ((p: string) => { ino: unknown }) | undefined;
+  expect(typeof systemStat?.("/").ino).toBe("bigint");
+});

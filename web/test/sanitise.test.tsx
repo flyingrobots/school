@@ -365,3 +365,41 @@ test.each([
     expect(host.querySelectorAll("[data-figure] img").length).toBe(1)
   }
 )
+
+// var() takes a fallback that may hold parentheses or another var() (CSS Custom Properties,
+// "Using Cascading Variables: the var() notation"). Oracle: that grammar; the image's fill is
+// the token's value when set, else its fallback, resolved the same way.
+const PRIMARY_SET = (name: string) =>
+  name === "--primary" ? "rgb(9, 9, 9)" : ""
+const fillOf = (fill: string, token: (name: string) => string) =>
+  new DOMParser()
+    .parseFromString(
+      decodeURIComponent(
+        (
+          figureImage(
+            `<svg viewBox="0 0 10 10"><circle r="4" fill="${fill}"/></svg>`,
+            token
+          ) ?? ""
+        ).slice("data:image/svg+xml,".length)
+      ),
+      "image/svg+xml"
+    )
+    .querySelector("circle")
+    ?.getAttribute("fill")
+
+test.each([
+  ["var(--primary)", PRIMARY_SET, "rgb(9, 9, 9)"],
+  ["var(--primary, rgb(1, 2, 3))", PRIMARY_SET, "rgb(9, 9, 9)"],
+  ["var(--primary, rgb(1, 2, 3))", () => "", "rgb(1, 2, 3)"],
+  ["var(--unset, var(--primary))", PRIMARY_SET, "rgb(9, 9, 9)"],
+  [
+    "var(--unset, var(--also-unset, rgb(1, 2, 3)))",
+    PRIMARY_SET,
+    "rgb(1, 2, 3)",
+  ],
+] as const)(
+  "an untrusted figure’s fill %s resolves as var() says",
+  (fill, token, want) => {
+    expect({ fill: fillOf(fill, token) }).toEqual({ fill: want })
+  }
+)
