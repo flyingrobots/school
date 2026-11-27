@@ -145,12 +145,12 @@ test("the image makes /store owned by the server's user, so a new course-store v
   expect(dockerfile.indexOf("useradd")).toBeLessThan(dockerfile.indexOf("/store"));
 });
 
-test("compose mounts the course-store volume at /store and points SCHOOL_COURSE_STORE at it, which .env may set empty", () => {
+test("compose mounts the course-store volume at /store and points SCHOOL_COURSE_STORE at it through SCHOOL_COMPOSE_COURSE_STORE, which .env may set empty and a host export never reaches", () => {
   const school = compose.services.school;
   expect(school?.volumes).toContain("course-store:/store");
   expect(Object.keys(compose.volumes ?? {})).toContain("course-store");
   // `-`, not `:-`: unset means /store, and an empty value in .env means no store, so installing is off.
-  expect(school?.environment?.SCHOOL_COURSE_STORE).toBe("${SCHOOL_COURSE_STORE-/store}");
+  expect(school?.environment?.SCHOOL_COURSE_STORE).toBe("${SCHOOL_COMPOSE_COURSE_STORE-/store}");
 });
 
 test("the image ships the migrate command", () => {
