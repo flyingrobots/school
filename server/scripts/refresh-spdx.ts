@@ -1,16 +1,20 @@
 // Regenerates the vendored SPDX lists (flyingrobots/school#274): server/spdx-license-ids.ts from the
 // `spdx-license-ids` package and server/spdx-exception-ids.ts from `spdx-exceptions` (both copied, not
 // dependencies: ADR 2). It fetches with `npm pack` into a scratch directory under $TMPDIR, never into
-// the repository, and writes only those two files.
+// the repository, and writes only those two files, both or neither (each goes to a temporary file
+// beside it first, and the two are then renamed into place).
 //
 //   bun server/scripts/refresh-spdx.ts [--license-ids <version>] [--exceptions <version>]
 //
 // With no version it takes the package's latest release. Giving the versions the files record
-// regenerates them byte for byte. Each file records the release it came from; the staleness rule is
+// regenerates them byte for byte. Each file records the release it came from, with the licence of the
+// package (read from its package.json): a fetched package whose licence differs from the recorded one
+// is refused, because NOTICE attributes it and a human has to update NOTICE. The staleness rule is
 // `isStale` below, and docs/working-notes.md says when to run this. It needs the network and npm, and
 // stops, changing nothing, when either is missing.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import * as nodeFs from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -37,18 +41,18 @@ function wrapped(names: readonly string[]): string {
 }
 
 const stamp = (name: string, r: Release) =>
-  `/** The release of \`${r.package}\` this list is from, and the day it was published. */
-export const ${name}: Release = { package: ${JSON.stringify(r.package)}, version: ${JSON.stringify(r.version)}, published: ${JSON.stringify(r.published)} };`;
+  `/** The release of \`${r.package}\` this list is from, the day it was published and the package's licence. */
+export const ${name}: Release = { package: ${JSON.stringify(r.package)}, version: ${JSON.stringify(r.version)}, published: ${JSON.stringify(r.published)}, license: ${JSON.stringify(r.license)} };`;
 
 /** The text of server/spdx-license-ids.ts for `release`. */
 export function renderLicenseIds(release: Release, ids: readonly string[], deprecated: readonly string[]): string {
   return `// The SPDX License List's license identifiers, current and deprecated, as \`spdx-license-ids\`
-// ${release.version} (CC0-1.0, https://github.com/jslicense/spdx-license-ids) publishes them. A course's
+// ${release.version} (${release.license}, https://github.com/jslicense/spdx-license-ids) publishes them. A course's
 // \`license\` (server/course-file.ts) names only these, or a \`LicenseRef-\`. Copied, not a dependency
 // (ADR 2). Generated: to update, run \`bun server/scripts/refresh-spdx.ts\` (docs/working-notes.md).
 
-/** The release of an npm package a list was copied from, and the day npm says it was published (YYYY-MM-DD). */
-export type Release = { package: string; version: string; published: string };
+/** The release of an npm package a list was copied from, the day npm says it was published (YYYY-MM-DD) and the package's licence (an SPDX id). */
+export type Release = { package: string; version: string; published: string; license: string };
 
 ${stamp("LICENSE_IDS_RELEASE", release)}
 
@@ -66,8 +70,8 @@ ${wrapped(deprecated)}
 
 /** The text of server/spdx-exception-ids.ts for `release`. */
 export function renderExceptionIds(release: Release, ids: readonly string[]): string {
-  return `// The SPDX License List's exception identifiers, as \`spdx-exceptions\` ${release.version} (CC0-1.0,
-// https://github.com/jslicense/spdx-exceptions) publishes them. A course's \`license\`
+  return `// The SPDX License List's exception identifiers, as \`spdx-exceptions\` ${release.version} (${release.license},
+// https://github.com/kemitchell/spdx-exceptions.json; attributed in NOTICE) publishes them. A course's \`license\`
 // (server/course-file.ts) names only these after \`WITH\`. Copied, not a dependency (ADR 2).
 // Generated: to update, run \`bun server/scripts/refresh-spdx.ts\` (docs/working-notes.md).
 
@@ -94,12 +98,12 @@ export function isStale(published: string, today: string): boolean {
 
 /** The release a generated list file records. Throws if \`source\` has none. */
 export function readRelease(source: string): Release {
-  const m = /export const \w+_RELEASE: Release = \{ package: "([^"]+)", version: "([^"]+)", published: "([^"]+)" \};/.exec(source);
+  const m = /export const \w+_RELEASE: Release = \{ package: "([^"]+)", version: "([^"]+)", published: "([^"]+)", license: "([^"]+)" \};/.exec(source);
   if (m === null) throw new Error("no recorded release found");
-  return { package: m[1]!, version: m[2]!, published: m[3]! };
+  return { package: m[1]!, version: m[2]!, published: m[3]!, license: m[4]! };
 }
 
-class Refusal extends Error {
+export class Refusal extends Error {
   constructor(message: string, readonly code = 1) {
     super(message);
   }
@@ -122,8 +126,11 @@ function strings(path: string): string[] {
   return parsed.data;
 }
 
+/** A downloaded package: its release, and the directory it was unpacked into. */
+export type Fetched = { release: Release; dir: string };
+
 /** Downloads `pkg` at `version` (or its latest release) into `scratch`, giving the release and the unpacked directory. */
-function fetchRelease(pkg: string, version: string | null, scratch: string): { release: Release; dir: string } {
+function fetchRelease(pkg: string, version: string | null, scratch: string): Fetched {
   const wanted = version ?? npm(["view", pkg, "version"], scratch).trim();
   const packed = npm(["pack", `${pkg}@${wanted}`, "--silent", "--pack-destination", scratch], scratch).trim().split("\n").pop()!;
   const dir = join(scratch, pkg);
@@ -133,7 +140,68 @@ function fetchRelease(pkg: string, version: string | null, scratch: string): { r
   const times = z.record(z.string(), z.string()).parse(JSON.parse(npm(["view", pkg, "time", "--json"], scratch)));
   const when = times[wanted];
   if (when === undefined) throw new Refusal(`npm records no publication time for ${pkg}@${wanted}`);
-  return { release: { package: pkg, version: wanted, published: when.slice(0, 10) }, dir };
+  const manifest = z.object({ license: z.string().min(1) }).safeParse(JSON.parse(readFileSync(join(dir, "package.json"), "utf8")));
+  if (!manifest.success) throw new Refusal(`${pkg}@${wanted} declares no license in its package.json`);
+  return { release: { package: pkg, version: wanted, published: when.slice(0, 10), license: manifest.data.license }, dir };
+}
+
+/** What `refresh` touches: how packages are fetched, the file operations, where the two lists live and where to scratch. */
+export type Deps = {
+  fetch: (pkg: string, version: string | null, scratch: string) => Fetched;
+  fs: Pick<typeof nodeFs, "writeFileSync" | "renameSync" | "rmSync">;
+  paths: { licenses: string; exceptions: string };
+  scratch: string;
+};
+
+/** Refuses when `fetched` is licensed differently from the release recorded in the file at `path`. */
+function checkLicense(fetched: Release, path: string): void {
+  const recorded = readRelease(readFileSync(path, "utf8")).license;
+  if (fetched.license !== recorded) {
+    throw new Refusal(
+      `${fetched.package} ${fetched.version} is licensed ${fetched.license}, not ${recorded} as ${path} records; NOTICE attributes it, so update NOTICE and the recorded license first, then run this again`,
+    );
+  }
+}
+
+/** Writes each `[path, text]` to a temporary file beside it, then renames them all into place; on a failure the files are as they were. */
+function writeAll(files: readonly (readonly [string, string])[], fs: Deps["fs"]): void {
+  const temps = files.map(([path]) => `${path}.tmp-${process.pid}`);
+  const originals = files.map(([path]) => readFileSync(path, "utf8"));
+  const renamed: number[] = [];
+  try {
+    files.forEach(([, text], i) => fs.writeFileSync(temps[i]!, text));
+    files.forEach(([path], i) => {
+      fs.renameSync(temps[i]!, path);
+      renamed.push(i);
+    });
+  } catch (e) {
+    for (const i of renamed) {
+      const back = `${files[i]![0]}.back-${process.pid}`;
+      fs.writeFileSync(back, originals[i]!);
+      fs.renameSync(back, files[i]![0]);
+    }
+    throw e;
+  } finally {
+    for (const path of temps) fs.rmSync(path, { force: true });
+    for (const [path] of files) fs.rmSync(`${path}.back-${process.pid}`, { force: true });
+  }
+}
+
+/** Fetches both packages, checks their licences against the recorded ones, and writes both lists or neither. */
+export function refresh(versions: Record<string, string | null>, deps: Deps): { licenses: Release; exceptions: Release } {
+  const licenses = deps.fetch("spdx-license-ids", versions["--license-ids"] ?? null, deps.scratch);
+  const exceptions = deps.fetch("spdx-exceptions", versions["--exceptions"] ?? null, deps.scratch);
+  checkLicense(licenses.release, deps.paths.licenses);
+  checkLicense(exceptions.release, deps.paths.exceptions);
+  // Nothing is written until both lists have been fetched, read and checked.
+  writeAll(
+    [
+      [deps.paths.licenses, renderLicenseIds(licenses.release, strings(join(licenses.dir, "index.json")), strings(join(licenses.dir, "deprecated.json")))],
+      [deps.paths.exceptions, renderExceptionIds(exceptions.release, strings(join(exceptions.dir, "index.json")))],
+    ],
+    deps.fs,
+  );
+  return { licenses: licenses.release, exceptions: exceptions.release };
 }
 
 function main(argv: string[]): void {
@@ -148,15 +216,9 @@ function main(argv: string[]): void {
   // The scratch directory is under $TMPDIR, never the repository, and goes when the run ends.
   const scratch = mkdtempSync(join(tmpdir(), "school-refresh-spdx-"));
   try {
-    const licenses = fetchRelease("spdx-license-ids", versions["--license-ids"] ?? null, scratch);
-    const exceptions = fetchRelease("spdx-exceptions", versions["--exceptions"] ?? null, scratch);
-    const files = [
-      [join(import.meta.dir, "..", "spdx-license-ids.ts"), renderLicenseIds(licenses.release, strings(join(licenses.dir, "index.json")), strings(join(licenses.dir, "deprecated.json")))],
-      [join(import.meta.dir, "..", "spdx-exception-ids.ts"), renderExceptionIds(exceptions.release, strings(join(exceptions.dir, "index.json")))],
-    ] as const;
-    // Nothing is written until both lists have been fetched and read.
-    for (const [path, text] of files) writeFileSync(path, text);
-    console.log(`spdx-license-ids ${licenses.release.version} (${licenses.release.published}), spdx-exceptions ${exceptions.release.version} (${exceptions.release.published}) written.`);
+    const paths = { licenses: join(import.meta.dir, "..", "spdx-license-ids.ts"), exceptions: join(import.meta.dir, "..", "spdx-exception-ids.ts") };
+    const { licenses, exceptions } = refresh(versions, { fetch: fetchRelease, fs: nodeFs, paths, scratch });
+    console.log(`spdx-license-ids ${licenses.version} (${licenses.published}), spdx-exceptions ${exceptions.version} (${exceptions.published}) written.`);
     console.log(`Update the versions named in docs/working-notes.md and docs/topics/course-format/README.md to match.`);
   } finally {
     rmSync(scratch, { recursive: true, force: true });

@@ -3,11 +3,11 @@
 // `license` (server/course-file.ts) names only these, or a `LicenseRef-`. Copied, not a dependency
 // (ADR 2). Generated: to update, run `bun server/scripts/refresh-spdx.ts` (docs/working-notes.md).
 
-/** The release of an npm package a list was copied from, and the day npm says it was published (YYYY-MM-DD). */
-export type Release = { package: string; version: string; published: string };
+/** The release of an npm package a list was copied from, the day npm says it was published (YYYY-MM-DD) and the package's licence (an SPDX id). */
+export type Release = { package: string; version: string; published: string; license: string };
 
-/** The release of `spdx-license-ids` this list is from, and the day it was published. */
-export const LICENSE_IDS_RELEASE: Release = { package: "spdx-license-ids", version: "3.0.24", published: "2026-09-17" };
+/** The release of `spdx-license-ids` this list is from, the day it was published and the package's licence. */
+export const LICENSE_IDS_RELEASE: Release = { package: "spdx-license-ids", version: "3.0.24", published: "2026-09-17", license: "CC0-1.0" };
 
 /** The current identifiers (708). */
 export const LICENSE_IDS: readonly string[] = [

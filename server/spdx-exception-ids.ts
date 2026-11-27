@@ -5,8 +5,8 @@
 
 import type { Release } from "./spdx-license-ids.ts";
 
-/** The release of `spdx-exceptions` this list is from, and the day it was published. */
-export const EXCEPTION_IDS_RELEASE: Release = { package: "spdx-exceptions", version: "2.5.0", published: "2024-02-15" };
+/** The release of `spdx-exceptions` this list is from, the day it was published and the package's licence. */
+export const EXCEPTION_IDS_RELEASE: Release = { package: "spdx-exceptions", version: "2.5.0", published: "2024-02-15", license: "CC-BY-3.0" };
 
 /** The exception identifiers (66). */
 export const EXCEPTION_IDS: readonly string[] = [
