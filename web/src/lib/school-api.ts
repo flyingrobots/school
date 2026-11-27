@@ -393,14 +393,33 @@ export function sendExposure(x: Exposure): Promise<Delivery<null>> {
   )
 }
 
+// What a course's course.json declares about itself beyond its title (flyingrobots/school#209), each
+// null when it declares none. Both course endpoints carry it.
+const Manifest = {
+  summary: z.string().nullable(),
+  author: z.string().nullable(),
+  /** An SPDX license expression, as declared. */
+  license: z.string().nullable(),
+  format: z.number().int().positive().nullable(),
+}
+/** What the pages show of a course's declaration (flyingrobots/school#277). */
+export type Declaration = {
+  summary: string | null
+  author: string | null
+  license: string | null
+}
+
 // GET /api/courses (server/server.ts, coursesJson): every course, in the server's order (by name).
 // `name` is the slug the addresses carry; `title` is what the pages show: the course's course.json
 // title, or its name when it declares none (flyingrobots/school#143). Counts are null when a course's
-// lessons cannot be read.
+// lessons cannot be read. `trusted` is false for a course School serves in safe mode
+// (flyingrobots/school#210), which the sidebar marks (flyingrobots/school#277).
 export const CoursesReply = z.array(
   z.object({
     name: z.string(),
     title: z.string(),
+    trusted: z.boolean(),
+    ...Manifest,
     lessons: z.number().int().nonnegative().nullable(),
     reference: z.number().int().nonnegative(),
     quizzes: z.number().int().nonnegative().nullable(),
@@ -457,6 +476,7 @@ export const CourseReply = z.union([
     name: z.string(),
     title: z.string(),
     trusted: z.boolean(),
+    ...Manifest,
     reference: z.array(z.string()),
     lessons: CourseLessons,
   }),
@@ -464,6 +484,7 @@ export const CourseReply = z.union([
     name: z.string(),
     title: z.string(),
     trusted: z.boolean(),
+    ...Manifest,
     reference: z.array(z.string()),
     lessons: z.null(),
     lessonsError: z.string(),
@@ -475,6 +496,7 @@ export type Course = {
   title: string
   /** False for a course School serves sandboxed: its pages can't run scripts (flyingrobots/school#210). */
   trusted: boolean
+  declaration: Declaration
   reference: string[]
   lessons: z.infer<typeof CourseLessons>
 }
@@ -488,6 +510,7 @@ export type CourseLoad =
       kind: "unreadable"
       title: string
       trusted: boolean
+      declaration: Declaration
       reason: string
       reference: string[]
     }
@@ -508,11 +531,17 @@ export async function loadCourse(
     const course = CourseReply.safeParse(await res.json())
     if (!course.success) return { kind: "unloaded" }
     const c = course.data
+    const declaration = {
+      summary: c.summary,
+      author: c.author,
+      license: c.license,
+    }
     if (c.lessons === null)
       return {
         kind: "unreadable",
         title: c.title,
         trusted: c.trusted,
+        declaration,
         reason: c.lessonsError,
         reference: c.reference,
       }
@@ -522,6 +551,7 @@ export async function loadCourse(
         name: c.name,
         title: c.title,
         trusted: c.trusted,
+        declaration,
         reference: c.reference,
         lessons: c.lessons,
       },
