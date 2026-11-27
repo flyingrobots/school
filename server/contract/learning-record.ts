@@ -658,7 +658,7 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     await answer(r, e.id, "q1", "right", at(1));
     await answer(r, e.id, "q2", "wrong", at(2));
     expect(await due(r, ["q1", "q2"], at(1 + DELAY))).toEqual([]); // q2 was seen 1 ms less than the delay ago
-    expect(await due(r, ["q1", "q3"], at(10 * DELAY))).toEqual([]); // q2 is due, but was not asked about
+    expect(await due(r, ["q1", "q3"], at(2 + DELAY))).toEqual([]); // q2 is due, but was not asked about; q1 is within its stability (RFC 5 §4.6)
     // Another course's record is not this course's.
     expect(await r.dueReview({ course: "other", blocks: ["q2"], now: at(10 * DELAY), delayMs: DELAY, limit: 10 })).toEqual([]);
   });
@@ -674,7 +674,7 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     // A delay after it was last wrong, right first try with nothing shown: cleared.
     const later = await tracked(r, page, at(1 + DELAY + 60_000));
     await answer(r, later.id, "q1", "right", at(1 + DELAY + 60_001));
-    expect(await due(r, ["q1"], at(10 * DELAY))).toEqual([]);
+    expect(await due(r, ["q1"], at(1 + 2 * DELAY + 60_001))).toEqual([]); // a delay on, within its stability (RFC 5 §4.6)
     // Wrong again in a later encounter: due again.
     const again = await tracked(r, page, at(20 * DELAY));
     await answer(r, again.id, "q1", "wrong", at(20 * DELAY + 1));

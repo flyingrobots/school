@@ -21,7 +21,9 @@ const page = (id: string, title: string, quizzes: string[]): Block =>
   ({ type: "page", id, title, subtitle: "", children: quizzes.map(quiz) });
 const l1 = page("l1", "Orbits", ["q1", "q2"]);
 const l2 = page("l2", "Tides", ["q3"]);
-const YESTERDAY = new Date(Date.now() - 2 * 24 * 3600 * 1000);
+// Twenty-two hours ago: past the review delay, and within a clean answer's stability of one day, so
+// q2 has not faded (RFC 5 §4.6).
+const YESTERDAY = new Date(Date.now() - 22 * 3600 * 1000);
 const yesterday = (ms: number) => new Date(YESTERDAY.getTime() + ms).toISOString();
 
 beforeAll(async () => {
@@ -65,7 +67,8 @@ const get = async (path: string) => {
 };
 
 test("the next lesson opens with the item due in a Review section at its top, its reason in words, and a reload shows the same", async () => {
-  const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", timeZone: "Pacific/Auckland" }).format(YESTERDAY);
+  // The day of q1's first try, the answer the reason is written from, at yesterday(1000).
+  const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", timeZone: "Pacific/Auckland" }).format(new Date(YESTERDAY.getTime() + 1000));
   const opened = await get("/api/courses/c/lessons/l2?aid=1");
   expect(opened.lesson).toEqual({ ...l2, children: [{ type: "section", id: "school:review", title: "Review", children: [quiz("q1")] }, quiz("q3")] });
   expect(opened.review).toEqual([{
