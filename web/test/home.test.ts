@@ -88,6 +88,8 @@ const orbits = page("orbits", "Orbits", [quiz("q1"), quiz("q2"), explain], {
 })
 const tides = page("tides", "Tides", [quiz("q3"), quiz("q4")])
 const rocks = page("rocks", "Rocks", [quiz("g1"), quiz("g2"), quiz("g3")])
+// An explanation to write beside two quizzes: saving it is a study day, answering neither is not.
+const notes = page("notes", "Notes", [quiz("n1"), quiz("n2"), explain])
 const cells = page("cells", "Cells", [quiz("q9")], {
   question: "What is a cell made of?",
   teaser: "Smaller than you'd think.",
@@ -127,6 +129,7 @@ beforeAll(
     course("astro", "Astronomy", [orbits, tides])
     course("bio", "Biology", [cells])
     course("geo", "Geology", [rocks])
+    course("lab", "Lab", [notes])
 
     // Two days ago, in Orbits: q1 wrong then right (so it is due now), and an explanation, graded.
     const DAY = 24 * 3600 * 1000
@@ -267,6 +270,24 @@ beforeAll(
           ago(ms)
         )
       }
+      // Lab: an explanation saved an hour ago, so a study day, and neither of its quizzes answered.
+      const lab = await r.openEncounter({
+        course: "lab",
+        lesson: "notes",
+        page: notes,
+        now: ago(3600_000 + 1000),
+        aidTracking: 1,
+      })
+      await r.saveExplanation(
+        {
+          submissionId: crypto.randomUUID(),
+          encounterId: lab.id,
+          blockId: "e1",
+          text: "They just do.",
+          ms: 10,
+        },
+        ago(3600_000)
+      )
       await db.close()
     }
     const env = (state: string, courses = ["astro", "bio"]) => ({
@@ -280,7 +301,7 @@ beforeAll(
     })
     partway = await startSchool(env("partway"))
     everywhere = await startSchool(env("everywhere"))
-    holding = await startSchool(env("holding", ["geo", "bio"]))
+    holding = await startSchool(env("holding", ["geo", "bio", "lab"]))
 
     vite = await createServer({
       root: web,
@@ -736,6 +757,15 @@ describe("how each course is holding", () => {
     const p = await open(await context(holding))
     await words(p, "bio").first().waitFor()
     expect(await words(p, "bio").allTextContents()).toEqual(["Not started yet"])
+    await close(p.context())
+  })
+
+  test("a course with a study day and no quiz answered says how many are not started, not that it has not started", async () => {
+    const p = await open(await context(holding))
+    await words(p, "lab").first().waitFor()
+    expect(await words(p, "lab").allTextContents()).toEqual([
+      "2 not started yet",
+    ])
     await close(p.context())
   })
 
