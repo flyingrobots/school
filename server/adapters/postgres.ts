@@ -221,5 +221,9 @@ export function postgresRecord(sql: Sql): LearningRecord {
     // groups goes as a value for its jsonb parameter, an object from key to blocks.
     masteryRollup: async (q) =>
       (await rows("mastery_rollup", q.course, q.groups, q.now, q.delayMs)).map((row) => Rolled.parse(row).item),
+
+    ask: async () => { throw new Error("not implemented"); },
+    recordReply: async () => { throw new Error("not implemented"); },
+    lessonConversations: async () => { throw new Error("not implemented"); },
   };
 }

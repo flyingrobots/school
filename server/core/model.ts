@@ -431,3 +431,88 @@ export const InstalledCourse = z.discriminatedUnion("source", [
   CourseInstall.options[1].extend({ at: timestamp, trusted: z.boolean() }),
 ]);
 export type InstalledCourse = z.infer<typeof InstalledCourse>;
+
+// ---- Conversations about a passage (RFC 6 §5.2, Figure 5.1, Table 5.3; flyingrobots/school#225) --
+
+/** The longest passage a conversation may be anchored to, in characters (RFC 6 §5.6). */
+export const PASSAGE_MAX = 2000;
+/** The longest question, in characters (RFC 6 Figure 5.1). */
+export const QUESTION_MAX = 4000;
+
+/**
+ * A question about a passage, to store before any model is asked. `conversationId` and `questionId`
+ * are the caller's, so a resend is stored once. The first question of a conversation opens it and
+ * carries `blockId`, the block where the passage begins, and `passage`, the selected words; every
+ * later question carries neither, since they are the conversation's.
+ */
+export const AskQuestion = z.object({
+  conversationId: uuid,
+  questionId: uuid,
+  encounterId: uuid,
+  blockId: blockId.nullable(),
+  passage: z.string().min(1).max(PASSAGE_MAX).nullable(),
+  text: z.string().trim().min(1).max(QUESTION_MAX),
+}).refine((q) => (q.blockId === null) === (q.passage === null), { message: "a passage is given with the block where it begins", path: ["passage"] });
+export type AskQuestion = z.infer<typeof AskQuestion>;
+
+/**
+ * `stored`: the question and its `ai-help` exposure, in one write. `duplicate`: this id already holds
+ * this same question. `conflict`: it holds another; the first stands. `rejected`: nothing stored,
+ * because the encounter does not exist or does not track aid; or the conversation is new and the
+ * question has no passage, or its block is not in the encounter's snapshot; or the conversation
+ * exists and the question gives a passage, or its encounter is of another lesson.
+ */
+export const AskResult = z.object({ status: z.enum(["stored", "duplicate", "conflict", "rejected"]) });
+export type AskResult = z.infer<typeof AskResult>;
+
+/** A source an answer quoted: the source's id, the words quoted, and whether they were found in it (RFC 6 §5.5). */
+export const ReplySource = z.object({ sourceId: z.string().min(1), quote: z.string(), checked: z.boolean() });
+export type ReplySource = z.infer<typeof ReplySource>;
+
+/** Token counts, by the name the agent reports each under, when it reports them (RFC 6 §5.4). */
+export const ReplyUsage = z.record(z.string(), z.int().nonnegative());
+export type ReplyUsage = z.infer<typeof ReplyUsage>;
+
+const replyFields = {
+  /** The answer as shown: the whole of it, or for a failed reply whatever reached the learner, possibly nothing. */
+  text: z.string(),
+  sources: z.array(ReplySource),
+  /** The agent that answered, as the bridge names it, and its model, when known. */
+  agent: z.string().nullable(),
+  model: z.string().nullable(),
+  usage: ReplyUsage.nullable(),
+};
+
+/** The one reply to a question, to store: succeeded with an answer, or failed with the reason. */
+export const ReplyRecord = z.discriminatedUnion("status", [
+  z.object({ ...replyFields, status: z.literal("succeeded"), text: z.string().min(1), error: z.null() }),
+  z.object({ ...replyFields, status: z.literal("failed"), error: z.string().min(1) }),
+]).and(z.object({ questionId: uuid }));
+export type ReplyRecord = z.infer<typeof ReplyRecord>;
+
+/**
+ * `stored`: the question's reply. `duplicate`: it already has this same reply. `conflict`: it has
+ * another; the first stands. `rejected`: there is no such question; nothing stored.
+ */
+export const ReplyResult = z.object({ status: z.enum(["stored", "duplicate", "conflict", "rejected"]) });
+export type ReplyResult = z.infer<typeof ReplyResult>;
+
+/** A reply as stored, with its place in the record's order. */
+export const Reply = z.discriminatedUnion("status", [
+  z.object({ ...replyFields, status: z.literal("succeeded"), error: z.null(), seq: Seq, at: timestamp }),
+  z.object({ ...replyFields, status: z.literal("failed"), error: z.string(), seq: Seq, at: timestamp }),
+]);
+export type Reply = z.infer<typeof Reply>;
+
+/** A question as stored: its encounter, its own `ai-help` exposure, and its reply or null. */
+export const ConversationQuestion = z.object({
+  questionId: z.string(), encounterId: z.string(), text: z.string(), seq: Seq, exposureSeq: Seq, at: timestamp, reply: Reply.nullable(),
+});
+export type ConversationQuestion = z.infer<typeof ConversationQuestion>;
+
+/** A conversation as stored: the passage it is anchored to, and its questions in `seq` order. */
+export const Conversation = z.object({
+  conversationId: z.string(), blockId: z.string(), passage: z.string(), seq: Seq, at: timestamp,
+  questions: z.array(ConversationQuestion),
+});
+export type Conversation = z.infer<typeof Conversation>;

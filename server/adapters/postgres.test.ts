@@ -2,6 +2,7 @@
 // reaches the record only by calling the functions migration 0001 grants to school_app.
 import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
 import { PGlite, type PGliteInterface } from "@electric-sql/pglite";
+import { conversationTables } from "../contract/conversation-tables.ts";
 import { learningRecordContract } from "../contract/learning-record.ts";
 import { migrate } from "../db/migrate.ts";
 import { pgliteSql } from "./pglite.ts";
@@ -14,9 +15,9 @@ setDefaultTimeout(30_000); // PGlite starts a whole Postgres in process.
 
 /** The functions the port calls: every one granted to school_app. */
 const PORT_FUNCTIONS = [
-  "choice_decision_notes", "choose_course_trust", "choose_time_zone", "due_review", "encounter_answers", "encounter_decision_notes", "encounter_evidence", "encounter_explanations",
-  "explanation", "install_course", "installed_courses", "last_studied", "latest_feedback", "lesson_progress", "mastery", "mastery_rollup", "open_encounter", "open_lesson_encounter", "record_decision_note", "record_exposure", "record_grading", "record_lesson_help",
-  "record_view", "remove_installed_course", "save_explanation", "study_days", "submission_aid", "submit", "time_zone",
+  "ask", "choice_decision_notes", "choose_course_trust", "choose_time_zone", "due_review", "encounter_answers", "encounter_decision_notes", "encounter_evidence", "encounter_explanations",
+  "explanation", "install_course", "installed_courses", "last_studied", "latest_feedback", "lesson_conversations", "lesson_progress", "mastery", "mastery_rollup", "open_encounter", "open_lesson_encounter", "record_decision_note", "record_exposure", "record_grading", "record_lesson_help",
+  "record_reply", "record_view", "remove_installed_course", "save_explanation", "study_days", "submission_aid", "submit", "time_zone",
 ];
 
 /** A function call and nothing else: no table, no second statement, every argument a parameter. */
@@ -52,6 +53,20 @@ async function freshApp(): Promise<PGliteInterface> {
 }
 
 learningRecordContract("postgres (PGlite)", async () => postgresRecord(functionCallsOnly(pgliteSql(await freshApp()))));
+
+// PGlite is one session: each statement as another role switches the session's role, then back to school_app.
+conversationTables("postgres (PGlite)", async () => {
+  const db = await freshApp();
+  return {
+    record: postgresRecord(functionCallsOnly(pgliteSql(db))),
+    as: (role) => ({
+      query: async <T>(text: string, params: readonly unknown[]) => {
+        await db.exec(`RESET ROLE; SET ROLE ${role}`);
+        try { return (await db.query<T>(text, [...params])).rows; } finally { await db.exec("RESET ROLE; SET ROLE school_app"); }
+      },
+    }),
+  };
+});
 
 test("the guard refuses table SQL, so the contract run above proves the adapter issues none", async () => {
   const guarded = functionCallsOnly({ query: async () => [] });
@@ -109,6 +124,10 @@ test("every port method is one call of its function, as school_app", async () =>
   await r.mastery({ course: "c", blocks: ["q1"], now: "2026-11-23T10:00:00.000Z", delayMs: 1 });
   await r.masteryRollup({ course: "c", groups: { l1: ["q1"] }, now: "2026-11-23T10:00:00.000Z", delayMs: 1 });
   await r.openLessonEncounter({ course: "c", lesson: "l1", lessonPage: page, page, notes: [], now: "2026-11-21T10:00:06.000Z", aidTracking: 1 });
+  const questionId = crypto.randomUUID();
+  await r.ask({ conversationId: crypto.randomUUID(), questionId, encounterId: e.id, blockId: "q1", passage: "?", text: "Why?" }, "2026-11-21T10:00:07.000Z");
+  await r.recordReply({ questionId, status: "failed", text: "", error: "down", sources: [], agent: null, model: null, usage: null }, "2026-11-21T10:00:08.000Z");
+  await r.lessonConversations("c", "l1");
   expect(seen.map((s) => FUNCTION_CALL.exec(s)![1]).sort()).toEqual(PORT_FUNCTIONS);
 });
 
