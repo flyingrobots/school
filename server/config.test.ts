@@ -356,6 +356,7 @@ const part = (env: Record<string, string>, fs: ReturnType<typeof fakeFs> = PART)
 test.each([
   ["a trusted course's subfolder under another name", "/mnt/library", 'trusted course "course" \\(/mnt/course\\) from SCHOOL_COURSE', "/mnt/course/reference"],
   ["inside a trusted course's subfolder under another name", "/mnt/library/guest", 'trusted course "course" \\(/mnt/course\\) from SCHOOL_COURSE', "/mnt/course/reference/guest"],
+  ["not yet made, inside a trusted course's subfolder under another name", "/mnt/library/new", 'trusted course "course" \\(/mnt/course\\) from SCHOOL_COURSE', "/mnt/course/reference"],
   ["a mount's subfolder under another name", "/mnt/figs", 'SCHOOL_MOUNTS mount "papers" \\(/mnt/papers\\)', "/mnt/papers/figures"],
   ["the web folder's subfolder under another name", "/mnt/static", "SCHOOL_WEB \\(/mnt/web\\)", "/mnt/web/assets"],
 ])("an untrusted folder that is %s, by device and inode, is refused, naming both folders", (_, folder, other, inner) => {

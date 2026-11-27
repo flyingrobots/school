@@ -1,6 +1,6 @@
 // Where the framework finds a course, the learner's state, and any extra source material.
 // Nothing here names a subject: a course is configured, never compiled in (ADR 6).
-import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { withPassword } from "./secrets.ts";
 
@@ -158,30 +158,78 @@ function lineage(p: string, stat: Stat): { self: string | null; all: Set<string>
   let self: string | null = null;
   let at = resolved(p);
   for (let first = true; ; first = false) {
-    try {
-      const s = stat(at);
-      // Exact integers either way: a bigint prints every digit, and an injected Number is taken as given.
-      const id = `${BigInt(s.dev)}:${BigInt(s.ino)}`;
-      all.add(id);
-      if (first) self = id;
-    } catch (e) {
-      if (code(e) !== "ENOENT") throw new ConfigError(`cannot stat ${at}: ${code(e) ?? String(e)}`);
-    }
+    const id = identity(at, stat);
+    if (id !== null) all.add(id);
+    if (first) self = id;
     const up = dirname(at);
     if (up === at) return { self, all };
     at = up;
   }
 }
 
-/** The most folders School walks in one trusted course, mount or web folder (flyingrobots/school#298). */
+/** The "dev:ino" identity of `at`, or null when it does not exist. */
+function identity(at: string, stat: Stat): string | null {
+  try {
+    const s = stat(at);
+    // Exact integers either way: a bigint prints every digit, and an injected Number is taken as given.
+    return `${BigInt(s.dev)}:${BigInt(s.ino)}`;
+  } catch (e) {
+    if (code(e) !== "ENOENT") throw new ConfigError(`cannot stat ${at}: ${code(e) ?? String(e)}`);
+    return null;
+  }
+}
+
+/**
+ * The most folders School walks below one trusted course, mount or web folder (flyingrobots/school#298).
+ * A course holds lessons/ and reference/ and a few folders under them: the example course holds 2,
+ * and a course of 2,000 reference files in 100 topics about 100. 10,000 is far past any course. Each
+ * folder costs one readdir and one stat, so the cap bounds a walk to about a quarter of a second on
+ * a local SSD (100 folders take 3 ms), and a folder that is not a course, such as a home directory
+ * or a whole disk, is refused at once instead of walked for minutes.
+ */
 export const DIRECTORY_CAP = 10_000;
 
 /** The names of the folders directly inside `dir`, never a symlink, whatever it points at. */
 export type List = (dir: string) => string[];
 
-export const systemList: List = () => {
-  throw new Error("not implemented");
-};
+/**
+ * School's own list. A symlink is never a folder here: the server never serves through a symlink
+ * that leaves the folder it serves (serveFrom compares real paths), so following one would only
+ * refuse setups that are safe, or loop. A filesystem that does not say an entry's type is asked
+ * with lstat, which does not follow links either.
+ */
+export const systemList: List = (dir) =>
+  readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isDirectory() || (!d.isFile() && !d.isSymbolicLink() && lstatSync(join(dir, d.name)).isDirectory()))
+    .map((d) => d.name);
+
+/**
+ * Every folder at or below `root`, by identity, with the path it was found at. Walked breadth-first
+ * through `list`, so never through a symlink; a folder seen twice (a bind mount of an ancestor
+ * inside its own tree) is walked once. Refused, naming `what`, past DIRECTORY_CAP folders.
+ */
+function tree(root: string, what: string, stat: Stat, list: List): Map<string, string> {
+  const found = new Map<string, string>();
+  const queue = [resolved(root)];
+  for (let i = 0; i < queue.length; i++) {
+    const dir = queue[i]!;
+    const id = identity(dir, stat);
+    if (id === null || found.has(id)) continue;
+    found.set(id, dir);
+    let names: string[];
+    try {
+      names = list(dir);
+    } catch (e) {
+      if (code(e) === "ENOENT" || code(e) === "ENOTDIR") continue;
+      throw new ConfigError(`cannot list ${dir} in ${what}: ${code(e) ?? String(e)}`);
+    }
+    if (queue.length - 1 + names.length > DIRECTORY_CAP) {
+      throw new ConfigError(`${what} holds more than ${DIRECTORY_CAP} folders; with SCHOOL_UNTRUSTED_COURSES set, School walks every folder of each trusted course, mount and the web folder to find one bind-mounted where an untrusted course lives, and walks at most ${DIRECTORY_CAP} in each`);
+    }
+    for (const name of names) queue.push(join(dir, name));
+  }
+  return found;
+}
 
 /** Whether `a` is `b`, holds it or sits inside it by identity, whatever their paths say. */
 function sameTree(a: string, b: string, stat: Stat): boolean {
@@ -191,6 +239,7 @@ function sameTree(a: string, b: string, stat: Stat): boolean {
 }
 
 /** `stat` is the filesystem's identity; tests give a fake one, since aliases need a bind mount. */
+/** `list` names a folder's subfolders; tests give a fake one beside the fake stat (flyingrobots/school#298). */
 export function parseConfig(env: Record<string, string | undefined>, frameworkDefault: string, stat: Stat = systemStat, list: List = systemList): Config {
   const cwd = process.cwd();
   const framework = abs(env.SCHOOL_ROOT ?? frameworkDefault, cwd);
@@ -244,6 +293,25 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     for (const [what, root] of roots) {
       if (sameTree(path, root, stat)) {
         throw new ConfigError(`untrusted course ${JSON.stringify(name)} (${path}) from SCHOOL_UNTRUSTED_COURSES and ${what} are the same folder under two names, or one holds the other (same device and inode, as when Docker bind-mounts one folder twice); a folder is trusted or untrusted, not both`);
+      }
+    }
+  }
+  // Part of one bind-mounted elsewhere (flyingrobots/school#298): at a bind mount's root ".." leaves
+  // the trusted tree, so the ancestors above cannot show that /library is a trusted course's
+  // reference/. Every folder of each trusted root is collected by identity instead, and an untrusted
+  // course whose folder or an ancestor has one of them is refused. Walked only when there is an
+  // untrusted course to protect, so a setup without one starts as before.
+  if (Object.keys(untrusted).length > 0) {
+    const lineages = Object.entries(untrusted).map(([name, path]) => ({ name, path, ids: lineage(path, stat).all }));
+    for (const [what, root] of roots) {
+      const inside = tree(root, what, stat, list);
+      for (const { name, path, ids } of lineages) {
+        for (const id of ids) {
+          const at = inside.get(id);
+          if (at !== undefined) {
+            throw new ConfigError(`untrusted course ${JSON.stringify(name)} (${path}) from SCHOOL_UNTRUSTED_COURSES is, or sits inside, ${at} in ${what} under another name (same device and inode, as when Docker bind-mounts part of a folder); a folder is trusted or untrusted, not both`);
+          }
+        }
       }
     }
   }
