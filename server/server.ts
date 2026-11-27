@@ -677,6 +677,15 @@ const http = Bun.serve({
   // Bun closes a request idle for 10 s by default; a grading call can take a minute or two.
   // 255 s is Bun's maximum, so the grader's own timeout is capped below it (grade.ts).
   idleTimeout: 255,
+  // Production never sets NODE_ENV, so Bun would default to its development error page, with source
+  // and paths, for any request that throws without the handler below (flyingrobots/school#346).
+  development: false,
+  // A request that throws, most often because the record cannot be reached, answers a neutral 503
+  // in JSON and logs what failed; never a stack trace or Bun's error page (flyingrobots/school#322).
+  error(e) {
+    console.error(`school: a request could not be answered: ${e.message}`);
+    return json({ error: "School cannot answer this just now. It may be waiting for its record; try again in a moment." }, 503, { "cache-control": "no-store" });
+  },
   async fetch(req, server) {
     // Before anything else, so that no route, present or future, answers a rebound name (flyingrobots/school#18).
     if (!hostAllowed(req.headers.get("host"), hosts)) {
@@ -848,7 +857,7 @@ const http = Bun.serve({
     }
     const api = /^\/api\/courses\/([a-z0-9][a-z0-9-]*)(?:\/lessons\/([\w-]+))?$/.exec(pathname);
     if (api !== null) {
-      const found = (await registry.current()).find(api[1]!);
+      const found = await registry.find(api[1]!);
       if (found === null) return json({ error: "no such course" }, 404);
       // An installed course listed but not served answers its reason, and none of its files.
       if (found.kind === "unavailable") return api[2] === undefined ? contained(found.course, unavailableJson(found.course)) : json({ error: found.course.reason }, 404);
@@ -869,7 +878,7 @@ const http = Bun.serve({
     // untrusted course's, sandboxed.
     const ref = /^\/courses\/([a-z0-9][a-z0-9-]*)\/reference\/(.+)$/.exec(pathname);
     if (ref !== null) {
-      const found = (await registry.current()).find(ref[1]!);
+      const found = await registry.find(ref[1]!);
       const c = found?.kind === "served" ? found.course : null;
       const dir = c === null ? null : referenceDir(c);
       return c === null || dir === null ? notFound() : contained(c, await serveFrom(dir, [ref[2]!]));
