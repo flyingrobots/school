@@ -3,7 +3,7 @@
 // It speaks only through the port; storage-level rules (append-only triggers, privileges) are
 // tested beside each adapter, since how they are enforced is the adapter's business.
 import { expect, test } from "bun:test";
-import { ExposureKind, type Block, type CourseInstall, type DecisionNoteInput, type GradingRecord, type InstalledCourse, type LessonHelp, type Mastery } from "../core/model.ts";
+import { ExposureKind, type Block, type CourseInstall, type DecisionNoteInput, type DueItem, type GradingRecord, type InstalledCourse, type LessonHelp, type Mastery } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
 
 /**
@@ -1081,6 +1081,83 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     }
     // Witnesses: the fixed seed reaches every state, an empty group and a block in more than one place.
     for (const [what, k] of Object.entries(seen)) expect(`${what}: ${k > 0}`, replay).toBe(`${what}: true`);
+  });
+
+  // ---- Faded review (RFC 5 §4.6; flyingrobots/school#219) -------------------------------------
+  // Due review's fourth rule: a quiz none of the three weak rules chose, settled, whose mastery
+  // strength at `at` is below one half, and last answered at least the delay before `at`. Oracle:
+  // RFC 5 Table 4.6 and the worked example of §4.3: a clean answer's stability is one day, and each
+  // clean answer a delay later multiplies it by 2.5, so strength is exactly one half one stability
+  // after the refresh, and below it a millisecond later.
+
+  dr("faded, golden (RFC 5 §4.3): a quiz answered cleanly comes back once a whole stability has passed, citing mastery's evidence", async (r) => {
+    const first = await episode(r, "clean", 0);
+    expect(await due(r, ["q1"], at(DAY))).toEqual([]); // strength exactly one half: not below it
+    const back: DueItem = {
+      blockId: "q1", rule: "due-review/faded", answeredAt: at(0), corrected: false, shown: [], lastSeen: at(0), evidence: [first.first],
+    };
+    expect(await due(r, ["q1"], at(DAY + 1))).toEqual([back]);
+    expect((await held(r, at(DAY + 1))).evidence).toEqual(back.evidence);
+    // Answered cleanly when it comes back: stability is now 2.5 days, so it returns 2.5 days on.
+    const second = await episode(r, "clean", DAY + 1);
+    expect(await due(r, ["q1"], at(DAY + 1 + 2.5 * DAY))).toEqual([]);
+    const again = { ...back, answeredAt: at(DAY + 1), lastSeen: at(DAY + 1), evidence: [first.first, second.first] };
+    expect(await due(r, ["q1"], at(DAY + 2 + 2.5 * DAY))).toEqual([again]);
+    expect((await held(r, at(DAY + 2 + 2.5 * DAY))).evidence).toEqual(again.evidence);
+  });
+
+  dr("faded: a settled quiz still within one stability of its refresh does not come back, though the delay has passed", async (r) => {
+    await episode(r, "clean", 0);
+    await episode(r, "clean", DAY); // spaced: stability 2.5 days from here
+    const now = at(3 * DAY);
+    expect(await held(r, now)).toMatchObject({ settled: true, stabilityMs: 2.5 * DAY, strength: expect.closeTo(0.5 ** 0.8, 4) });
+    expect(await due(r, ["q1"], now)).toEqual([]);
+  });
+
+  dr("faded: items rank after the three weak rules, lowest strength first, then by seq, and fill only what the weak ones leave of the limit", async (r) => {
+    const untracked = await r.openEncounter({ course: "c", lesson: "l0", page: lesson("l0", [quiz("u1")]), now: at(0), aidTracking: null });
+    await answer(r, untracked.id, "u1", "right", at(1));
+    const e = await tracked(r, lesson("l1", [quiz("a1"), quiz("w1"), quiz("f1"), quiz("f2")]), at(2));
+    await r.recordExposure(exposure(e.id, "a1", "hint"), at(3));
+    await answer(r, e.id, "a1", "right", at(4));
+    await answer(r, e.id, "w1", "wrong", at(5));
+    await answer(r, e.id, "f2", "right", at(6)); // f2 and f1 are equally faded at any later time; f2's seq is the smaller
+    await answer(r, e.id, "f1", "right", at(6));
+    await episode(r, "clean", 5 * DAY, "f3"); // refreshed later: less faded than f1 and f2
+    const all = ["u1", "a1", "w1", "f1", "f2", "f3"];
+    const now = at(10 * DAY);
+    const ranked = async (limit: number) => (await due(r, all, now, limit)).map((x) => [x.blockId, x.rule]);
+    const weak = [["w1", "due-review/wrong-first-try"], ["a1", "due-review/aided-first-try"], ["u1", "due-review/unknown-aid"]];
+    const faded = [["f2", "due-review/faded"], ["f1", "due-review/faded"], ["f3", "due-review/faded"]];
+    expect(await ranked(10)).toEqual([...weak, ...faded]);
+    expect(await ranked(5)).toEqual([...weak, ...faded.slice(0, 2)]);
+    expect(await ranked(4)).toEqual([...weak, ...faded.slice(0, 1)]);
+    expect(await ranked(3)).toEqual(weak); // the limit already filled by the weak rules
+    expect(await ranked(2)).toEqual(weak.slice(0, 2));
+    expect(await ranked(0)).toEqual([]);
+  });
+
+  dr("faded: a quiz both weak and below one half in strength comes back once, under its weak rule", async (r) => {
+    await episode(r, "aided", 0, "a1");
+    await episode(r, "unknown", 0, "u1");
+    const now = at(10 * DAY);
+    expect(await measure(r, ["a1", "u1"], now)).toMatchObject([
+      { blockId: "a1", settled: false, strength: expect.closeTo(0.5 ** 10, 6) },
+      { blockId: "u1", settled: false, strength: expect.closeTo(0.5 ** 10, 6) },
+    ]);
+    expect((await due(r, ["a1", "u1"], now)).map((x) => [x.blockId, x.rule])).toEqual([
+      ["a1", "due-review/aided-first-try"], ["u1", "due-review/unknown-aid"],
+    ]);
+  });
+
+  dr("faded: a faded quiz answered again within the delay, after its first try, waits for the delay from that answer", async (r) => {
+    const { encounterId, first } = await episode(r, "clean", 0);
+    await answer(r, encounterId, "q1", "right", at(3 * DAY)); // the same episode: it refreshes nothing, but the quiz was seen
+    expect((await held(r, at(3 * DAY + HOUR))).strength).toBeCloseTo(0.5 ** (3 + 1 / 24), 6);
+    expect(await due(r, ["q1"], at(3 * DAY + DELAY - 1))).toEqual([]);
+    expect(await due(r, ["q1"], at(3 * DAY + DELAY))).toEqual([{
+      blockId: "q1", rule: "due-review/faded", answeredAt: at(0), corrected: false, shown: [], lastSeen: at(3 * DAY), evidence: [first],
+    }]);
   });
 
   // ---- Help for a whole encounter (RFC 6 §5.1, Table 5.2; flyingrobots/school#224) -------------

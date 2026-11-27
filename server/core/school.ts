@@ -62,6 +62,8 @@ export function reviewReason(item: DueItem, tz?: string): string {
       return `On ${day}, ${help} helped you find this one. ${back}`;
     case "due-review/unknown-aid":
       return `On ${day}, you found this one while School wasn't noting the help it showed. ${back}`;
+    case "due-review/faded":
+      throw new Error("not implemented");
   }
 }
 
