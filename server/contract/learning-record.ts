@@ -880,10 +880,37 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     const zero = { blockId: "q1", strength: 0, stabilityMs: DAY, refreshedAt: at(DAY), settled: false, evidence: [before.first, wrong.first] };
     expect(await held(r, at(2 * DAY + HOUR))).toEqual(zero);
     expect(await held(r, at(30 * DAY))).toEqual(zero);
-    const next = await episode(r, "clean", 2 * DAY + 2 * HOUR); // within the delay: the clock restarts, stability stays one day
+    const next = await episode(r, "clean", 2 * DAY + 2 * HOUR); // the chain starts again here: one day, and this first try is its anchor
     expect(await held(r, at(2 * DAY + 2 * HOUR))).toEqual({
-      blockId: "q1", strength: 1, stabilityMs: DAY, refreshedAt: at(2 * DAY + 2 * HOUR), settled: false, evidence: [wrong.first, next.first],
+      blockId: "q1", strength: 1, stabilityMs: DAY, refreshedAt: at(2 * DAY + 2 * HOUR), settled: false, evidence: [next.first],
     });
+  });
+
+  mm("after a wrong first try the next right first try starts again: wrong, then right a day later, gives one day and strength 1 at once", async (r) => {
+    await episode(r, "wrong", 0);
+    const right = await episode(r, "clean", DAY); // a spaced clean answer, but not 2.5 of anything: the wrong one is no anchor to grow from
+    expect(await held(r, at(DAY))).toEqual({ blockId: "q1", strength: 1, stabilityMs: DAY, refreshedAt: at(DAY), settled: true, evidence: [right.first] });
+    expect((await held(r, at(2 * DAY))).strength).toBeCloseTo(0.5, 4);
+    const grown = await episode(r, "clean", 2 * DAY); // and from there it grows as usual
+    expect(await held(r, at(2 * DAY))).toMatchObject({ strength: 1, stabilityMs: 2.5 * DAY, evidence: [right.first, grown.first] });
+  });
+
+  mm("spacing is measured from the previous episode's last answer, not its first", async (r) => {
+    const a = await episode(r, "clean", 0);
+    await answer(r, a.encounterId, "q1", "right", at(15 * HOUR)); // the same episode again, 15 h on
+    const b = await episode(r, "clean", 30 * HOUR); // 30 h after the first answer, but 15 h after the last: not a delay
+    expect(await held(r, at(30 * HOUR))).toEqual({ blockId: "q1", strength: 1, stabilityMs: DAY, refreshedAt: at(30 * HOUR), settled: true, evidence: [a.first, b.first] });
+    const c = await episode(r, "clean", 30 * HOUR + DELAY); // a delay after b's only answer
+    expect(await held(r, at(30 * HOUR + DELAY))).toMatchObject({ stabilityMs: 2.5 * DAY, evidence: [a.first, c.first] });
+  });
+
+  mm("settled: a clean answer exactly the delay after a weak episode's last answer settles the quiz; 1 ms sooner does not", async (r) => {
+    const wrong = await episode(r, "wrong", 0);
+    await answer(r, wrong.encounterId, "q1", "right", at(HOUR)); // the weak episode's last answer
+    await episode(r, "clean", HOUR + DELAY - 1);
+    expect((await held(r, at(HOUR + DELAY))).settled).toBe(false);
+    await episode(r, "clean", HOUR + DELAY);
+    expect((await held(r, at(HOUR + DELAY))).settled).toBe(true);
   });
 
   mm("a quiz never answered is null; rows follow the order asked, each block once; another course's answers are not this one's", async (r) => {
@@ -929,6 +956,7 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     const kinds = ["clean", "clean", "clean", "aided", "unknown", "wrong"] as const;
     const seen = { spaced: 0, soon: 0, aided: 0, unknown: 0, wrong: 0 };
     let model = { stabilityMs: DAY, refreshedAt: 0, zero: false };
+    let afterWrong = false; // the previous first try was wrong: the next right one starts again
     let last: number | null = null;
     let previous: number | null = null;
     for (let t = 0, step = 0; t < 365 * DAY; t += Math.floor(random() * 3 * DAY), step++) {
@@ -937,10 +965,11 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
       // Table 4.2, one row per kind of first try; the first answer starts at one day.
       if (last === null) model = { stabilityMs: DAY, refreshedAt: t, zero: kind === "wrong" };
       else if (kind === "wrong") model = { ...model, stabilityMs: DAY, zero: true };
-      else if (kind === "aided") model = { stabilityMs: DAY, refreshedAt: t, zero: false };
+      else if (kind === "aided" || afterWrong) model = { stabilityMs: DAY, refreshedAt: t, zero: false };
       else if (kind === "unknown" || !spaced) model = { ...model, refreshedAt: t, zero: false };
       else model = { stabilityMs: model.stabilityMs * 2.5, refreshedAt: t, zero: false };
       seen[kind === "clean" ? (spaced ? "spaced" : "soon") : kind]++;
+      afterWrong = kind === "wrong";
       await episode(r, kind, t);
       last = t;
       const probe = t + Math.floor(random() * 2 * DAY);

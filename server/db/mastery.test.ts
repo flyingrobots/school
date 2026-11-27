@@ -81,3 +81,14 @@ test("stability stops growing after 100 counted answers, so it stays a finite nu
   expect(held!.strength).toBeCloseTo(1, 10);
   expect(held!.evidence).toHaveLength(100);
 });
+
+test("evidence keeps the latest 100 seqs, not the earliest", async () => {
+  const db = await fresh();
+  await db.exec(CLEAN_DAYS(150));
+  const firsts = (await db.query<{ seq: string }>("SELECT seq::text AS seq FROM school.answers WHERE block_id = 'q1' ORDER BY answers.seq")).rows.map((r) => Number(r.seq));
+  expect(firsts).toHaveLength(150);
+  await db.exec("SET ROLE school_app");
+  const [held] = await postgresRecord(pgliteSql(db)).mastery({ course: "c", blocks: ["q1"], now: "2026-06-01T09:00:00.000Z", delayMs: DAY });
+  // The anchor, 149 counted first tries and the latest are all cited (150 seqs): the last 100 stay, ascending.
+  expect(held!.evidence).toEqual(firsts.slice(50));
+});
