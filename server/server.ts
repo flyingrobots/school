@@ -1,7 +1,8 @@
 // School server: a JSON API over courses, lessons and the learner's record in Postgres, plus the
 // built web app (web/dist). It renders no HTML of its own; the pages are the shadcn app in web/.
 import { join, normalize, sep } from "node:path";
-import { readdirSync, realpathSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { askRoute, type AskSource } from "./ask.ts";
 import { lastValidLoader, quizIds, quizzes, type Block } from "./blocks.ts";
 import { PROMPT_VERSION, RUBRIC_VERSION, bridgeConfig, callBridge } from "./grade.ts";
 import { openDatabase, redact, Refused } from "./adapters/database.ts";
@@ -18,7 +19,7 @@ import { allowedHosts, hostAllowed } from "./hosts.ts";
 import { withSecretFiles } from "./secrets.ts";
 import { agentOrder, agentTest } from "./agents.ts";
 import { authoringStatus } from "./skill.ts";
-import { feedbackSpeech, lessonSpeech, SEGMENT, SpeakRequest, toSpeech, UTTERANCE } from "./speak.ts";
+import { feedbackSpeech, htmlText, lessonSpeech, SEGMENT, SpeakRequest, toSpeech, UTTERANCE } from "./speak.ts";
 import { PREVIEW_TTL_MS, previewInstall, sweepStaging, type PreviewAnswer } from "./install-preview.ts";
 
 let config;
@@ -459,6 +460,41 @@ async function speakJson(body: unknown): Promise<Response> {
   return toSpeech(currentBridge(), noSpeech(), "POST", "/speak", { body: { text } });
 }
 
+// ---- Asking about a passage (RFC 6 §5.3; flyingrobots/school#227) --------------------------------
+
+/** Why School cannot answer a question without a bridge, in words. */
+const noAsking = () => unpaired(bridgeNow()) ? `School cannot answer questions: ${UNPAIRED}`
+  : "Asking about a passage goes through the bridge, and no bridge is connected yet; connect one in Settings.";
+
+/** A course's reference documents as sources an answer may quote: each one's text, titled by its `<title>` or its file name. */
+function referenceSources(c: Course): AskSource[] {
+  const dir = referenceDir(c);
+  if (dir === null) return [];
+  return referenceDocs(c).map((f) => {
+    const html = readFileSync(join(dir, f), "utf8");
+    const title = htmlText(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i.exec(html)?.[1] ?? "");
+    return { id: `reference/${f}`, title: title === "" ? f : title, text: htmlText(html) };
+  });
+}
+
+/** What POST /api/ask needs from this file: the lesson as written, the bridge, and the use cases. */
+const askDeps = {
+  school,
+  async lesson(course: string, lesson: string) {
+    const found = (await registry.current()).find(course);
+    if (found === null || found.kind === "unavailable") return { status: 404 as const, error: "no such course" };
+    const c = found.course;
+    // RFC 6 §7: a stranger's course text in the prompt could steer the agent, so safe mode turns asking off.
+    if (!c.trusted) return { status: 403 as const, error: "This course is in safe mode, so asking about it is off: its text would go to an agent on your computer. Trusting the course turns asking on." };
+    const page = readablePages(c).find((p) => p.id === lesson);
+    if (page === undefined) return { status: 404 as const, error: "no such lesson" };
+    return { page, references: referenceSources(c) };
+  },
+  bridge: currentBridge,
+  noBridge: noAsking,
+  log: (line: string) => console.error(`school: ${line}`),
+};
+
 /**
  * The questions due for review now, across served courses, each with where it lives, why it's back
  * and its course's `trusted` (flyingrobots/school#272).
@@ -641,7 +677,7 @@ const http = Bun.serve({
   // Bun closes a request idle for 10 s by default; a grading call can take a minute or two.
   // 255 s is Bun's maximum, so the grader's own timeout is capped below it (grade.ts).
   idleTimeout: 255,
-  async fetch(req) {
+  async fetch(req, server) {
     // Before anything else, so that no route, present or future, answers a rebound name (flyingrobots/school#18).
     if (!hostAllowed(req.headers.get("host"), hosts)) {
       return json({ status: "refused", error: "this Host is not one of School's names; add it to SCHOOL_ALLOWED_HOSTS if it should be" }, 403);
@@ -737,6 +773,11 @@ const http = Bun.serve({
       return json(r.body, r.status);
     }
     if (req.method === "POST" && pathname === "/api/speak") return speakJson(await readJson(req));
+    if (req.method === "POST" && pathname === "/api/ask") {
+      // The answer streams for as long as the bridge's ask agents take; Bun's idle timeout must not end it first.
+      server.timeout(req, 0);
+      return askRoute(askDeps, await readJson(req));
+    }
     if (req.method === "POST" && pathname === "/api/installs/preview") return installPreviewJson(req);
     const cancel = /^\/api\/speak\/([^/]+)\/cancel$/.exec(pathname);
     if (req.method === "POST" && cancel !== null) {
@@ -798,6 +839,13 @@ const http = Bun.serve({
     if (pathname === "/api/review") return reviewJson(url.searchParams);
     if (pathname === "/api/activity") return activityJson(url.searchParams);
     if (pathname === "/api/showcase") return showcaseJson();
+    // A lesson's conversations about its passages (RFC 6 Table 5.4), from the record.
+    const talk = /^\/api\/courses\/([a-z0-9][a-z0-9-]*)\/lessons\/([\w-]+)\/conversations$/.exec(pathname);
+    if (talk !== null) {
+      const found = (await registry.current()).find(talk[1]!);
+      if (found === null || found.kind === "unavailable") return json({ error: "no such course" }, 404);
+      return contained(found.course, json(await school.lessonConversations(found.course.name, talk[2]!), 200, { "cache-control": "no-store" }));
+    }
     const api = /^\/api\/courses\/([a-z0-9][a-z0-9-]*)(?:\/lessons\/([\w-]+))?$/.exec(pathname);
     if (api !== null) {
       const found = (await registry.current()).find(api[1]!);

@@ -10,8 +10,8 @@ import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Block } from "./blocks.ts";
-import { AskLine } from "./ask.ts";
-import { Conversation } from "./core/model.ts";
+import { AskLine, askRoute, type AskDeps } from "./ask.ts";
+import { Conversation, type ReplyRecord } from "./core/model.ts";
 import { startSchool, timeout, type Started } from "./testing/processes.ts";
 
 const TOKEN = "ask-token-NEVER-SHOW-ME-0123";
@@ -57,6 +57,7 @@ const SCENARIOS: Record<string, (string | Record<string, unknown>)[]> = {
     delta(`rces>\n${JSON.stringify([{ source_id: "orbits", quote: "Nothing  stops a planet" }])}\n</sources>`), end("succeeded")],
   unchecked: [delta("Planets coast." + SOURCES([{ source_id: "orbits", quote: "nothing pushes it" }, { source_id: "orbits", quote: "Planets are pushed by angels" }, { source_id: "nowhere", quote: "Nothing" }])), end("succeeded")],
   disconnect: [delta("First part. "), "disconnect", delta("Second part."), end("succeeded")],
+  gone: [delta("First part. "), "gone", delta("Second part."), end("succeeded")],
   failing: [delta("Half an"), end("failed", "timed out after 90 s")],
   plain: [delta("Plain answer."), end("succeeded")],
 };
@@ -69,6 +70,7 @@ const bridge = Bun.serve({
   hostname: "127.0.0.1", port: 0,
   async fetch(req) {
     if (new URL(req.url).pathname !== "/ask") return Response.json({ status: "not found" }, { status: 404 });
+    if (req.headers.get("authorization") !== `Bearer ${TOKEN}`) return Response.json({ status: "unauthorised" }, { status: 401 });
     const body = await req.json() as { prompt: string; deadline_ms?: unknown };
     // What School's record holds at the moment the bridge is asked, read back through School.
     const before = Conversation.array().parse(await (await fetch(`${school.url}/api/courses/astro/lessons/orbits/conversations`)).json());
@@ -166,6 +168,17 @@ function lines(r: Response) {
   };
 }
 
+/** `p`, or a failure naming `what` once `ms` have passed, so a held stream fails its own test instead of timing it out. */
+async function within<T>(ms: number, p: Promise<T>, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, no) => { timer = setTimeout(() => no(new Error(`${what} within ${ms} ms`)), ms); });
+  try {
+    return await Promise.race([p, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Waits until School's record holds a reply to `questionId`, for at most `ms`; a condition, not a sleep. */
 async function replyOf(s: Started, questionId: string, ms = 5_000) {
   const until = Date.now() + ms;
@@ -189,8 +202,11 @@ describe("POST /api/ask", () => {
     const read = lines(r);
     expect(await read.next()).toEqual({ type: "stored", conversationId: q.conversationId, questionId: q.questionId });
     // The first delta arrives while the agent is held at its gate: proxied, not buffered.
-    expect(await read.next()).toEqual({ type: "delta", text: "An orbit is " });
-    open();
+    try {
+      expect(await within(3_000, read.next(), "no delta arrived while the agent was held at its gate")).toEqual({ type: "delta", text: "An orbit is " });
+    } finally {
+      open();
+    }
     const rest = await read.rest();
     const text = rest.flatMap((l) => (l.type === "delta" ? [l.text] : [])).join("");
     expect(text).toBe("falling while moving sideways.\n\n");
@@ -256,13 +272,49 @@ describe("POST /api/ask", () => {
     const browser = new AbortController();
     const r = await post(school, "/api/ask", q, browser.signal);
     const read = lines(r);
-    expect((await read.next())?.type).toBe("stored");
-    expect(await read.next()).toEqual({ type: "delta", text: "First part. " });
-    browser.abort();
-    await read.reader.cancel().catch(() => {});
-    open();
+    try {
+      expect((await read.next())?.type).toBe("stored");
+      expect(await within(3_000, read.next(), "no delta arrived while the agent was held at its gate")).toEqual({ type: "delta", text: "First part. " });
+      browser.abort();
+      await read.reader.cancel().catch(() => {});
+    } finally {
+      open();
+    }
     const reply = await replyOf(school, q.questionId);
     expect(reply).toMatchObject({ status: "succeeded", text: "First part. Second part.", agent: "fake-claude" });
+  });
+
+  // Across processes, whether School notices the browser has gone before the bridge's last line
+  // arrives is a race this test cannot hold. In process, cancelling the stream School answers with
+  // is exactly what a browser going away does to it, at a moment the test chooses.
+  test("in process: a browser that goes away mid-answer leaves the bridge's answer read to its end and stored", async () => {
+    const open = gate("gone");
+    const [conversationId, questionId, encounterId] = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+    const at = new Date(0).toISOString();
+    let stored!: (r: ReplyRecord) => void;
+    const reply = new Promise<ReplyRecord>((r) => { stored = r; });
+    const deps: AskDeps = {
+      school: {
+        ask: async () => ({ status: "stored" }),
+        recordReply: async (r) => { stored(r); return { status: "stored" }; },
+        lessonConversations: async () => [{ conversationId, blockId: "p1", passage: "Nothing stops a planet", seq: 1, at,
+          questions: [{ questionId, encounterId, text: "[gone] And after?", seq: 3, exposureSeq: 2, at, reply: null }] }],
+      },
+      lesson: async () => ({ page: lesson, references: [] }),
+      bridge: () => ({ url: bridge.url.href.replace(/\/$/, ""), token: TOKEN, deadlineMs: 10_000 }),
+      noBridge: () => "no bridge",
+      log: () => {},
+    };
+    const r = await askRoute(deps, { course: "astro", lesson: "orbits", conversationId, questionId, encounterId, blockId: "p1", passage: "Nothing stops a planet", text: "[gone] And after?" });
+    const read = lines(r);
+    try {
+      expect((await read.next())?.type).toBe("stored");
+      expect(await within(3_000, read.next(), "no delta arrived while the agent was held at its gate")).toEqual({ type: "delta", text: "First part. " });
+      await read.reader.cancel();
+    } finally {
+      open();
+    }
+    expect(await within(3_000, reply, "no reply was stored")).toMatchObject({ status: "succeeded", text: "First part. Second part.", agent: "fake-claude" });
   });
 
   test("an answer that fails after its first words ends with a failed line, and is stored failed with what was shown", async () => {
@@ -333,6 +385,52 @@ describe("POST /api/ask", () => {
     expect((await post(school, "/api/ask", await question(school, "[plain] x?", { encounterId: untracked }))).status).toBe(400);
     expect((await fetch(school.url + "/api/ask", { method: "POST", headers: { "content-type": "text/plain" }, body: "{}" })).status).toBe(415);
     expect(asked.length).toBe(count);
+  });
+});
+
+describe("POST /api/ask in process, at the bridge's edges", () => {
+  /** Route dependencies over a record that stores every question and hands back `filed` as the lesson's conversations. */
+  function inProcess(over: Partial<AskDeps>, filed: (q: { conversationId: string; questionId: string; encounterId: string }) => Conversation[]) {
+    const replies: ReplyRecord[] = [];
+    const ids = { conversationId: crypto.randomUUID(), questionId: crypto.randomUUID(), encounterId: crypto.randomUUID() };
+    const deps: AskDeps = {
+      school: { ask: async () => ({ status: "stored" }), recordReply: async (r) => { replies.push(r); return { status: "stored" }; }, lessonConversations: async () => filed(ids) },
+      lesson: async () => ({ page: lesson, references: [] }),
+      bridge: () => ({ url: bridge.url.href.replace(/\/$/, ""), token: TOKEN, deadlineMs: 10_000 }),
+      noBridge: () => "no bridge",
+      log: () => {},
+      ...over,
+    };
+    const body = { course: "astro", lesson: "orbits", ...ids, blockId: "p1", passage: "Nothing stops a planet", text: "[plain] Edges?" };
+    return { deps, body, replies };
+  }
+  const at = new Date(0).toISOString();
+  const filedHere = (q: { conversationId: string; questionId: string; encounterId: string }): Conversation[] =>
+    [{ conversationId: q.conversationId, blockId: "p1", passage: "Nothing stops a planet", seq: 1, at, questions: [{ ...q, text: "[plain] Edges?", seq: 3, exposureSeq: 2, at, reply: null }] }];
+
+  test("a question the record files under another lesson is not answered, and its reply is stored as failed", async () => {
+    const count = asked.length;
+    const { deps, body, replies } = inProcess({}, () => []);
+    const r = await askRoute(deps, body);
+    expect(r.status).toBe(400);
+    expect(asked.length).toBe(count);
+    expect(replies).toMatchObject([{ questionId: body.questionId, status: "failed", text: "" }]);
+  });
+
+  test("a bridge that refuses School's token is a 502 in words, and the reply is stored as failed", async () => {
+    const { deps, body, replies } = inProcess({ bridge: () => ({ url: bridge.url.href.replace(/\/$/, ""), token: "another-token-0123456", deadlineMs: 10_000 }) }, filedHere);
+    const r = await askRoute(deps, body);
+    expect(r.status).toBe(502);
+    expect((await r.json()).error).toContain("token");
+    expect(replies).toMatchObject([{ status: "failed" }]);
+  });
+
+  test("a bridge older than asking (no POST /ask) is a 503 in words, and the reply is stored as failed", async () => {
+    const { deps, body, replies } = inProcess({ bridge: () => ({ url: `${bridge.url.href.replace(/\/$/, "")}/old`, token: TOKEN, deadlineMs: 10_000 }) }, filedHere);
+    const r = await askRoute(deps, body);
+    expect(r.status).toBe(503);
+    expect((await r.json()).error).toContain("older");
+    expect(replies).toMatchObject([{ status: "failed" }]);
   });
 });
 
