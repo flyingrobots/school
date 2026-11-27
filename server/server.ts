@@ -117,7 +117,10 @@ const grader: Grader = {
 
 // The hexagon (RFC 3, §4): this file is the composition root and the HTTP adapter. It parses
 // every request with the core's Zod schemas and reaches the record only through the use cases.
-const school = createSchool({ record: postgresRecord(database.sql), grader, clock: { now: () => new Date().toISOString() } });
+// SCHOOL_TEST_CLOCK fixes now for a test over HTTP (server/config.ts); only on a PGlite record.
+const fixedNow = config.clock;
+if (fixedNow !== null) console.warn(`school: warning: the clock is fixed at ${fixedNow} by SCHOOL_TEST_CLOCK; every answer is recorded at that time. Use it for tests only.`);
+const school = createSchool({ record: postgresRecord(database.sql), grader, clock: { now: () => fixedNow ?? new Date().toISOString() } });
 
 // Static files come only from configured mounts; lesson sources and state are never served raw.
 const MOUNTS: Record<string, string> = mountTable(config);
@@ -237,9 +240,11 @@ type View = "web" | "slides";
 const isView = (v: string | null): v is View => v === "web" || v === "slides";
 const summary = (p: Block | undefined) => (p === undefined || p.type !== "page" ? null : { id: p.id, title: p.title, subtitle: p.subtitle });
 
+const missing = (lesson: string): never => { throw new Error(`the mastery rollup returned no row for lesson ${lesson}`); };
+
 /**
- * A course: its lessons, each with how many of its quizzes have been answered correctly, and its
- * reference documents. Lessons that cannot be read do not hide the documents
+ * A course: its lessons, each with how many of its quizzes have been answered correctly and how
+ * they are holding now (RFC 5 §4.5, flyingrobots/school#220), and its reference documents. Lessons that cannot be read do not hide the documents
  * (flyingrobots/school#115): `lessons` is then null and `lessonsError` says why, in a 200.
  */
 async function courseJson(c: Course): Promise<Response> {
@@ -247,16 +252,20 @@ async function courseJson(c: Course): Promise<Response> {
   const reference = referenceDocs(c);
   if (library === null) return json({ name: c.name, title: titleOf(c), trusted: c.trusted, ...manifestOf(c), reference, lessons: null, lessonsError: error?.message ?? "the lessons could not be loaded" });
   const done = await school.lessonProgress(c.name);
+  const quizzesOf = library.pages.map((p) => ({ page: p, ids: quizIds(p) }));
+  // One group per lesson, at the server's clock: a lesson with no quizzes counts zero in each state.
+  const rolled = new Map((await school.masteryNow(c.name, Object.fromEntries(quizzesOf.map(({ page, ids }) => [page.id, [...ids]]))))
+    .map((r) => [r.key, { notStarted: r.notStarted, settling: r.settling, holding: r.holding, faded: r.faded }]));
   return json({
     name: c.name,
     title: titleOf(c),
     trusted: c.trusted,
     ...manifestOf(c),
     reference,
-    lessons: library.pages.map((p) => {
-      const ids = quizIds(p);
-      return { ...summary(p), quizzes: ids.size, answeredCorrectly: [...ids].filter((id) => done[p.id]?.includes(id)).length };
-    }),
+    lessons: quizzesOf.map(({ page: p, ids }) => ({
+      ...summary(p), quizzes: ids.size, answeredCorrectly: [...ids].filter((id) => done[p.id]?.includes(id)).length,
+      mastery: rolled.get(p.id) ?? missing(p.id),
+    })),
   });
 }
 

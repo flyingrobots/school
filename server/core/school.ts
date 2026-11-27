@@ -210,7 +210,8 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
         })),
       };
     },
-    masteryNow: async () => { throw new Error("not implemented"); },
+    masteryNow: (course, groups) =>
+      record.masteryRollup({ course, groups: Object.fromEntries(Object.entries(groups).map(([k, b]) => [k, [...b]])), now: clock.now(), delayMs: REVIEW_DELAY_MS }),
     recordView: (v) => record.recordView(v, clock.now()),
     recordExposure: (e) => record.recordExposure(e, clock.now()),
     submissionAid: (id) => record.aid(id),

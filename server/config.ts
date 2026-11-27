@@ -300,6 +300,19 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     }
   }
 
+  // A fixed clock for tests over HTTP (flyingrobots/school#220). Refused on a postgres:// record, so
+  // a learner's record is never written at a time that is not now.
+  const clockValue = env.SCHOOL_TEST_CLOCK === undefined || env.SCHOOL_TEST_CLOCK === "" ? null : env.SCHOOL_TEST_CLOCK;
+  let clock: string | null = null;
+  if (clockValue !== null) {
+    if (database.driver !== "pglite") throw new ConfigError("SCHOOL_TEST_CLOCK is for tests: it fixes the server's clock, so it is refused unless SCHOOL_DATABASE_URL is pglite:<directory>");
+    const instant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(clockValue) ? Date.parse(clockValue) : NaN;
+    if (Number.isNaN(instant)) {
+      throw new ConfigError(`SCHOOL_TEST_CLOCK ${JSON.stringify(clockValue)} is not an instant: give a date, a time and a zone, as 2026-01-03T10:00:00Z`);
+    }
+    clock = new Date(instant).toISOString();
+  }
+
   const port = Number(env.PORT ?? 4747);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigError(`PORT ${JSON.stringify(env.PORT)} is not a port`);
 
@@ -315,7 +328,7 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     mounts,
     host: env.HOST ?? "127.0.0.1",
     port,
-    clock: null,
+    clock,
   };
 }
 
