@@ -173,6 +173,16 @@ function lineage(p: string, stat: Stat): { self: string | null; all: Set<string>
   }
 }
 
+/** The most folders School walks in one trusted course, mount or web folder (flyingrobots/school#298). */
+export const DIRECTORY_CAP = 10_000;
+
+/** The names of the folders directly inside `dir`, never a symlink, whatever it points at. */
+export type List = (dir: string) => string[];
+
+export const systemList: List = () => {
+  throw new Error("not implemented");
+};
+
 /** Whether `a` is `b`, holds it or sits inside it by identity, whatever their paths say. */
 function sameTree(a: string, b: string, stat: Stat): boolean {
   const x = lineage(a, stat);
@@ -181,7 +191,7 @@ function sameTree(a: string, b: string, stat: Stat): boolean {
 }
 
 /** `stat` is the filesystem's identity; tests give a fake one, since aliases need a bind mount. */
-export function parseConfig(env: Record<string, string | undefined>, frameworkDefault: string, stat: Stat = systemStat): Config {
+export function parseConfig(env: Record<string, string | undefined>, frameworkDefault: string, stat: Stat = systemStat, list: List = systemList): Config {
   const cwd = process.cwd();
   const framework = abs(env.SCHOOL_ROOT ?? frameworkDefault, cwd);
   // SCHOOL_COURSES registers many; SCHOOL_COURSE stays accepted as a single unnamed course,
