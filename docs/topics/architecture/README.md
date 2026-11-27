@@ -23,7 +23,7 @@ proposed; for that, read [RFC 2](../../rfc/0002-lessons-written-for-each-learner
 | [The pinned skill](#the-pinned-skill) | The `school` skill an authoring agent is given, its manifest digest, and when authoring is off |
 | [The pinned skill](#the-pinned-skill) | The `school` skill an authoring agent is given, its manifest digest, and when authoring is off || [The hexagon](#the-hexagon) | The core, its ports and the adapters that implement them |
 | [The learning record](#the-learning-record) | Tables, rules, encounters, what the rules do and do not guarantee |
-| [The bridge](#the-bridge) | How explanations are graded |
+| [The bridge](#the-bridge) | How explanations are graded, and how a question about a passage is answered |
 | [The web app](#the-web-app) | What exists of the interface |
 | [Trust and known defects](#trust-and-known-defects) | What School assumes, and what is broken; fetching a course repository and previewing an install |
 | [Configuration](#configuration) | Every environment variable |
@@ -99,6 +99,8 @@ JSON API.
 | GET, POST | `/api/settings/agents` | The bridge's agents as its file declares them; a POST only reorders them and switches them on or off |
 | POST | `/api/settings/agents/test` | Runs one declared agent for real |
 | POST | `/api/installs/preview` | `{url, commit}`: fetches, extracts and checks one commit of a course repository in the course store's `staging/`, and answers what was found, the suggested name and any progress already under it; `courses/` and the record are unchanged ([previewing an install](#previewing-an-install)). A refusal is a 422 with its stage and reason, a malformed body 400, and no course store 503. Refused when `Sec-Fetch-Site` is present and is not `same-origin`: 403 `{ status: "forbidden", error }`. A failure that is not a refusal (the store or the record) is 500 `{ status: "failed", error }`, with the reason in School's log and the preview's folder deleted |
+| POST | `/api/ask` | A question about a passage of a lesson: `{ course, lesson, conversationId, questionId, encounterId, blockId, passage, text }`, `blockId` and `passage` only on a conversation's first question. The passage is checked against the lesson, the question and its `ai-help` exposure are stored, and the answer streams as `application/x-ndjson` ([asking about a passage](#asking-about-a-passage)). A passage not in the lesson, a malformed body or a question the record rejects is 400; a resent or conflicting question id 409; a course in safe mode 403; no bridge 503 with the reason |
+| GET | `/api/courses/:c/lessons/:id/conversations` | The lesson's conversations from the record (`school.lesson_conversations`), in `seq` order, each with its passage, its questions in `seq` order and their replies. An unknown course is 404 |
 | POST | `/api/speak` | `{ course, lesson }` or `{ feedback: true }`, never text: the server builds the text and submits it to AI-TTS through the bridge; `{ id, state, segments }`. No bridge, or no daemon, is a 503 with the reason ([reading aloud](../reading-aloud/README.md)) |
 | GET | `/api/speak/:id` | That reading's progress, each segment ready or not |
 | GET | `/api/speak/:id/segments/:n` | One segment's WAV, with byte ranges |
@@ -444,7 +446,7 @@ locks, so it refuses to run under anything but READ COMMITTED.
 port's `recordReply`, stores the one reply: `stored`, `duplicate`, `conflict`, or `rejected` for no
 such question. `school.lesson_conversations(course, lesson)`, the port's `lessonConversations`,
 reads a lesson's conversations in `seq` order, each with its questions in `seq` order and their
-replies. Nothing calls them over HTTP yet.
+replies. `POST /api/ask` and `GET /api/courses/:c/lessons/:id/conversations` call them ([asking about a passage](#asking-about-a-passage)).
 
 **Figure 3. The learning record's tables**
 
@@ -738,8 +740,8 @@ throws before the failure is stored ([flyingrobots/school#17](https://github.com
 | Local or hosted | Agents are launched locally; whether inference is local depends on the agent. A hosted CLI sends the prompt and the explanation over the network. |
 | Grading | Fidelity, completeness, accessibility, each `meets`, `partly` or `misses`, or insufficient evidence; quoted contradictions are checked to exist in the source, not to support the criticism |
 
-The bridge also answers a learner's question about a passage, for the server route RFC 6 plans
-(flyingrobots/school#227): `POST /ask` takes `{ prompt, deadline_ms }` and answers
+The bridge also answers a learner's question about a passage, for the server's `POST /api/ask`
+([asking about a passage](#asking-about-a-passage)): `POST /ask` takes `{ prompt, deadline_ms }` and answers
 `application/x-ndjson`, one `{"type":"delta","text"}` line for each piece of the answer as the
 agent writes it, then one `{"type":"end"}` line with `status`, `agent`, `usage` (the token
 counts), `error` and every attempt. Its agents are a separate `ask` list in the bridge's file,
@@ -797,6 +799,39 @@ and a signal kill are outside this: they are not lines. Every line names its pub
 and carries the process's `run` id; `--help`, `--schema` and `--human` are in
 [the programs' output](../program-output/README.md#the-bridge) (flyingrobots/school#135).
 
+### Asking about a passage
+
+`POST /api/ask` (`server/ask.ts`, RFC 6 §5.3, flyingrobots/school#227) answers a learner's question about a passage of a lesson through the bridge's `POST /ask`, and keeps the question, its aid and the answer in the record. The order is what makes the record honest: the question and its aid are stored before any model is asked, and the answer is stored after, whether or not the browser is still there.
+
+| Step | What happens |
+| --- | --- |
+| The passage | A first question's passage must occur in the lesson as written, beginning in the block it names: in that block, or a section's title or any block inside it, and running on as far as it likes. The lesson is read as [reading aloud](../reading-aloud/README.md) reads it, compared in Unicode NFC, ignoring case, runs of whitespace and curly quotes. So a passage holding markup, a quiz choice, a `why`, a model answer, an explain source or a nest diagram is never in it (400). A later question names no passage; its conversation's is used, and it must be a conversation of this lesson (400) |
+| No bridge | 503 with the reason, and nothing stored |
+| The record | `school.ask` stores the question and its `ai-help` exposure in one transaction. `rejected` is 400 (an untracked or unknown encounter, for instance); `duplicate` and `conflict` are 409, and the bridge is not asked again. A question the record files under another lesson than the one named is stored with a failed reply and answered 400 |
+| The prompt | The lesson as reading aloud says it, as sources: its opening under the lesson's id, and each top-level section under its own id. No quiz choice, `why`, model answer, explain source or nest diagram. Then the course's reference documents, given whole up to 100,000 characters and after that only their titles; the conversation's earlier turns from the record; and the passage and the question inside tags marked as the learner's text, with `&`, `<` and `>` escaped so they cannot open or close a tag. The agent is asked to end with a `<sources>` block listing the id and exact words of each source it used |
+| The bridge | `POST /ask` with the server's token and `redirect: "error"`, deadline `SCHOOL_BRIDGE_DEADLINE_MS`. A bridge that cannot be reached is 503, one that refuses the token 502, one with no `/ask` (older than asking) 503, any other refusal 502; each in words, with the reply stored as failed |
+| The stream | Each `delta` is passed on as it arrives, except the `<sources>` block: the end of a delta that could begin it is held back until the next delta shows whether it does, so the block never reaches the page |
+| The quotes | Each quote is checked to occur in the source it names, by grading's check (`quoteFound` in `server/core/school.ts`, which `checkQuotes` uses). Every quote is stored with `checked`; the page is sent only the checked ones |
+| The reply | `school.record_reply` stores the answer as shown, its quotes, the agent and the token counts, or a failure with whatever text reached the page. A browser that goes away stops nothing: the bridge's answer is read to its end and stored |
+
+_Table 1. The steps of `POST /api/ask`, in order. Everything before the stream answers in JSON; from the first line on, the answer is NDJSON._
+
+The answer is one JSON object per line, each checked by the `AskLine` schema in `server/ask.ts`. The lines come in the order of Table 2.
+
+| `type` | Fields | When |
+| --- | --- | --- |
+| `stored` | `conversationId`, `questionId` | First: the question and its exposure are in the record |
+| `delta` | `text` | Each piece of the answer as it is written |
+| `sources` | `sources`: `{ sourceId, title, quote }` for each checked quote | Once the answer is stored |
+| `done` | `agent`: the agent that answered | Last, after `sources` |
+| `failed` | `error`, in words | Last, instead of `sources` and `done`, when the answer failed or could not be stored |
+
+_Table 2. The lines of `POST /api/ask`'s answer. A page reads `stored` first and then exactly one of `done` or `failed` last._
+
+A course in [safe mode](#trust-and-known-defects) is not asked about (403): its text would go into an agent's prompt, and RFC 6 §7 keeps a stranger's course text out of the prompt until asking is sandboxed. The cases are in the [test plan](test-plan.md#asking-about-a-passage-on-the-server).
+
+In short: the record holds the question and its aid before the model runs, the prompt holds no answer, and the reply is kept whoever is still listening.
+
 ## The web app
 
 `web/` is a stock shadcn/ui app on Vite and React, themed from theme-book through the
@@ -828,7 +863,7 @@ is currently broken.
 | --- | --- |
 | Everyone who can reach it | No login: anyone on the tailnet or localhost can use the API, including settings |
 | Trusted courses (`SCHOOL_COURSES`, `SCHOOL_COURSE`) | Their files render on School's origin with School's authority, which includes the settings API and the bridge that runs the learner's agents. RFC 1 decided installed courses are trusted code. |
-| Untrusted courses (`SCHOOL_UNTRUSTED_COURSES`) | Not trusted with School's authority: they are served in safe mode, and their files cannot run script on School's origin (below) |
+| Untrusted courses (`SCHOOL_UNTRUSTED_COURSES`) | Not trusted with School's authority: they are served in safe mode, their files cannot run script on School's origin (below), and they cannot be asked about, since their text would go into an agent's prompt ([asking about a passage](#asking-about-a-passage)) |
 | Installed courses ([the course list](#the-course-list)) | Untrusted, and served in safe mode, unless the record's latest trust choice for that install trusts them; an update is a new install, so it starts untrusted |
 | Configured agents | They run with the learner's account on the host, under their own commands' limits |
 
@@ -865,7 +900,7 @@ The identity check misses one case: a mount made after School started, since the
 
 ### Fetching a course repository
 
-`fetchCommit` (`server/fetch-commit.ts`, RFC 7 §6) fetches one commit of a course repository into a new bare repository, `<staging>/repo.git`, and answers the commit's full hash. The [install preview](#previewing-an-install) calls it with a staging folder under the course store. The URL and the server are hostile, so School checks the commit, then the URL, then the host's addresses, then the staging folder, and only then runs git. Table 1 lists the rules in that order, and the first rule broken gives the refusal. Any refusal deletes the staging folder, or never makes it.
+`fetchCommit` (`server/fetch-commit.ts`, RFC 7 §6) fetches one commit of a course repository into a new bare repository, `<staging>/repo.git`, and answers the commit's full hash. The [install preview](#previewing-an-install) calls it with a staging folder under the course store. The URL and the server are hostile, so School checks the commit, then the URL, then the host's addresses, then the staging folder, and only then runs git. Table 3 lists the rules in that order, and the first rule broken gives the refusal. Any refusal deletes the staging folder, or never makes it.
 
 | Rule | Refused with |
 | --- | --- |
@@ -882,9 +917,9 @@ The identity check misses one case: a mount made after School started, since the
 | Each git process finishes within 60 seconds. The fetched repository stays within 64 MiB on disk: School measures it every 100 ms while git runs and again when git ends (RFC 7 Table 6.2). Passing either limit kills git's whole process group | `timeout`, `too-large` |
 | git fetches the commit, and the object is a commit, not a tree or blob | `git-failed`, `not-a-commit` |
 
-_Table 1. What `fetchCommit` checks, in the order the code checks it. Every refusal carries a sentence naming what was refused._
+_Table 3. What `fetchCommit` checks, in the order the code checks it. Every refusal carries a sentence naming what was refused._
 
-git is pinned to the addresses School checked. `http.curloptResolve=HOST:443:ADDRESS[,ADDRESS]` hands them to libcurl, so git never looks the host up again, and a second answer from DNS (rebinding) is never used. Only a plain host name can be pinned this way: libcurl reads a name starting with `-` as "remove this entry", so Table 1 refuses such a name before any lookup. Redirects are not followed (`http.followRedirects=false`), because a redirect could lead to a host or port the pin does not cover. git runs with a fresh environment: no system or global configuration, `HOME` set to the staging folder (so no `.netrc`), `GIT_TERMINAL_PROMPT=0`, no askpass, an empty `credential.helper`, an empty `http.proxy` (which also overrides a proxy in the environment), `core.hooksPath=/dev/null`, `transfer.fsckObjects`, no submodules, and `git init --bare --template=`. The bare repository is made first. Every later git command, `ls-remote` included, names that repository with `--git-dir` and starts in it, and `GIT_CEILING_DIRECTORIES` stops git looking above the staging folder. So a git repository around the course store adds no configuration, such as a header, a URL rewrite or a proxy. The fetch is `git fetch --depth=1 --no-tags --no-recurse-submodules <url> <hash>`, so the repository holds that one commit and nothing is checked out. `refs/heads/course` then points at the commit, so nothing prunes it before it is read. When git exits, School kills its process group, so no helper it started outlives it. A host that will not serve a commit by its hash fails as `git-failed`, with git's own message.
+git is pinned to the addresses School checked. `http.curloptResolve=HOST:443:ADDRESS[,ADDRESS]` hands them to libcurl, so git never looks the host up again, and a second answer from DNS (rebinding) is never used. Only a plain host name can be pinned this way: libcurl reads a name starting with `-` as "remove this entry", so Table 3 refuses such a name before any lookup. Redirects are not followed (`http.followRedirects=false`), because a redirect could lead to a host or port the pin does not cover. git runs with a fresh environment: no system or global configuration, `HOME` set to the staging folder (so no `.netrc`), `GIT_TERMINAL_PROMPT=0`, no askpass, an empty `credential.helper`, an empty `http.proxy` (which also overrides a proxy in the environment), `core.hooksPath=/dev/null`, `transfer.fsckObjects`, no submodules, and `git init --bare --template=`. The bare repository is made first. Every later git command, `ls-remote` included, names that repository with `--git-dir` and starts in it, and `GIT_CEILING_DIRECTORIES` stops git looking above the staging folder. So a git repository around the course store adds no configuration, such as a header, a URL rewrite or a proxy. The fetch is `git fetch --depth=1 --no-tags --no-recurse-submodules <url> <hash>`, so the repository holds that one commit and nothing is checked out. `refs/heads/course` then points at the commit, so nothing prunes it before it is read. When git exits, School kills its process group, so no helper it started outlives it. A host that will not serve a commit by its hash fails as `git-failed`, with git's own message.
 
 The request names only the URL, the commit and the staging folder. The git program, the network (resolver, address check, ports, CA file) and the limits are a separate second argument, `FetchTesting`. Only tests pass it, to reach a local server, and no route may build it from a client's input.
 
@@ -905,7 +940,7 @@ A refusal at any stage deletes the preview's folder and answers 422. This one is
   "message": "0001-places-worth-twice.json > places-worth-twice > places-practice > places-q-worth: exactly one choice must be correct" }
 ```
 
-`stage` is `fetch`, `extract` or `check`. `reason` is the fetch's reason (Table 1), the extraction's (`unsafe-name`, `case-collision`, `symlink`, `submodule`, `lfs-pointer`, `too-many-files`, `file-too-large`, `total-too-large`, `path-too-long`, `too-deep`, `not-a-commit`, `bad-destination`, `timeout`, `git-failed`), or `invalid` for the check. `path` is the tree path or course file it concerns, or null. `message` is the stage's own sentence, git's error output included for `git-failed`, with any path inside the store made relative to the course. It is text from the server and from git, and a client shows it as text, never as HTML.
+`stage` is `fetch`, `extract` or `check`. `reason` is the fetch's reason (Table 3), the extraction's (`unsafe-name`, `case-collision`, `symlink`, `submodule`, `lfs-pointer`, `too-many-files`, `file-too-large`, `total-too-large`, `path-too-long`, `too-deep`, `not-a-commit`, `bad-destination`, `timeout`, `git-failed`), or `invalid` for the check. `path` is the tree path or course file it concerns, or null. `message` is the stage's own sentence, git's error output included for `git-failed`, with any path inside the store made relative to the course. It is text from the server and from git, and a client shows it as text, never as HTML.
 
 A course that passes answers 200. This is the example course as PREVIEW-1 and PREVIEW-12 check it, with progress already under its name; the URL is illustrative, and the preview id and hash are shortened:
 
