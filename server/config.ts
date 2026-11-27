@@ -39,6 +39,11 @@ export type Config = {
   mounts: Record<string, string>;
   host: string;
   port: number;
+  /**
+   * A fixed instant the server reads as now, from SCHOOL_TEST_CLOCK; null, the default, for the
+   * system clock. Only for tests over HTTP that need a time-dependent answer at a known time.
+   */
+  clock: string | null;
 };
 
 /** Which Postgres driver holds the record, and where. */
@@ -310,6 +315,7 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     mounts,
     host: env.HOST ?? "127.0.0.1",
     port,
+    clock: null,
   };
 }
 

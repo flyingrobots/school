@@ -1,6 +1,6 @@
 // School's use cases (RFC 3, §4). Each takes values already parsed at the edge, talks only to
 // ports, and returns plain data for the driving adapter to serialise.
-import type { Aid, AidTracking, Block, Contradiction, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, RecordedExposureKind, ReviewNote, ReviewReason, EvidenceRow, Exposure, ExposureResult, ExplanationState, ExplanationSubmission, Grading, GradingRecord, LastStudied, LatestFeedback, LessonProgress, Recorded, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
+import type { Aid, AidTracking, Block, Contradiction, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, RecordedExposureKind, ReviewNote, ReviewReason, EvidenceRow, Exposure, ExposureResult, ExplanationState, ExplanationSubmission, Grading, GradingRecord, LastStudied, LatestFeedback, LessonProgress, MasteryRollup, Recorded, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
 import type { Clock, Grader, LearningRecord } from "./ports.ts";
 
 const squash = (s: string) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim().toLowerCase();
@@ -114,6 +114,12 @@ export interface School {
    */
   activity(courses: readonly { name: string; blocks: readonly string[] }[], days: number, tz: string):
     Promise<{ today: string; courses: { course: string; studied: string[]; due: { day: string; items: number }[] }[] }>;
+  /**
+   * How each group of the course's quizzes is holding now (RFC 5 §4.5): one row per key of
+   * `groups`, read at the clock's now with the delay due review uses, so it agrees with the review
+   * a lesson opens with. A group with no quizzes counts zero in every state.
+   */
+  masteryNow(course: string, groups: Readonly<Record<string, readonly string[]>>): Promise<MasteryRollup[]>;
 }
 
 export function createSchool(ports: { record: LearningRecord; grader: Grader; clock: Clock }): School {
@@ -204,6 +210,7 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
         })),
       };
     },
+    masteryNow: async () => { throw new Error("not implemented"); },
     recordView: (v) => record.recordView(v, clock.now()),
     recordExposure: (e) => record.recordExposure(e, clock.now()),
     submissionAid: (id) => record.aid(id),
