@@ -1,8 +1,10 @@
 # Course page test plan
 
-The contract ledger for [the course page](README.md). Every case runs in `bun test` from
-`web/test/course.test.ts`: Chrome through playwright-core, the Vite dev server, and a real School
-server whose progress the test records through `POST /api/answer`.
+The contract ledger for [the course page](README.md). Every case runs in `bun test`. The page's
+cases are in `web/test/course.test.ts`: Chrome through playwright-core, the Vite dev server, and a
+real School server whose progress the test records through `POST /api/answer`. The API's mastery
+cases (COURSE-25 to COURSE-27) are in `server/course-mastery.test.ts`: a real School server at a
+fixed clock (`SCHOOL_TEST_CLOCK`) over a record the test writes through the port.
 
 | ID | Case | Oracle | Status | Test |
 | --- | --- | --- | --- | --- |
@@ -30,3 +32,6 @@ server whose progress the test records through `POST /api/answer`.
 | COURSE-22 | Declaration's colours | In a light and a dark colour scheme, the summary's text is the resolved `--muted-foreground`, and the license Badge's text and border the resolved `--foreground` and `--border`, its text differing between the two | implemented | `a course's declaration > the summary and badges take the theme's colours, in light and in dark` |
 | COURSE-23 | Long declaration on a phone | At 375px wide, a course with a long author and a long SPDX `OR` license chain has no horizontal page scroll (`scrollWidth <= innerWidth`), each Badge sits inside the viewport and clips nothing, and the full text is shown (flyingrobots/school#277) | implemented | `a course's declaration > a long author and a long license chain wrap on a phone: no sideways scroll, full text reachable` |
 | COURSE-24 | Markup is inert | An untrusted course whose summary and author are `<img src=x onerror=...>` strings shows them as literal text, renders no `img` or `b` element, and runs no handler (flyingrobots/school#277) | implemented | `markup in a course's declaration > an untrusted course's markup-like summary and author show as literal text and run nothing` |
+| COURSE-25 | Mastery, one of each | At the server's day 2, a lesson whose quizzes are never answered, wrong at day 0, clean at day 1.5 and clean at day 0 gives `mastery: {notStarted: 1, settling: 1, holding: 1, faded: 1}`, with `id`, `title`, `subtitle`, `quizzes` and `answeredCorrectly` as before (RFC 5 Table 4.5; flyingrobots/school#220) | implemented | `a lesson with one quiz in each state reports one of each, beside its fields as they were` |
+| COURSE-26 | Mastery, no quizzes | A lesson with no quizzes gives zero in every state | implemented | `a lesson with no quizzes reports zero in every state` |
+| COURSE-27 | Mastery at the server's clock | A request whose `Date` header and `now`, `at` and `clock` parameters name the server's day 1 or 2031 gets the same counts as COURSE-25 | implemented | `the counts are at the server's clock, whatever time the client says it is` |

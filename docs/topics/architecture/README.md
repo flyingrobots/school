@@ -84,7 +84,7 @@ JSON API.
 | GET | `/api/review?tz=` | The questions due for review now, across courses, each with its lesson, question and reason ([due review](../due-review/README.md)); the reason names its day in `tz` |
 | GET | `/api/activity?days=14&tz=` | Each course's study days in the last `days` (1 to 60), and how many questions come back on each day ahead, as days in `tz` |
 | GET | `/api/showcase` | What's ahead: every lesson with a quiz not yet answered correctly, with its hook ([a course's folder](../course-format/README.md#a-lessons-hook)) |
-| GET | `/api/courses/:c` | One course: its `name`, `title`, `trusted`, `summary`, `author`, `license` and `format` (null when not declared), lessons with correct-quiz counts, reference documents. Lessons that cannot be read are `lessons: null` with the reason in `lessonsError`, still a 200 with the reference documents |
+| GET | `/api/courses/:c` | One course: its `name`, `title`, `trusted`, `summary`, `author`, `license` and `format` (null when not declared), lessons with correct-quiz counts and `mastery`, how many of each lesson's quizzes are `notStarted`, `settling`, `holding` and `faded` at the server's clock ([the course page](../course-page/README.md#each-lessons-mastery)), reference documents. Lessons that cannot be read are `lessons: null` with the reason in `lessonsError`, still a 200 with the reference documents |
 | GET | `/api/courses/:c/lessons/:id` | One lesson; `?view=web` opens or resumes an encounter, `?view=slides` records nothing. `?aid=1` declares that the client records every exposure it shows, so the encounter is opened with aid tracking 1; absent, it is untracked and its aid unknown. Any other `aid` value is refused (400). `?tz=` is the zone a review reason names its day in |
 | POST | `/api/answer` | Records a quiz answer |
 | POST | `/api/explanation` | Saves an explanation, before any grading |
@@ -679,6 +679,7 @@ This check finds a whole folder mounted twice, not part of one. At a bind mount'
 | `SCHOOL_MOUNTS` | Server | `name=path` pairs served read-only, never sandboxed; one over an untrusted course's folder is refused | none |
 | `SCHOOL_WEB` | Server | The built web app; a folder over an untrusted course's is refused | `web/dist` |
 | `HOST`, `PORT` | Server | Listen address | `127.0.0.1:4747` |
+| `SCHOOL_TEST_CLOCK` | Server | For tests only: an instant with a zone (`2026-01-03T10:00:00Z`) the server reads as now for everything it records and measures, with a warning at startup. Refused (exit 2) unless `SCHOOL_DATABASE_URL` is `pglite:`, or when it is not an instant | none: the system clock |
 | `SCHOOL_ALLOWED_HOSTS` | Server | Host names answered besides `127.0.0.1`, `localhost`, `::1` and `HOST`, comma-separated; the tailnet name | none |
 | `SCHOOL_BRIDGE_URL`, `SCHOOL_BRIDGE_TOKEN` | Server | Override the saved bridge settings; `SCHOOL_BRIDGE_TOKEN_FILE`, which compose gives, wins over the token | none |
 | `SCHOOL_BACKUP_INTERVAL_SECONDS` | `backup` service | Seconds between dumps; the first is taken at start | `21600` |
