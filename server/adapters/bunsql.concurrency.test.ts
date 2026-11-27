@@ -133,6 +133,23 @@ async function history(admin: Pool, course: string) {
      ORDER BY seq`, [course])] as { seq: string | bigint; kind: "install" | "removal"; id: string }[];
 }
 
+// Authoring (RFC 9 §5.5, flyingrobots/school#258): request_authoring, decide_draft and an authored
+// install_course serialise on the same advisory lock per course name, so a draft is decided once.
+/** `course` installed, a request on it, and a ready draft of that request. Returns the draft's id. */
+async function readyDraft(r: LearningRecord, course: string): Promise<string> {
+  const base = install(course);
+  await r.installCourse(base, NOW);
+  const requestId = uuid();
+  expect(await r.requestAuthoring({ id: requestId, course, baseInstallId: base.id, text: "Add a lesson.", skillSha256: hex(64, "5"), schoolVersion: "0.1.0" },
+    NOW)).toEqual({ status: "stored" });
+  const draftId = uuid();
+  expect(await r.recordDraft({ id: draftId, requestId, round: 1, status: "ready", agent: "claude", commit: hex(40, "7"), contentSha256: hex(64, "8"),
+    checkMessage: null, inputTokens: 1, outputTokens: 1 }, NOW)).toEqual({ status: "stored" });
+  return draftId;
+}
+const doDiscard = (r: LearningRecord, draftId: string) => (): Promise<Told> =>
+  r.decideDraft({ id: uuid(), draftId, decision: "discarded", installId: null, patch: null }, NOW);
+
 describe.skipIf(URL_ === undefined)("Bun.SQL concurrency on a real Postgres (SCHOOL_TEST_POSTGRES_URL)", () => {
   test(`two first answers to one block at once: exactly one is first try, the other stored as not first (${REPS} times)`, async () => {
     const s = await setup(2);
@@ -344,6 +361,17 @@ describe.skipIf(URL_ === undefined)("Bun.SQL concurrency on a real Postgres (SCH
     }
   }, SLOW);
 
+  test(`two decisions on one draft at once: one is stored, the other is told the draft is already decided (${REPS} times)`, async () => {
+    const s = await setup(2);
+    for (let i = 0; i < REPS; i++) {
+      const draftId = await readyDraft(s.record, `bells-${i}`);
+      const { results, waiting } = await race(s, "school.authoring_drafts", "decide_draft", [doDiscard(s.record, draftId), doDiscard(s.record, draftId)]);
+      expect(waiting.size).toBe(2);
+      expect(values(results).map((x) => x.status).sort()).toEqual(["already-decided", "stored"]);
+      expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.authoring_decisions WHERE draft_id = $1", [draftId]))[0].n).toBe(1);
+    }
+  }, SLOW);
+
   // F-8 of the review of flyingrobots/school#45: open_encounter and record_grading serialise on an
   // advisory lock and then read what the lock holder committed. That needs a snapshot taken after
   // the lock, which READ COMMITTED gives each statement; under REPEATABLE READ the transaction's
@@ -383,6 +411,24 @@ describe.skipIf(URL_ === undefined)("Bun.SQL concurrency on a real Postgres (SCH
       await expect(rr.removeInstalledCourse("bells", NOW)).rejects.toThrow(/READ COMMITTED/);
       expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.course_removals"))[0].n).toBe(0);
       expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.course_installs"))[0].n).toBe(1);
+    }, SLOW);
+
+    test("request_authoring, record_draft and decide_draft refuse to run under it, and store nothing", async () => {
+      const s = await setup(2);
+      const rr = postgresRecord(repeatableRead(s.pool));
+      const base = install("bells");
+      await s.record.installCourse(base, NOW);
+      const request = { id: uuid(), course: "bells", baseInstallId: base.id, text: "Add a lesson.", skillSha256: hex(64, "5"), schoolVersion: "0.1.0" };
+      await expect(rr.requestAuthoring(request, NOW)).rejects.toThrow(/READ COMMITTED/);
+      expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.authoring_requests"))[0].n).toBe(0);
+      await s.record.requestAuthoring(request, NOW);
+      const draft = { id: uuid(), requestId: request.id, round: 1, status: "ready", agent: "claude", commit: hex(40, "7"), contentSha256: hex(64, "8"),
+        checkMessage: null, inputTokens: 1, outputTokens: 1 } as const;
+      await expect(rr.recordDraft(draft, NOW)).rejects.toThrow(/READ COMMITTED/);
+      expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.authoring_drafts"))[0].n).toBe(0);
+      await s.record.recordDraft(draft, NOW);
+      await expect(doDiscard(rr, draft.id)()).rejects.toThrow(/READ COMMITTED/);
+      expect((await s.admin.unsafe("SELECT count(*)::int AS n FROM school.authoring_decisions"))[0].n).toBe(0);
     }, SLOW);
 
     test("the adapter runs every request READ COMMITTED even when the database defaults to REPEATABLE READ", async () => {

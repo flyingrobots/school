@@ -1,8 +1,10 @@
 // The ports: what School's core needs from the world, defined by the core (RFC 3, §4).
 // Adapters implement them; the core never imports an adapter.
 import type {
-  Aid, AidTracking, Block, CourseInstall, CourseProgress, DecisionChoice, DueItem, DueReviewQuery, ReviewNote, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingInput,
-  GradingRecord, InstallResult, InstalledCourse, LastStudied, LatestFeedback, LessonHelp, LessonProgress, Mastery, MasteryQuery, MasteryRollup, MasteryRollupQuery, Outcome, Recorded, RemovalResult, SaveResult, SavedExplanation, StudyDay, Submission, SubmitResult, TrustResult, ViewEvent,
+  Aid, AidTracking, Block, CourseInstall, CourseProgress, DecisionChoice, DueItem, DueReviewQuery, ReviewNote, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission,
+  Exposure, ExposureResult, Grading, GradingInput, GradingRecord, InstallResult, InstalledCourse, LastStudied, LatestFeedback, LessonHelp, LessonProgress, Mastery, MasteryQuery, MasteryRollup, MasteryRollupQuery, Outcome,
+  Recorded, RemovalResult, SaveResult, SavedExplanation, StudyDay, Submission, SubmitResult, TrustResult, ViewEvent, AuthoringDecision, AuthoringDraft, AuthoringRequest, AuthoringResult, DecisionResult, DraftResult,
+  RecordedRequest,
 } from "./model.ts";
 
 /**
@@ -58,6 +60,20 @@ export interface LearningRecord {
   chooseCourseTrust(installId: string, trusted: boolean, now: string): Promise<TrustResult>;
   /** Each name's current install, by name. */
   installedCourses(): Promise<InstalledCourse[]>;
+  /**
+   * Record an authoring request (RFC 9 §5.5) before the bridge is asked; refused unless its base is
+   * the course's current install. Stored once per request id; see AuthoringResult.
+   */
+  requestAuthoring(r: AuthoringRequest, now: string): Promise<AuthoringResult>;
+  /** Record one round of a request once it ends: a built draft, ready or refused by the check, or a failure. See DraftResult. */
+  recordDraft(d: AuthoringDraft, now: string): Promise<DraftResult>;
+  /**
+   * Record the author's decision on a draft, once per draft. An accept is refused unless the draft is
+   * `ready` and its `authored` install is still the course's current install. See DecisionResult.
+   */
+  decideDraft(d: AuthoringDecision, now: string): Promise<DecisionResult>;
+  /** The course's authoring requests, each with its drafts and their decisions, in the record's order. */
+  courseAuthoring(course: string): Promise<RecordedRequest[]>;
   /**
    * What the record holds under `course`, whether or not anything serves it now: a course removed
    * earlier, or configured before, keeps its progress under its name (RFC 7 §5.2).

@@ -15,11 +15,13 @@ import { OWNER } from "./migrate.ts";
 
 /**
  * The record tables with a `course` column. Snapshots hold page content and name no course; a trust
- * choice names its install by id, so it follows the install's rows (RFC 7 §5.2, step 5).
+ * choice names its install by id, so it follows the install's rows (RFC 7 §5.2, step 5); an
+ * authoring draft names its request, and a decision its draft, so they follow the request's row
+ * (RFC 9 §5.5).
  */
-export const COURSE_TABLES = ["encounters", "views", "decision_notes", "course_installs", "course_removals"] as const;
+export const COURSE_TABLES = ["encounters", "views", "decision_notes", "course_installs", "course_removals", "authoring_requests"] as const;
 const RECORD_TABLES = ["snapshots", "encounters", "answers", "explanations", "gradings", "views", "exposures", "decision_notes", "time_zone_choices",
-  "course_installs", "course_removals", "course_trust_choices"] as const;
+  "course_installs", "course_removals", "course_trust_choices", "authoring_requests", "authoring_drafts", "authoring_decisions"] as const;
 
 export type Renamed = { from: string; to: string; rows: Record<(typeof COURSE_TABLES)[number], number> };
 
