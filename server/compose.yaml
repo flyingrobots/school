@@ -118,6 +118,11 @@ services:
       # Courses served in safe mode, the same name=path pairs (`guest=/library/guest`): their files
       # are sandboxed, so they cannot run script as School (flyingrobots/school#210). Optional.
       SCHOOL_UNTRUSTED_COURSES: ${SCHOOL_UNTRUSTED_COURSES:-}
+      # The course store (RFC 7 §5.1), in the named volume `course-store`: the folder installed
+      # courses will live in, and nothing else; nothing installs into it yet. Set SCHOOL_COURSE_STORE
+      # empty in .env for no store, which keeps installing off. It may not be, hold or sit inside a
+      # course, the state folder, a mount or the web app: the server refuses to start (exit 2).
+      SCHOOL_COURSE_STORE: ${SCHOOL_COURSE_STORE-/store}
       # The course at /course, named after that folder (`course`). Set SCHOOL_COMPOSE_COURSE empty in
       # .env to name that course in SCHOOL_COURSES instead (`aion=/course,bells=/library`), after
       # renaming it in the record (docs/topics/migrate-job, "Renaming a course"). Its own variable,
@@ -141,6 +146,7 @@ services:
       - ${SCHOOL_SOURCES_DIR:?set SCHOOL_SOURCES_DIR to the course's source material, or to an empty directory}:/sources:ro
       # Optional: the folder SCHOOL_COURSES reads from. Without it, the course folder again, which nothing reads there.
       - ${SCHOOL_LIBRARY_DIR:-${SCHOOL_COURSE_DIR}}:/library:ro
+      - course-store:/store   # see SCHOOL_COURSE_STORE above
 # Each from the launcher's environment (host/school.ts), which read it from the Keychain. Compose
 # copies each into the services that list it, at /run/secrets/<name>.
 secrets:
@@ -155,3 +161,6 @@ volumes:
   # The dumps. `docker compose down -v` deletes this volume too, with the record: copy a dump
   # elsewhere first (docs/workflows/backup-and-restore/README.md).
   backups:
+  # The course store (SCHOOL_COURSE_STORE): course content, never learner state, which stays in
+  # the `postgres` volume and SCHOOL_STATE_DIR.
+  course-store:

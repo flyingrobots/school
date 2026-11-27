@@ -252,6 +252,32 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     }
   }
 
+  // The course store (RFC 7 §5.1, flyingrobots/school#233): the one folder School may write, which
+  // holds installed courses and nothing else. Courses, learner state, mounts and the web app each
+  // keep their own folder, so the store may not be, hold or sit inside any of them, compared on
+  // real paths and then by identity, as the untrusted checks above are.
+  const store = env.SCHOOL_COURSE_STORE === undefined || env.SCHOOL_COURSE_STORE === "" ? null : abs(env.SCHOOL_COURSE_STORE, cwd);
+  if (store !== null) {
+    const apart: [string, string][] = [
+      ...Object.entries(courses).map(([name, root]): [string, string] => [Object.hasOwn(untrusted, name)
+        ? `untrusted course ${JSON.stringify(name)} (${root}) from SCHOOL_UNTRUSTED_COURSES`
+        : `trusted course ${JSON.stringify(name)} (${root}) from ${name === single ? "SCHOOL_COURSE" : "SCHOOL_COURSES"}`, root]),
+      [`SCHOOL_STATE (${state})`, state],
+      [`DB_PATH (${dbPath})`, dbPath],
+      ...(database.driver === "pglite" ? [[`the record in SCHOOL_DATABASE_URL (${database.dir})`, database.dir] as [string, string]] : []),
+      ...served.map(([what, folder]): [string, string] => [`${what} (${folder})`, folder]),
+    ];
+    const why = "the course store holds installed courses only, apart from every course, learner state, mount and the web app";
+    for (const [what, folder] of apart) {
+      if (within(store, folder) || within(folder, store)) throw new ConfigError(`SCHOOL_COURSE_STORE (${store}) overlaps ${what}; ${why}`);
+    }
+    for (const [what, folder] of apart) {
+      if (sameTree(store, folder, stat)) {
+        throw new ConfigError(`SCHOOL_COURSE_STORE (${store}) and ${what} are the same folder under two names, or one holds the other (same device and inode, as when Docker bind-mounts one folder twice); ${why}`);
+      }
+    }
+  }
+
   const port = Number(env.PORT ?? 4747);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigError(`PORT ${JSON.stringify(env.PORT)} is not a port`);
 
@@ -260,7 +286,7 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     courses,
     untrusted: Object.keys(untrusted).sort(),
     state,
-    store: null, // not implemented yet (flyingrobots/school#233)
+    store,
     dbPath,
     database,
     web,
