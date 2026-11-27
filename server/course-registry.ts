@@ -11,7 +11,9 @@
 // - An install's folder is written once and never changed, so its content digest (RFC 7 §7) is
 //   checked the first time the registry sees the install, and the answer kept for that install id.
 //   That its folder still exists is checked on every read. An install with no folder, or whose files
-//   are not the ones recorded, is listed with its reason and never served.
+//   are not the ones recorded, or that cannot be read, is listed with its reason and never served.
+//   A reason names the install by id and says what failed, never an absolute path; a failure of the
+//   file system is not kept, so the install is checked again once its folder is fixed.
 // - A name both configured and installed refuses the start (`RegistryError`, exit 2). One that
 //   appears later, written to the record while School runs, is logged and the configured course
 //   keeps the name.
@@ -98,21 +100,34 @@ function isFolder(p: string): boolean {
   }
 }
 
-type Verified = { ok: true; file: CourseFile } | { ok: false; reason: string };
+/** `cache` is whether the answer may be kept: a filesystem failure may pass, so it is asked again. */
+type Verified = { ok: true; file: CourseFile } | { ok: false; reason: string; cache: boolean };
+
+/** What failed on the filesystem, in words, with no path: the code of the error, or its kind. */
+const fsFailure = (e: unknown): string => {
+  const code = (e as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? `the file system answered ${code}` : "the file system failed";
+};
 
 /** Whether an install's folder holds exactly the files its row recorded, and its course.json if so. */
 function verify(row: InstalledCourse, folder: string): Verified {
+  const install = `install ${row.id} of ${JSON.stringify(row.course)}`;
   const again = "; installing it again from its recorded source will bring it back";
-  const d = contentDigest(folder);
-  if (!d.ok) return { ok: false, reason: `the files of ${JSON.stringify(row.course)} have changed since it was installed (${folder}): ${d.message}${again}` };
+  let d: Digest;
+  try {
+    d = contentDigest(folder);
+  } catch (e) {
+    return { ok: false, cache: false, reason: `the files of ${install} cannot be read (${fsFailure(e)}); they are checked again on the next request` };
+  }
+  if (!d.ok) return { ok: false, cache: true, reason: `the files of ${install} have changed since it was installed: ${d.message}${again}` };
   if (d.digest !== row.contentSha256) {
-    return { ok: false, reason: `the files of ${JSON.stringify(row.course)} have changed since it was installed (${folder}): their digest is ${d.digest}, and the record's is ${row.contentSha256}${again}` };
+    return { ok: false, cache: true, reason: `the files of ${install} have changed since it was installed: their digest is ${d.digest}, and the record's is ${row.contentSha256}${again}` };
   }
   try {
     return { ok: true, file: readCourseFile(folder) };
   } catch (e) {
-    if (e instanceof CourseFileError) return { ok: false, reason: `the course.json of ${JSON.stringify(row.course)} cannot be read (${folder}): ${e.message}` };
-    throw e;
+    if (e instanceof CourseFileError) return { ok: false, cache: true, reason: `the course.json of ${install} cannot be read: ${e.message.replaceAll(folder, "<install folder>")}` };
+    return { ok: false, cache: false, reason: `the course.json of ${install} cannot be read (${fsFailure(e)}); it is checked again on the next request` };
   }
 }
 
@@ -151,13 +166,13 @@ export function courseRegistry(opts: { config: Config; configured: ServedCourse[
       const folder = installFolder(config.store, row.id);
       if (!isFolder(folder)) {
         verified.delete(row.id); // a folder put back is checked again
-        listed.push(unavailable(`the files of ${JSON.stringify(row.course)} are missing from the course store (${folder}); installing it again from its recorded source will bring it back`));
+        listed.push(unavailable(`the files of install ${row.id} of ${JSON.stringify(row.course)} are missing from the course store; installing it again from its recorded source will bring it back`));
         continue;
       }
       let v = verified.get(row.id);
       if (v === undefined) {
         v = verify(row, folder);
-        verified.set(row.id, v);
+        if (v.ok || v.cache) verified.set(row.id, v);
       }
       if (!v.ok) {
         listed.push(unavailable(v.reason));
