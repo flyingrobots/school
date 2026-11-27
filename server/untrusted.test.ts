@@ -5,7 +5,10 @@
 // Oracle: the issue's section 2b. `Content-Security-Policy: sandbox` with no allow-* token gives
 // the document an opaque origin and no script (CSP Level 3, "sandbox"; HTML, "sandboxing flag
 // set"); `X-Content-Type-Options: nosniff` stops a browser reading the bytes as another type
-// (Fetch, "should response to request be blocked due to nosniff").
+// (Fetch, "should response to request be blocked due to nosniff"). Beside `sandbox`, fetch
+// directives (flyingrobots/school#271) let a document load only School's own files and data:
+// images, so it cannot tell another site when the learner opens it (CSP Level 3, "default-src",
+// "img-src", "style-src", "font-src").
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -72,7 +75,25 @@ async function guard(path: string): Promise<{ status: number; csp: string | null
   return { status: res.status, csp: res.headers.get("content-security-policy"), nosniff: res.headers.get("x-content-type-options") };
 }
 
-const SANDBOXED = { status: 200, csp: "sandbox", nosniff: "nosniff" };
+/** The whole policy an untrusted course's responses carry: no script, and nothing from another site. */
+const POLICY = "sandbox; default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'";
+const SANDBOXED = { status: 200, csp: POLICY, nosniff: "nosniff" };
+
+/**
+ * The sources a policy lets an image load from: `img-src`, or `default-src` when there is none
+ * (CSP Level 3, "get the effective directive" and its fallback list).
+ */
+function imageSources(policy: string): string[] {
+  const directives = new Map(policy.split(";").map((d) => d.trim().split(/\s+/)).map(([name, ...sources]) => [(name ?? "").toLowerCase(), sources]));
+  return directives.get("img-src") ?? directives.get("default-src") ?? ["*"];
+}
+
+/**
+ * Whether a source expression could match an http(s) URL on another site. Only `'self'` (School's
+ * own origin), `'none'` and the `data:` scheme cannot; a host, a wildcard, or an `http:`/`https:`
+ * scheme source can.
+ */
+const reachesOtherSites = (source: string) => !["'self'", "'none'", "data:"].includes(source.toLowerCase());
 const UNCHANGED = { status: 200, csp: null, nosniff: null };
 
 // Every route that serves an untrusted course's bytes (the issue's known failure mode: a header
@@ -98,14 +119,30 @@ describe("an untrusted course", () => {
   test("its reference page carries exactly the sandbox policy, with no allow-scripts or allow-same-origin", async () => {
     const res = await fetch(base + "/courses/guest/reference/page.html");
     expect(await res.text()).toBe(HOSTILE_HTML); // the document itself is served as written
-    expect(res.headers.get("content-security-policy")).toBe("sandbox");
+    expect(res.headers.get("content-security-policy")).toBe(POLICY);
     expect(res.headers.get("content-type")).toStartWith("text/html");
+  });
+
+  test.each(COURSE_ROUTES)("%s lets no image load from another site, only School's own and data:", async (route) => {
+    const res = await fetch(base + route.replace("{c}", "guest").replace("{l}", "g1"));
+    await res.arrayBuffer();
+    const sources = imageSources(res.headers.get("content-security-policy") ?? "");
+    // A cross-site image such as https://tracker.example/pixel.png matches none of them.
+    expect({ sources, crossSite: sources.filter(reachesOtherSites) }).toEqual({ sources: ["'self'", "data:"], crossSite: [] });
+  });
+
+  test("every fetch a document can make falls back to 'none' unless named", async () => {
+    const res = await fetch(base + "/courses/guest/reference/page.html");
+    await res.arrayBuffer();
+    const directives = (res.headers.get("content-security-policy") ?? "").split(";").map((d) => d.trim());
+    expect(directives).toContain("default-src 'none'");
+    expect(directives.filter((d) => /^(script|connect|frame|child|object|media|worker|manifest)-src\b/.test(d))).toEqual([]);
   });
 
   test("an SVG with script is served as SVG under the same sandbox, never as HTML", async () => {
     const res = await fetch(base + "/courses/guest/reference/figure.svg");
     expect([res.headers.get("content-type")?.split(";")[0], res.headers.get("content-security-policy"), res.headers.get("x-content-type-options")])
-      .toEqual(["image/svg+xml", "sandbox", "nosniff"]);
+      .toEqual(["image/svg+xml", POLICY, "nosniff"]);
   });
 
   test("a symlink out of its reference folder is still refused", async () => {
