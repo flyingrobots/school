@@ -793,8 +793,8 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
   // number of milliseconds.
 
   /** A case of the mastery measure. */
-  const mm = (title: string, fn: (r: LearningRecord) => Promise<void>) =>
-    test(`${name}: mastery: ${title}`, async () => fn(await make()));
+  const mm = (title: string, fn: (r: LearningRecord) => Promise<void>, timeoutMs?: number) =>
+    test(`${name}: mastery: ${title}`, async () => fn(await make()), timeoutMs);
   const HOUR = 60 * 60 * 1000;
   const DAY = 24 * HOUR;
   const measure = (r: LearningRecord, blocks: string[], now: string) => r.mastery({ course: "c", blocks, now, delayMs: DELAY });
@@ -946,20 +946,30 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     expect((await held(r, at(3650 * DAY))).strength).toBeCloseTo(0, 10);
   });
 
-  // Generated: a year of random first tries for one quiz, each measured at a random time after it,
-  // against a model that moves step by step as RFC 5 Table 4.2 says. Oracle: Table 4.2; the record
-  // computes Table 4.1's closed form, which RFC 5 states is the same measure.
-  mm("under a year of random first tries, strength stays in [0, 1], stability never falls on a spaced clean answer, and both follow Table 4.2", async (r) => {
+  // Generated: a fixed number of random first tries for one quiz, up to three days apart, each
+  // measured at a random time after it, against a model that moves step by step as RFC 5 Table 4.2
+  // says. Oracle: Table 4.2; the record computes Table 4.1's closed form, which RFC 5 states is the
+  // same measure.
+  //
+  // The work is bounded by the count, not by a span of time, and the case's budget is derived from
+  // it, so its outcome does not depend on the machine's speed (flyingrobots/school#354). A year of
+  // first tries was about 250 of them, each five round trips, which outran Bun's default 5 s on a
+  // local Postgres. 64 reaches every kind of first try for every seed from 0 to 1999 (at most 50
+  // were needed); the witnesses below say so for the seed in use.
+  const FIRST_TRIES = 64;
+  /** A first try's budget: its five round trips at 100 ms each, many times their time on a loaded machine. */
+  const PER_FIRST_TRY_MS = 500;
+  mm(`under ${FIRST_TRIES} random first tries, strength stays in [0, 1], stability never falls on a spaced clean answer, and both follow Table 4.2`, async (r) => {
     const seed = FUZZ_SEED;
     const random = seeded(seed);
-    const replay = `replay: SCHOOL_TEST_SEED=${seed} bun test server/adapters/postgres.test.ts -t "mastery: under a year"`;
+    const replay = `replay: SCHOOL_TEST_SEED=${seed} bun test server/adapters/postgres.test.ts -t "mastery: under ${FIRST_TRIES} random first tries"`;
     const kinds = ["clean", "clean", "clean", "aided", "unknown", "wrong"] as const;
     const seen = { spaced: 0, soon: 0, aided: 0, unknown: 0, wrong: 0 };
     let model = { stabilityMs: DAY, refreshedAt: 0, zero: false };
     let afterWrong = false; // the previous first try was wrong: the next right one starts again
     let last: number | null = null;
     let previous: number | null = null;
-    for (let t = 0, step = 0; t < 365 * DAY; t += Math.floor(random() * 3 * DAY), step++) {
+    for (let t = 0, step = 0; step < FIRST_TRIES; t += Math.floor(random() * 3 * DAY), step++) {
       const kind = kinds[Math.floor(random() * kinds.length)]!;
       const spaced = last === null || t - last >= DELAY;
       // Table 4.2, one row per kind of first try; the first answer starts at one day.
@@ -983,7 +993,7 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     }
     // Witnesses: the fixed seed reaches every kind of first try.
     for (const [kind, n] of Object.entries(seen)) expect(`${kind}: ${n > 0}`, replay).toBe(`${kind}: true`);
-  });
+  }, 5_000 + FIRST_TRIES * PER_FIRST_TRY_MS); // Bun's default for opening the record, then each first try's budget
 
   // ---- Mastery rollup (RFC 5 §4.5; flyingrobots/school#218) -----------------------------------
   // Per group of quizzes, the four counts of Table 4.5 and the mean strength. Oracle: RFC 5 Table

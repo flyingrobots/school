@@ -575,8 +575,9 @@ describe("loading", () => {
     const atGate = new Promise<void>((r) => (reached = r))
     let release!: () => void
     const held = new Promise<void>((r) => (release = r))
+    // The page asks for ?aid=1&tz=…: the route takes any query after aid=1.
     await p.route(
-      "**/api/courses/loading/lessons/orbits?aid=1",
+      /\/api\/courses\/loading\/lessons\/orbits\?aid=1(&|$)/,
       async (route) => {
         reached()
         await held
