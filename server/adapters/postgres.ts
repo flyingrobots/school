@@ -12,7 +12,7 @@
 // end as the model's ISO form, 2026-11-21T10:00:00.000Z.
 import { z } from "zod";
 import {
-  CourseInstall, Aid, Block, DecisionNote, InstallResult, InstalledCourse, RemovalResult, TrustResult, DecisionNoteResult, DueItem, Encounter, EvidenceKind, EvidenceRow, ExplanationState, ExposureResult, Grading,
+  CourseInstall, CourseProgress, Aid, Block, DecisionNote, InstallResult, InstalledCourse, RemovalResult, TrustResult, DecisionNoteResult, DueItem, Encounter, EvidenceKind, EvidenceRow, ExplanationState, ExposureResult, Grading,
   Findings, LastStudied, LatestFeedback, LessonProgress, Mastery, Recorded, SaveResult, Seq, StudyDay, SubmitResult, type ExplainBlock,
 } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
@@ -153,6 +153,12 @@ export function postgresRecord(sql: Sql): LearningRecord {
         return InstalledCourse.parse({ id: c.id, course: c.course, source: c.source, url: c.url, bundleSha256: c.bundle_sha256, commit: c.commit,
           contentSha256: c.content_sha256, title: c.title, format: c.format, at: c.at, trusted: c.trusted });
       }),
+
+    courseProgress: async (course) => {
+      void CourseProgress;
+      void course;
+      throw new Error("not implemented");
+    },
 
     saveExplanation: async (s, now) =>
       SaveResult.parse({ status: await value("save_explanation", s.submissionId, s.encounterId, s.blockId, s.text, s.ms, now) }),
