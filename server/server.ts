@@ -17,6 +17,7 @@ import { CourseFileError, readCourseFile, type CourseFile } from "./course-file.
 import { allowedHosts, hostAllowed } from "./hosts.ts";
 import { withSecretFiles } from "./secrets.ts";
 import { agentOrder, agentTest } from "./agents.ts";
+import { authoringStatus } from "./skill.ts";
 import { feedbackSpeech, lessonSpeech, SEGMENT, SpeakRequest, toSpeech, UTTERANCE } from "./speak.ts";
 
 let config;
@@ -114,6 +115,12 @@ const grader: Grader = {
     : unpaired(b) ? `school: not grading: ${UNPAIRED}`
     : `school: grading through the bridge at ${b.url} (from ${b.urlFrom})`);
 }
+
+// Authoring (RFC 9 §5.3, flyingrobots/school#257): the school skill an authoring agent would be
+// given, hashed once here. Without it authoring is off and says why; everything else still serves.
+const authoring = authoringStatus(config.skill, config.skillDocs);
+console.log(authoring.authoring === "on" ? `school: authoring on: the school skill's manifest digest is ${authoring.skill.digest} (${authoring.skill.files} files)`
+  : `school: authoring off: ${authoring.reason}`);
 
 // The hexagon (RFC 3, §4): this file is the composition root and the HTTP adapter. It parses
 // every request with the core's Zod schemas and reaches the record only through the use cases.
@@ -636,6 +643,7 @@ const http = Bun.serve({
       const b = bridgeNow();
       return json({ url: b.url, urlFrom: b.urlFrom, tokenSet: b.token !== null, tokenFrom: b.tokenFrom }, 200, { "cache-control": "no-store" });
     }
+    if (pathname === "/api/settings/authoring") return json(authoring);
     if (pathname === "/api/settings/agents") {
       const r = await toBridge(currentBridge(), "GET", "/config");
       return json(r.body, r.status);

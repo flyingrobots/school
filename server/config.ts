@@ -294,6 +294,12 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     }
   }
 
+  // The school skill an authoring agent is given, and the references it links (RFC 9 §5.3,
+  // flyingrobots/school#257): this checkout's by default; compose mounts them under /framework.
+  // Whether they are there is reported at start (server/skill.ts), never a refusal to start.
+  const skill = env.SCHOOL_SKILL === "" ? null : abs(env.SCHOOL_SKILL ?? join(framework, ".agents", "skills", "school"), cwd);
+  const skillDocs = abs(env.SCHOOL_SKILL_DOCS || join(framework, "docs", "topics"), cwd);
+
   const port = Number(env.PORT ?? 4747);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigError(`PORT ${JSON.stringify(env.PORT)} is not a port`);
 
@@ -303,8 +309,8 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     untrusted: Object.keys(untrusted).sort(),
     state,
     store,
-    skill: null,
-    skillDocs: "",
+    skill,
+    skillDocs,
     dbPath,
     database,
     web,
