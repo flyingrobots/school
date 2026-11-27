@@ -6,9 +6,9 @@
 // the document an opaque origin and no script (CSP Level 3, "sandbox"; HTML, "sandboxing flag
 // set"); `X-Content-Type-Options: nosniff` stops a browser reading the bytes as another type
 // (Fetch, "should response to request be blocked due to nosniff"). Beside `sandbox`, fetch
-// directives (flyingrobots/school#271) let a document load only School's own files and data:
-// images, so it cannot tell another site when the learner opens it (CSP Level 3, "default-src",
-// "img-src", "style-src", "font-src").
+// directives (flyingrobots/school#271) let a document load only School's own images and
+// stylesheets, inline styles and data: images, so it cannot tell another site when the learner
+// opens it (CSP Level 3, "default-src", "img-src", "style-src").
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -76,7 +76,7 @@ async function guard(path: string): Promise<{ status: number; csp: string | null
 }
 
 /** The whole policy an untrusted course's responses carry: no script, and nothing from another site. */
-const POLICY = "sandbox; default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'";
+const POLICY = "sandbox; default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'";
 const SANDBOXED = { status: 200, csp: POLICY, nosniff: "nosniff" };
 
 /**
@@ -136,7 +136,7 @@ describe("an untrusted course", () => {
     await res.arrayBuffer();
     const directives = (res.headers.get("content-security-policy") ?? "").split(";").map((d) => d.trim());
     expect(directives).toContain("default-src 'none'");
-    expect(directives.filter((d) => /^(script|connect|frame|child|object|media|worker|manifest)-src\b/.test(d))).toEqual([]);
+    expect(directives.filter((d) => /^(script|connect|font|frame|child|object|media|worker|manifest)-src\b/.test(d))).toEqual([]);
   });
 
   test("an SVG with script is served as SVG under the same sandbox, never as HTML", async () => {
