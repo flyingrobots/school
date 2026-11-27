@@ -34,9 +34,7 @@ export function spdxProblem(expression: string): string | null {
 
   function license(): string | null {
     const t = peek();
-    if (t === undefined || OPERATORS.has(t) || t === ")") return `expected a license, found ${found()}`;
-    const lower = lowercaseOperator(t);
-    if (lower !== null) return lower;
+    if (t === undefined || OPERATORS.has(t.toUpperCase()) || t === ")") return `expected a license, found ${found()}`;
     at++;
     if (REF.test(t)) return null;
     const id = t.endsWith("+") ? t.slice(0, -1) : t;
@@ -50,7 +48,7 @@ export function spdxProblem(expression: string): string | null {
       at++;
       const inner = or();
       if (inner !== null) return inner;
-      if (peek() !== ")") return `expected ")", found ${found()}`;
+      if (peek() !== ")") return (peek() === undefined ? null : lowercaseOperator(peek()!)) ?? `expected ")", found ${found()}`;
       at++;
       return peek() === "WITH" ? "WITH takes a license id on its left, not a parenthesised group" : null;
     }
@@ -58,7 +56,7 @@ export function spdxProblem(expression: string): string | null {
     if (problem !== null || peek() !== "WITH") return problem;
     at++;
     const t = peek();
-    if (t === undefined || OPERATORS.has(t) || t === "(" || t === ")") return `expected an exception after WITH, found ${found()}`;
+    if (t === undefined || OPERATORS.has(t.toUpperCase()) || t === "(" || t === ")") return `expected an exception after WITH, found ${found()}`;
     at++;
     if (!ID.test(t)) return `${JSON.stringify(t)} is not an exception id`;
     if (!exceptions.has(t.toLowerCase())) return `unknown exception ${JSON.stringify(t)}; it is not on the SPDX exceptions list`;
