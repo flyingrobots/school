@@ -46,7 +46,7 @@ bun migrate.ts --help | --schema [--human]
 | --- | --- |
 | `--help`, `-h` | Prints a `help` line, then a `schema` line for every message type; exit 0. Reads no setting, touches no database |
 | `--schema` | Prints a `schema` line for every message type; exit 0. Reads no setting, touches no database |
-| `--rename-course <from>=<to>` | After the migrations, renames course `<from>` to `<to>` in the record and prints a `renamed` line and a `renamed_installs` line (below) |
+| `--rename-course <from>=<to>` | After the migrations, renames course `<from>` to `<to>` in the record and prints a `renamed` line, a `renamed_installs` line and a `renamed_authoring` line (below) |
 | `--human`, `--humanize` | Prose instead of JSON Lines. With `--help`, the prose names the message types rather than printing their schemas; `--schema --human` prints each schema indented |
 
 Any other argument, or `--rename-course` without one `<from>=<to>` pair or given twice, is an
@@ -71,6 +71,7 @@ prints them.
 | `school.migrate.applied` | `applied` | stdout | `version`, `name` | Each migration, once committed |
 | `school.migrate.renamed` | `renamed` | stdout | `from`, `to`, `rows` (`encounters`, `views`, `decision_notes`) | `--rename-course`, once the rename commits |
 | `school.migrate.renamed.installs` | `renamed_installs` | stdout | `course_installs`, `course_removals` | `--rename-course`, right after `renamed` |
+| `school.migrate.renamed.authoring` | `renamed_authoring` | stdout | `authoring_requests` | `--rename-course`, right after `renamed_installs` |
 | `school.migrate.done` | `done` | stdout | `ok: true`, `where`, `applied` (versions, in order), `role` | Last line of a good run |
 | `school.migrate.captured` | `captured` | either | `stream`, `text` | A library printed something |
 | `school.migrate.error.usage` | `error` | stderr | `error: "usage"`, `code: 2`, `message` | Unknown argument |
@@ -132,7 +133,9 @@ To check a run in a script, read the last line and its `event`, for example with
 
 A course's name files the learner's progress in the record: every encounter, view and decision
 note names its course, and so does every install and removal of an installed course (RFC 7 §7,
-flyingrobots/school#232). A trust choice names its install by id, so it follows the install. A deployment names its main course after the folder it is mounted at
+flyingrobots/school#232), and every authoring request (RFC 9 §5.5, flyingrobots/school#258). A trust
+choice names its install by id, so it follows the install; an authoring draft names its request, and
+a decision its draft, so they follow the request. A deployment names its main course after the folder it is mounted at
 (`/course`, so `course`) unless `SCHOOL_COURSES` names it. Renaming one changes where that progress
 is filed, so School must be stopped while it happens: a running server goes on writing under the
 name it started with. From `server/`:
@@ -141,7 +144,8 @@ name it started with. From `server/`:
 2. Take a backup and copy it out (docs/workflows/backup-and-restore, steps 2 and 3).
 3. Rename: `../school compose run --rm migrate bun migrate.ts --rename-course course=aion`. It
    prints `start`, `renamed` with the rows moved per table, `renamed_installs` with the install and
-   removal rows moved (a message of its own, so `renamed` is the 1.0.0 line it always was), then `done`.
+   removal rows moved (a message of its own, so `renamed` is the 1.0.0 line it always was),
+   `renamed_authoring` with the authoring requests moved (likewise), then `done`.
 4. Name the course in `server/.env`: `SCHOOL_COMPOSE_COURSE=` (empty) and
    `SCHOOL_COURSES=aion=/course,...` with any other courses.
 5. Start School again: `../school up`.

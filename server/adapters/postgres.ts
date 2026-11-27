@@ -12,6 +12,7 @@
 // end as the model's ISO form, 2026-11-21T10:00:00.000Z.
 import { z } from "zod";
 import {
+  AuthoringDecision, AuthoringDraft, AuthoringRequest, AuthoringResult, DecisionResult, DraftResult, RecordedRequest, CourseProgress,
   AskQuestion, AskResult, Conversation, ReplyRecord, ReplyResult, CourseInstall, Aid, Block, DecisionNote, InstallResult, InstalledCourse, RemovalResult, TrustResult, DecisionNoteResult, DueItem, Encounter, EvidenceKind, EvidenceRow, ExplanationState, ExposureResult, Grading,
   Findings, LastStudied, LatestFeedback, LessonProgress, Mastery, MasteryRollup, Recorded, SaveResult, Seq, StudyDay, SubmitResult, type ExplainBlock,
 } from "../core/model.ts";
@@ -58,7 +59,9 @@ const Studied = z.object({ course: z.string(), lesson: z.string(), at: time });
 const InstalledRow = z.object({
   id: z.string(), course: z.string(), source: z.string(), url: z.string().nullable(), bundle_sha256: z.string().nullable(), commit: z.string(),
   content_sha256: z.string(), title: z.string(), format: z.number().nullable(), at: time, trusted: z.boolean(),
+  parent_install_id: z.string().nullable(), draft_id: z.string().nullable(),
 });
+const RequestRow = z.object({ request: RecordedRequest });
 const FeedbackRow = z.object({
   submission_id: z.string(), course: z.string(), lesson: z.string(), block_id: z.string(),
   model: z.string().nullable(), findings: Findings, at: time,
@@ -140,8 +143,9 @@ export function postgresRecord(sql: Sql): LearningRecord {
     // model trims is stored trimmed, and one it refuses never reaches the table.
     installCourse: async (input, now) => {
       const i = CourseInstall.parse(input);
-      return InstallResult.parse({ status: await value("install_course",
-        i.id, i.course, i.source, i.url, i.bundleSha256, i.commit, i.contentSha256, i.title, i.format, now) });
+      const authored = i.source === "authored" ? i : null;
+      return InstallResult.parse({ status: await value("install_course", i.id, i.course, i.source, i.url, i.bundleSha256, i.commit,
+        i.contentSha256, i.title, i.format, authored?.parentInstallId ?? null, authored?.draftId ?? null, now) });
     },
 
     removeInstalledCourse: async (course, now) => RemovalResult.parse({ status: await value("remove_installed_course", course, now) }),
@@ -153,8 +157,32 @@ export function postgresRecord(sql: Sql): LearningRecord {
       (await rows("installed_courses")).map((row) => {
         const c = InstalledRow.parse(row);
         return InstalledCourse.parse({ id: c.id, course: c.course, source: c.source, url: c.url, bundleSha256: c.bundle_sha256, commit: c.commit,
-          contentSha256: c.content_sha256, title: c.title, format: c.format, at: c.at, trusted: c.trusted });
+          contentSha256: c.content_sha256, title: c.title, format: c.format, at: c.at, trusted: c.trusted,
+          ...(c.source === "authored" ? { parentInstallId: c.parent_install_id, draftId: c.draft_id } : {}) });
       }),
+
+    // Each input is parsed first, as installCourse's is, so the record never holds a row the model
+    // would refuse to read back; the tables check the same rules again (server/db/authoring.test.ts).
+    requestAuthoring: async (input, now) => {
+      const q = AuthoringRequest.parse(input);
+      return AuthoringResult.parse({ status: await value("request_authoring",
+        q.id, q.course, q.baseInstallId, q.text, q.skillSha256, q.schoolVersion, now) });
+    },
+
+    recordDraft: async (input, now) => {
+      const d = AuthoringDraft.parse(input);
+      return DraftResult.parse({ status: await value("record_draft", d.id, d.requestId, d.round, d.status, d.agent, d.commit,
+        d.contentSha256, d.checkMessage, d.inputTokens, d.outputTokens, now) });
+    },
+
+    decideDraft: async (input, now) => {
+      const x = AuthoringDecision.parse(input);
+      return DecisionResult.parse({ status: await value("decide_draft", x.id, x.draftId, x.decision, x.installId, x.patch, now) });
+    },
+
+    courseAuthoring: async (course) => (await rows("course_authoring", course)).map((row) => RequestRow.parse(row).request),
+
+    courseProgress: async (course) => CourseProgress.parse(await one("course_progress", course)),
 
     saveExplanation: async (s, now) =>
       SaveResult.parse({ status: await value("save_explanation", s.submissionId, s.encounterId, s.blockId, s.text, s.ms, now) }),

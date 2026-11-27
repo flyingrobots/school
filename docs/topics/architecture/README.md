@@ -25,7 +25,7 @@ proposed; for that, read [RFC 2](../../rfc/0002-lessons-written-for-each-learner
 | [The learning record](#the-learning-record) | Tables, rules, encounters, what the rules do and do not guarantee |
 | [The bridge](#the-bridge) | How explanations are graded |
 | [The web app](#the-web-app) | What exists of the interface |
-| [Trust and known defects](#trust-and-known-defects) | What School assumes, and what is broken |
+| [Trust and known defects](#trust-and-known-defects) | What School assumes, and what is broken; fetching a course repository and previewing an install |
 | [Configuration](#configuration) | Every environment variable |
 | [Secrets](../secrets/README.md) | Where the three secrets live (the macOS Keychain) and how each reaches its process; its own page |
 
@@ -83,9 +83,9 @@ JSON API.
 | GET | `/api/resume` | What to study now, from where the learner left off: `continue`, `next`, `start`, `finished` or `nothing` ([the home page](../home-page/README.md)); each but `nothing` names its course and gives its `trusted` |
 | GET | `/api/feedback` | The newest succeeded grading: its course, the course's `trusted`, lesson, the prompt it answered and the findings; `null` before any. A course no longer served gives `trusted: false` |
 | GET | `/api/review?tz=` | The questions due for review now, across courses, each with its course's `trusted`, its lesson, question and reason ([due review](../due-review/README.md)); the reason names its day in `tz` |
-| GET | `/api/activity?days=14&tz=` | Each course's `trusted`, its study days in the last `days` (1 to 60), and how many questions come back on each day ahead, as days in `tz` |
+| GET | `/api/activity?days=14&tz=` | Each course's `trusted`, its study days in the last `days` (1 to 60), and how many questions come back on each day ahead, as days in `tz`; and its `quizzes` and `mastery`, how many of them are `notStarted`, `settling`, `holding` and `faded` at the server's clock ([the home page](../home-page/README.md#how-each-course-is-holding)) |
 | GET | `/api/showcase` | What's ahead: every lesson with a quiz not yet answered correctly, with its hook ([a course's folder](../course-format/README.md#a-lessons-hook)) and its course's `trusted` |
-| GET | `/api/courses/:c` | One course: its `name`, `title`, `trusted`, `summary`, `author`, `license` and `format` (null when not declared), lessons with correct-quiz counts, reference documents. Lessons that cannot be read are `lessons: null` with the reason in `lessonsError`, still a 200 with the reference documents. An installed course that is listed but not served answers the same shape with `reference: []`, and its lessons and reference files answer 404 |
+| GET | `/api/courses/:c` | One course: its `name`, `title`, `trusted`, `summary`, `author`, `license` and `format` (null when not declared), lessons with correct-quiz counts and `mastery`, how many of each lesson's quizzes are `notStarted`, `settling`, `holding` and `faded` at the server's clock ([the course page](../course-page/README.md#each-lessons-mastery)), reference documents. Lessons that cannot be read are `lessons: null` with the reason in `lessonsError`, still a 200 with the reference documents. An installed course that is listed but not served answers the same shape with `reference: []`, and its lessons and reference files answer 404 |
 | GET | `/api/courses/:c/lessons/:id` | One lesson; `?view=web` (the default) opens or resumes an encounter, `?view=slides` records nothing. The web view answers only School's own `fetch()`: a request whose `Sec-Fetch-Site` is not `same-origin` or whose `Sec-Fetch-Dest` is not `empty`, such as an image or a link from another page, is refused (403) and opens nothing; one with neither header, as over plain HTTP on a name other than localhost, is answered ([trust](#trust-and-known-defects)). `?aid=1` declares that the client records every exposure it shows, so the encounter is opened with aid tracking 1; absent, it is untracked and its aid unknown. Any other `aid` value is refused (400). `?tz=` is the zone a review reason names its day in |
 | POST | `/api/answer` | Records a quiz answer |
 | POST | `/api/explanation` | Saves an explanation, before any grading |
@@ -98,6 +98,7 @@ JSON API.
 | GET, POST | `/api/settings/bridge` | The bridge address and token; the token is never returned except once when generated. A new address clears a saved token, and is refused (409) while the token comes from the environment |
 | GET, POST | `/api/settings/agents` | The bridge's agents as its file declares them; a POST only reorders them and switches them on or off |
 | POST | `/api/settings/agents/test` | Runs one declared agent for real |
+| POST | `/api/installs/preview` | `{url, commit}`: fetches, extracts and checks one commit of a course repository in the course store's `staging/`, and answers what was found, the suggested name and any progress already under it; `courses/` and the record are unchanged ([previewing an install](#previewing-an-install)). A refusal is a 422 with its stage and reason, a malformed body 400, and no course store 503. Refused when `Sec-Fetch-Site` is present and is not `same-origin`: 403 `{ status: "forbidden", error }`. A failure that is not a refusal (the store or the record) is 500 `{ status: "failed", error }`, with the reason in School's log and the preview's folder deleted |
 | POST | `/api/speak` | `{ course, lesson }` or `{ feedback: true }`, never text: the server builds the text and submits it to AI-TTS through the bridge; `{ id, state, segments }`. No bridge, or no daemon, is a 503 with the reason ([reading aloud](../reading-aloud/README.md)) |
 | GET | `/api/speak/:id` | That reading's progress, each segment ready or not |
 | GET | `/api/speak/:id/segments/:n` | One segment's WAV, with byte ranges |
@@ -235,7 +236,7 @@ The record is Postgres, built by the numbered migrations in `server/db/migration
 `0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_read_committed.sql`,
 `0006_due_review.sql`, `0007_since_last_here.sql`, `0008_study_days.sql`, `0009_time_zone_choices.sql`,
 `0010_course_installs.sql`, `0011_mastery.sql`, `0012_ai_help.sql`, `0013_mastery_rollup.sql`,
-`0014_faded_review.sql`, `0017_conversations.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
+`0014_faded_review.sql`, `0015_course_progress.sql`, `0016_authoring.sql`, `0017_conversations.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -273,7 +274,7 @@ connection, in the record's database. The server refuses to start if any of thes
 | 4 | Owns no schema (schema `school` included), relation, function, type or database | the owner's login, objects it created |
 | 5 | Outside `pg_catalog` and `information_schema`: no privilege on any table, view, materialized view or foreign table (`SELECT` to `MAINTAIN`), no `USAGE`, `SELECT` or `UPDATE` on any sequence, no column privilege | table, column, sequence and `MAINTAIN` grants |
 | 6 | In `pg_catalog` and `information_schema`: no write privilege on any relation (except `UPDATE` on `pg_settings`, which Postgres grants `PUBLIC` and which is `SET`), and no `SELECT` on the relations Postgres withholds from an ordinary role (`RESTRICTED_RELATIONS`: `pg_authid`, `pg_statistic`, `pg_shadow` and 20 more) | catalog grants to it or to `PUBLIC` |
-| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 29 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
+| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 37 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
 | 8 | No privilege granted to it by name on any relation, column, function (but the granted ones), schema (but `USAGE` on `school`), database, type, language, large object, foreign-data wrapper, foreign server or tablespace; no parameter privilege (`pg_parameter_acl`) granted to it or to `PUBLIC` | direct grants, `GRANT SET ON PARAMETER` |
 | 9 | No default privileges (`pg_default_acl`) granting to it or to `PUBLIC`, and none set by it | future grants |
 | 10 | No `CREATE` on any schema; no `CREATE` or `TEMPORARY` on the record's database | creating objects there |
@@ -393,6 +394,29 @@ Migration 0014 (RFC 5 §4.6, flyingrobots/school#219) replaces `due_review`, wit
 its three rules unchanged, to add `due-review/faded`: a settled quiz whose strength from
 `school.mastery` is below one half, ranked after the weak rules and filling only what they leave of
 the limit ([due review](../due-review/README.md#faded-quizzes)).
+Migration 0015 (RFC 7 §5.2, flyingrobots/school#237) adds `school.course_progress(course)`, the
+port's `courseProgress`: how many encounters were opened under a course name, how many answers and
+explanations were given in them, and how many views were recorded under it, whether or not any
+course is served under that name now. The [install preview](#previewing-an-install) reads it to say
+whether a name already holds progress.
+Migration 0016 (RFC 9 §5.5, flyingrobots/school#258) records authoring in three more append-only
+tables, before any of RFC 9's routes use them: `authoring_requests` (what the learner asked of a
+course, on which install, with the skill's digest and School's version; 1 to 20,000 characters),
+`authoring_drafts` (each round of a request, at most two: `ready` or `refused` by the check with the
+agent, the draft commit and its digest, or `failed` with no commit; a second round only after a
+refused first that has no decision) and `authoring_decisions` (one per draft, `accepted` with its install and patch, or
+`discarded`). `school.request_authoring(...)` answers `stored`, `duplicate`, `conflict`, or `refused`
+when the base is not the course's current install; `school.record_draft(...)` answers `stored`,
+`duplicate`, `conflict`, or `rejected` for no such request or a round out of turn (round 2 only follows a refused round 1 with no decision);
+`school.decide_draft(...)` answers `stored`, `duplicate`, `conflict`, or, storing nothing,
+`already-decided`, `not-ready` (an accept of a draft that is not `ready`), `stale` (the accepted
+install is no longer current) or `rejected` (no such draft, an accept naming another install, or a discard of a draft an install already names); `school.course_authoring(course)` lists a course's
+requests with their drafts and decisions. They are the port's `requestAuthoring`, `recordDraft`,
+`decideDraft` and `courseAuthoring`. `course_installs` gains the source `authored`, with
+`parent_install_id` and `draft_id`; `school.install_course` takes both and answers `stale` when an
+authored install's parent is no longer current, or `rejected` when its draft is not an undecided
+`ready` draft of a request on that parent whose commit and content digest the install names, and `school.installed_courses()` reports both.
+One extension beyond RFC 9 Figure 5.2 stays: a `failed` draft may be discarded, so the 14-day sweep can close it.
 `school.latest_feedback()` is the succeeded grading with the highest `seq` and where its explanation
 was written; the port's `latestFeedback`. A failed attempt is never feedback.
 
@@ -479,7 +503,6 @@ erDiagram
         text kind "hint, model-answer, feedback, reference, ai-help"
         timestamptz at
     }
-    ENCOUNTERS ||--o{ CONVERSATIONS : "is opened in"
     CONVERSATIONS ||--o{ QUESTIONS : "collects"
     ENCOUNTERS ||--o{ QUESTIONS : "is asked in"
     QUESTIONS ||--|| EXPOSURES : "records, kind ai-help"
@@ -532,13 +555,52 @@ erDiagram
         bigint seq PK
         uuid id UK "caller UUID"
         text course "the name the learner chose"
-        text source "git or bundle"
+        text source "git, bundle or authored"
         text url "https, set for git"
         text bundle_sha256 "set for bundle"
-        text commit
+        text commit "the draft commit, for authored"
         text content_sha256 "the files' manifest"
         text title
         integer format "NULL when undeclared"
+        uuid parent_install_id FK "set for authored"
+        uuid draft_id FK "set for authored, once per draft"
+        timestamptz at
+    }
+    COURSE_INSTALLS ||--o{ AUTHORING_REQUESTS : "is the base of"
+    AUTHORING_REQUESTS ||--o{ AUTHORING_DRAFTS : "is drafted in"
+    AUTHORING_DRAFTS ||--o| AUTHORING_DECISIONS : "is decided by"
+    AUTHORING_DRAFTS ||--o| COURSE_INSTALLS : "becomes"
+    AUTHORING_REQUESTS {
+        bigint seq PK
+        uuid id UK "caller UUID"
+        text course
+        uuid base_install_id FK "the current install when asked"
+        text text "1 to 20,000 characters"
+        text skill_sha256 "the skill's manifest"
+        text school_version
+        timestamptz at
+    }
+    AUTHORING_DRAFTS {
+        bigint seq PK
+        uuid id UK "caller UUID"
+        uuid request_id FK
+        integer round "1, or 2 after a refused 1"
+        text status "ready, refused or failed"
+        text agent "NULL only when failed"
+        text commit "set unless failed"
+        text content_sha256 "set unless failed"
+        text check_message "set exactly when refused"
+        integer input_tokens
+        integer output_tokens
+        timestamptz at
+    }
+    AUTHORING_DECISIONS {
+        bigint seq PK
+        uuid id UK "caller UUID"
+        uuid draft_id FK "UK: one per draft"
+        text decision "accepted or discarded"
+        uuid install_id FK "set exactly when accepted"
+        text patch "set exactly when accepted"
         timestamptz at
     }
     COURSE_REMOVALS {
@@ -693,6 +755,14 @@ unless the caller received some of that agent's words. After a kill the bridge w
 the agent's pipes to close, then stops reading them, so a child that left the process group cannot
 hold the queue. The cases are in the [test plan](test-plan.md#asking-the-bridge-a-question).
 
+Every kill, of a grading agent or a question's, sends SIGKILL to the agent's process group and
+sends it again every 50 ms until the pipes close, for at most 500 ms. A child the agent forks just
+as the first signal lands can miss it and hold the pipes; a later one ends it, so it cannot hold
+either queue. The sweep stops by 500 ms because once the group is empty its number can be reused,
+and a kill that lands after the pipes have closed starts no sweep: it ends the agent alone, never
+its group. Group numbers 0 and 1 are never swept
+(flyingrobots/school#285; the cases are in the [test plan](test-plan.md#killing-an-agent-flyingrobotsschool285)).
+
 The bridge also reads aloud: it hands text the server built to the AI-TTS daemon on the host's
 Unix socket, for synthesis only, and serves the audio back for the browser to play
 ([reading aloud](../reading-aloud/README.md)).
@@ -785,13 +855,17 @@ A course is trusted or untrusted, never both: the server refuses to start (exit 
 
 Realpath cannot see a bind mount. Compose mounts `SCHOOL_COURSE_DIR` at `/course`, which is trusted, and, unless `SCHOOL_LIBRARY_DIR` is set, at `/library` as well, so `/library` is the trusted course under a second name. Every check above is therefore also made by filesystem identity, the `(st_dev, st_ino)` pair stat gives. For each untrusted course folder and each trusted root (a trusted course, a mount, the web folder), School collects the identity of the folder and of every ancestor that exists. It refuses at start (exit 2) when either folder's identity is among the other's, saying the two are the same folder under two names or that one holds the other, and naming both variables and folders. With compose's defaults, `SCHOOL_UNTRUSTED_COURSES=guest=/library` is refused; set `SCHOOL_LIBRARY_DIR` to a folder that does not hold the course. Inodes are read as exact integers (`bigint`), so none is rounded.
 
-Part of a trusted folder mounted elsewhere is caught too (flyingrobots/school#298). At a bind mount's root, `..` leads into the container's tree, not the tree the folder came from, so the ancestors alone cannot show that `/library` is a trusted course's `reference/`. When `SCHOOL_UNTRUSTED_COURSES` is set, School therefore walks every folder below each trusted course, mount and the web folder at start, never following a symlink, and refuses (exit 2) an untrusted course whose folder or any ancestor has the identity of one of them. The refusal names the untrusted folder, the trusted root and the folder inside it. Symlinks are not followed because the server never serves through a symlink that leaves the folder it serves. A trusted course, mount or web folder holding more than 10,000 folders is refused, naming it and the cap, rather than walked; the message says to unset `SCHOOL_UNTRUSTED_COURSES` or point the variable at a folder holding fewer. A course holds far fewer, and the walk stays quick: 0.4 ms for the example course, 3 ms for a course of 2,000 reference files in 100 folders, and about 250 ms at the cap. With no untrusted course, nothing is walked.
+Part of a trusted folder mounted elsewhere is caught too (flyingrobots/school#298). At a bind mount's root, `..` leads into the container's tree, not the tree the folder came from, so the ancestors alone cannot show that `/library` is a trusted course's `reference/`. When `SCHOOL_UNTRUSTED_COURSES` is set, School therefore walks every folder and regular file below each trusted course, mount and the web folder at start, never following a symlink, and refuses (exit 2) an untrusted course whose folder or any ancestor has the identity of one of them. The refusal names the untrusted folder, the trusted root and the folder inside it. Symlinks are not followed because the server never serves through a symlink that leaves the folder it serves.
 
-The identity check misses three cases. It cannot see a mount made after School started. It cannot see an untrusted course's file bind-mounted inside a trusted folder, because only folders are walked. It cannot see one of an untrusted course's subfolders bind-mounted inside a trusted folder, because an untrusted course's own subfolders are not walked. Compose's defaults create none of these. Never bind-mount a file or subfolder of an untrusted course into a trusted course, a mount or the web folder.
+Part of an untrusted course mounted inside a trusted folder is caught as well (flyingrobots/school#315). School walks each untrusted course the same way, folders and regular files, and refuses (exit 2) when anything below it has the identity of anything below a trusted course, a mount or the web folder: one of its files or subfolders bind-mounted into a trusted folder, one of theirs bind-mounted into it, or a file hard-linked into both. The refusal names the untrusted course and its entry, and the trusted root and its entry. Two names for one file inside one course, or in two untrusted courses, keep one trust and are accepted. An entry School cannot list or stat is refused, naming it, rather than skipped, since what it hides could be such an alias.
+
+A course, mount or web folder holding more than 10,000 folders (the folder cap, as before files were walked) or more than 100,000 regular files (the file cap, counted apart) is refused, naming it and the cap it passed, rather than walked; the message says how to start (unset `SCHOOL_UNTRUSTED_COURSES`, point the variable at a folder holding fewer, or remove the untrusted course). A listed file is read with lstat, so a file swapped for a symlink after the walk listed it is read as the link and never followed. A course holds far fewer entries than either cap, and the walk stays quick. Measured on a Mac with an SSD, median of 30 starts after warm-up, on a quiet machine: 2.0 ms for a trusted course of 2,000 reference files in 100 folders when only folders were walked, 4.8 ms now that its files are read too, and 10 ms when the untrusted course also holds 2,000 files; one stat costs about 1.4 µs, so each 2,000-file course adds about 3 ms. At the file cap, a trusted course of 100,000 files in 1,000 folders took a median of 0.5 s over 10 starts, measured under heavy load (load average above 40). With no untrusted course, nothing is walked.
+
+The identity check misses one case: a mount made after School started, since the walk runs only at start. Compose's defaults create none. Never bind-mount anything into a course, a mount or the web folder while School runs.
 
 ### Fetching a course repository
 
-`fetchCommit` (`server/fetch-commit.ts`, RFC 7 §6) fetches one commit of a course repository into a new bare repository, `<staging>/repo.git`, and answers the commit's full hash. No route calls it yet; the install preview (RFC 7 task 7) will, with a staging folder under the course store. The URL and the server are hostile, so School checks the commit, then the URL, then the host's addresses, then the staging folder, and only then runs git. Table 1 lists the rules in that order, and the first rule broken gives the refusal. Any refusal deletes the staging folder, or never makes it.
+`fetchCommit` (`server/fetch-commit.ts`, RFC 7 §6) fetches one commit of a course repository into a new bare repository, `<staging>/repo.git`, and answers the commit's full hash. The [install preview](#previewing-an-install) calls it with a staging folder under the course store. The URL and the server are hostile, so School checks the commit, then the URL, then the host's addresses, then the staging folder, and only then runs git. Table 1 lists the rules in that order, and the first rule broken gives the refusal. Any refusal deletes the staging folder, or never makes it.
 
 | Rule | Refused with |
 | --- | --- |
@@ -814,6 +888,46 @@ git is pinned to the addresses School checked. `http.curloptResolve=HOST:443:ADD
 
 The request names only the URL, the commit and the staging folder. The git program, the network (resolver, address check, ports, CA file) and the limits are a separate second argument, `FetchTesting`. Only tests pass it, to reach a local server, and no route may build it from a client's input.
 
+### Previewing an install
+
+`POST /api/installs/preview` (`server/install-preview.ts`, RFC 7 §4, task 7) is the first half of installing a course from a repository: it shows the learner what a commit holds before anything is installed. Its body is exactly `{"url": ..., "commit": ...}`, two strings; any other field is refused (400), so nothing in a request can reach `FetchTesting`, which the route never passes. Like every `POST /api/*` it needs a JSON body and an allowed `Host`, and it is also refused (403) when `Sec-Fetch-Site` is present and is anything but `same-origin`, so only School's own pages can make School fetch a URL (RFC 7 §8); that answer is `{"status": "forbidden", "error": ...}`. If the store or the record fails rather than the course being refused, it answers 500 `{"status": "failed", "error": ...}` without the cause, which goes to School's log, and the preview's folder is deleted. The sweep never runs on a `staging/` that is not a real folder (a symlink, say). Without a [course store](#configuration) it answers 503: `Installing courses needs a course store. It is set with SCHOOL_COURSE_STORE, described in Configuration.`
+
+The preview works in a new folder, `<SCHOOL_COURSE_STORE>/staging/<preview id>/`:
+
+1. `fetchCommit` fetches the commit into `repo.git` ([fetching a course repository](#fetching-a-course-repository)).
+2. `extractCommit` (`server/extract-tree.ts`, RFC 7 task 5) reads that commit's tree and writes only `course.json`, `lessons/*.json` and `reference/**` into `course/`, refusing symlinks, submodules, LFS pointers, unsafe or colliding names and anything over RFC 7 Table 6.2's limits. `repo.git` is then deleted.
+3. `checkCourse` (`server/check-course.ts`) loads `course/` as `school check` does.
+
+A refusal at any stage deletes the preview's folder and answers 422. This one is the example course (`.agents/skills/school/example`) with its first quiz given no correct choice, as PREVIEW-4 checks it:
+
+```json
+{ "status": "refused", "stage": "check", "reason": "invalid", "path": "0001-places-worth-twice.json",
+  "message": "0001-places-worth-twice.json > places-worth-twice > places-practice > places-q-worth: exactly one choice must be correct" }
+```
+
+`stage` is `fetch`, `extract` or `check`. `reason` is the fetch's reason (Table 1), the extraction's (`unsafe-name`, `case-collision`, `symlink`, `submodule`, `lfs-pointer`, `too-many-files`, `file-too-large`, `total-too-large`, `path-too-long`, `too-deep`, `not-a-commit`, `bad-destination`, `timeout`, `git-failed`), or `invalid` for the check. `path` is the tree path or course file it concerns, or null. `message` is the stage's own sentence, git's error output included for `git-failed`, with any path inside the store made relative to the course. It is text from the server and from git, and a client shows it as text, never as HTML.
+
+A course that passes answers 200. This is the example course as PREVIEW-1 and PREVIEW-12 check it, with progress already under its name; the URL is illustrative, and the preview id and hash are shortened:
+
+```json
+{ "status": "ok", "preview": "6f1c…", "expires": "2026-11-26T11:00:00.000Z",
+  "url": "https://github.com/flyingrobots/counting-in-binary.git", "commit": "3a9e…",
+  "course": { "title": "Counting in Binary", "summary": "How two symbols are enough to count anything, and how to read a binary number.",
+              "author": "The School maintainers", "license": "Apache-2.0", "format": 1,
+              "lessons": [
+                { "file": "0001-places-worth-twice.json", "id": "places-worth-twice", "title": "Places worth twice", "quizzes": 2, "explains": 1 },
+                { "file": "0002-adding-with-carries.json", "id": "adding-with-carries", "title": "Adding with carries", "quizzes": 2, "explains": 1 }],
+              "quizzes": 3, "explains": 2 },
+  "name": { "suggested": "counting-in-binary", "taken": null,
+            "progress": { "encounters": 1, "answers": 1, "explanations": 0, "views": 0 } } }
+```
+
+Each lesson's `quizzes` counts the quizzes it shows; the course's `quizzes` counts distinct quizzes, so one lesson reusing another's quiz through `ref` adds none.
+
+`commit` is always the full hash, a branch or tag resolved once. `name.suggested` follows RFC 7 §5.2: the URL's last path segment, percent-decoded and without `.git`, lowercased, with each run of other characters made one hyphen and none at either end. When that is empty or a name School's routes reserve, the course's title is used the same way, and failing both, `course`. `name.taken` is `configured` when a configured course has the name, `installed` when a current install has it (`school.installed_courses()`), and otherwise null. `name.progress` is what the record already holds under the name (`school.course_progress`, [the learning record](#the-learning-record)), or null when it holds nothing; a course removed earlier, or one that was configured before, keeps its progress under its name.
+
+The preview reads the record and writes nothing to it, and writes nothing in the store outside `staging/`. A good preview stays in its folder as `course/` and `preview.json` (the URL, the full commit and `expires`), for the install to move into `courses/`. Nothing installs it yet (RFC 7 task 8). A preview is deleted once `expires`, an hour after it was made, has passed: by a sweep School runs every ten minutes and before each new preview. A folder with no `preview.json`, from a preview still running or one cut short, is deleted an hour after it last changed. Every preview is deleted when School starts.
+
 | Defect | Effect | Issue |
 | --- | --- | --- |
 | Bridge reply shape not validated | A malformed reply throws and stores no failed grading | [#17](https://github.com/flyingrobots/school/issues/17) |
@@ -825,10 +939,10 @@ The request names only the URL, the commit and the staging folder. The git progr
 | Variable | Program | Meaning | Default |
 | --- | --- | --- | --- |
 | `SCHOOL_COURSES` | Server | `name=path` pairs, one per course | none |
-| `SCHOOL_UNTRUSTED_COURSES` | Server | `name=path` pairs, one per course served in safe mode: its files are sandboxed ([trust](#trust-and-known-defects)). A name or folder also trusted is refused | none |
+| `SCHOOL_UNTRUSTED_COURSES` | Server | `name=path` pairs, one per course served in safe mode: its files are sandboxed ([trust](#trust-and-known-defects)). A name or folder also trusted is refused, and so is a course sharing a file or folder with a trusted one by device and inode; one holding more than 10,000 folders or 100,000 files is refused rather than walked | none |
 | `SCHOOL_COURSE` | Server | One unnamed course, named after its folder | none; `/course` under compose, set there by `SCHOOL_COMPOSE_COURSE`, which may be empty |
 | `SCHOOL_STATE` | Server | Learner state; must not be inside a course | `state/` |
-| `SCHOOL_COURSE_STORE` | Server | The course store (RFC 7 §5.1): the folder installed courses live in, and nothing else. School serves each current install from `courses/<install id>/` in it ([the course list](#the-course-list)); nothing writes into it yet. Empty means no store, so installing is off. Refused at start (exit 2, naming both paths) when it is, holds or sits inside a course, `SCHOOL_STATE`, `DB_PATH`, a PGlite record, a mount, `SCHOOL_WEB` or the framework folder (`SCHOOL_ROOT`, which holds the server source), and when the path exists but is not a folder, compared on real paths and by device and inode, as for [untrusted courses](#trust-and-known-defects) | none; `/store` under compose, the named volume `course-store`; compose reads it from `SCHOOL_COMPOSE_COURSE_STORE`, so a host export of `SCHOOL_COURSE_STORE` never reaches the container |
+| `SCHOOL_COURSE_STORE` | Server | The course store (RFC 7 §5.1): the folder installed courses live in, and nothing else. School serves each current install from `courses/<install id>/` in it ([the course list](#the-course-list)); [Install previews](#previewing-an-install) are staged in its `staging/`, which start empties; nothing writes into `courses/` yet. Empty means no store, so installing is off and a preview is a 503. Refused at start (exit 2, naming both paths) when it is, holds or sits inside a course, `SCHOOL_STATE`, `DB_PATH`, a PGlite record, a mount, `SCHOOL_WEB` or the framework folder (`SCHOOL_ROOT`, which holds the server source), and when the path exists but is not a folder, compared on real paths and by device and inode, as for [untrusted courses](#trust-and-known-defects) | none; `/store` under compose, the named volume `course-store`; compose reads it from `SCHOOL_COMPOSE_COURSE_STORE`, so a host export of `SCHOOL_COURSE_STORE` never reaches the container |
 | `SCHOOL_SKILL` | Server | The `school` skill an authoring agent is given ([the pinned skill](#the-pinned-skill)). Empty means none, so authoring is off. Never a refusal to start: a missing or unfit folder turns authoring off with the reason | `<SCHOOL_ROOT>/.agents/skills/school`; `/framework/skills/school` under compose, the checkout's skill mounted read-only; compose reads it from `SCHOOL_COMPOSE_SKILL`, so a host export of `SCHOOL_SKILL` never reaches the container |
 | `SCHOOL_SKILL_DOCS` | Server | The folder holding the references the skill links, `course-format/` and `voice/` | `<SCHOOL_ROOT>/docs/topics`; `/framework/docs` under compose, set there with no variable |
 | `SCHOOL_SKILL` | Server | The `school` skill an authoring agent is given ([the pinned skill](#the-pinned-skill)). Empty means none, so authoring is off. Never a refusal to start: a missing or unfit folder turns authoring off with the reason | `<SCHOOL_ROOT>/.agents/skills/school`; `/framework/skills/school` under compose, the checkout's skill mounted read-only; compose reads it from `SCHOOL_COMPOSE_SKILL`, so a host export of `SCHOOL_SKILL` never reaches the container || `SCHOOL_DATABASE_URL` | Server | The record: `postgres://school_app:password@host:port/db` (`Bun.SQL`; `school_app`'s own login, refused if it fails [the login check](#the-login-check)) or `pglite:<dir>` (PGlite on disk, not inside a course) | none: required |
@@ -837,9 +951,10 @@ The request names only the URL, the commit and the staging folder. The git progr
 | `SCHOOL_MIGRATE_PASSWORD`, `SCHOOL_MIGRATE_PASSWORD_FILE` | Migrate job | The owner's password, for a `SCHOOL_MIGRATE_URL` that names none; the file wins. Compose gives the file | none |
 | `SCHOOL_APP_PASSWORD`, `SCHOOL_APP_PASSWORD_FILE` | Migrate job | The password the job gives `school_app`, at least 20 letters and digits; the same one the server logs in with. The file wins | none: required |
 | `DB_PATH` | Server | The old SQLite record, only read: startup refuses while it holds learner work | `<SCHOOL_STATE>/progress.db` |
-| `SCHOOL_MOUNTS` | Server | `name=path` pairs served read-only, never sandboxed; one over an untrusted course's folder is refused; with `SCHOOL_UNTRUSTED_COURSES` set, a mount holding more than 10,000 folders is refused rather than walked | none |
-| `SCHOOL_WEB` | Server | The built web app; a folder over an untrusted course's is refused; with `SCHOOL_UNTRUSTED_COURSES` set, a folder holding more than 10,000 folders is refused rather than walked | `web/dist` |
+| `SCHOOL_MOUNTS` | Server | `name=path` pairs served read-only, never sandboxed; one over an untrusted course's folder is refused; with `SCHOOL_UNTRUSTED_COURSES` set, a mount holding more than 10,000 folders or 100,000 files is refused rather than walked | none |
+| `SCHOOL_WEB` | Server | The built web app; a folder over an untrusted course's is refused; with `SCHOOL_UNTRUSTED_COURSES` set, a folder holding more than 10,000 folders or 100,000 files is refused rather than walked | `web/dist` |
 | `HOST`, `PORT` | Server | Listen address | `127.0.0.1:4747` |
+| `SCHOOL_TEST_CLOCK` | Server | For tests only: an instant with a zone (`2026-01-03T10:00:00Z`) the server reads as now for everything it records and measures, with a warning at startup. Refused (exit 2) unless `SCHOOL_DATABASE_URL` is `pglite:`, or when it is not an instant | none: the system clock |
 | `SCHOOL_ALLOWED_HOSTS` | Server | Host names answered besides `127.0.0.1`, `localhost`, `::1` and `HOST`, comma-separated; the tailnet name | none |
 | `SCHOOL_BRIDGE_URL`, `SCHOOL_BRIDGE_TOKEN` | Server | Override the saved bridge settings; `SCHOOL_BRIDGE_TOKEN_FILE`, which compose gives, wins over the token | none |
 | `SCHOOL_BACKUP_INTERVAL_SECONDS` | `backup` service | Seconds between dumps; the first is taken at start | `21600` |

@@ -78,6 +78,15 @@ test("opening a lesson passes the client's aid capture version, or null, to the 
   ]);
 });
 
+test("mastery is read at the clock's now with due review's delay, one group per key (RFC 5 §4.5)", async () => {
+  const asked: unknown[] = [];
+  const row = { key: "l1", quizzes: 1, notStarted: 1, settling: 0, holding: 0, faded: 0, strength: 0 };
+  const record = { masteryRollup: async (q: unknown) => (asked.push(q), [row]) } as unknown as LearningRecord;
+  const school = createSchool({ record, grader: grader({ status: "failed", error: "x" }), clock });
+  expect(await school.masteryNow("c", { l1: ["q1"], l2: [] })).toEqual([row]);
+  expect(asked).toEqual([{ course: "c", groups: { l1: ["q1"], l2: [] }, now: NOW, delayMs: REVIEW_DELAY_MS }]);
+});
+
 describe("due review on opening a lesson (RFC 2 §5; flyingrobots/school#32)", () => {
   const quiz = (id: string): Block => ({ type: "quiz", id, q: `${id}?`, why: ".", choices: [{ id: "a", text: "A", correct: true }] });
   const item = (blockId: string, o: Partial<DueItem> = {}): DueItem => ({
@@ -267,5 +276,42 @@ describe("resumeFrom", () => {
     const record = { lastStudied: async () => last("aion", "l1") } as Partial<LearningRecord> as LearningRecord;
     const school = createSchool({ record, grader: grader({ status: "failed", error: "x" }), clock });
     expect(await school.lastStudied()).toEqual(last("aion", "l1"));
+  });
+});
+
+// RFC 5 Table 5.1 step 6 (flyingrobots/school#222): each course's lane says how its quizzes are
+// holding today, from the rollup with one group for the course, at the clock's now.
+describe("activity says how each course is holding today", () => {
+  const rolled = (key: string, o: Partial<{ quizzes: number; notStarted: number; settling: number; holding: number; faded: number; strength: number | null }> = {}) =>
+    ({ key, quizzes: 0, notStarted: 0, settling: 0, holding: 0, faded: 0, strength: null, ...o });
+  const recordWith = (rows: Record<string, ReturnType<typeof rolled>>, asked: unknown[]) => ({
+    studyDays: async () => [],
+    dueReview: async () => [],
+    masteryRollup: async (q: { course: string }) => (asked.push(q), [rows[q.course]!]),
+  }) as Partial<LearningRecord> as LearningRecord;
+
+  test("each course's counts are read at the clock's now with due review's delay, one group holding every quiz", async () => {
+    const asked: unknown[] = [];
+    const record = recordWith({ astro: rolled("astro", { quizzes: 2, holding: 1, faded: 1, strength: 0.4 }) }, asked);
+    const school = createSchool({ record, grader: grader({ status: "failed", error: "x" }), clock });
+    const a = await school.activity([{ name: "astro", blocks: ["q1", "q2"] }], 14, "UTC");
+    // Oracle: RFC 5 §4.8, "at today ... from mastery_rollup with one group for the course".
+    expect(asked).toEqual([{ course: "astro", groups: { astro: ["q1", "q2"] }, now: NOW, delayMs: REVIEW_DELAY_MS }]);
+    expect(a.courses[0]).toMatchObject({ course: "astro", quizzes: 2, mastery: { notStarted: 0, settling: 0, holding: 1, faded: 1 } });
+  });
+
+  test("the rollup's mean strength is not passed on: it is for ranking, never for display", async () => {
+    const record = recordWith({ astro: rolled("astro", { quizzes: 1, holding: 1, strength: 0.9 }) }, []);
+    const school = createSchool({ record, grader: grader({ status: "failed", error: "x" }), clock });
+    const course = (await school.activity([{ name: "astro", blocks: ["q1"] }], 14, "UTC")).courses[0]!;
+    expect(Object.keys(course).sort()).toEqual(["course", "due", "mastery", "quizzes", "studied"]);
+    expect(Object.keys(course.mastery).sort()).toEqual(["faded", "holding", "notStarted", "settling"]);
+  });
+
+  test("a course with no quizzes counts zero in every state", async () => {
+    const record = recordWith({ bare: rolled("bare") }, []);
+    const school = createSchool({ record, grader: grader({ status: "failed", error: "x" }), clock });
+    expect((await school.activity([{ name: "bare", blocks: [] }], 14, "UTC")).courses[0])
+      .toMatchObject({ quizzes: 0, mastery: { notStarted: 0, settling: 0, holding: 0, faded: 0 } });
   });
 });

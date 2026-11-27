@@ -3,6 +3,7 @@
 import type {
   Aid, AidTracking, AskQuestion, AskResult, Block, Conversation, CourseInstall, DecisionChoice, DueItem, DueReviewQuery, ReviewNote, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingInput,
   GradingRecord, InstallResult, InstalledCourse, LastStudied, LatestFeedback, LessonHelp, LessonProgress, Mastery, MasteryQuery, MasteryRollup, MasteryRollupQuery, Outcome, Recorded, RemovalResult, ReplyRecord, ReplyResult, SaveResult, SavedExplanation, StudyDay, Submission, SubmitResult, TrustResult, ViewEvent,
+  AuthoringDecision, AuthoringDraft, AuthoringRequest, AuthoringResult, CourseProgress, DecisionResult, DraftResult, RecordedRequest,
 } from "./model.ts";
 
 /**
@@ -58,6 +59,25 @@ export interface LearningRecord {
   chooseCourseTrust(installId: string, trusted: boolean, now: string): Promise<TrustResult>;
   /** Each name's current install, by name. */
   installedCourses(): Promise<InstalledCourse[]>;
+  /**
+   * Record an authoring request (RFC 9 §5.5) before the bridge is asked; refused unless its base is
+   * the course's current install. Stored once per request id; see AuthoringResult.
+   */
+  requestAuthoring(r: AuthoringRequest, now: string): Promise<AuthoringResult>;
+  /** Record one round of a request once it ends: a built draft, ready or refused by the check, or a failure. See DraftResult. */
+  recordDraft(d: AuthoringDraft, now: string): Promise<DraftResult>;
+  /**
+   * Record the author's decision on a draft, once per draft. An accept is refused unless the draft is
+   * `ready` and its `authored` install is still the course's current install. See DecisionResult.
+   */
+  decideDraft(d: AuthoringDecision, now: string): Promise<DecisionResult>;
+  /** The course's authoring requests, each with its drafts and their decisions, in the record's order. */
+  courseAuthoring(course: string): Promise<RecordedRequest[]>;
+  /**
+   * What the record holds under `course`, whether or not anything serves it now: a course removed
+   * earlier, or configured before, keeps its progress under its name (RFC 7 §5.2).
+   */
+  courseProgress(course: string): Promise<CourseProgress>;
   saveExplanation(s: ExplanationSubmission, now: string): Promise<SaveResult>;
   /** A saved explanation, its block from the snapshot and its latest grading; null if there is none. */
   explanation(submissionId: string): Promise<SavedExplanation | null>;

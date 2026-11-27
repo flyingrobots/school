@@ -4,13 +4,14 @@ The contract ledger for [School's architecture](README.md). Every case runs in `
 
 ## The bridge's output
 
-The cases run the bridge as a real process.
+The cases run the bridge as a real process, except BRIDGE-OUT-3 and BRIDGE-OUT-4, which call the answer validator directly.
 
 | ID | Case | Oracle | Status | Test |
 | --- | --- | --- | --- | --- |
 | BRIDGE-OUT-1 | Logs | Every stdout line parses as JSON with a string `kind`; no line contains the prompt | implemented | `bridge/bridge.test.ts`: `logs are JSON Lines and never contain the prompt` |
 | BRIDGE-OUT-2 | Port taken | With the port held by another socket: every line on stdout and stderr parses as JSON with a string `kind`; exactly one `bridge.error`, last on stdout, naming `host:port` and carrying `host` and `port`; no token in the output; exit 2 | implemented | `bridge/bridge.test.ts`: `a bridge whose port is taken writes one bridge.error line naming it, nothing but JSON Lines, and exits 2` |
 | BRIDGE-OUT-3 | A hostile key | A grading answer with a key the schema does not allow, named `The learner wrote: ...`: its `bridge.attempt` error is `unexpected key at $` and no line holds the key. In the validator: a key inside an array item is `unexpected key at $.items[1]`; keys named like inherited members (`constructor`, `__proto__`) are unexpected too; 500 random keys (seed 289, `SCHOOL_TEST_SEED` to replay) never appear in the problem | implemented | `bridge/bridge.test.ts`: `a grading answer with a hostile unexpected key logs an attempt error that quotes none of it`; `bridge/schema.test.ts` (flyingrobots/school#289) |
+| BRIDGE-OUT-4 | A required key named like a built-in | In the validator: a schema requiring `constructor`, `__proto__` or `toString` answers `$.<key> is missing` for `{}`, since only the answer's own keys count, and accepts an answer that has the key; an ordinary required key is still missing from `{}` and present in `{ ok: true }` | implemented | `bridge/schema.test.ts`: `a schema requiring constructor refuses an answer that lacks it`; `a schema requiring %s refuses an answer that lacks it`; `a schema requiring %s accepts an answer that has it`; `a schema requiring an ordinary key still refuses an answer that lacks it and accepts one that has it` (flyingrobots/school#329) |
 
 ## Asking the bridge a question
 
@@ -61,6 +62,28 @@ run on `Bun.SQL` only.
 | CONV-11 | No direct path for `school_app` | Insert, update, delete, select and truncate on each table are permission errors | implemented | `server/contract/conversation-tables.ts`: `conversations: school_app may not insert, update, delete, read or truncate a conversation table` |
 | CONV-12 | Many at once | 20 questions in one encounter, 10 follow-ups in one conversation, one question twice, one id for two questions, one reply twice, each held at a gate until all wait: each stored once, with its own exposure before it, read in `seq` order; `ask` and `record_reply` refuse REPEATABLE READ | implemented | `server/adapters/bunsql.concurrency.test.ts`: `20 questions at once in one encounter ...` and the four races after it; `ask and record_reply refuse to run under it, and store nothing`; the contract's `conversations: many questions at once in one encounter ...` |
 
+_Table 1. The conversation cases, on PGlite and Bun.SQL; the races on Bun.SQL only._
+
+## Killing an agent (flyingrobots/school#285)
+
+A kill sends SIGKILL to the agent's process group, then again every 50 ms until the pipes close,
+for at most 500 ms. The fake agent in `bridge/run.test.ts` forks without pause in four loops, so a
+kill nearly always lands mid-fork: on the machine the tests were written on, one kill of its group
+left a child running in 15 of 20 tries. Each child sleeps 600 s, so only a kill ends one in time.
+A child counts as left if `ps` shows it in the agent's group, running and not a zombie, 2 s after
+the chain returns.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| KILL-1 | Golden | A grading agent that forks as its timeout kill lands: the chain returns, the next agent answers, and no process is left in the agent's group; three conclusive runs | implemented | `bridge/run.test.ts`: `a grading agent that forks as its kill lands leaves no child running, and the next agent runs` |
+| KILL-2 | Exits normally | An agent that answers and exits is not timed out, and its answer stands | implemented | `bridge/run.test.ts`: `an agent that answers and exits is not timed out: its answer stands` |
+| KILL-3 | Unrelated group | A process group running beside the killed agent survives the kill and the sweep | implemented | `bridge/run.test.ts`: `the kill reaches only the agent's own process group: another group running beside it survives` |
+| KILL-4 | Under load | Five forking agents killed at once, three rounds: every chain returns and no child is left | implemented | `bridge/run.test.ts`: `five forking agents killed at once, three rounds over: every chain returns and no child is left` |
+| KILL-5 | Kill after the pipes closed | A timeout, or a hang-up, landing after the agent's pipes closed and before it exits starts no sweep (the sweep counter is unchanged), for `POST /run` and `POST /ask` | implemented | `bridge/run.test.ts`: `a kill after the agent's pipes closed starts no sweep`; `bridge/ask.test.ts`: `a hang-up after the ask agent's pipes closed starts no sweep` |
+| KILL-6 | Not a group | `sweepGroup` with 0, 1, a negative, fractional or non-finite number sends no signal (the signal function is injected) | implemented | `bridge/run.test.ts`: `sweepGroup signals no group that is not a real one, and a real one once` |
+
+_Table 2. The agent kill's cases. The ask route uses the same sweep (`sweepGroup` in `bridge/run.ts`)._
+
 ## The course store (flyingrobots/school#233)
 
 `SCHOOL_COURSE_STORE`, RFC 7 §5.1. The oracle for every refusal is §5.1's: start refuses, with exit 2 naming both paths, a store that is, holds or sits inside a course or learner state. This page extends it to mounts and the web folder, which School serves and must not write into.
@@ -79,7 +102,7 @@ run on `Bun.SQL` only.
 | STORE-10 | Is, holds or sits inside the framework folder (`SCHOOL_ROOT`), which holds the server source | Refused, naming both paths | implemented | `server/config.test.ts`: `a store that %s is refused, naming both paths` (framework cases) |
 | STORE-11 | A path that exists but is a file | Refused, naming the path | implemented | `server/config.test.ts`: `a store path that exists but is a file, not a folder, is refused, naming it` |
 
-_Table 2. The course store's cases. STORE-9 reads the Dockerfile; no test builds the image._
+_Table 3. The course store's cases. STORE-9 reads the Dockerfile; no test builds the image._
 
 ## Stopping the bridge (flyingrobots/school#286)
 
@@ -110,7 +133,7 @@ zombie, 2 s after the bridge exits.
 | REGISTRY-9 | The acceptance test: a folder and its row added while School runs | In `/api/courses` with no restart, the row written through `school_app`'s own connection | implemented | `server/installed-courses.test.ts`: `a course whose folder and row are added while School runs is in /api/courses with no restart (Bun.SQL)` |
 | REGISTRY-10 | The content digest | The SHA-256 of one `<sha256> <path>\n` line per file, sorted by path, over the FIPS 180-2 vectors; a symlink has no digest | implemented | `server/course-registry.test.ts`: `is the SHA-256 of one line per file, its hash and its path, sorted by path`, `refuses a folder holding anything but regular files and folders` |
 
-_Table 3. The course list's cases, on PGlite and, for REGISTRY-9, on Bun.SQL._
+_Table 4. The course list's cases, on PGlite and, for REGISTRY-9, on Bun.SQL._
 
 ## The pinned skill (flyingrobots/school#257)
 
@@ -135,7 +158,7 @@ RFC 9 §5.3 and [the pinned skill](README.md#the-pinned-skill). The manifest's o
 | SKILLPIN-15 | Configuration | Defaults to the framework's `.agents/skills/school` and `docs/topics`; relative paths resolve against the working directory; empty `SCHOOL_SKILL` is null | implemented | `server/config.test.ts`: `SCHOOL_SKILL and SCHOOL_SKILL_DOCS default to the framework checkout's skill and its docs/topics`, `SCHOOL_SKILL and SCHOOL_SKILL_DOCS name the skill and its references, relative paths resolving against the working directory`, `an empty SCHOOL_SKILL means no skill, so authoring is off` |
 | SKILLPIN-16 | Compose | The three read-only mounts under `/framework`; `SCHOOL_SKILL: ${SCHOOL_COMPOSE_SKILL-/framework/skills/school}` and `SCHOOL_SKILL_DOCS: /framework/docs`, so a host export never reaches the container | implemented | `server/docker.test.ts`: `compose mounts the checkout's school skill and its references read-only under /framework`, `compose points SCHOOL_SKILL at the mount through SCHOOL_COMPOSE_SKILL, which .env may set empty and a host export never reaches, and SCHOOL_SKILL_DOCS at the references with no variable at all` |
 
-_Table 4. The pinned skill's cases. SKILLPIN-16 reads compose.yaml; no test builds the image or runs compose._
+_Table 5. The pinned skill's cases. SKILLPIN-16 reads compose.yaml; no test builds the image or runs compose._
 
 ## Fetching one commit (flyingrobots/school#236)
 
@@ -173,4 +196,64 @@ _Table 4. The pinned skill's cases. SKILLPIN-16 reads compose.yaml; no test buil
 | FETCH-28 | A SHA-256 repository, by branch and by full hash | Fetched by its 64-digit hash | implemented | `FETCH-28: a SHA-256 repository's commit, named by %s, is fetched by its 64-digit hash` |
 | FETCH-29 | A request carrying `git`, `limits` and `network` fields, as a spread JSON body would | The fields are ignored; fetched with the test seams given as the second argument | implemented | `FETCH-29: the test seams carried on a request, as a JSON body spread into it would carry them, are ignored` |
 
-_Table 5. The fetch's cases. FETCH-2 to FETCH-29 are in `server/fetch-commit.test.ts`. FETCH-22 to FETCH-27 each fail when the protection they name is deleted. None runs the server image's git; CI runs them on the runner's git._
+_Table 6. The fetch's cases. FETCH-2 to FETCH-29 are in `server/fetch-commit.test.ts`. FETCH-22 to FETCH-27 each fail when the protection they name is deleted. None runs the server image's git; CI runs them on the runner's git._
+
+## The authoring record (flyingrobots/school#258)
+
+[The learning record](README.md#the-learning-record)'s authoring tables, RFC 9 task 2. The oracle is RFC 9 §5.5 (Tables 5.5 and 5.6) and the draft states of Figure 5.2. Each `authoring:` case is in the LearningRecord contract (`server/contract/learning-record.ts`) and runs on both drivers, as `postgres (PGlite): authoring: ...` and `postgres (Bun.SQL): authoring: ...`.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| AUTH-REC-1 | Golden | A request on the current install, a ready draft, its authored install and an accept are each stored and read back by `courseAuthoring`; the authored install is current, with its parent and draft | implemented | `authoring: a request on the course's current install is stored, and read back with no drafts`; `authoring: a draft is read back under its request with its agent, commit, digest and token counts`; `authoring: an authored install of a ready draft updates the course, and is listed with its parent and draft, untrusted`; `authoring: an accepted draft keeps its install and patch, and is read back with its decision` |
+| AUTH-REC-2 | Other drafts and a discard | A refused draft keeps its message and is followed by round 2; a failed round has no commit and may name no agent; a discard leaves the live course as it was | implemented | `authoring: a refused first draft keeps the check's message, and its repair round is stored after it`; `authoring: a failed round is stored with no commit, digest or message, and may name no agent`; `authoring: a discarded draft is read back with its decision, and the course's current install is unchanged` |
+| AUTH-REC-3 | Resends | Each of a request, a draft and a decision resent is `duplicate`; its id with other content is `conflict`; the first stands | implemented | `authoring: a resent request is a duplicate, and its id with another request is a conflict; the first stands`; `authoring: a resent draft is a duplicate, and its id with another draft is a conflict; the first stands`; `authoring: a resent decision is a duplicate, and its id with another decision is a conflict; the first stands` |
+| AUTH-REC-4 | A base that is not current | An earlier install, another course's, a removed course's, or none: `refused`, nothing stored | implemented | `authoring: a request whose base is not the course's current install is refused, and stores nothing` |
+| AUTH-REC-5 | Rounds out of turn | No such request, a second round 1, round 2 after a ready or failed round 1, round 2 after a decided round 1, a third draft: `rejected` | implemented | `authoring: a draft out of turn is rejected and stores nothing`; `authoring: a request has at most two rounds; a third is rejected`; `authoring: round 2 is refused once round 1 has any decision, and stores nothing` |
+| AUTH-REC-6 | A second decision | Refused as `already-decided` after an accept or a discard; the first stands; two decisions at once on Bun.SQL store one | implemented | `authoring: a second decision on a draft is refused, whichever came first; the first stands`; `server/adapters/bunsql.concurrency.test.ts`: `two decisions on one draft at once: one is stored, the other is told the draft is already decided (50 times)` |
+| AUTH-REC-7 | Accepting a draft that is not ready | A refused or failed draft: `not-ready`, nothing stored | implemented | `authoring: accepting a draft that is not ready is refused, and stores nothing` |
+| AUTH-REC-8 | A stale base | An authored install whose parent is no longer current is `stale`; an accept whose install is no longer current is `stale`; a stale draft can still be discarded; a failed draft may be discarded, an extension beyond RFC 9 Figure 5.2 kept for the 14-day sweep | implemented | `authoring: an authored install whose parent is no longer the course's current install is stale, and stores nothing`; `authoring: accepting after the course has moved on from the draft's install is refused as stale, and stores nothing`; `authoring: a draft whose base is stale can still be discarded`; `authoring: a failed draft may be discarded (an extension beyond RFC 9 Figure 5.2, for the 14-day sweep)` |
+| AUTH-REC-9 | The wrong draft or install | An authored install of a draft that is refused, failed, discarded, unknown, on another base or under another name, or already installed, or whose commit or content digest is not the draft's, is `rejected`; so is an accept naming another install, a decision on no draft, or a discard of a draft an install already names | implemented | `authoring: an authored install of a draft that is not an undecided ready draft on its parent is rejected, and stores nothing`; `authoring: an authored install must name its draft's own commit and content digest, or it is rejected and stores nothing`; `authoring: a draft that has become an install cannot be discarded before its accept is recorded; nothing is stored`; `authoring: a draft installed once cannot be installed again under another install id`; `authoring: an accept naming an install that is not the draft's, or a decision on no draft, is rejected` |
+| AUTH-REC-10 | Malformed input | Refused by the model, and, called directly, by the record on its own, storing nothing; 20,000 characters are code points | implemented | `authoring: a malformed request, draft or decision is refused and stores nothing`; `authoring: a request of exactly 20,000 characters is stored, counted in code points`; `server/db/authoring.test.ts` (all five cases) |
+| AUTH-REC-11 | Append-only | `school_app` may not touch the three tables; the owner's UPDATE, DELETE and TRUNCATE are refused by their triggers, on PGlite and Bun.SQL | implemented | `server/db/init.test.ts`: `as school_app, direct INSERT, UPDATE, DELETE and TRUNCATE on every record table are denied`, `as the owner, an update or delete of a record row is refused by a trigger, and so is a truncate`; `server/adapters/bunsql.test.ts`: `the authoring tables refuse school_app's direct writes, and the owner's UPDATE, DELETE and TRUNCATE` |
+| AUTH-REC-12 | READ COMMITTED | `request_authoring`, `record_draft` and `decide_draft` refuse REPEATABLE READ and store nothing | implemented | `server/adapters/bunsql.concurrency.test.ts`: `request_authoring, record_draft and decide_draft refuse to run under it, and store nothing` |
+| AUTH-REC-13 | Order and course | A course lists only its own requests, by `seq`, each with its drafts by `seq` | implemented | `authoring: each course lists only its own requests, in the record's order, each with its drafts in order` |
+
+_Table 7. The authoring record's cases. State kept outside the Postgres record is the failure mode the issue names: every case reads back through the port, never from a cache._
+
+Every refusal the issue names is a case here, and every case reads the record back through the port on both drivers.
+
+## Previewing an install (flyingrobots/school#237)
+
+`POST /api/installs/preview` and `previewInstall` in `server/install-preview.ts`, RFC 7 §4, §5.2 and §8, task 7. The oracles are the issue's acceptance criteria, RFC 7's pipeline (Figure 4.1, Listing 5.1) and §5.2's naming rule, the example course's own `course.json`, and `checkCourse` on the same files. Every case that fetches runs against the local https server of the fetch cases through `FetchTesting`, which the route never passes; the route's cases are refused before git runs and reach no network.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| PREVIEW-1 | The example course at its full hash | Its title, summary, author, license `Apache-2.0`, format 1, both lessons with their quiz and explain counts, 3 distinct quizzes, the suggested name `counting-in-binary`, nothing taken, no progress, the preview id and an expiry an hour on | implemented | `server/install-preview.test.ts`: `PREVIEW-1: the example course answers its title, lessons, quizzes, license and format` |
+| PREVIEW-2 | The example course by branch | Answered with the full hash the branch resolved to | implemented | `PREVIEW-2: a branch is answered as the full hash it resolved to` |
+| PREVIEW-3 | What a good preview leaves | `staging/<id>/` holds only `course/` (course.json, two lessons, the glossary) and `preview.json` (URL, full commit, expiry); no `repo.git`, no `courses/` | implemented | `PREVIEW-3: the preview is kept in staging as the course School reads and its source, with no repository and nothing in courses/` |
+| PREVIEW-4 | The example with a quiz that has no correct choice | `check` refusal with `checkCourse`'s own file and message; only an empty `staging/` left | implemented | `PREVIEW-4: a bad course answers the check's own message, and leaves nothing in the store but an empty staging/` |
+| PREVIEW-5 | A `course.json` that is not JSON | Named `course.json` in `path` and `message`; the answer holds no path in the store | implemented | `PREVIEW-5: a course.json the check refuses is named as course.json, never by its path in the store` |
+| PREVIEW-6 | A branch the repository lacks | `fetch` refusal, `no-such-ref`; nothing staged | implemented | `PREVIEW-6: a fetch refusal answers its reason, and leaves nothing staged` |
+| PREVIEW-7 | A symlink under `reference/` | `extract` refusal, `symlink`, at `reference/secret`; nothing staged | implemented | `PREVIEW-7: an extraction refusal answers its reason and path, and leaves nothing staged` |
+| PREVIEW-8 | No body, an array, no `url` or `commit`, a number for the URL, test seams beside the request | `invalid`; `staging/` never made | implemented | `PREVIEW-8: a request with %s is invalid, and nothing is fetched or staged` |
+| PREVIEW-9 | RFC 7 §5.2's example URL, a trailing slash and `.GIT`, percent-encoding, a reserved name, no path, nothing usable | `school-bells`, `some-course`, `caf-notes`, the title's name, then `course` | implemented | `PREVIEW-9: %s with title %p suggests %s` |
+| PREVIEW-10 | A suggested name a configured course has | `taken: "configured"` | implemented | `PREVIEW-10: a suggested name a configured course has is answered as taken by it` |
+| PREVIEW-11 | A suggested name a current install has | `taken: "installed"` | implemented | `PREVIEW-11: a suggested name a current install has is answered as taken by it` |
+| PREVIEW-12 | A name with an encounter and an answer on a real PGlite record | `progress` is those counts; every row of every table in schema `school` is the same after the preview | implemented | `PREVIEW-12: a name the record already has progress under is answered with that progress, and the record is unchanged` |
+| PREVIEW-13 | A staged preview past its `expires`, one within it | The first deleted, the second kept | implemented | `PREVIEW-13: a preview past its time is deleted and one within it is kept` |
+| PREVIEW-14 | Staging folders with no `preview.json`, an hour old and a second old | The first deleted, the second kept | implemented | `PREVIEW-14: a staging folder with no preview.json is deleted once it is older than a preview's lifetime, and kept while it may still be in progress` |
+| PREVIEW-15 | Sweeping everything | Every preview deleted; `staging/` and `courses/` kept | implemented | `PREVIEW-15: sweeping everything, as at start, deletes every preview and keeps courses/` |
+| PREVIEW-16 | An expired preview, then a new preview | The expired one is gone | implemented | `PREVIEW-16: an expired preview is swept by the next preview` |
+| PREVIEW-17 | A `staging/` that is a symlink to a folder holding an expired preview | Neither sweep (expired only, or everything) deletes anything there | implemented | `PREVIEW-17: staging/ that is a symlink is not swept, and what it points at is left alone` |
+| PREVIEW-18 | The record throws after the course passed its check | The error reaches the caller and `staging/` is empty | implemented | `PREVIEW-18: a preview that throws after the course passed its check still deletes its staging, and the error reaches the caller` |
+| PREVIEW-ROUTE-1 | A preview left in `staging/` before start | Gone once School is up | implemented | `server/install-preview-route.test.ts`: `PREVIEW-ROUTE-1: School sweeps staging/ at start, so a preview left behind is gone` |
+| PREVIEW-ROUTE-2 | No course store | 503, naming `SCHOOL_COURSE_STORE` | implemented | `PREVIEW-ROUTE-2: without a course store, the answer is a 503 that names SCHOOL_COURSE_STORE` |
+| PREVIEW-ROUTE-3 | An `http` URL, a loopback address, credentials, a commit given as an option | 422 JSON with `stage: "fetch"` and the fetch's reason; `courses/` never made | implemented | `PREVIEW-ROUTE-3: %s is refused as JSON with its reason, and courses/ is never made` |
+| PREVIEW-ROUTE-4 | A body that is not JSON, lacks `commit`, or carries another field | 400 JSON | implemented | `PREVIEW-ROUTE-4: a body that is %s is a 400` |
+| PREVIEW-ROUTE-5 | A Host not in `SCHOOL_ALLOWED_HOSTS` | 403; nothing staged | implemented | `PREVIEW-ROUTE-5: a Host not among School's names is refused before routing, and nothing is staged`; also `server/host.test.ts`: `a request with Host %p is refused on every route` |
+| PREVIEW-ROUTE-6 | `Sec-Fetch-Site` `cross-site`, `same-site`, `none` | 403 | implemented | `PREVIEW-ROUTE-6: Sec-Fetch-Site %s is refused; only School's own pages may ask` |
+| PREVIEW-ROUTE-7 | `Sec-Fetch-Site: same-origin` | Reaches the route | implemented | `PREVIEW-ROUTE-7: Sec-Fetch-Site same-origin reaches the route` |
+| PREVIEW-ROUTE-8 | A body declared `text/plain` | 415 | implemented | `PREVIEW-ROUTE-8: a body that is not declared JSON is refused` |
+| PREVIEW-PROGRESS-1 | `courseProgress` on every record adapter: a name with nothing, one with encounters, answers, explanations and views beside another name's, a view alone, a removed install's | The counts written, and none of the other name's | implemented | `server/contract/learning-record.ts`: `course progress: %s`, run on PGlite and Bun.SQL |
+
+_Table 8. The install preview's cases. PREVIEW-3, -4, -5, -8, -12, -14, -16, PREVIEW-ROUTE-1 and the `same-site` and `none` cases of PREVIEW-ROUTE-6 each fail when the behaviour they name is removed. No case previews a course from the internet._

@@ -83,17 +83,21 @@ test("the tables hold one reply per question, and a question to one exposure of 
     (await db.query<{ id: string }>("SELECT * FROM school.open_encounter('c', 'l2', $1, $2, 1)", [PAGE.replace('"id":"l1"', '"id":"l2"'), at()])).rows[0]!.id);
   const question = uuid();
   await ask(db, { encounter: e, question });
+  const foreign = { exposure: uuid() };
+  await as(db, "school_app", () => db.query("SELECT school.record_lesson_help($1, $2, 'ai-help', $3)", [foreign.exposure, other, at(2)]));
   await as(db, "school_owner", async () => {
     const reply = () => db.query("INSERT INTO school.replies (question_id, status, text, sources, error, at) VALUES ($1, 'failed', '', '[]', 'x', $2)",
       [question, at(2)]);
     await reply();
     await expect(reply()).rejects.toThrow("replies_question");
     const q = (await db.query<{ conversation_id: string; exposure_seq: number }>("SELECT conversation_id, exposure_seq FROM school.questions")).rows[0]!;
-    // The same exposure for a second question, or a question in another encounter than its exposure's.
+    // The same exposure for a second question: the unique constraint.
     await expect(db.query("INSERT INTO school.questions (question_id, conversation_id, encounter_id, text, exposure_seq, at) VALUES ($1, $2, $3, 'Again?', $4, $5)",
-      [uuid(), q.conversation_id, e, q.exposure_seq, at(3)])).rejects.toThrow("questions_exposure");
+      [uuid(), q.conversation_id, e, q.exposure_seq, at(3)])).rejects.toThrow('duplicate key value violates unique constraint "questions_exposure"');
+    // A fresh exposure of another encounter, so only the foreign key can refuse it: it names the exposure's encounter, not the question's.
+    const fresher = (await db.query<{ seq: number }>("SELECT seq::int AS seq FROM school.exposures WHERE exposure_id = $1", [foreign.exposure])).rows[0]!.seq;
     await expect(db.query("INSERT INTO school.questions (question_id, conversation_id, encounter_id, text, exposure_seq, at) VALUES ($1, $2, $3, 'Again?', $4, $5)",
-      [uuid(), q.conversation_id, other, q.exposure_seq, at(3)])).rejects.toThrow("questions_exposure");
+      [uuid(), q.conversation_id, e, fresher, at(3)])).rejects.toThrow('violates foreign key constraint "questions_exposure_encounter"');
   });
-  expect(await counts(db)).toEqual({ conversations: 1, questions: 1, replies: 1, exposures: 1 });
+  expect(await counts(db)).toEqual({ conversations: 1, questions: 1, replies: 1, exposures: 2 });
 });

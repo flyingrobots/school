@@ -83,8 +83,8 @@ test("an empty record has no feedback, nothing to review, and no days studied", 
   expect(activity).toEqual({
     today: dayIn(Date.now()), tz: TZ, days: 14,
     courses: [
-      { course: "c", courseTitle: "Astronomy", trusted: true, studied: [], due: [] },
-      { course: "d", courseTitle: "d", trusted: true, studied: [], due: [] },
+      { course: "c", courseTitle: "Astronomy", trusted: true, studied: [], due: [], quizzes: 3, mastery: { notStarted: 3, settling: 0, holding: 0, faded: 0 } },
+      { course: "d", courseTitle: "d", trusted: true, studied: [], due: [], quizzes: 1, mastery: { notStarted: 1, settling: 0, holding: 0, faded: 0 } },
     ],
   });
 });
@@ -113,7 +113,9 @@ test("activity lists each course's study days in the window, and how many questi
   expect(c.studied).toEqual([...new Set([dayIn(NOW - 48 * HOUR), dayIn(NOW - 10 * HOUR)])]);
   // q1 is due now, so it is not ahead; q2 comes back within the next day.
   expect(c.due).toEqual([{ day: dayIn(NOW + 24 * HOUR), items: 1 }]);
-  expect(a.courses.find((x: { course: string }) => x.course === "d")).toEqual({ course: "d", courseTitle: "d", trusted: true, studied: [], due: [] });
+  expect(a.courses.find((x: { course: string }) => x.course === "d")).toEqual({
+    course: "d", courseTitle: "d", trusted: true, studied: [], due: [], quizzes: 1, mastery: { notStarted: 1, settling: 0, holding: 0, faded: 0 },
+  });
   // days is bounded, and must be a whole number.
   for (const bad of ["0", "61", "x", "1.5"]) await get(server, `/api/activity?days=${bad}`, 400);
   expect((await get(server, "/api/activity")).days).toBe(14);
