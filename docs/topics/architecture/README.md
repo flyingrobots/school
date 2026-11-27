@@ -585,7 +585,7 @@ throws before the failure is stored ([flyingrobots/school#17](https://github.com
 
 | Property | Today |
 | --- | --- |
-| Agents | Command templates, tried in order; output must match the response schema. Declared, commands included, only in the bridge's file on the host. |
+| Agents | Command templates, tried in order; output must match the response schema. One that is missing, cannot be started (its attempt says `could not start <program> (<code>)`), fails or answers off-schema hands over to the next. Declared, commands included, only in the bridge's file on the host. |
 | Isolation | No shell, an empty working folder, the process tree killed on timeout. This is not filesystem confinement: an agent can do whatever its own command allows. |
 | Local or hosted | Agents are launched locally; whether inference is local depends on the agent. A hosted CLI sends the prompt and the explanation over the network. |
 | Grading | Fidelity, completeness, accessibility, each `meets`, `partly` or `misses`, or insufficient evidence; quoted contradictions are checked to exist in the source, not to support the criticism |
