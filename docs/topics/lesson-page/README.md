@@ -106,14 +106,16 @@ a block:
 | --- | --- |
 | `feedback` | A quiz shows its explanation ("Why"): after a right answer, or on load for a quiz already answered right |
 | `model-answer` | An explain block shows its model answer: after an explanation is saved, or on load for one already saved |
+| `feedback` | An explain block shows a succeeded grading's findings: after a grading succeeds, or on load for an explanation already graded. A failed grading is never feedback. It is help for that block alone (RFC 8 §4.6) |
 | `reference` | One of an explain block's sources is opened |
 | `hint` | Never: no block type carries a hint yet |
 
 - Each showing is recorded once, under a UUID the page makes, so a resend is stored once. Showing
-  the same help again (a reload, or the model answer after a revision) is a new showing and a new
-  record. Collapsing and reopening the model answer is not; closing and reopening a source is.
+  the same help again (a reload, the model answer after a revision, or the grading of a revision)
+  is a new showing and a new record. Collapsing and reopening the model answer is not; closing and reopening a source is.
 - The quiz and explain blocks say when they show help (`onWhyShown`, `onModelShown`,
-  `onSourceOpened`); `web/src/pages/lesson.tsx` turns each call into one exposure.
+  `onFeedbackShown`, `onSourceOpened`); `web/src/pages/lesson.tsx` turns each call into one
+  exposure.
 - Exposures go through the outbox ahead of anything submitted after them, so School sees the help
   before the work that came after it. While one cannot be sent, the submission waits behind it and
   the block shows it as not sent yet.
@@ -190,12 +192,15 @@ grading on cue. Like the shell
 tests, it needs `npm ci` in `web/` and Google Chrome.
 
 The help the page records is tested at two levels. `web/test/quiz.test.tsx` and
-`web/test/explain.test.tsx` check that each block calls `onWhyShown`, `onModelShown` and
-`onSourceOpened` exactly once per showing, under React strict mode, and that Revise works. In
-`web/test/lesson.test.ts`, against School on `pglite:`, the "aid tracking", "every exposure the
-page shows is recorded once per showing", "RFC 2 Figure 4 over the page" and "an exposure that did
-not reach School" groups check `?aid=1`, one exposure per kind and showing, the order submit,
-model answer, revision, resends by the same id, and that 400, 409 and 501 are final.
+`web/test/explain.test.tsx` check that each block calls `onWhyShown`, `onModelShown`,
+`onFeedbackShown` and `onSourceOpened` exactly once per showing, under React strict mode, and that
+Revise works. In `web/test/lesson.test.ts`, against School on `pglite:`, the "aid tracking", "every
+exposure the page shows is recorded once per showing", "RFC 2 Figure 4 over the page" and "an
+exposure that did not reach School" groups check `?aid=1`, one exposure per kind and showing, the
+order submit, model answer, revision, resends by the same id, and that 400, 409 and 501 are final.
+Its "feedback for an explanation" test reads the record itself, with School stopped: one `feedback`
+exposure to the explain block once a grading succeeds, none for a failed one, a second on reload,
+and none to any other block.
 
 The outbox is tested in the "the outbox (flyingrobots/school#28)" group, with each context's
 network switched off in its `/api` route and tabs closed and reopened in one browser profile: an

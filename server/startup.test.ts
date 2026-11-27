@@ -230,3 +230,32 @@ test.each([
   expect(r.err).toContain(`${named(root)} overlaps untrusted course "c" (${join(root, "course")}) from SCHOOL_UNTRUSTED_COURSES`);
   expect(existsSync(join(root, "state", "db"))).toBe(false);
 }), timeout(1));
+
+// The course store (RFC 7 §5.1, flyingrobots/school#233): a SCHOOL_COURSE_STORE over a course or
+// over learner state stops startup with exit 2, naming both paths, before any record is made.
+test("a course store beside the course and the state starts", () => inRoot(async (root) => {
+  const r = await boot({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "state", "db")}`, SCHOOL_COURSE_STORE: join(root, "store") });
+  expect(r.up).toBe(true);
+}), timeout(1));
+
+test.each([
+  ["inside the course", (root: string) => join(root, "course", "store"), (root: string) => `trusted course "c" (${join(root, "course")}) from SCHOOL_COURSES`],
+  ["inside the state", (root: string) => join(root, "state", "store"), (root: string) => `SCHOOL_STATE (${join(root, "state")})`],
+])("a course store %s stops startup, naming both paths", (_, store, other) => inRoot(async (root) => {
+  const r = await boot({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "state", "db")}`, SCHOOL_COURSE_STORE: store(root) });
+  expect([r.up, r.code]).toEqual([false, 2]);
+  expect(r.err).toContain(`SCHOOL_COURSE_STORE (${store(root)}) overlaps ${other(root)}`);
+  expect(existsSync(join(root, "state", "db"))).toBe(false);
+}), timeout(1));
+
+test.each([
+  ["the course", (root: string) => join(root, "course", "lessons"), (root: string) => `trusted course "c" (${join(root, "course")}) from SCHOOL_COURSES`],
+  ["the state", (root: string) => join(root, "state", "inner"), (root: string) => `SCHOOL_STATE (${join(root, "state")})`],
+])("a course store that is a symlink into %s stops startup, naming both paths", (_, target, other) => inRoot(async (root) => {
+  mkdirSync(join(root, "state", "inner"), { recursive: true });
+  symlinkSync(target(root), join(root, "store"));
+  const r = await boot({ SCHOOL_COURSES: `c=${join(root, "course")}`, SCHOOL_STATE: join(root, "state"), SCHOOL_DATABASE_URL: `pglite:${join(root, "state", "db")}`, SCHOOL_COURSE_STORE: join(root, "store") });
+  expect([r.up, r.code]).toEqual([false, 2]);
+  expect(r.err).toContain(`SCHOOL_COURSE_STORE (${join(root, "store")}) overlaps ${other(root)}`);
+  expect(existsSync(join(root, "state", "db"))).toBe(false);
+}), timeout(1));
