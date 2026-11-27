@@ -184,12 +184,14 @@ Practical notes for anyone — human or agent — changing the framework.
   refused until the files are refreshed. Both are generated and record the release they came from (`LICENSE_IDS_RELEASE`, `EXCEPTION_IDS_RELEASE`:
   package, version, the day npm published it and the package's licence). To refresh, run `bun server/scripts/refresh-spdx.ts`
   (it needs npm and the network, fetches into a scratch directory under `$TMPDIR`, and writes only those
-  two files, both or neither; `--license-ids <version>` and `--exceptions <version>` pin a release, and the versions the
-  files record regenerate them byte for byte), then update the versions named here and in
-  `docs/topics/course-format/README.md`. The script reads each package's licence from its
-  `package.json` and stops, changing nothing, when it differs from the recorded one: `NOTICE`
-  attributes the exceptions list under CC-BY-3.0, so a person updates `NOTICE` and the recorded
-  licence before running it again. Refresh at least once every 12 months, or when a course
+  two files and `NOTICE`, all or none: each original is renamed aside before the new files are renamed
+  in, so a full disk cannot leave one half-updated; `--license-ids <version>` and `--exceptions <version>`
+  pin a release, and the versions the files record regenerate them byte for byte). The script updates the
+  versions `NOTICE` names for both packages itself, so `LISTS-12` keeps passing on a same-licence
+  refresh; then update the versions named here and in `docs/topics/course-format/README.md`. The script
+  reads each package's licence from its `package.json` and stops, changing nothing, when it differs
+  from the recorded one: `NOTICE` attributes the exceptions list under CC-BY-3.0, so a person updates
+  the licence wording in `NOTICE` and the recorded licence before running it again. Refresh at least once every 12 months, or when a course
   needs a license the lists lack: a release published more than 12 months ago is due (`isStale` in the
   script). `server/spdx-lists.test.ts` pins that rule and checks the files, their records and these docs
   agree; it does not read the clock or the network, so it cannot go red on a day nothing changed
