@@ -44,7 +44,7 @@ async function populated(): Promise<PGlite> {
 const INSTALL_TABLES = ["course_installs", "course_removals"] as const;
 const install = async (db: PGlite, course: string, ms: number) => {
   const id = crypto.randomUUID();
-  await db.query("SELECT school.install_course($1, $2, 'git', 'https://example.com/c.git', NULL, $3, $4, 'C', 1, $5)",
+  await db.query("SELECT school.install_course($1, $2, 'git', 'https://example.com/c.git', NULL, $3, $4, 'C', 1, NULL, NULL, $5)",
     [id, course, "a".repeat(40), "c".repeat(64), at(ms)]);
   return id;
 };
@@ -77,7 +77,7 @@ async function snapshot(db: PGlite) {
     for (const t of TABLES) perCourse[t] = (await db.query(`SELECT course, count(*)::int AS n FROM school.${t} GROUP BY 1 ORDER BY 1`)).rows;
     const all: Record<string, unknown[]> = {};
     for (const t of ["snapshots", "encounters", "answers", "explanations", "gradings", "views", "exposures", "decision_notes", "time_zone_choices",
-      ...INSTALL_TABLES, "course_trust_choices"]) {
+      ...INSTALL_TABLES, "course_trust_choices", "authoring_requests", "authoring_drafts", "authoring_decisions"]) {
       all[t] = (await db.query(`SELECT * FROM school.${t} ORDER BY seq`)).rows;
     }
     return { perCourse, all };
@@ -95,7 +95,7 @@ describe("renameCourse", () => {
     const before = await snapshot(db);
     const triggers = await enabled(db);
     expect(await renameCourse(db, "course", "aion")).toEqual({ from: "course", to: "aion",
-      rows: { encounters: 1, views: 1, decision_notes: 1, course_installs: 0, course_removals: 0 } });
+      rows: { encounters: 1, views: 1, decision_notes: 1, course_installs: 0, course_removals: 0, authoring_requests: 0 } });
     const after = await snapshot(db);
     for (const t of TABLES) {
       expect(after.perCourse[t]).toEqual([{ course: "aion", n: 1 }, { course: "bells", n: 1 }]);
@@ -103,7 +103,7 @@ describe("renameCourse", () => {
       expect(strip(after.all[t]!)).toEqual(strip(before.all[t]!));
     }
     for (const t of ["snapshots", "answers", "explanations", "gradings", "exposures"]) expect(after.all[t]).toEqual(before.all[t]);
-    expect(triggers.length).toBe(24); // two per record table: append-only, and no truncate
+    expect(triggers.length).toBe(30); // two per record table: append-only, and no truncate
     expect(await enabled(db)).toEqual(triggers);
   }, SLOW);
 
@@ -111,7 +111,7 @@ describe("renameCourse", () => {
   test("moves a course's install and removal rows to the new name, and nothing else", async () => {
     const { db, current } = await withInstalls();
     const before = await snapshot(db);
-    expect((await renameCourse(db, "course", "aion")).rows).toEqual({ encounters: 1, views: 1, decision_notes: 1, course_installs: 2, course_removals: 1 });
+    expect((await renameCourse(db, "course", "aion")).rows).toEqual({ encounters: 1, views: 1, decision_notes: 1, course_installs: 2, course_removals: 1, authoring_requests: 0 });
     const after = await snapshot(db);
     const courses = (rows: unknown[]) => rows.map((r) => (r as { course: string }).course);
     expect(courses(after.all.course_installs!)).toEqual(["aion", "aion", "bells"]);
@@ -124,11 +124,40 @@ describe("renameCourse", () => {
     expect(await installed(db)).toEqual([{ id: current, course: "aion", trusted: true }, expect.objectContaining({ course: "bells" })]);
   }, SLOW);
 
+  // RFC 9 §5.5 (flyingrobots/school#258): an authoring request names its course; its drafts and
+  // decisions name the request by id, so they follow it.
+  test("moves a course's authoring requests to the new name, and its drafts and decisions follow them", async () => {
+    const { db, current } = await withInstalls();
+    const request = crypto.randomUUID();
+    const draft = crypto.randomUUID();
+    await as(db, "school_app", async () => {
+      await db.query("SELECT school.request_authoring($1, 'course', $2, 'Add a lesson.', $3, '0.1.0', $4)", [request, current, "5".repeat(64), at(300)]);
+      await db.query("SELECT school.record_draft($1, $2, 1, 'refused', 'claude', $3, $4, 'Not yet.', 1, 1, $5)", [draft, request, "7".repeat(40), "8".repeat(64), at(301)]);
+      await db.query("SELECT school.decide_draft($1, $2, 'discarded', NULL, NULL, $3)", [crypto.randomUUID(), draft, at(302)]);
+    });
+    const before = await snapshot(db);
+    expect((await renameCourse(db, "course", "aion")).rows.authoring_requests).toBe(1);
+    const after = await snapshot(db);
+    const strip = (rows: unknown[]) => rows.map((r) => ({ ...(r as object), course: undefined }));
+    expect(after.all.authoring_requests!.map((r) => (r as { course: string }).course)).toEqual(["aion"]);
+    expect(strip(after.all.authoring_requests!)).toEqual(strip(before.all.authoring_requests!));
+    expect(after.all.authoring_drafts).toEqual(before.all.authoring_drafts);
+    expect(after.all.authoring_decisions).toEqual(before.all.authoring_decisions);
+    const history = (course: string) => as(db, "school_app", async () =>
+      (await db.query<{ request: { id: string; drafts: { id: string }[] } }>("SELECT * FROM school.course_authoring($1)", [course])).rows
+        .map((r) => [r.request.id, r.request.drafts.map((d) => d.id)]));
+    expect(await history("aion")).toEqual([[request, [draft]]]);
+    expect(await history("course")).toEqual([]);
+    await as(db, "school_owner", async () => {
+      expect(await error(db.exec("UPDATE school.authoring_requests SET course = 'x'"))).toBe("authoring_requests are append-only");
+    });
+  }, SLOW);
+
   test("renames a course that is installed but has no progress yet", async () => {
     const db = new PGlite();
     await migrate(db);
     await as(db, "school_app", () => install(db, "course", 0));
-    expect((await renameCourse(db, "course", "aion")).rows).toEqual({ encounters: 0, views: 0, decision_notes: 0, course_installs: 1, course_removals: 0 });
+    expect((await renameCourse(db, "course", "aion")).rows).toEqual({ encounters: 0, views: 0, decision_notes: 0, course_installs: 1, course_removals: 0, authoring_requests: 0 });
     expect((await installed(db)).map((c) => c.course)).toEqual(["aion"]);
   }, SLOW);
 

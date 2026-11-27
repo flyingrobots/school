@@ -154,6 +154,11 @@ export function postgresRecord(sql: Sql): LearningRecord {
           contentSha256: c.content_sha256, title: c.title, format: c.format, at: c.at, trusted: c.trusted });
       }),
 
+    requestAuthoring: async () => { throw new Error("not implemented"); },
+    recordDraft: async () => { throw new Error("not implemented"); },
+    decideDraft: async () => { throw new Error("not implemented"); },
+    courseAuthoring: async () => { throw new Error("not implemented"); },
+
     saveExplanation: async (s, now) =>
       SaveResult.parse({ status: await value("save_explanation", s.submissionId, s.encounterId, s.blockId, s.text, s.ms, now) }),
 

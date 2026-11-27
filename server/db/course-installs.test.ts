@@ -1,6 +1,7 @@
 // The install record's storage rules (RFC 7 §7; flyingrobots/school#232), on PGlite. What the
 // functions answer is the LearningRecord contract's (server/contract/learning-record.ts); this file
-// holds what the contract cannot see: which names the table admits, and that its source can widen.
+// holds what the contract cannot see: which names and titles the table admits. The `authored` source
+// (RFC 9 §5.5) and its columns are in server/db/authoring.test.ts.
 import { describe, expect, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
 import { NAME, RESERVED } from "../config.ts";
@@ -17,7 +18,7 @@ async function as<T>(db: PGlite, role: string, fn: () => Promise<T>): Promise<T>
 }
 
 const install = (db: PGlite, course: string) =>
-  db.query("SELECT school.install_course($1, $2, 'git', 'https://example.com/c.git', NULL, $3, $4, 'C', NULL, $5)",
+  db.query("SELECT school.install_course($1, $2, 'git', 'https://example.com/c.git', NULL, $3, $4, 'C', NULL, NULL, NULL, $5)",
     [crypto.randomUUID(), course, "a".repeat(40), "c".repeat(64), at]);
 
 describe("course installs", () => {
@@ -54,7 +55,7 @@ describe("course installs", () => {
     const titles = ["", " ", "\t", "\n", "\u00a0", "\u3000", "\ufeff", "\u2028", "a ", " a", "\ta", "a\n", "\u00a0a", "a\u3000", "\ufeffa",
       "a b", "a\u00a0b", "Bells", "é", "\u200b", "a\u200b"];
     const stored = (title: string) => as(db, "school_app", () => db.query(
-      "SELECT school.install_course($1, 'bells', 'git', 'https://example.com/c.git', NULL, $2, $3, $4, NULL, $5)",
+      "SELECT school.install_course($1, 'bells', 'git', 'https://example.com/c.git', NULL, $2, $3, $4, NULL, NULL, NULL, $5)",
       [crypto.randomUUID(), "a".repeat(40), "c".repeat(64), title, at]).then(() => true, () => false));
     const model = (title: string) => {
       const p = CourseInstall.safeParse({ id: crypto.randomUUID(), course: "bells", source: "git", url: "https://example.com/c.git", bundleSha256: null,
@@ -66,19 +67,5 @@ describe("course installs", () => {
     expect(verdicts).toEqual(titles.map((t) => `${JSON.stringify(t)}: table ${model(t)}`));
     expect(titles.filter(model).length).toBeGreaterThan(3); // witnesses on both sides
     expect(titles.filter((t) => !model(t)).length).toBeGreaterThan(8);
-  }, SLOW);
-
-  // RFC 9 will add an `authored` source in a migration of its own: the source rule is one named
-  // CHECK, and the URL and bundle rules ask only that each is set for its own source.
-  test("a later migration can widen the sources by replacing one named CHECK", async () => {
-    const db = new PGlite();
-    await migrate(db);
-    const authored = () => db.query("SELECT school.install_course($1, 'notes', 'authored', NULL, NULL, $2, $3, 'Notes', NULL, $4) AS s",
-      [crypto.randomUUID(), "a".repeat(40), "c".repeat(64), at]);
-    expect(await as(db, "school_app", () => authored().then(() => "stored", (e: Error) => e.message)))
-      .toContain('violates check constraint "course_installs_source"');
-    await as(db, "school_owner", () => db.exec(`ALTER TABLE school.course_installs DROP CONSTRAINT course_installs_source,
-      ADD CONSTRAINT course_installs_source CHECK (source IN ('git', 'bundle', 'authored'))`));
-    expect((await as(db, "school_app", authored)).rows).toEqual([{ s: "installed" }]);
   }, SLOW);
 });
