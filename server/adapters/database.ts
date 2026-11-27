@@ -143,6 +143,7 @@ export const GRANTED_FUNCTIONS: readonly string[] = [
   "school.record_decision_note(uuid,text,text,text,uuid,text,text,jsonb,timestamp with time zone)",
   "school.record_exposure(uuid,uuid,text,text,timestamp with time zone)",
   "school.record_grading(uuid,text,text,text,text,text,jsonb,text,jsonb,text,timestamp with time zone)",
+  "school.record_lesson_help(uuid,uuid,text,timestamp with time zone)",
   "school.record_view(text,text,timestamp with time zone)",
   "school.remove_installed_course(text,timestamp with time zone)",
   "school.save_explanation(uuid,uuid,text,text,bigint,timestamp with time zone)",

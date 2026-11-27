@@ -152,6 +152,15 @@ describe("due review on opening a lesson (RFC 2 §5; flyingrobots/school#32)", (
       expect(reason).not.toMatch(/[0-9]+ ?%|score|points?\b/i); // results in words, never scores
     }
   });
+
+  test("help for the whole encounter is named as asking about the lesson (RFC 6 §5.1, Table 5.2; flyingrobots/school#224)", () => {
+    // Oracle: RFC 6 Table 5.2, row 6, which gives this sentence.
+    const answeredAt = "2026-11-21T12:00:00.000Z";
+    expect(reviewReason(item("q", { rule: "due-review/aided-first-try", answeredAt, corrected: false, shown: ["ai-help"] }), "UTC"))
+      .toBe("On 21 November, asking about the lesson helped you find this one. It's back so you can answer it from memory.");
+    expect(reviewReason(item("q", { shown: ["ai-help", "hint"] })))
+      .toBe("On 20 November, asking about the lesson and a hint helped you find this one. It's back so you can answer it from memory.");
+  });
 });
 
 test("an exposure is recorded at the clock's time, and aid is the record's to derive", async () => {

@@ -1,6 +1,6 @@
 // School's use cases (RFC 3, §4). Each takes values already parsed at the edge, talks only to
 // ports, and returns plain data for the driving adapter to serialise.
-import type { Aid, AidTracking, Block, Contradiction, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, ExposureKind, ReviewNote, ReviewReason, EvidenceRow, Exposure, ExposureResult, ExplanationState, ExplanationSubmission, Grading, GradingRecord, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, Recorded, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
+import type { Aid, AidTracking, Block, Contradiction, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingRecord, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, Recorded, RecordedExposureKind, ReviewNote, ReviewReason, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
 import type { Clock, Grader, LearningRecord } from "./ports.ts";
 
 const squash = (s: string) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim().toLowerCase();
@@ -37,8 +37,9 @@ export const REVIEW_LIMIT = 3;
 /** The id of the section School adds at the top of a lesson for its review items. Authored ids may not start `school:` (server/blocks.ts). */
 export const REVIEW_SECTION_ID = "school:review";
 
-const helpWords: Record<ExposureKind, string> = {
+const helpWords: Record<RecordedExposureKind, string> = {
   feedback: "the explanation", "model-answer": "the model answer", hint: "a hint", reference: "a reference",
+  "ai-help": "asking about the lesson",
 };
 const listed = (words: string[]) => words.length <= 1 ? words.join("") : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
 

@@ -91,7 +91,7 @@ JSON API.
 | POST | `/api/explanation` | Saves an explanation, before any grading |
 | POST | `/api/grade` | One grading attempt through the bridge |
 | POST | `/api/view` | Records a view |
-| POST | `/api/exposure` | Records help shown for a block: `{ exposureId, encounterId, blockId, kind }`, kind `hint`, `model-answer`, `feedback` or `reference`. A stored or resent id answers 200 (`stored`, `duplicate`); the id naming something else is a conflict (409); no such encounter, an untracked one, or a block that is not a quiz or explain block in its snapshot is rejected (400) |
+| POST | `/api/exposure` | Records help shown for a block: `{ exposureId, encounterId, blockId, kind }`, kind `hint`, `model-answer`, `feedback` or `reference`; `ai-help` is refused (400), since only the server records help for a whole encounter. A stored or resent id answers 200 (`stored`, `duplicate`); the id naming something else is a conflict (409); no such encounter, an untracked one, or a block that is not a quiz or explain block in its snapshot is rejected (400) |
 | GET | `/api/aid/:submissionId` | One answer's or explanation's derived aid: `{ submissionId, aid }`, aid `aided`, `no-recorded-aid` or `unknown`. No such submission is 404; an id that is not a UUID is refused (400) |
 | GET | `/api/settings/status` | Whether the bridge answers |
 | GET | `/api/settings/authoring` | Whether authoring is on: `{ authoring: "on", skill: { digest, files } }`, the [pinned skill](#the-pinned-skill)'s manifest digest and file count, or `{ authoring: "off", reason }`. Nothing authors a course yet |
@@ -234,7 +234,7 @@ contract suite holds every driver under it to the same behaviour.
 The record is Postgres, built by the numbered migrations in `server/db/migrations/` (`0001_init.sql`,
 `0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_read_committed.sql`,
 `0006_due_review.sql`, `0007_since_last_here.sql`, `0008_study_days.sql`, `0009_time_zone_choices.sql`,
-`0010_course_installs.sql`, `0011_mastery.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
+`0010_course_installs.sql`, `0011_mastery.sql`, `0012_ai_help.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -318,6 +318,18 @@ explanation's aid in `submission_aid`: **unknown** when the encounter's `aid_tra
 **no recorded aid** otherwise. Aid is never stored, and `seq`, not `at`, decides before and after.
 `POST /api/exposure` stores them. The lesson page opens lessons with `?aid=1` and posts each
 exposure it shows (see [the lesson page](../lesson-page/README.md#the-help-it-records)).
+
+Whenever a model shows the learner more about a lesson, the rule is the same: the server records one
+exposure of kind `ai-help` for the whole encounter, before the model is asked, and every quiz answer
+or explanation in that encounter with a larger `seq` is aided, whichever block it belongs to (RFC 6
+§5.1). Migration 0012 adds it. `ai-help` is the only kind whose `block_id` is NULL, and the table
+checks that it is NULL exactly then (`exposures_block`). `record_lesson_help(exposure_id,
+encounter_id, kind, at)` stores one, idempotent by its id, and rejects an encounter that does not
+exist or does not track aid; it is the port's `recordLessonHelp`. `submission_aid`, `due_review` and
+`quiz_episodes` (so mastery too) read an exposure with no block as one to every block of its
+encounter. `POST /api/exposure` refuses the kind: the browser cannot record it or skip it. The rule
+errs toward marking aid: a lesson with five quizzes and one question to the model brings up to five
+items back for review.
 
 Decisions are notes that name their evidence (RFC 2 §3 and §5). Migration 0004 adds
 `decision_notes`: what School chose (a course, a lesson, or a block of a lesson), the rule that
@@ -428,8 +440,8 @@ erDiagram
         bigint seq PK
         uuid exposure_id UK "client UUID"
         uuid encounter_id FK
-        text block_id
-        text kind "hint, model-answer, feedback, reference"
+        text block_id "NULL exactly for ai-help: the whole encounter"
+        text kind "hint, model-answer, feedback, reference, ai-help"
         timestamptz at
     }
     ENCOUNTERS |o--o{ DECISION_NOTES : "is chosen for"
@@ -476,8 +488,8 @@ erDiagram
 
 *Figure 3. The learning record's tables, in schema `school`. Every row takes its `seq` from one
 shared sequence, so "before" and "after" across tables compare `seq`, never `at`. `VIEWS` (page
-views) and `TIME_ZONE_CHOICES` (the learner's time zone) are omitted. `EXPOSURES` is written only by `POST /api/exposure`, which the
-lesson page calls for each help it shows.*
+views) and `TIME_ZONE_CHOICES` (the learner's time zone) are omitted. `EXPOSURES` is written by `POST /api/exposure`, which the
+lesson page calls for each help it shows, and will be written by the server's `record_lesson_help` for help a model writes once asking lands (RFC 6).*
 
 | Rule | How it is enforced | What it does not cover |
 | --- | --- | --- |

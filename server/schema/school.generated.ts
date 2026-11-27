@@ -186,6 +186,11 @@ export interface LatestFeedback {
   at: string;
 }
 
+export interface LessonHelp {
+  exposureId: string;
+  encounterId: string;
+}
+
 export interface Mastery {
   blockId: string;
   strength: number | null;
