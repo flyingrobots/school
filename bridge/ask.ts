@@ -9,7 +9,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentEnded, agentStarted, answerText, claudeStreamLine, usageOf, type Agent, type AskConfig, type StreamLine, type Usage } from "./run.ts";
+import { agentEnded, agentStarted, answerText, claudeStreamLine, spawnFailure, usageOf, type Agent, type AskConfig, type StreamLine, type Usage } from "./run.ts";
 import { expand, usesPlaceholder } from "./template.ts";
 
 export type { Usage } from "./run.ts";
@@ -99,10 +99,15 @@ async function askAgent(agent: Agent, job: AskJob, timeoutMs: number, onDelta: (
   let pid: number | null = null;
   try {
     // detached: the agent leads its own process group, so a kill ends everything it started.
-    const proc = Bun.spawn(argv, {
-      cwd: work, detached: true, stdout: "pipe", stderr: "pipe",
-      stdin: usesPlaceholder(agent.argv, "{prompt}") ? "ignore" : new TextEncoder().encode(job.prompt),
-    });
+    let proc: Bun.Subprocess<"ignore" | Uint8Array, "pipe", "pipe">;
+    try {
+      proc = Bun.spawn(argv, {
+        cwd: work, detached: true, stdout: "pipe", stderr: "pipe",
+        stdin: usesPlaceholder(agent.argv, "{prompt}") ? "ignore" : new TextEncoder().encode(job.prompt),
+      });
+    } catch (e) {
+      return { attempt: { agent: agent.name, status: "failed", error: spawnFailure(program, e), exitCode: null, ms: Date.now() - started, deltas: 0 }, usage: null };
+    }
     agentStarted(pid = proc.pid);
     let why: string | null = null;
     let sweep: ReturnType<typeof setInterval> | null = null;
