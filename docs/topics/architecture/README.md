@@ -272,7 +272,7 @@ connection, in the record's database. The server refuses to start if any of thes
 | 4 | Owns no schema (schema `school` included), relation, function, type or database | the owner's login, objects it created |
 | 5 | Outside `pg_catalog` and `information_schema`: no privilege on any table, view, materialized view or foreign table (`SELECT` to `MAINTAIN`), no `USAGE`, `SELECT` or `UPDATE` on any sequence, no column privilege | table, column, sequence and `MAINTAIN` grants |
 | 6 | In `pg_catalog` and `information_schema`: no write privilege on any relation (except `UPDATE` on `pg_settings`, which Postgres grants `PUBLIC` and which is `SET`), and no `SELECT` on the relations Postgres withholds from an ordinary role (`RESTRICTED_RELATIONS`: `pg_authid`, `pg_statistic`, `pg_shadow` and 20 more) | catalog grants to it or to `PUBLIC` |
-| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 27 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
+| 7 | It may execute no function outside `pg_catalog` and `information_schema` but the 32 in `GRANTED_FUNCTIONS` (the migrations' grants), and none of the 55 built-ins Postgres withholds from an ordinary role (`RESTRICTED_FUNCTIONS`: `lo_import`, `lo_export`, `pg_read_file`, `pg_ls_dir`, `pg_reload_conf` and the rest), whether granted to it or to `PUBLIC` | function grants, helpers in `school`, functions in `public` |
 | 8 | No privilege granted to it by name on any relation, column, function (but the granted ones), schema (but `USAGE` on `school`), database, type, language, large object, foreign-data wrapper, foreign server or tablespace; no parameter privilege (`pg_parameter_acl`) granted to it or to `PUBLIC` | direct grants, `GRANT SET ON PARAMETER` |
 | 9 | No default privileges (`pg_default_acl`) granting to it or to `PUBLIC`, and none set by it | future grants |
 | 10 | No `CREATE` on any schema; no `CREATE` or `TEMPORARY` on the record's database | creating objects there |
@@ -384,18 +384,19 @@ tables, before any of RFC 9's routes use them: `authoring_requests` (what the le
 course, on which install, with the skill's digest and School's version; 1 to 20,000 characters),
 `authoring_drafts` (each round of a request, at most two: `ready` or `refused` by the check with the
 agent, the draft commit and its digest, or `failed` with no commit; a second round only after a
-refused first) and `authoring_decisions` (one per draft, `accepted` with its install and patch, or
+refused first that has no decision) and `authoring_decisions` (one per draft, `accepted` with its install and patch, or
 `discarded`). `school.request_authoring(...)` answers `stored`, `duplicate`, `conflict`, or `refused`
 when the base is not the course's current install; `school.record_draft(...)` answers `stored`,
-`duplicate`, `conflict`, or `rejected` for no such request or a round out of turn;
+`duplicate`, `conflict`, or `rejected` for no such request or a round out of turn (round 2 only follows a refused round 1 with no decision);
 `school.decide_draft(...)` answers `stored`, `duplicate`, `conflict`, or, storing nothing,
 `already-decided`, `not-ready` (an accept of a draft that is not `ready`), `stale` (the accepted
-install is no longer current) or `rejected`; `school.course_authoring(course)` lists a course's
+install is no longer current) or `rejected` (no such draft, an accept naming another install, or a discard of a draft an install already names); `school.course_authoring(course)` lists a course's
 requests with their drafts and decisions. They are the port's `requestAuthoring`, `recordDraft`,
 `decideDraft` and `courseAuthoring`. `course_installs` gains the source `authored`, with
 `parent_install_id` and `draft_id`; `school.install_course` takes both and answers `stale` when an
 authored install's parent is no longer current, or `rejected` when its draft is not an undecided
-`ready` draft of a request on that parent, and `school.installed_courses()` reports both.
+`ready` draft of a request on that parent whose commit and content digest the install names, and `school.installed_courses()` reports both.
+One extension beyond RFC 9 Figure 5.2 stays: a `failed` draft may be discarded, so the 14-day sweep can close it.
 Migration 0011 (RFC 5 §4.1, flyingrobots/school#217) adds `school.mastery(course, blocks, at, delay_ms)`,
 the port's `mastery`: per quiz, its stability and its strength at `at`, read from the record each
 time it is asked and never stored. It reads episodes through `school.quiz_episodes`, the same
