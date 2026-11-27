@@ -822,6 +822,109 @@ describe("every exposure the page shows is recorded once per showing (flyingrobo
     timeout(3) + 20_000
   )
 
+  test(
+    "feedback for a revision: revise, save and a succeeded grading add exactly one feedback to the record, and a revision whose grading fails adds none",
+    async () => {
+      const state = join(root, "revised-state")
+      const s = await stack(state, `revised=${COURSE}`)
+      try {
+        const p = await newPage(s)
+        const seen = posts(p)
+        let stored = 0
+        p.on("response", (r) => {
+          if (new URL(r.url()).pathname === "/api/exposure" && r.ok())
+            stored += 1
+        })
+        const settled = async (n: number) => {
+          await exposed(p, seen, n)
+          const until = Date.now() + 5_000
+          while (stored < n && Date.now() < until) await p.waitForTimeout(25)
+          expect(stored).toBe(n)
+        }
+        /** The encounter's exposures, oldest first, read as the owner with School stopped; then School again. */
+        const inRecord = async (encounterId: string) => {
+          await stop(s)
+          const rows = await ownerQuery<{ block_id: string; kind: string }>(
+            join(state, "record"),
+            "SELECT block_id, kind FROM school.exposures WHERE encounter_id = $1 ORDER BY seq",
+            [encounterId]
+          )
+          s.school = await startSchool(s.env)
+          return rows.map((r) => [r.block_id, r.kind])
+        }
+        const waitFor = (status: string) =>
+          p.waitForFunction(
+            (want) =>
+              document
+                .querySelector("[data-explain-id=seasons]")
+                ?.getAttribute("data-state") === want,
+            status
+          )
+
+        await open(s, lessonPath("revised"), "Orbits", p)
+        const x = explain(p, "seasons")
+        await x.locator("[data-explain=draft]").fill("The tilt of the axis.")
+        await x.locator("[data-explain=save]").click()
+        await waitFor("saved")
+        replies.push("succeed")
+        await x.locator("[data-explain=grade]").click()
+        await waitFor("graded")
+        await settled(2)
+        const encounterId = encounterOf(seen)
+
+        // Revise, save, grade: the revision's model answer and its findings are one new showing each.
+        await x.locator("[data-explain=revise]").click()
+        await x
+          .locator("[data-explain=draft]")
+          .fill("The axis is tilted, so each hemisphere leans towards the Sun.")
+        await x.locator("[data-explain=save]").click()
+        await waitFor("saved")
+        replies.push("succeed")
+        await x.locator("[data-explain=grade]").click()
+        await waitFor("graded")
+        await settled(4)
+        // Oracle: RFC 8 §4.6, one `feedback` for each succeeded grading, so exactly one new one.
+        expect(await inRecord(encounterId)).toEqual([
+          ["seasons", "model-answer"],
+          ["seasons", "feedback"],
+          ["seasons", "model-answer"],
+          ["seasons", "feedback"],
+        ])
+
+        // A revision whose grading fails adds its model answer and no feedback.
+        await open(s, lessonPath("revised"), "Orbits", p)
+        await settled(6)
+        await x.locator("[data-explain=revise]").click()
+        await x
+          .locator("[data-explain=draft]")
+          .fill("Tilt makes each hemisphere lean towards the Sun in turn.")
+        await x.locator("[data-explain=save]").click()
+        await waitFor("saved")
+        await settled(7)
+        replies.push("fail")
+        await x.locator("[data-explain=grade]").click()
+        await waitFor("failed")
+        await settled(7)
+        expect(new Set(seen.exposures().map((e) => e.encounterId))).toEqual(
+          new Set([encounterId])
+        )
+        expect(await inRecord(encounterId)).toEqual([
+          ["seasons", "model-answer"],
+          ["seasons", "feedback"],
+          ["seasons", "model-answer"],
+          ["seasons", "feedback"],
+          ["seasons", "model-answer"],
+          ["seasons", "feedback"], // the reload showing the graded revision
+          ["seasons", "model-answer"], // the next revision's save
+        ])
+        await p.context().close()
+      } finally {
+        await stop(s)
+      }
+    },
+    timeout(3) + 30_000
+  )
+
   test("reference: once each time one of an explain block's sources is opened", async () => {
     const p = await newPage()
     const seen = posts(p)

@@ -19,9 +19,9 @@ proposed; for that, read [RFC 2](../../rfc/0002-lessons-written-for-each-learner
 | Section | Covers |
 | --- | --- |
 | [The three parts](#the-three-parts) | Framework, course, learner state, and the trust between them |
-| [The server](#the-server) | Routes, the write guard, file serving |
+| [The server](#the-server) | Routes, the write guard, file serving, the course list |
 | [The pinned skill](#the-pinned-skill) | The `school` skill an authoring agent is given, its manifest digest, and when authoring is off |
-| [The hexagon](#the-hexagon) | The core, its ports and the adapters that implement them |
+| [The pinned skill](#the-pinned-skill) | The `school` skill an authoring agent is given, its manifest digest, and when authoring is off || [The hexagon](#the-hexagon) | The core, its ports and the adapters that implement them |
 | [The learning record](#the-learning-record) | Tables, rules, encounters, what the rules do and do not guarantee |
 | [The bridge](#the-bridge) | How explanations are graded |
 | [The web app](#the-web-app) | What exists of the interface |
@@ -79,13 +79,13 @@ JSON API.
 
 | Method | Path | Does |
 | --- | --- | --- |
-| GET | `/api/courses` | Lists installed courses, each with its `name` (the slug in addresses), `title`, `trusted` (false for a course in [safe mode](#trust-and-known-defects)), and `summary`, `author`, `license` and `format`, each null when the course does not declare it ([a course's folder](../course-format/README.md)), with lesson and reference counts, and each course's `quizzes` and `answeredCorrectly`; the counts are `null` for a course whose lessons cannot be read |
+| GET | `/api/courses` | Lists every course in [the course list](#the-course-list), configured or installed, each with its `name` (the slug in addresses), `title`, `trusted` (false for a course in [safe mode](#trust-and-known-defects)), and `summary`, `author`, `license` and `format`, each null when the course does not declare it ([a course's folder](../course-format/README.md)), with lesson and reference counts, and each course's `quizzes` and `answeredCorrectly`; the counts are `null` for a course whose lessons cannot be read. An installed course that is listed but not served has `lessons`, `quizzes` and `answeredCorrectly` `null`, `reference` 0, and its reason in `lessonsError` |
 | GET | `/api/resume` | What to study now, from where the learner left off: `continue`, `next`, `start`, `finished` or `nothing` ([the home page](../home-page/README.md)); each but `nothing` names its course and gives its `trusted` |
 | GET | `/api/feedback` | The newest succeeded grading: its course, the course's `trusted`, lesson, the prompt it answered and the findings; `null` before any. A course no longer served gives `trusted: false` |
 | GET | `/api/review?tz=` | The questions due for review now, across courses, each with its course's `trusted`, its lesson, question and reason ([due review](../due-review/README.md)); the reason names its day in `tz` |
 | GET | `/api/activity?days=14&tz=` | Each course's `trusted`, its study days in the last `days` (1 to 60), and how many questions come back on each day ahead, as days in `tz` |
 | GET | `/api/showcase` | What's ahead: every lesson with a quiz not yet answered correctly, with its hook ([a course's folder](../course-format/README.md#a-lessons-hook)) and its course's `trusted` |
-| GET | `/api/courses/:c` | One course: its `name`, `title`, `trusted`, `summary`, `author`, `license` and `format` (null when not declared), lessons with correct-quiz counts, reference documents. Lessons that cannot be read are `lessons: null` with the reason in `lessonsError`, still a 200 with the reference documents |
+| GET | `/api/courses/:c` | One course: its `name`, `title`, `trusted`, `summary`, `author`, `license` and `format` (null when not declared), lessons with correct-quiz counts, reference documents. Lessons that cannot be read are `lessons: null` with the reason in `lessonsError`, still a 200 with the reference documents. An installed course that is listed but not served answers the same shape with `reference: []`, and its lessons and reference files answer 404 |
 | GET | `/api/courses/:c/lessons/:id` | One lesson; `?view=web` (the default) opens or resumes an encounter, `?view=slides` records nothing. The web view answers only School's own `fetch()`: a request whose `Sec-Fetch-Site` is not `same-origin` or whose `Sec-Fetch-Dest` is not `empty`, such as an image or a link from another page, is refused (403) and opens nothing; one with neither header, as over plain HTTP on a name other than localhost, is answered ([trust](#trust-and-known-defects)). `?aid=1` declares that the client records every exposure it shows, so the encounter is opened with aid tracking 1; absent, it is untracked and its aid unknown. Any other `aid` value is refused (400). `?tz=` is the zone a review reason names its day in |
 | POST | `/api/answer` | Records a quiz answer |
 | POST | `/api/explanation` | Saves an explanation, before any grading |
@@ -122,6 +122,38 @@ No endpoint can set an agent's command. `POST /api/settings/agents` forwards onl
 name and on/off switch, and the bridge's `PUT /config` accepts only a reordering of the agents
 its file already declares, in the grading list, the ask list or both; commands are written by
 editing that file on the host.
+
+### The course list
+
+The server serves configured and installed courses together, under one set of names (RFC 7 §5.2 and
+§7, flyingrobots/school#234). `server/course-registry.ts` builds the list:
+
+- **Configured courses** come from `SCHOOL_COURSES`, `SCHOOL_COURSE` and `SCHOOL_UNTRUSTED_COURSES`,
+  each with its `course.json`, read once at start.
+- **Installed courses** come from `school.installed_courses()`, read again by every request that
+  uses the list. An install, a removal or a trust choice in the record is therefore served on the
+  next request, with no restart. Each is served from `<SCHOOL_COURSE_STORE>/courses/<install id>/`,
+  with the record's title. It is untrusted, and so in [safe mode](#trust-and-known-defects),
+  unless the record's latest trust choice for that install trusts it.
+- **An install that is listed but not served.** The first time the list sees an install, it
+  computes the folder's content digest and compares it with the record's `content_sha256`
+  ([a course's folder](../course-format/README.md#an-installed-courses-folder)). Then, on every
+  request, it checks that the folder still exists. A folder that is missing, holds other files, or
+  holds anything but regular files and folders is still listed, with `lessons: null` and its reason
+  in `lessonsError`, and none of its files are served. So is a folder the file system cannot read
+  (an unreadable subfolder, or one that vanishes while it is read): only that install is affected,
+  every other course is still served, and the failure is not remembered, so the install is served
+  again once its folder is fixed. A reason names the install by id and says what failed; it never
+  holds an absolute path of the course store. With no `SCHOOL_COURSE_STORE`, every install is
+  listed this way. The start logs each such course to stderr.
+- **A name both configured and installed** stops the start with exit code 2. The message names the
+  configured folder and the install id. If such a row is written while School runs, School logs
+  it to stderr once and the configured course keeps the name.
+
+The digest is computed once per install, because an install's folder is written once and never
+changed. A file changed while School runs is therefore found at the next start, but a folder
+deleted while School runs is found on the next request. Nothing writes into the course store yet:
+the install routes are later tasks of RFC 7.
 
 In short: the server is thin. It answers only to its own names, serves files safely, guards
 writes against ordinary cross-site requests, and hands learning-record work to Postgres functions.
@@ -333,14 +365,14 @@ of its files' manifest, and its title and format), `course_removals`, and `cours
 nothing; `school.choose_course_trust(install_id, trusted, at)` answers `stored`, or `rejected` for no
 such install; `school.installed_courses()` lists each name's latest install with no later removal,
 and its latest trust choice (none is untrusted). They are the port's `installCourse`,
-`removeInstalledCourse`, `chooseCourseTrust` and `installedCourses`. Nothing serves an installed
-course yet: the course list is still read from configuration (RFC 7 §10, task 4).
+`removeInstalledCourse`, `chooseCourseTrust` and `installedCourses`. [The course list](#the-course-list)
+serves each current install beside the configured courses.
 Migration 0011 (RFC 5 §4.1, flyingrobots/school#217) adds `school.mastery(course, blocks, at, delay_ms)`,
 the port's `mastery`: per quiz, its stability and its strength at `at`, read from the record each
 time it is asked and never stored. It reads episodes through `school.quiz_episodes`, the same
 episodes and weaknesses as due review, which only the record's own functions call. The measure is
 in [mastery](../mastery/README.md).
-`school.latest_feedback()` is the succeeded grading with the highest `seq` and where its explanation
+Migration 0011 (RFC 5 §4.1, flyingrobots/school#217) adds `school.mastery(course, blocks, at, delay_ms)`,`school.latest_feedback()` is the succeeded grading with the highest `seq` and where its explanation
 was written; the port's `latestFeedback`. A failed attempt is never feedback.
 
 **Figure 3. The learning record's tables**
@@ -554,7 +586,7 @@ throws before the failure is stored ([flyingrobots/school#17](https://github.com
 
 | Property | Today |
 | --- | --- |
-| Agents | Command templates, tried in order; output must match the response schema. Declared, commands included, only in the bridge's file on the host. |
+| Agents | Command templates, tried in order; output must match the response schema. One that is missing, cannot be started (its attempt says `could not start <program> (<code>)`), fails or answers off-schema hands over to the next. Declared, commands included, only in the bridge's file on the host. |
 | Isolation | No shell, an empty working folder, the process tree killed on timeout. This is not filesystem confinement: an agent can do whatever its own command allows. |
 | Local or hosted | Agents are launched locally; whether inference is local depends on the agent. A hosted CLI sends the prompt and the explanation over the network. |
 | Grading | Fidelity, completeness, accessibility, each `meets`, `partly` or `misses`, or insufficient evidence; quoted contradictions are checked to exist in the source, not to support the criticism |
@@ -642,6 +674,7 @@ is currently broken.
 | Everyone who can reach it | No login: anyone on the tailnet or localhost can use the API, including settings |
 | Trusted courses (`SCHOOL_COURSES`, `SCHOOL_COURSE`) | Their files render on School's origin with School's authority, which includes the settings API and the bridge that runs the learner's agents. RFC 1 decided installed courses are trusted code. |
 | Untrusted courses (`SCHOOL_UNTRUSTED_COURSES`) | Not trusted with School's authority: they are served in safe mode, and their files cannot run script on School's origin (below) |
+| Installed courses ([the course list](#the-course-list)) | Untrusted, and served in safe mode, unless the record's latest trust choice for that install trusts them; an update is a new install, so it starts untrusted |
 | Configured agents | They run with the learner's account on the host, under their own commands' limits |
 
 An untrusted course is served in safe mode (flyingrobots/school#210, RFC 4 step 2). Its reference files of any type (`/courses/:c/reference/*`) and its course and lesson JSON (`/api/courses/:c`, `/api/courses/:c/lessons/:l`) carry two headers a trusted course's responses do not:
@@ -710,10 +743,10 @@ The request names only the URL, the commit and the staging folder. The git progr
 | `SCHOOL_UNTRUSTED_COURSES` | Server | `name=path` pairs, one per course served in safe mode: its files are sandboxed ([trust](#trust-and-known-defects)). A name or folder also trusted is refused | none |
 | `SCHOOL_COURSE` | Server | One unnamed course, named after its folder | none; `/course` under compose, set there by `SCHOOL_COMPOSE_COURSE`, which may be empty |
 | `SCHOOL_STATE` | Server | Learner state; must not be inside a course | `state/` |
-| `SCHOOL_COURSE_STORE` | Server | The course store (RFC 7 §5.1): the folder installed courses will live in, and nothing else. Nothing installs into it yet. Empty means no store, so installing is off. Refused at start (exit 2, naming both paths) when it is, holds or sits inside a course, `SCHOOL_STATE`, `DB_PATH`, a PGlite record, a mount, `SCHOOL_WEB` or the framework folder (`SCHOOL_ROOT`, which holds the server source), and when the path exists but is not a folder, compared on real paths and by device and inode, as for [untrusted courses](#trust-and-known-defects) | none; `/store` under compose, the named volume `course-store`; compose reads it from `SCHOOL_COMPOSE_COURSE_STORE`, so a host export of `SCHOOL_COURSE_STORE` never reaches the container |
+| `SCHOOL_COURSE_STORE` | Server | The course store (RFC 7 §5.1): the folder installed courses live in, and nothing else. School serves each current install from `courses/<install id>/` in it ([the course list](#the-course-list)); nothing writes into it yet. Empty means no store, so installing is off. Refused at start (exit 2, naming both paths) when it is, holds or sits inside a course, `SCHOOL_STATE`, `DB_PATH`, a PGlite record, a mount, `SCHOOL_WEB` or the framework folder (`SCHOOL_ROOT`, which holds the server source), and when the path exists but is not a folder, compared on real paths and by device and inode, as for [untrusted courses](#trust-and-known-defects) | none; `/store` under compose, the named volume `course-store`; compose reads it from `SCHOOL_COMPOSE_COURSE_STORE`, so a host export of `SCHOOL_COURSE_STORE` never reaches the container |
 | `SCHOOL_SKILL` | Server | The `school` skill an authoring agent is given ([the pinned skill](#the-pinned-skill)). Empty means none, so authoring is off. Never a refusal to start: a missing or unfit folder turns authoring off with the reason | `<SCHOOL_ROOT>/.agents/skills/school`; `/framework/skills/school` under compose, the checkout's skill mounted read-only; compose reads it from `SCHOOL_COMPOSE_SKILL`, so a host export of `SCHOOL_SKILL` never reaches the container |
 | `SCHOOL_SKILL_DOCS` | Server | The folder holding the references the skill links, `course-format/` and `voice/` | `<SCHOOL_ROOT>/docs/topics`; `/framework/docs` under compose, set there with no variable |
-| `SCHOOL_DATABASE_URL` | Server | The record: `postgres://school_app:password@host:port/db` (`Bun.SQL`; `school_app`'s own login, refused if it fails [the login check](#the-login-check)) or `pglite:<dir>` (PGlite on disk, not inside a course) | none: required |
+| `SCHOOL_SKILL` | Server | The `school` skill an authoring agent is given ([the pinned skill](#the-pinned-skill)). Empty means none, so authoring is off. Never a refusal to start: a missing or unfit folder turns authoring off with the reason | `<SCHOOL_ROOT>/.agents/skills/school`; `/framework/skills/school` under compose, the checkout's skill mounted read-only; compose reads it from `SCHOOL_COMPOSE_SKILL`, so a host export of `SCHOOL_SKILL` never reaches the container || `SCHOOL_DATABASE_URL` | Server | The record: `postgres://school_app:password@host:port/db` (`Bun.SQL`; `school_app`'s own login, refused if it fails [the login check](#the-login-check)) or `pglite:<dir>` (PGlite on disk, not inside a course) | none: required |
 | `SCHOOL_DATABASE_PASSWORD`, `SCHOOL_DATABASE_PASSWORD_FILE` | Server | `school_app`'s password, for a `SCHOOL_DATABASE_URL` that names none; the file wins. Compose gives the file | none |
 | `SCHOOL_MIGRATE_URL` | Migrate job | The owner's URL: a role that can create roles, in practice the superuser | none: required |
 | `SCHOOL_MIGRATE_PASSWORD`, `SCHOOL_MIGRATE_PASSWORD_FILE` | Migrate job | The owner's password, for a `SCHOOL_MIGRATE_URL` that names none; the file wins. Compose gives the file | none |
