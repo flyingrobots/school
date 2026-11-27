@@ -567,17 +567,25 @@ describe("not found", () => {
 
 describe("loading", () => {
   test("shows Skeletons and a Spinner until the lesson arrives", async () => {
+    // The lesson's reply is held until the test opens the gate, so the loading state is there by
+    // construction. Waiting for the request to reach the gate proves the route holds it: a route
+    // that does not match leaves the loading state to the machine's speed (flyingrobots/school#354).
     const p = await newPage()
+    let reached!: () => void
+    const atGate = new Promise<void>((r) => (reached = r))
     let release!: () => void
     const held = new Promise<void>((r) => (release = r))
+    // The page asks for ?aid=1&tz=…: the route takes any query after aid=1.
     await p.route(
-      "**/api/courses/loading/lessons/orbits?aid=1",
+      /\/api\/courses\/loading\/lessons\/orbits\?aid=1(&|$)/,
       async (route) => {
+        reached()
         await held
         await route.fallback()
       }
     )
     await p.goto(base + lessonPath("loading"))
+    await atGate
     await p.locator("[data-lesson=loading]").waitFor()
     expect(
       await p.locator("[data-lesson=loading] [data-slot=skeleton]").count()

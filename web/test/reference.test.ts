@@ -308,14 +308,21 @@ describe("a course with reference documents", () => {
 
 describe("states", () => {
   test("while the list loads, it shows Skeletons and a Spinner, then the documents", async () => {
+    // The course's reply is held until the test opens the gate, so the loading state is there by
+    // construction; waiting for the request to reach the gate proves the route holds it
+    // (flyingrobots/school#354).
     const c = await context()
+    let reached!: () => void
+    const atGate = new Promise<void>((r) => (reached = r))
     let release!: () => void
     const held = new Promise<void>((r) => (release = r))
     await c.route(/\/api\/courses\/aion$/, async (route) => {
+      reached()
       await held
       await route.fallback()
     })
     const p = await open("/courses/aion/reference", c)
+    await atGate
     await main(p).locator("[data-slot=skeleton]").first().waitFor()
     expect(
       await main(p).locator("[data-slot=spinner], [role=status]").count()
