@@ -195,33 +195,40 @@ function identity(at: string, stat: Stat): string | null {
 }
 
 /**
- * The most folders School walks below one trusted course, mount or web folder (flyingrobots/school#298).
- * A course holds lessons/ and reference/ and a few folders under them: the example course holds 2,
- * and a course of 2,000 reference files in 100 topics about 100. 10,000 is far past any course. Each
- * folder costs one readdir and one stat, so the cap bounds a walk to about a quarter of a second on
- * a local SSD (100 folders take 3 ms), and a folder that is not a course, such as a home directory
- * or a whole disk, is refused at once instead of walked for minutes.
+ * The most entries, folders and regular files together, School walks below one course, mount or
+ * web folder (flyingrobots/school#298, flyingrobots/school#315). A course holds lessons/ and
+ * reference/ and a few folders under them: the example course holds 2 folders and a handful of
+ * files, and a course of 2,000 reference files in 100 topics about 2,100 entries. 10,000 is far past
+ * any course. Each entry costs one stat and each folder one readdir, so the cap bounds a walk, and
+ * a folder that is not a course, such as a home directory or a whole disk, is refused at once
+ * instead of walked for minutes.
  */
-export const DIRECTORY_CAP = 10_000;
-
-/** The names of the folders directly inside `dir`, never a symlink, whatever it points at. */
-export type List = (dir: string) => string[];
+export const ENTRY_CAP = 10_000;
 
 /**
- * School's own list. A symlink is never a folder here: the server never serves through a symlink
- * that leaves the folder it serves (serveFrom compares real paths), so following one would only
- * refuse setups that are safe, or loop. A filesystem that does not say an entry's type is asked
- * with lstat, which does not follow links either.
+ * The entries directly inside `dir` that School walks: its folders and its regular files, by name.
+ * Never a symlink, whatever it points at, and nothing else (a socket, a pipe, a device).
  */
-export const systemList: List = (dir) =>
-  readdirSync(dir, { withFileTypes: true })
-    .filter((d) => d.isDirectory() || (!d.isFile() && !d.isSymbolicLink() && lstatSync(join(dir, d.name)).isDirectory()))
-    .map((d) => d.name);
+export type List = (dir: string) => { dirs: string[]; files: string[] };
+
+/**
+ * School's own list. A symlink is never a folder or a file here: the server never serves through a
+ * symlink that leaves the folder it serves (serveFrom compares real paths), so following one would
+ * only refuse setups that are safe, or loop. A filesystem that does not say an entry's type is
+ * asked with lstat, which does not follow links either.
+ */
+export const systemList: List = (dir) => {
+  const dirs: string[] = [];
+  for (const d of readdirSync(dir, { withFileTypes: true })) {
+    if (d.isDirectory() || (!d.isFile() && !d.isSymbolicLink() && lstatSync(join(dir, d.name)).isDirectory())) dirs.push(d.name);
+  }
+  return { dirs, files: [] };
+};
 
 /**
  * Every folder at or below `root`, by identity, with the path it was found at. Walked breadth-first
  * through `list`, so never through a symlink; a folder seen twice (a bind mount of an ancestor
- * inside its own tree) is walked once. Refused, naming `what`, past DIRECTORY_CAP folders.
+ * inside its own tree) is walked once. Refused, naming `what`, past ENTRY_CAP folders.
  */
 function tree(root: string, what: string, stat: Stat, list: List): Map<string, string> {
   const found = new Map<string, string>();
@@ -233,13 +240,13 @@ function tree(root: string, what: string, stat: Stat, list: List): Map<string, s
     found.set(id, dir);
     let names: string[];
     try {
-      names = list(dir);
+      names = list(dir).dirs;
     } catch (e) {
       if (code(e) === "ENOENT" || code(e) === "ENOTDIR") continue;
       throw new ConfigError(`cannot list ${dir} in ${what}: ${code(e) ?? String(e)}`);
     }
-    if (queue.length - 1 + names.length > DIRECTORY_CAP) {
-      throw new ConfigError(`${what} holds more than ${DIRECTORY_CAP} folders; with SCHOOL_UNTRUSTED_COURSES set, School walks every folder of each trusted course, mount and the web folder to find one bind-mounted where an untrusted course lives, and walks at most ${DIRECTORY_CAP} in each. To start, unset SCHOOL_UNTRUSTED_COURSES, or point ${/SCHOOL_[A-Z_]+/.exec(what)?.[0] ?? "the variable named above"} at a folder holding fewer`);
+    if (queue.length - 1 + names.length > ENTRY_CAP) {
+      throw new ConfigError(`${what} holds more than ${ENTRY_CAP} folders; with SCHOOL_UNTRUSTED_COURSES set, School walks every folder of each trusted course, mount and the web folder to find one bind-mounted where an untrusted course lives, and walks at most ${ENTRY_CAP} in each. To start, unset SCHOOL_UNTRUSTED_COURSES, or point ${/SCHOOL_[A-Z_]+/.exec(what)?.[0] ?? "the variable named above"} at a folder holding fewer`);
     }
     for (const name of names) queue.push(join(dir, name));
   }
