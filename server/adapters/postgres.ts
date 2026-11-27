@@ -180,9 +180,8 @@ export function postgresRecord(sql: Sql): LearningRecord {
 
     recordExposure: async (e, now) =>
       ExposureResult.parse({ status: await value("record_exposure", e.exposureId, e.encounterId, e.blockId, e.kind, now) }),
-    recordLessonHelp: async () => {
-      throw new Error("not implemented");
-    },
+    recordLessonHelp: async (h, now) =>
+      ExposureResult.parse({ status: await value("record_lesson_help", h.exposureId, h.encounterId, h.kind, now) }),
 
     aid: async (submissionId) => {
       const r = await rows("submission_aid", submissionId);

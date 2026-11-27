@@ -103,6 +103,13 @@ type AidRequest {
   submissionId: String!
 }
 
+# Help for a whole encounter, which the server records (RFC 6 §5.1). Its `kind` is left out: the one
+# value, `ai-help`, holds a hyphen, which a GraphQL enum value cannot. check.ts compares the rest.
+type LessonHelp {
+  exposureId: String!
+  encounterId: String!
+}
+
 # ---- What the record answers -------------------------------------------------------------------
 
 enum StoreStatus { stored duplicate conflict rejected }
