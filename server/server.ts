@@ -19,7 +19,8 @@ import { withSecretFiles } from "./secrets.ts";
 import { agentOrder, agentTest } from "./agents.ts";
 import { authoringStatus } from "./skill.ts";
 import { feedbackSpeech, lessonSpeech, SEGMENT, SpeakRequest, toSpeech, UTTERANCE } from "./speak.ts";
-import { PREVIEW_TTL_MS, previewInstall, sweepStaging, type PreviewAnswer } from "./install-preview.ts";
+import { PREVIEW_TTL_MS, previewInstall, sweepStaging, type PreviewAnswer, type Previews } from "./install-preview.ts";
+import { courseInstaller, installStatus, sweepCourses, type InstallAnswer } from "./install-course.ts";
 
 let config;
 let bridgeCfg;
@@ -123,11 +124,14 @@ if (fixedNow !== null) console.warn(`school: warning: the clock is fixed at ${fi
 const school = createSchool({ record: postgresRecord(database.sql), grader, clock: { now: () => fixedNow ?? new Date().toISOString() } });
 
 // The course store (RFC 7 §5.1). Every preview staged before this start is deleted now, and one
-// never confirmed is deleted once its hour is up, by this sweep and before each new preview.
+// never confirmed is deleted once its hour is up, by this sweep and before each new preview. What
+// the install needs to know about each preview is kept here, in this process's memory, and never
+// read from the store (server/install-preview.ts), so no preview outlives a restart.
 const STORE = config.store;
+const previews: Previews = new Map();
 if (STORE !== null) {
-  sweepStaging(STORE, Date.now(), true);
-  setInterval(() => sweepStaging(STORE, Date.now()), PREVIEW_TTL_MS / 6).unref();
+  sweepStaging(STORE, Date.now(), previews, true);
+  setInterval(() => sweepStaging(STORE, Date.now(), previews), PREVIEW_TTL_MS / 6).unref();
   console.log(`school: course store at ${STORE}; installing from a repository is on`);
 } else {
   console.log("school: no course store (SCHOOL_COURSE_STORE); installing courses is off");
@@ -147,6 +151,9 @@ try {
   await database.close();
   process.exit(2);
 }
+// A folder in the store's courses/ that is no current install's (RFC 7 §5.1): an earlier version,
+// or one a crash left between moving it there and recording it. Deleted before anything is served.
+if (STORE !== null) sweepCourses(STORE, new Set((await school.installedCourses()).map((c) => c.id)));
 for (const l of first.listed) if (l.kind === "unavailable") console.error(`school: course ${JSON.stringify(l.course.name)} is listed but not served: ${l.course.reason}`);
 
 // Static files come only from configured mounts; lesson sources and state are never served raw.
@@ -617,7 +624,7 @@ async function installPreviewJson(req: Request): Promise<Response> {
   try {
     answer = await previewInstall(await readJson(req), {
       store: STORE, configured: configured.map((c) => c.name), installedNames: () => school.installedNames(), progress: (c) => school.courseProgress(c),
-      now: () => Date.now(), newId: () => crypto.randomUUID(),
+      now: () => Date.now(), newId: () => crypto.randomUUID(), previews,
     });
   } catch (e) {
     // Not a refusal: the store or the record failed. The reason goes to the log; the answer stays JSON.
@@ -625,6 +632,31 @@ async function installPreviewJson(req: Request): Promise<Response> {
     return json({ status: "failed", error: "School could not preview this course; the reason is in School's log" }, 500);
   }
   return json(answer, PREVIEW_STATUS[answer.status], { "cache-control": "no-store" });
+}
+
+const install = STORE === null ? null : courseInstaller({
+  store: STORE, configured: configured.map((c) => c.name), installedNames: () => school.installedNames(),
+  record: (i) => school.installCourse(i), now: () => Date.now(), newId: () => crypto.randomUUID(), previews,
+});
+
+/**
+ * POST /api/installs (RFC 7 task 8, flyingrobots/school#238): install a staged preview under a name
+ * (server/install-course.ts). It writes the course store and the record, so like the preview it
+ * answers only School's own pages (RFC 7 §8). The course is served, untrusted, from the next request.
+ */
+async function installJson(req: Request): Promise<Response> {
+  const site = req.headers.get("sec-fetch-site");
+  if (site !== null && site !== "same-origin") return json({ status: "forbidden", error: "only School's own pages may install a course" }, 403);
+  if (install === null) return json({ status: "unavailable", error: NO_STORE }, 503);
+  let answer: InstallAnswer;
+  try {
+    answer = await install(await readJson(req));
+  } catch (e) {
+    // Not a refusal: the store or the record failed, and any folder the install moved is deleted.
+    console.error(`school: install failed: ${e instanceof Error ? e.message : String(e)}`);
+    return json({ status: "failed", error: "School could not install this course; the reason is in School's log" }, 500);
+  }
+  return json(answer, installStatus(answer), { "cache-control": "no-store" });
 }
 
 async function readJson(req: Request): Promise<unknown> {
@@ -747,6 +779,7 @@ const http = Bun.serve({
     }
     if (req.method === "POST" && pathname === "/api/speak") return speakJson(await readJson(req));
     if (req.method === "POST" && pathname === "/api/installs/preview") return installPreviewJson(req);
+    if (req.method === "POST" && pathname === "/api/installs") return installJson(req);
     const cancel = /^\/api\/speak\/([^/]+)\/cancel$/.exec(pathname);
     if (req.method === "POST" && cancel !== null) {
       if (!UTTERANCE.test(cancel[1]!)) return json({ status: "invalid", error: "not an utterance id" }, 400);

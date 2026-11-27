@@ -108,7 +108,7 @@ license CC-BY-4.0; format 1
 
 ## Extracting a course from a git commit
 
-`extractCommit` in `server/extract-tree.ts` copies a course out of one commit of a bare git repository into a new folder, writing only what School reads and refusing anything that could escape the folder, run code or exhaust the disk. It is the extraction step of installing a course (RFC 7, "Installing courses", §4 and §6, which answers flyingrobots/school#188; this module is flyingrobots/school#235); nothing in School calls it yet, and fetching the commit is a separate step.
+`extractCommit` in `server/extract-tree.ts` copies a course out of one commit of a bare git repository into a new folder, writing only what School reads and refusing anything that could escape the folder, run code or exhaust the disk. It is the extraction step of installing a course (RFC 7, "Installing courses", §4 and §6, which answers flyingrobots/school#188; this module is flyingrobots/school#235). The [install preview](../architecture/README.md#previewing-an-install) calls it on the commit `fetchCommit` fetched, a separate step.
 
 ```ts
 const result = await extractCommit({ repository: "/staging/abc/repo.git", commit: "<40 or 64 hex digits>", into: "/staging/abc/course" });
@@ -161,7 +161,7 @@ So a commit's course reaches disk only after every entry School would write has 
 
 ## An installed course's folder
 
-An installed course is a course folder in the course store, `<SCHOOL_COURSE_STORE>/courses/<install id>/`, named by its install's id in the record, not by its course name (RFC 7 §5.1). It has the layout above and nothing else, since extraction writes only `course.json`, `lessons/*.json` and `reference/**`. School serves it under the name the record gives it ([the course list](../architecture/README.md#the-course-list)) and never writes to it after the install.
+An installed course is a course folder in the course store, `<SCHOOL_COURSE_STORE>/courses/<install id>/`, named by its install's id in the record, not by its course name (RFC 7 §5.1). It has the layout above and nothing else, since extraction writes only `course.json`, `lessons/*.json` and `reference/**`. [The install](../architecture/README.md#installing-a-previewed-course) moves it there from a checked preview and makes every file in it read-only; School serves it under the name the record gives it ([the course list](../architecture/README.md#the-course-list)) and never writes to it again. At start, School deletes every folder in `courses/` that is no current install's.
 
 The record keeps the folder's content digest, `content_sha256`. `contentDigest` in `server/course-registry.ts` computes it:
 

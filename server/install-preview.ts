@@ -10,11 +10,13 @@
 //
 // A refusal at any stage deletes the preview's folder and answers the stage, the reason, the tree
 // path or file it concerns, and the stage's own sentence. A course that passes is kept as
-// `course/` beside `preview.json` (the URL, the full commit and when the preview expires) for the
-// install (RFC 7 task 8, `POST /api/installs {preview, name}`) to move into `courses/`; until then
-// nothing outside `staging/` is written, and the record is only read. A preview that is never
-// confirmed is deleted once it expires, an hour after it was made (`sweepStaging`), and every
-// preview is deleted when School starts.
+// `course/`, the only thing left in its folder, for the install (server/install-course.ts, RFC 7
+// task 8) to move into `courses/`. What the install needs to know about it (the URL, the full
+// commit, when it expires, and the content digest of `course/` as checked) is kept in the server's
+// memory, in `previews`, never on disk, so nothing that can write the store can change it. Until
+// the install, nothing outside `staging/` is written, and the record is only read. A preview that
+// is never confirmed is deleted, folder and memory, once it expires, an hour after it was made
+// (`sweepStaging`), and every preview is deleted when School starts, so none outlives a restart.
 //
 // The answer also suggests a name (RFC 7 §5.2): the URL's last path segment without `.git`, made a
 // course name; says whether a configured course or a current install already has it; and gives
@@ -24,11 +26,12 @@
 // this function's third argument. Only tests pass it; the route never does, and nothing in the
 // request body can reach it: the body is parsed strictly, so any field besides `url` and `commit`
 // is refused.
-import { lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join, sep } from "node:path";
 import { z } from "zod";
 import { checkCourse, type Lesson } from "./check-course.ts";
 import { NAME, RESERVED } from "./config.ts";
+import { contentDigest } from "./course-registry.ts";
 import type { CourseProgress } from "./core/model.ts";
 import { extractCommit } from "./extract-tree.ts";
 import { fetchCommit, type FetchTesting } from "./fetch-commit.ts";
@@ -50,6 +53,8 @@ export type PreviewSources = {
   now: () => number;
   /** A new preview id, a UUID. */
   newId: () => string;
+  /** The server's memory of the previews it staged, which a good preview is added to. */
+  previews: Previews;
 };
 
 export type PreviewStage = "fetch" | "extract" | "check";
@@ -68,8 +73,14 @@ export type PreviewAnswer =
 /** The body, exactly: two strings, and no other field. Lengths are bounded here; fetchCommit checks the rest. */
 const PreviewRequest = z.object({ url: z.string().max(4096), commit: z.string().max(512) }).strict();
 
-/** What `preview.json` holds beside a kept preview's `course/`. */
-const PreviewFile = z.object({ url: z.string(), commit: z.string(), expires: z.iso.datetime() });
+/**
+ * What the server remembers of a kept preview: the URL, the full commit, when the preview expires
+ * (milliseconds since the epoch), and the content digest of `course/` as checked (RFC 7 §7), which
+ * the install compares with the folder it moves, so files changed after the check are never installed.
+ */
+export type StagedPreview = { url: string; commit: string; expires: number; contentSha256: string };
+/** The previews this server process staged, by preview id. Only `previewInstall` adds to it. */
+export type Previews = Map<string, StagedPreview>;
 
 /** Lowercased, every run of other characters one hyphen, no hyphen at either end (RFC 7 §5.2 step 1). */
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -96,22 +107,25 @@ export function suggestName(url: string, title: string | null): string {
   return "course";
 }
 
-/** When a staged preview's time is up: its preview.json's `expires`, or, for a preview still being made or left half-made, a lifetime after it last changed. */
-function expiresAt(folder: string): number {
-  try {
-    const file = join(folder, "preview.json");
-    if (lstatSync(file).isFile()) return Date.parse(PreviewFile.parse(JSON.parse(readFileSync(file, "utf8"))).expires);
-  } catch {
-    // No preview.json, or not one School wrote: fall back to the folder's age.
-  }
-  return lstatSync(folder).mtimeMs + PREVIEW_TTL_MS;
+/** When a staged preview's time is up: when `previews` says it expires, or, for a folder it does not name (a preview still being made, or left half-made), a lifetime after the folder last changed. */
+function expiresAt(folder: string, name: string, previews: Previews): number {
+  return previews.get(name)?.expires ?? lstatSync(folder).mtimeMs + PREVIEW_TTL_MS;
 }
 
 /**
  * Deletes every preview in `<store>/staging/` whose time is up at `now`, or every entry when `all`
- * (as at start, RFC 7 §5.1). `staging/` itself is kept, and is not swept at all unless it is a real folder; anything else in the store is not touched.
+ * (as at start, RFC 7 §5.1), and forgets each preview in `previews` whose time is up (all of them
+ * when `all`). `staging/` itself is kept, and is not swept at all unless it is a real folder;
+ * anything else in the store is not touched.
  */
-export function sweepStaging(store: string, now: number, all = false): void {
+export function sweepStaging(store: string, now: number, previews: Previews, all = false): void {
+  sweepFolders(store, now, previews, all);
+  // Forgotten only now: the folders were judged by the expiries remembered here.
+  for (const [id, kept] of previews) if (all || kept.expires <= now) previews.delete(id);
+}
+
+/** The folders of `sweepStaging`; it never throws. */
+function sweepFolders(store: string, now: number, previews: Previews, all: boolean): void {
   const staging = join(store, "staging");
   let names: string[];
   try {
@@ -124,7 +138,7 @@ export function sweepStaging(store: string, now: number, all = false): void {
   for (const name of names) {
     const entry = join(staging, name);
     try {
-      if (all || !lstatSync(entry).isDirectory() || expiresAt(entry) <= now) rmSync(entry, { recursive: true, force: true });
+      if (all || !lstatSync(entry).isDirectory() || expiresAt(entry, name, previews) <= now) rmSync(entry, { recursive: true, force: true });
     } catch {
       // Gone already, or deleted by a sweep running beside this one.
     }
@@ -140,7 +154,7 @@ export async function previewInstall(body: unknown, sources: PreviewSources, tes
   if (!parsed.success) return { status: "invalid", error: "a preview takes {\"url\": ..., \"commit\": ...}: the repository's https URL and a full commit hash, branch or tag, and nothing else" };
   const { url, commit: asked } = parsed.data;
   const now = sources.now();
-  sweepStaging(sources.store, now);
+  sweepStaging(sources.store, now, sources.previews);
   const staging = join(sources.store, "staging");
   mkdirSync(staging, { recursive: true });
   const id = sources.newId();
@@ -148,7 +162,7 @@ export async function previewInstall(body: unknown, sources: PreviewSources, tes
   const course = join(folder, "course");
   // A stage's sentence may name a file by its path in the store; it is answered relative to the course.
   const plain = (message: string) => message.replaceAll(course + sep, "").replaceAll(folder + sep, "").replaceAll(course, ".").replaceAll(folder, ".");
-  let kept = false;
+  let staged = false;
   try {
     const fetched = await fetchCommit({ url, commit: asked, staging: folder }, testing);
     if (!fetched.ok) return { status: "refused", stage: "fetch", reason: fetched.refusal.reason, path: null, message: plain(fetched.refusal.message) };
@@ -157,20 +171,24 @@ export async function previewInstall(body: unknown, sources: PreviewSources, tes
     rmSync(fetched.repository, { recursive: true, force: true });
     const check = checkCourse(course);
     if (!check.ok) return { status: "refused", stage: "check", reason: "invalid", path: check.file, message: plain(check.message) };
+    // The digest of the folder as checked, taken before anything else is awaited. The extraction
+    // wrote only regular files and folders, so the folder has one.
+    const digest = contentDigest(course);
+    if (!digest.ok) throw new Error(`the extracted course has no content digest: ${digest.message}`);
 
     const suggested = suggestName(url, check.title);
     const taken = sources.configured.includes(suggested) ? "configured" : (await sources.installedNames()).includes(suggested) ? "installed" : null;
     const held = await sources.progress(suggested);
     const progress = held.encounters + held.answers + held.explanations + held.views > 0 ? held : null;
-    const expires = new Date(now + PREVIEW_TTL_MS).toISOString();
-    writeFileSync(join(folder, "preview.json"), JSON.stringify({ url, commit: fetched.commit, expires }), { flag: "wx", mode: 0o644 });
-    kept = true;
+    const expires = now + PREVIEW_TTL_MS;
+    sources.previews.set(id, { url, commit: fetched.commit, expires, contentSha256: digest.digest });
+    staged = true;
     return {
-      status: "ok", preview: id, expires, url, commit: fetched.commit,
+      status: "ok", preview: id, expires: new Date(expires).toISOString(), url, commit: fetched.commit,
       course: { title: check.title, ...check.manifest, lessons: check.lessons, quizzes: check.quizzes, explains: check.explains },
       name: { suggested, taken, progress },
     };
   } finally {
-    if (!kept) rmSync(folder, { recursive: true, force: true });
+    if (!staged) rmSync(folder, { recursive: true, force: true });
   }
 }

@@ -13,9 +13,10 @@ import { join, relative } from "node:path";
 import { postgresRecord } from "./adapters/postgres.ts";
 import { pgliteSql } from "./adapters/pglite.ts";
 import { checkCourse } from "./check-course.ts";
+import { contentDigest } from "./course-registry.ts";
 import { migrate } from "./db/migrate.ts";
 import type { Network } from "./fetch-commit.ts";
-import { PREVIEW_TTL_MS, previewInstall, suggestName, sweepStaging, type PreviewSources } from "./install-preview.ts";
+import { PREVIEW_TTL_MS, previewInstall, suggestName, sweepStaging, type PreviewSources, type Previews } from "./install-preview.ts";
 import { dir, file, repository, symlink } from "./testing/git-trees.ts";
 import { certificate, git, gitBackend, serveHttps } from "./testing/https-git.ts";
 
@@ -82,9 +83,14 @@ function sources(o: Partial<PreviewSources> = {}): PreviewSources {
   return {
     store, configured: [], installedNames: async () => [],
     progress: async () => ({ encounters: 0, answers: 0, explanations: 0, views: 0 }),
-    now: () => T0, newId: () => `00000000-0000-4000-8000-${String(++id).padStart(12, "0")}`, ...o,
+    now: () => T0, newId: () => `00000000-0000-4000-8000-${String(++id).padStart(12, "0")}`, previews: new Map(), ...o,
   };
 }
+/** The content digest of `folder` (RFC 7 §7), which the install compares with what it moves (flyingrobots/school#238). */
+const digestOf = (folder: string) => {
+  const d = contentDigest(folder);
+  return d.ok ? d.digest : d.message;
+};
 const preview = (body: unknown, s: PreviewSources) => previewInstall(body, s, { network: network() });
 
 /** Every file and folder under `dir`, relative and sorted; empty for a folder that does not exist. */
@@ -119,7 +125,7 @@ describe("previewInstall: a good course", () => {
     expect(got.status === "ok" ? got.commit : got).toBe(good);
   });
 
-  test("PREVIEW-3: the preview is kept in staging as the course School reads and its source, with no repository and nothing in courses/", async () => {
+  test("PREVIEW-3: the preview is kept in staging as the course School reads, with no repository and nothing in courses/, and its source in memory", async () => {
     const s = sources();
     await preview({ url: url("counting-in-binary.git"), commit: good }, s);
     const id = "00000000-0000-4000-8000-000000000001";
@@ -127,10 +133,10 @@ describe("previewInstall: a good course", () => {
     expect(tree(s.store)).toEqual([
       "staging", `staging/${id}`, `staging/${id}/course`, `staging/${id}/course/course.json`, `staging/${id}/course/lessons`,
       `staging/${id}/course/lessons/0001-places-worth-twice.json`, `staging/${id}/course/lessons/0002-adding-with-carries.json`,
-      `staging/${id}/course/reference`, `staging/${id}/course/reference/glossary.html`, `staging/${id}/preview.json`,
+      `staging/${id}/course/reference`, `staging/${id}/course/reference/glossary.html`,
     ]);
-    expect(JSON.parse(readFileSync(join(s.store, "staging", id, "preview.json"), "utf8")))
-      .toEqual({ url: url("counting-in-binary.git"), commit: good, expires: new Date(T0 + PREVIEW_TTL_MS).toISOString() });
+    expect(Object.fromEntries(s.previews))
+      .toEqual({ [id]: { url: url("counting-in-binary.git"), commit: good, expires: T0 + PREVIEW_TTL_MS, contentSha256: digestOf(join(s.store, "staging", id, "course")) } });
   });
 });
 
@@ -242,54 +248,57 @@ describe("previewInstall: progress already under the name, on a real record", ()
 });
 
 describe("sweepStaging", () => {
-  /** A preview folder in `store`'s staging, with a preview.json expiring at `expires` or none, last changed at `mtime`. */
-  function staged(store: string, id: string, expires: number | null, mtime = T0) {
+  /** A preview folder in `store`'s staging, last changed at `mtime`, remembered in `previews` as expiring at `expires`, or not remembered. */
+  function staged(store: string, previews: Previews, id: string, expires: number | null, mtime = T0) {
     const folder = join(store, "staging", id);
     mkdirSync(join(folder, "course"), { recursive: true });
-    if (expires !== null) writeFileSync(join(folder, "preview.json"), JSON.stringify({ url: "https://example.com/c.git", commit: "a".repeat(40), expires: new Date(expires).toISOString() }));
+    if (expires !== null) previews.set(id, { url: "https://example.com/c.git", commit: "a".repeat(40), expires, contentSha256: "0".repeat(64) });
     utimesSync(folder, mtime / 1000, mtime / 1000);
   }
 
-  test("PREVIEW-13: a preview past its time is deleted and one within it is kept", () => {
-    const { store } = sources();
-    staged(store, "expired", T0 - 1);
-    staged(store, "current", T0 + 1);
-    sweepStaging(store, T0);
-    expect(tree(join(store, "staging"))).toEqual(["current", "current/course", "current/preview.json"]);
+  test("PREVIEW-13: a preview past its time is deleted and forgotten, and one within it is kept", () => {
+    const { store, previews } = sources();
+    staged(store, previews, "expired", T0 - 1);
+    staged(store, previews, "current", T0 + 1);
+    sweepStaging(store, T0, previews);
+    expect({ staged: tree(join(store, "staging")), remembered: [...previews.keys()] }).toEqual({ staged: ["current", "current/course"], remembered: ["current"] });
   });
 
-  test("PREVIEW-14: a staging folder with no preview.json is deleted once it is older than a preview's lifetime, and kept while it may still be in progress", () => {
-    const { store } = sources();
-    staged(store, "abandoned", null, T0 - PREVIEW_TTL_MS - 1000);
-    staged(store, "working", null, T0 - 1000);
-    sweepStaging(store, T0);
+  // School reads no file in staging to learn when a preview expires: a preview.json there is not read.
+  test("PREVIEW-14: a staging folder this process does not remember is deleted once it is older than a preview's lifetime, whatever a preview.json in it says, and kept while it may still be in progress", () => {
+    const { store, previews } = sources();
+    staged(store, previews, "abandoned", null, T0 - PREVIEW_TTL_MS - 1000);
+    writeFileSync(join(store, "staging", "abandoned", "preview.json"), JSON.stringify({ expires: new Date(T0 + PREVIEW_TTL_MS).toISOString() }));
+    utimesSync(join(store, "staging", "abandoned"), (T0 - PREVIEW_TTL_MS - 1000) / 1000, (T0 - PREVIEW_TTL_MS - 1000) / 1000);
+    staged(store, previews, "working", null, T0 - 1000);
+    sweepStaging(store, T0, previews);
     expect(tree(join(store, "staging"))).toEqual(["working", "working/course"]);
   });
 
-  test("PREVIEW-15: sweeping everything, as at start, deletes every preview and keeps courses/", () => {
-    const { store } = sources();
-    staged(store, "current", T0 + PREVIEW_TTL_MS);
+  test("PREVIEW-15: sweeping everything, as at start, deletes and forgets every preview and keeps courses/", () => {
+    const { store, previews } = sources();
+    staged(store, previews, "current", T0 + PREVIEW_TTL_MS);
     mkdirSync(join(store, "courses", "kept"), { recursive: true });
-    sweepStaging(store, T0, true);
-    expect(tree(store)).toEqual(["courses", "courses/kept", "staging"]);
+    sweepStaging(store, T0, previews, true);
+    expect({ tree: tree(store), remembered: previews.size }).toEqual({ tree: ["courses", "courses/kept", "staging"], remembered: 0 });
   });
 
-  test("PREVIEW-16: an expired preview is swept by the next preview", async () => {
+  test("PREVIEW-16: an expired preview is swept and forgotten by the next preview", async () => {
     const s = sources();
-    staged(s.store, "expired", T0 - 1);
+    staged(s.store, s.previews, "expired", T0 - 1);
     await preview({ url: url("counting-in-binary.git"), commit: "no-such-branch" }, s);
-    expect(tree(join(s.store, "staging"))).toEqual([]);
+    expect({ staged: tree(join(s.store, "staging")), remembered: s.previews.size }).toEqual({ staged: [], remembered: 0 });
   });
 
   test("PREVIEW-17: staging/ that is a symlink is not swept, and what it points at is left alone", () => {
-    const { store } = sources();
+    const { store, previews } = sources();
     const outside = join(root, `outside-${++n}`);
     mkdirSync(join(outside, "expired", "course"), { recursive: true });
-    writeFileSync(join(outside, "expired", "preview.json"), JSON.stringify({ url: "https://example.com/c.git", commit: "a".repeat(40), expires: new Date(T0 - 1).toISOString() }));
+    utimesSync(join(outside, "expired"), (T0 - PREVIEW_TTL_MS - 1000) / 1000, (T0 - PREVIEW_TTL_MS - 1000) / 1000);
     symlinkSync(outside, join(store, "staging"));
-    sweepStaging(store, T0);
-    sweepStaging(store, T0, true);
-    expect(tree(outside)).toEqual(["expired", "expired/course", "expired/preview.json"]);
+    sweepStaging(store, T0, previews);
+    sweepStaging(store, T0, previews, true);
+    expect(tree(outside)).toEqual(["expired", "expired/course"]);
   });
 });
 
@@ -297,6 +306,6 @@ describe("previewInstall: a failure that is not a refusal", () => {
   test("PREVIEW-18: a preview that throws after the course passed its check still deletes its staging, and the error reaches the caller", async () => {
     const s = sources({ progress: async () => { throw new Error("record down"); } });
     await expect(preview({ url: url("counting-in-binary.git"), commit: good }, s)).rejects.toThrow("record down");
-    expect(tree(join(s.store, "staging"))).toEqual([]);
+    expect({ staged: tree(join(s.store, "staging")), remembered: s.previews.size }).toEqual({ staged: [], remembered: 0 });
   });
 });
