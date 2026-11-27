@@ -595,8 +595,8 @@ and 3)._
 
 | Layer | What the bridge does |
 | --- | --- |
-| Before anything is written | Refuses (400) a path that is absolute, empty, holds `..`, `.`, an empty part, a backslash or a NUL, names a file twice in any case, or names a file and a folder the same, and content that is not base64; and RFC 7's limits: 2,000 files, 8 MiB each, 64 MiB in all, paths of 255 bytes at most 8 folders deep |
-| What comes back | After the agent exits and its process group is killed, walks `course/` with `lstat`, never following a link, and returns only regular files under `course.json`, `lessons/`, `reference/`, `OBJECTIVES.md` and `RESOURCES.md`. A symlink, a file that is neither regular nor a folder, a `course/` that is not a folder, or a limit passed refuses the draft and names the path; anything else, in `course/` or outside it, is not returned |
+| Before anything is written | Refuses (400) a path that is absolute, empty, holds `..`, `.`, an empty part, a backslash or a NUL, names a file twice under the extractor's full case folding (as APFS does: `s` and `ſ`, `σ` and `ς`), or names a file and a folder the same, a guide path holding a line break (the guide's manifest has one line a file), and content that is not padded base64; and RFC 7's limits: 2,000 files, 8 MiB each, 64 MiB in all, paths of 255 bytes at most 8 folders deep |
+| What comes back | After the agent exits and its process group is killed, walks `course/` with `lstat`, never following a link, and returns only regular files under `course.json`, `lessons/`, `reference/`, `OBJECTIVES.md` and `RESOURCES.md`. A symlink, a file that is neither regular nor a folder, an entry it cannot read or look up (`unreadable`), a `course/` that is not a folder, or a limit passed refuses the draft and names the path; anything else, in `course/` or outside it, is not returned. A folder the agent locked (`chmod 000`) is made the owner's again so the working folder is still deleted |
 
 _Table 1. The two layers of confinement in the bridge itself (RFC 9 Table 5.2, layers 1 and 4).
 The server is to check the returned files again with RFC 7's extractor._
@@ -631,7 +631,7 @@ The bridge writes JSON Lines on stdout: one JSON object per line, each with a `k
 | `bridge.listening` | Once it listens: `host` and the `port` it got (the OS's choice for port `0`) |
 | `bridge.run.start`, `bridge.attempt`, `bridge.run.end` | Each `POST /run`, its attempts, and its outcome |
 | `bridge.ask.start`, `bridge.ask.attempt`, `bridge.ask.end` | Each `POST /ask`, its attempts with how many deltas each passed on, and its outcome with the token counts; never the question or the answer |
-| `bridge.author.start`, `bridge.author.attempt`, `bridge.author.end` | Each `POST /author` with its file counts, its attempts with how many steps each passed on, and its outcome with the files and bytes returned, the refusal's reason, the guide's digest and the token counts; never the prompt, a path or a file |
+| `bridge.author.start`, `bridge.author.attempt`, `bridge.author.end` | Each `POST /author` with its file counts, its attempts with how many steps each passed on (a refused attempt's `error` is the refusal's reason alone), and its outcome with the files and bytes returned, the refusal's reason, the guide's digest and the token counts; never the prompt, a path or a file |
 | `bridge.test` | Each `POST /test` |
 | `bridge.config.saved` | Each accepted `PUT /config` |
 | `bridge.speak.submit`, `bridge.speak.cancel` | Each text submitted to AI-TTS, and each cancelled ([reading aloud](../reading-aloud/README.md)); never the text |
@@ -642,7 +642,8 @@ A refusal to start is one `bridge.error` line and exit 2: a token under 16 chara
 is not a port, an unreadable configuration file, or a port already in use, whose line also carries
 `host`, `port` and `code: "EADDRINUSE"`. Any other uncaught throw or rejection is one `bridge.error`
 line with only its message, never a stack, and exit 1. A request handler that throws logs a
-`bridge.error` line and answers 500. The cases are in the [test plan](test-plan.md#the-bridges-output).
+`bridge.error` line and answers 500. A draft that throws logs only the error's kind and code, such
+as `a draft failed: Error (EEXIST)`, since its message could name a path the agent chose. The cases are in the [test plan](test-plan.md#the-bridges-output).
 Output that Bun itself or a native module writes straight to the file descriptors, a hard crash
 and a signal kill are outside this: they are not lines. Every line names its published schema in `bridge/schemas/`
 and carries the process's `run` id; `--help`, `--schema` and `--human` are in
