@@ -2,8 +2,8 @@
 title: "School's architecture"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-22
-updated: 2026-11-26
-version: 1.5.1
+updated: 2026-11-27
+version: 1.5.2
 status: "Living reference. Describes flyingrobots/school as read at commit a959505, plus the bridge's `POST /ask` (flyingrobots/school#226), with the record on Postgres since flyingrobots/school#47 and SQLite deleted by flyingrobots/school#49; proposals are in RFCs 2 and 3."
 ---
 
@@ -251,7 +251,7 @@ start rather than serve from its own copy.
 | Step at startup | What happens |
 | --- | --- |
 | 1. The SQLite check | If `DB_PATH` (default `<SCHOOL_STATE>/progress.db`, the old SQLite record) exists and holds any answer, explanation or view, or cannot be read as SQLite, the server exits with code 2 and names the file, before it opens Postgres. Nothing migrates from SQLite (RFC 3 §3.3). |
-| 2. Migrations, as the owner | On Postgres, not in the server: the migrate job (`server/migrate.ts`; the one-shot `migrate` service in `server/compose.yaml`, which the server waits for with `service_completed_successfully`) connects with `SCHOOL_MIGRATE_URL`, runs `server/db/migrate.ts` on one reserved connection, gives `school_app` `LOGIN` and the password `SCHOOL_APP_PASSWORD` (sent as a SCRAM verifier), clears every setting on the role (`ALTER ROLE school_app RESET ALL`, also per database), revokes `CREATE` and `TEMPORARY` on the database from `PUBLIC`, and exits. On PGlite the server runs the migrations itself, on its one session, which is the superuser. |
+| 2. Migrations, as the owner | On Postgres, not in the server: the migrate job (`server/migrate.ts`; the one-shot `migrate` service in `server/compose.yaml`, which the server waits for with `service_completed_successfully`) connects with `SCHOOL_MIGRATE_URL`, runs `server/db/migrate.ts` on one reserved connection, gives `school_app` `LOGIN` and the password `SCHOOL_APP_PASSWORD` (sent as a SCRAM verifier), clears every setting on the role (`ALTER ROLE school_app RESET ALL`, also per database), revokes `CREATE` and `TEMPORARY` on the database from `PUBLIC`, and exits. Jobs on several databases of one Postgres cluster may run at once ([below](#migrate-jobs-on-one-cluster)). On PGlite the server runs the migrations itself, on its one session, which is the superuser. |
 | 3. The login check | On Postgres the server logs in with `school_app`'s URL and refuses to start (exit 2, naming each reason, and the host, never a password) unless every check in [the login check](#the-login-check) holds. PGlite has no login and skips this. |
 | 4. Requests, as `school_app` | PGlite's session runs `SET ROLE school_app` once. On `Bun.SQL`, every statement still runs in its own transaction that starts with `SET LOCAL ROLE school_app`. The server checks that `current_user` is `school_app` before it serves. |
 | 5. Function calls only | The server's record accepts only `SELECT * FROM school.<function>($1, ...)`; anything else is refused before the driver sees it. |
@@ -260,6 +260,25 @@ On Postgres the server holds only `school_app`'s credentials (flyingrobots/schoo
 stay as defence in depth. PGlite's session is the superuser and takes `school_app`'s role, so there a
 statement that resets the role would get the superuser back; step 5 is what stops it, a guard
 rail, not tamper-proofing. PGlite is for development and tests only.
+
+### Migrate jobs on one cluster
+
+A Postgres server (a cluster) can hold more than one School record, each in a database of its own:
+the test server does, and so could a host that serves more than one learner. Jobs on different
+databases may run at once and all succeed (flyingrobots/school#356). The job's advisory locks cover
+only its own database, while `school_owner`, `school_app` and the server's connection limit
+belong to the whole cluster, so the job handles three things that cross databases:
+
+| Shared by the cluster | What the job does | Before flyingrobots/school#356 |
+| --- | --- | --- |
+| `max_connections` | Opens one connection, and runs the whole job on it | It held ten (Bun.SQL's default pool), so a few jobs at once failed with 53300, `too_many_connections` |
+| The roles, created if absent | When a job on another database creates a role between this job's check and its `CREATE ROLE`, the job waits for that job's transaction and takes the role as created: it catches `unique_violation` (23505) and `duplicate_object` (42710) from that statement only | On a cluster without the roles, every job but one failed with 23505 on `pg_authid_rolname_index` |
+| `school_app`'s catalog row | The role update waits for another transaction's change to the row, then retries on Postgres's `tuple concurrently updated`, up to 20 times with a short random pause. It throws any other error at once | Unchanged |
+
+_Table 1. What a migrate job shares with jobs on other databases of the same cluster, and how it
+handles each. Jobs on different clusters share nothing, and none waits on another._
+
+The cases are in `server/adapters/migrate-cluster.test.ts` (the [test plan](test-plan.md#migrate-jobs-on-one-cluster-flyingrobotsschool356)).
 
 ### The login check
 
@@ -802,7 +821,7 @@ The identity check misses one case: a mount made after School started, since the
 
 ### Fetching a course repository
 
-`fetchCommit` (`server/fetch-commit.ts`, RFC 7 §6) fetches one commit of a course repository into a new bare repository, `<staging>/repo.git`, and answers the commit's full hash. The [install preview](#previewing-an-install) calls it with a staging folder under the course store. The URL and the server are hostile, so School checks the commit, then the URL, then the host's addresses, then the staging folder, and only then runs git. Table 1 lists the rules in that order, and the first rule broken gives the refusal. Any refusal deletes the staging folder, or never makes it.
+`fetchCommit` (`server/fetch-commit.ts`, RFC 7 §6) fetches one commit of a course repository into a new bare repository, `<staging>/repo.git`, and answers the commit's full hash. The [install preview](#previewing-an-install) calls it with a staging folder under the course store. The URL and the server are hostile, so School checks the commit, then the URL, then the host's addresses, then the staging folder, and only then runs git. Table 2 lists the rules in that order, and the first rule broken gives the refusal. Any refusal deletes the staging folder, or never makes it.
 
 | Rule | Refused with |
 | --- | --- |
@@ -819,9 +838,9 @@ The identity check misses one case: a mount made after School started, since the
 | Each git process finishes within 60 seconds. The fetched repository stays within 64 MiB on disk: School measures it every 100 ms while git runs and again when git ends (RFC 7 Table 6.2). Passing either limit kills git's whole process group | `timeout`, `too-large` |
 | git fetches the commit, and the object is a commit, not a tree or blob | `git-failed`, `not-a-commit` |
 
-_Table 1. What `fetchCommit` checks, in the order the code checks it. Every refusal carries a sentence naming what was refused._
+_Table 2. What `fetchCommit` checks, in the order the code checks it. Every refusal carries a sentence naming what was refused._
 
-git is pinned to the addresses School checked. `http.curloptResolve=HOST:443:ADDRESS[,ADDRESS]` hands them to libcurl, so git never looks the host up again, and a second answer from DNS (rebinding) is never used. Only a plain host name can be pinned this way: libcurl reads a name starting with `-` as "remove this entry", so Table 1 refuses such a name before any lookup. Redirects are not followed (`http.followRedirects=false`), because a redirect could lead to a host or port the pin does not cover. git runs with a fresh environment: no system or global configuration, `HOME` set to the staging folder (so no `.netrc`), `GIT_TERMINAL_PROMPT=0`, no askpass, an empty `credential.helper`, an empty `http.proxy` (which also overrides a proxy in the environment), `core.hooksPath=/dev/null`, `transfer.fsckObjects`, no submodules, and `git init --bare --template=`. The bare repository is made first. Every later git command, `ls-remote` included, names that repository with `--git-dir` and starts in it, and `GIT_CEILING_DIRECTORIES` stops git looking above the staging folder. So a git repository around the course store adds no configuration, such as a header, a URL rewrite or a proxy. The fetch is `git fetch --depth=1 --no-tags --no-recurse-submodules <url> <hash>`, so the repository holds that one commit and nothing is checked out. `refs/heads/course` then points at the commit, so nothing prunes it before it is read. When git exits, School kills its process group, so no helper it started outlives it. A host that will not serve a commit by its hash fails as `git-failed`, with git's own message.
+git is pinned to the addresses School checked. `http.curloptResolve=HOST:443:ADDRESS[,ADDRESS]` hands them to libcurl, so git never looks the host up again, and a second answer from DNS (rebinding) is never used. Only a plain host name can be pinned this way: libcurl reads a name starting with `-` as "remove this entry", so Table 2 refuses such a name before any lookup. Redirects are not followed (`http.followRedirects=false`), because a redirect could lead to a host or port the pin does not cover. git runs with a fresh environment: no system or global configuration, `HOME` set to the staging folder (so no `.netrc`), `GIT_TERMINAL_PROMPT=0`, no askpass, an empty `credential.helper`, an empty `http.proxy` (which also overrides a proxy in the environment), `core.hooksPath=/dev/null`, `transfer.fsckObjects`, no submodules, and `git init --bare --template=`. The bare repository is made first. Every later git command, `ls-remote` included, names that repository with `--git-dir` and starts in it, and `GIT_CEILING_DIRECTORIES` stops git looking above the staging folder. So a git repository around the course store adds no configuration, such as a header, a URL rewrite or a proxy. The fetch is `git fetch --depth=1 --no-tags --no-recurse-submodules <url> <hash>`, so the repository holds that one commit and nothing is checked out. `refs/heads/course` then points at the commit, so nothing prunes it before it is read. When git exits, School kills its process group, so no helper it started outlives it. A host that will not serve a commit by its hash fails as `git-failed`, with git's own message.
 
 The request names only the URL, the commit and the staging folder. The git program, the network (resolver, address check, ports, CA file) and the limits are a separate second argument, `FetchTesting`. Only tests pass it, to reach a local server, and no route may build it from a client's input.
 
@@ -842,7 +861,7 @@ A refusal at any stage deletes the preview's folder and answers 422. This one is
   "message": "0001-places-worth-twice.json > places-worth-twice > places-practice > places-q-worth: exactly one choice must be correct" }
 ```
 
-`stage` is `fetch`, `extract` or `check`. `reason` is the fetch's reason (Table 1), the extraction's (`unsafe-name`, `case-collision`, `symlink`, `submodule`, `lfs-pointer`, `too-many-files`, `file-too-large`, `total-too-large`, `path-too-long`, `too-deep`, `not-a-commit`, `bad-destination`, `timeout`, `git-failed`), or `invalid` for the check. `path` is the tree path or course file it concerns, or null. `message` is the stage's own sentence, git's error output included for `git-failed`, with any path inside the store made relative to the course. It is text from the server and from git, and a client shows it as text, never as HTML.
+`stage` is `fetch`, `extract` or `check`. `reason` is the fetch's reason (Table 2), the extraction's (`unsafe-name`, `case-collision`, `symlink`, `submodule`, `lfs-pointer`, `too-many-files`, `file-too-large`, `total-too-large`, `path-too-long`, `too-deep`, `not-a-commit`, `bad-destination`, `timeout`, `git-failed`), or `invalid` for the check. `path` is the tree path or course file it concerns, or null. `message` is the stage's own sentence, git's error output included for `git-failed`, with any path inside the store made relative to the course. It is text from the server and from git, and a client shows it as text, never as HTML.
 
 A course that passes answers 200. This is the example course as PREVIEW-1 and PREVIEW-12 check it, with progress already under its name; the URL is illustrative, and the preview id and hash are shortened:
 

@@ -232,3 +232,20 @@ Every refusal the issue names is a case here, and every case reads the record ba
 | PREVIEW-PROGRESS-1 | `courseProgress` on every record adapter: a name with nothing, one with encounters, answers, explanations and views beside another name's, a view alone, a removed install's | The counts written, and none of the other name's | implemented | `server/contract/learning-record.ts`: `course progress: %s`, run on PGlite and Bun.SQL |
 
 _Table 7. The install preview's cases. PREVIEW-3, -4, -5, -8, -12, -14, -16, PREVIEW-ROUTE-1 and the `same-site` and `none` cases of PREVIEW-ROUTE-6 each fail when the behaviour they name is removed. No case previews a course from the internet._
+
+## Migrate jobs on one cluster (flyingrobots/school#356)
+
+[Migrate jobs on one cluster](README.md#migrate-jobs-on-one-cluster), in `server/adapters/migrate-cluster.test.ts`, on the real Postgres in `SCHOOL_TEST_POSTGRES_URL` (CI's gate fails a run that skips them). The oracles are the issue's acceptance criteria and Postgres's documented SQLSTATEs. The cases that wait for another session wait on `pg_stat_activity` showing the lock wait, never on time. The bootstrap cases run the runner's own `BOOTSTRAP` text under role names of their own, which they drop, because `school_app` and `school_owner` exist on a shared test server and own every scratch database's schema.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| CLUSTER-1 | One connection per job | While a job waits for the runner's lock, its database has exactly one session of the job's | implemented | `a migrate job holds one connection to its database, even while it waits for the runner's lock` |
+| CLUSTER-2 | Sixteen jobs at once | Sixteen jobs on sixteen databases all succeed on a server with the default `max_connections` of 100, and `school_app` logs in | implemented | `sixteen migrate jobs on sixteen databases of one cluster at once all succeed` |
+| CLUSTER-3 | The bootstrap race, scheduled | The second bootstrap, waiting on the first one's uncommitted roles, succeeds once the first commits, and each role exists once | implemented | `the role bootstrap, run in two databases of a cluster that has neither role yet, creates each role once and fails neither` |
+| CLUSTER-4 | The bootstrap race, sixteen at once | Sixteen bootstraps in sixteen databases at once all succeed | implemented | `the role bootstrap, run at once in sixteen databases of a cluster that has neither role yet, fails none` |
+| CLUSTER-5 | The password changes under the job | Another session's uncommitted password change makes the job wait. Once it commits, the job's password logs in and the other is refused (28P01) | implemented | `a job whose role update meets another session's uncommitted change of school_app's password waits for it, then sets its own` |
+| CLUSTER-6 | The role already exists | After a job with another password, the next job on another database sets its own; the earlier password is refused (28P01) | implemented | `when school_app already exists with another password, the next job on another database sets its own` |
+| CLUSTER-7 | A real error is not retried | A lock timeout (55P03) in the role update is thrown as it is, although the next attempt would have succeeded | implemented | `a role update that fails for any reason but a concurrent update is thrown as it is, not retried into success` |
+| CLUSTER-8 | Locks stay in their database | A job completes while another session holds both of the migrate job's advisory locks on another database of the cluster | implemented | `a job on one database does not wait for the migrate job's locks held on another database of the cluster` |
+
+_Table 8. Migrate jobs on one cluster. CLUSTER-1 to -4 failed on the code before the fix: ten sessions, 53300, and 23505 on `pg_authid_rolname_index`. CLUSTER-5 to -8 passed before it and fail when the behaviour they name is removed: no retry, a retry of every error, no password set, or the locks held on the job's own database._
