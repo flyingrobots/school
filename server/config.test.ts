@@ -194,3 +194,143 @@ test("a first run with no state directory yet is accepted", () => {
     done();
   }
 });
+
+// Untrusted courses (flyingrobots/school#210). SCHOOL_UNTRUSTED_COURSES takes the same name=path
+// pairs as SCHOOL_COURSES; a course is trusted or untrusted, never both.
+test("SCHOOL_UNTRUSTED_COURSES registers courses that are not trusted, beside trusted ones", () => {
+  const c = parseConfig({ SCHOOL_COURSES: "own=/courses/own", SCHOOL_UNTRUSTED_COURSES: "guest=/courses/guest", SCHOOL_STATE: "/var/school" }, FRAMEWORK);
+  expect(courseNames(c)).toEqual(["guest", "own"]);
+  expect(course(c, "guest")).toEqual({ name: "guest", root: "/courses/guest", lessons: "/courses/guest/lessons", reference: "/courses/guest/reference", trusted: false });
+  expect(course(c, "own")?.trusted).toBe(true);
+});
+
+test("a course from SCHOOL_COURSE or SCHOOL_COURSES stays trusted when nothing marks it", () => {
+  expect(course(parseConfig({ SCHOOL_COURSE: "/courses/own", SCHOOL_STATE: "/var/school" }, FRAMEWORK), "own")?.trusted).toBe(true);
+  expect(course(parseConfig({ SCHOOL_COURSES: "own=/courses/own", SCHOOL_STATE: "/var/school" }, FRAMEWORK), "own")?.trusted).toBe(true);
+});
+
+test("a name both trusted and untrusted is refused, naming both variables", () => {
+  expect(() => parseConfig({ SCHOOL_COURSES: "dual=/courses/a", SCHOOL_UNTRUSTED_COURSES: "dual=/courses/b", SCHOOL_STATE: "/var/school" }, FRAMEWORK))
+    .toThrow(/"dual" is in both SCHOOL_COURSES and SCHOOL_UNTRUSTED_COURSES/);
+  expect(() => parseConfig({ SCHOOL_COURSE: "/courses/dual", SCHOOL_UNTRUSTED_COURSES: "dual=/courses/b", SCHOOL_STATE: "/var/school" }, FRAMEWORK))
+    .toThrow(/"dual" is in both SCHOOL_COURSE and SCHOOL_UNTRUSTED_COURSES/);
+});
+
+test("one folder both trusted and untrusted, under two names, is refused", () => {
+  expect(() => parseConfig({ SCHOOL_COURSES: "own=/courses/same", SCHOOL_UNTRUSTED_COURSES: "guest=/courses/same/", SCHOOL_STATE: "/var/school" }, FRAMEWORK))
+    .toThrow(/untrusted course "guest" \(\/courses\/same\) overlaps trusted course "own" \(\/courses\/same\)/);
+});
+
+test.each([
+  ["inside a trusted one", "own=/courses/own", "guest=/courses/own/reference/guest"],
+  ["around a trusted one", "own=/courses/guest/own", "guest=/courses/guest"],
+])("an untrusted folder %s is refused, since the trusted course would serve its files unsandboxed", (_, trusted, untrusted) => {
+  expect(() => parseConfig({ SCHOOL_COURSES: trusted, SCHOOL_UNTRUSTED_COURSES: untrusted, SCHOOL_STATE: "/var/school" }, FRAMEWORK))
+    .toThrow(/overlaps trusted course "own"/);
+});
+
+test("SCHOOL_UNTRUSTED_COURSES follows SCHOOL_COURSES' rules for names and learner state", () => {
+  expect(() => parseConfig({ SCHOOL_UNTRUSTED_COURSES: "api=/x", SCHOOL_STATE: "/var/school" }, FRAMEWORK)).toThrow(/SCHOOL_UNTRUSTED_COURSES name "api" is reserved/);
+  expect(() => parseConfig({ SCHOOL_UNTRUSTED_COURSES: "guest=/courses/guest", SCHOOL_STATE: "/courses/guest/state" }, FRAMEWORK))
+    .toThrow(/must live outside the course/);
+});
+
+// A mount or the web app's folder is served with no sandbox, so neither may reach an untrusted
+// course's files (flyingrobots/school#210). Each is compared with every untrusted course on real
+// paths, both ways round, and the refusal names both variables and both folders.
+test.each([
+  ["is the untrusted folder", "lib=/lib/guest"],
+  ["contains the untrusted folder", "lib=/lib"],
+  ["sits inside the untrusted folder", "lib=/lib/guest/reference"],
+])("a SCHOOL_MOUNTS folder that %s is refused", (_, mounts) => {
+  expect(() => parseConfig({ SCHOOL_UNTRUSTED_COURSES: "guest=/lib/guest", SCHOOL_MOUNTS: mounts, SCHOOL_STATE: "/var/school" }, FRAMEWORK))
+    .toThrow(/SCHOOL_MOUNTS mount "lib" \(\/lib[^)]*\) overlaps untrusted course "guest" \(\/lib\/guest\) from SCHOOL_UNTRUSTED_COURSES/);
+});
+
+test.each([
+  ["is the untrusted folder", "/lib/guest"],
+  ["contains the untrusted folder", "/lib"],
+  ["sits inside the untrusted folder", "/lib/guest/reference"],
+])("a SCHOOL_WEB folder that %s is refused", (_, web) => {
+  expect(() => parseConfig({ SCHOOL_UNTRUSTED_COURSES: "guest=/lib/guest", SCHOOL_WEB: web, SCHOOL_STATE: "/var/school" }, FRAMEWORK))
+    .toThrow(/SCHOOL_WEB \(\/lib[^)]*\) overlaps untrusted course "guest" \(\/lib\/guest\) from SCHOOL_UNTRUSTED_COURSES/);
+});
+
+test("a mount reaching an untrusted course through a symlink is refused, since paths are compared resolved", () => {
+  const { mkdirSync, symlinkSync } = require("node:fs") as typeof import("node:fs");
+  const { root, done } = scratch();
+  try {
+    mkdirSync(join(root, "guest", "reference"), { recursive: true });
+    symlinkSync(join(root, "guest"), join(root, "alias"));
+    expect(() => parseConfig({ SCHOOL_UNTRUSTED_COURSES: `guest=${join(root, "guest")}`, SCHOOL_MOUNTS: `lib=${join(root, "alias")}`, SCHOOL_STATE: join(root, "state") }, FRAMEWORK))
+      .toThrow(/SCHOOL_MOUNTS mount "lib" .* overlaps untrusted course "guest"/);
+  } finally {
+    done();
+  }
+});
+
+test("a mount and a web folder beside an untrusted course, not over it, are accepted", () => {
+  const c = parseConfig({ SCHOOL_UNTRUSTED_COURSES: "guest=/lib/guest", SCHOOL_MOUNTS: "docs=/lib/docs", SCHOOL_WEB: "/lib/web", SCHOOL_STATE: "/var/school" }, FRAMEWORK);
+  expect([mountTable(c), c.web]).toEqual([{ docs: "/lib/docs" }, "/lib/web"]);
+});
+
+// Docker bind mounts (flyingrobots/school#280): compose mounts SCHOOL_COURSE_DIR at /course and,
+// by default, again at /library. realpath cannot see that the two are one folder, so the overlap
+// checks also compare filesystem identity, (st_dev, st_ino), of each folder and its ancestors.
+// A test runner cannot bind-mount without root, so a fake stat reports aliases as one directory.
+// Oracle: POSIX stat, "st_ino and st_dev taken together uniquely identify the file within the system".
+type Id = { dev: number; ino: number };
+/** A stat that knows only `ids`; every other path does not exist. */
+const fakeStat = (ids: Record<string, Id>) => (p: string): Id => {
+  const id = ids[p];
+  if (id === undefined) throw Object.assign(new Error(`ENOENT: ${p}`), { code: "ENOENT" });
+  return id;
+};
+// /mnt/course and /mnt/library are one bind-mounted folder (inode 42); /mnt/other is another.
+// Under /mnt, which macOS lacks, since its case-insensitive /library would resolve to /Library.
+const ALIASED = fakeStat({
+  "/": { dev: 1, ino: 2 },
+  "/mnt/course": { dev: 7, ino: 42 },
+  "/mnt/library": { dev: 7, ino: 42 },
+  "/mnt/course/guest": { dev: 7, ino: 43 },
+  "/mnt/library/guest": { dev: 7, ino: 43 },
+  "/mnt/other": { dev: 7, ino: 50 },
+});
+const aliased = (env: Record<string, string>) =>
+  parseConfigFrom({ SCHOOL_DATABASE_URL: "postgres://db/school", SCHOOL_STATE: "/var/school", ...env }, FRAMEWORK, ALIASED);
+
+test.each([
+  ["the trusted folder under another name", { SCHOOL_COURSE: "/mnt/course" }, "guest=/mnt/library", 'trusted course "course" \\(/mnt/course\\) from SCHOOL_COURSE'],
+  ["inside the trusted folder under another name", { SCHOOL_COURSE: "/mnt/course" }, "guest=/mnt/library/guest", 'trusted course "course" \\(/mnt/course\\) from SCHOOL_COURSE'],
+  ["around the trusted folder under another name", { SCHOOL_COURSES: "own=/mnt/course/guest" }, "guest=/mnt/library", 'trusted course "own" \\(/mnt/course/guest\\) from SCHOOL_COURSES'],
+  ["a mount's folder under another name", { SCHOOL_MOUNTS: "lib=/mnt/course" }, "guest=/mnt/library", 'SCHOOL_MOUNTS mount "lib" \\(/mnt/course\\)'],
+  ["the web folder under another name", { SCHOOL_WEB: "/mnt/course" }, "guest=/mnt/library/guest", "SCHOOL_WEB \\(/mnt/course\\)"],
+])("an untrusted folder that is %s, by device and inode, is refused", (_, env, untrusted, other) => {
+  expect(() => aliased({ ...env, SCHOOL_UNTRUSTED_COURSES: untrusted }))
+    .toThrow(new RegExp(`untrusted course "guest" \\(${untrusted.slice("guest=".length)}\\) from SCHOOL_UNTRUSTED_COURSES and ${other} are the same folder under two names`));
+});
+
+test("folders with different device and inode stay accepted under the same fake stat", () => {
+  const c = aliased({ SCHOOL_COURSE: "/mnt/course", SCHOOL_MOUNTS: "lib=/mnt/course", SCHOOL_UNTRUSTED_COURSES: "guest=/mnt/other" });
+  expect([course(c, "course")?.trusted, course(c, "guest")?.trusted]).toEqual([true, false]);
+});
+
+// Inodes above 2^53 (CodeRabbit on #213): a Number cannot hold them exactly, so two folders could
+// round to one identity. Identities are compared as exact integers, and School's own stat asks the
+// filesystem for bigint inodes. Oracle: Node's fs.statSync, "bigint: true" gives BigInt fields.
+test("two folders whose inodes differ only above 2^53 are told apart", () => {
+  const big = 2n ** 60n;
+  const stat = fakeStat({
+    "/": { dev: 1, ino: 2 },
+    "/mnt/course": { dev: 7, ino: big } as unknown as Id,
+    "/mnt/library": { dev: 7, ino: big + 1n } as unknown as Id,
+  });
+  const c = parseConfigFrom({ SCHOOL_DATABASE_URL: "postgres://db/school", SCHOOL_STATE: "/var/school", SCHOOL_COURSE: "/mnt/course", SCHOOL_UNTRUSTED_COURSES: "guest=/mnt/library" }, FRAMEWORK, stat);
+  expect(course(c, "guest")?.trusted).toBe(false);
+});
+
+test("School's own stat reads inodes as bigint, so none is rounded", async () => {
+  const config = (await import("./config.ts")) as Record<string, unknown>;
+  const systemStat = config.systemStat as ((p: string) => { ino: unknown }) | undefined;
+  expect(typeof systemStat?.("/").ino).toBe("bigint");
+});
