@@ -64,6 +64,38 @@ run on `Bun.SQL` only.
 
 _Table 1. The conversation cases, on PGlite and Bun.SQL; the races on Bun.SQL only._
 
+## Asking about a passage, on the server
+
+`POST /api/ask` and `GET /api/courses/:c/lessons/:id/conversations` ([asking about a passage](README.md#asking-about-a-passage); RFC 6 §5.3 to §5.5, flyingrobots/school#227). The oracles are the issue's acceptance items and RFC 6 Tables 5.4, 5.5 and 5.7. The `server/ask.test.ts` cases call the pure parts in the test's process. The `server/ask-route.test.ts` cases run School as a real process on PGlite, with a fake bridge in the test's process that streams NDJSON and contacts no model; the "in process" cases call the route directly with a stand-in record, where the test controls when the browser goes away.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| ASKS-1 | Golden | `stored`, then the first delta while the fake agent is held at a gate, then the rest, `sources` with the checked quote, and `done`; the `<sources>` block never reaches the page, even split across deltas; the reply is stored with its text, quotes, agent and token counts; the bridge gets School's token | implemented | `server/ask-route.test.ts`: `golden: the answer streams as NDJSON deltas while the agent writes, then its checked sources, and the reply is stored` |
+| ASKS-2 | Stored before the bridge | When the fake bridge is asked, it reads the lesson's conversations through School: the question is there with its `ai-help` exposure (`exposureSeq` below its `seq`) and no reply | implemented | `the question and its ai-help exposure are in the record before the bridge is asked` |
+| ASKS-3 | Passage not in the lesson | 400, nothing stored, the bridge not asked: words not in the lesson, a quiz choice, markup, an unknown block | implemented | `a passage not in the lesson is refused (400) and nothing is stored or asked` |
+| ASKS-4 | The passage rule | A passage beginning in its block, running on into later blocks and a section title, is accepted; one beginning in another block, or holding markup, a choice, a `why`, a model answer, an explain source or a nest label, is refused; whitespace, case, curly quotes and NFC do not matter | implemented | `server/ask.test.ts`: the eight `the passage check` cases |
+| ASKS-5 | Random passages | 400 stretches of the lesson from a random block are accepted (more than 50 within one block and more than 50 running past it); each with `<b>`, `§` or `</p>` put in is refused. Seed 227, `SCHOOL_TEST_SEED` to replay | implemented | `server/ask.test.ts`: `random passages: every stretch of the lesson from a block is accepted; ...` |
+| ASKS-6 | No answer in the prompt | Every choice, `why`, model answer, explain source and nest label of the fixture, harvested from the lesson (8 witnesses), is absent from the prompt; over HTTP, for a passage in a quiz, too | implemented | `server/ask.test.ts`: `the prompt holds no quiz choice, why, model answer, explain source or nest diagram`; `the lesson's sources are ...`; `server/ask-route.test.ts`: `no quiz choice, why or model answer is in the prompt, even for a passage in a quiz` |
+| ASKS-7 | What the prompt holds | The lesson as read aloud, the reference documents, the earlier turns, and the passage and question in tags marked as the learner's; learner text cannot close or open a tag; reference documents whole up to 100,000 characters, then titles only | implemented | `server/ask.test.ts`: the other `the prompt` cases |
+| ASKS-8 | Unchecked quote | Dropped from `sources`; stored with `checked: false`, as is a quote naming an unknown source; the check ignores whitespace, case and curly quotes, as grading's does | implemented | `server/ask-route.test.ts`: `an unchecked quote is dropped from the sources shown, and stored as unchecked`; `server/ask.test.ts`: `the quote check` and `the sources block` cases |
+| ASKS-9 | Browser gone | A browser that disconnects after the first delta: the whole answer is still read and stored, over HTTP and in process | implemented | `a browser that disconnects mid-answer still leaves the whole reply stored`; `in process: a browser that goes away mid-answer leaves the bridge's answer read to its end and stored` |
+| ASKS-10 | Fails after its first words | A `failed` line last; stored failed with the text that was shown | implemented | `an answer that fails after its first words ends with a failed line, and is stored failed with what was shown` |
+| ASKS-11 | Follow-up | A second question in the conversation sends its passage and the first turn from the record | implemented | `a follow-up question sends the conversation's passage and its earlier turns from the record` |
+| ASKS-12 | Resent or conflicting | 409, the bridge not asked again | implemented | `a resent question is not asked again; another question under its id is a conflict (409)` |
+| ASKS-13 | No bridge | 503 naming the bridge and Settings; nothing stored | implemented | `with no bridge, a 503 with the reason, and nothing stored` |
+| ASKS-14 | Bridge down or refusing | Unreachable 503, a refused token 502, no `/ask` 503, each in words; the question is stored first and its reply as failed; no token in the answer | implemented | `with a bridge that cannot be reached, ...`; `a bridge that refuses School's token is a 502 in words, ...`; `a bridge older than asking (no POST /ask) is a 503 in words, ...` |
+| ASKS-15 | Safe mode | A course in `SCHOOL_UNTRUSTED_COURSES` is refused 403; nothing stored, the bridge not asked | implemented | `a course in safe mode is not asked about (403), and nothing is stored` |
+| ASKS-16 | Refusals | A malformed body 400, an unknown course or lesson 404, an untracked encounter 400, not JSON 415; the bridge not asked. A question the record files under another lesson is 400 with its reply stored as failed | implemented | `a malformed request, an unknown course or lesson, and an untracked encounter are refused`; `a question the record files under another lesson is not answered, and its reply is stored as failed` |
+| ASKS-17 | Reading conversations | An unknown course is 404; a lesson with none is `[]`, `no-store` | implemented | `GET /api/courses/:c/lessons/:id/conversations`: `an unknown course is a 404; a lesson with no conversations is an empty list` |
+| ASKS-18 | A long conversation | Five earlier turns of 60,000 characters each: the prompt is within the bridge's 200,000, holds the newest turns whole and not the oldest, says earlier turns were left out, and the answer streams and is stored; a conversation that fits is sent whole with no such note | implemented | `server/ask-route.test.ts`: `a long conversation keeps the newest whole turns that fit, ...`, `a conversation that fits is sent whole, ...`; `server/ask.test.ts`: `a prompt over the cap drops the oldest earlier turns whole, ...` |
+| ASKS-19 | A lesson too long to send | The lesson, passage and question alone over the cap: 400 in inviting words, nothing stored, the bridge not asked | implemented | `server/ask-route.test.ts`: `a lesson too long to send with the question is refused (400) in words, ...`; `server/ask.test.ts`: `when the lesson, passage and question alone pass the cap, there is no prompt` |
+| ASKS-20 | The cap is the bridge's | The server's `BRIDGE_MAX_PROMPT` equals `MAX_PROMPT` in `bridge/bridge.ts` | implemented | `server/ask.test.ts`: `the server's copy of the cap is the bridge's MAX_PROMPT` |
+| ASKS-21 | An earlier answer is inert | A stored answer holding `</answered>`, `</turn>` and `<turn>` opens and closes no tag in the prompt; removing the escape fails the case | implemented | `server/ask.test.ts`: `an earlier answer cannot close its own tag or open another turn` |
+
+_Table 2. The server's ask cases. Each guarded behaviour was broken once and its case seen to fail (the pull request for flyingrobots/school#227 lists the breaks)._
+
+Every acceptance item of flyingrobots/school#227 is one of these cases: ASKS-1 the stream, ASKS-2 the record before the bridge, ASKS-3 the passage refused, ASKS-6 the prompt, ASKS-8 the unchecked quote, ASKS-9 the browser gone, ASKS-13 no bridge.
+
 ## Killing an agent (flyingrobots/school#285)
 
 A kill sends SIGKILL to the agent's process group, then again every 50 ms until the pipes close,
@@ -82,7 +114,7 @@ the chain returns.
 | KILL-5 | Kill after the pipes closed | A timeout, or a hang-up, landing after the agent's pipes closed and before it exits starts no sweep (the sweep counter is unchanged), for `POST /run` and `POST /ask` | implemented | `bridge/run.test.ts`: `a kill after the agent's pipes closed starts no sweep`; `bridge/ask.test.ts`: `a hang-up after the ask agent's pipes closed starts no sweep` |
 | KILL-6 | Not a group | `sweepGroup` with 0, 1, a negative, fractional or non-finite number sends no signal (the signal function is injected) | implemented | `bridge/run.test.ts`: `sweepGroup signals no group that is not a real one, and a real one once` |
 
-_Table 2. The agent kill's cases. The ask route uses the same sweep (`sweepGroup` in `bridge/run.ts`)._
+_Table 3. The agent kill's cases. The ask route uses the same sweep (`sweepGroup` in `bridge/run.ts`)._
 
 ## The course store (flyingrobots/school#233)
 
@@ -102,7 +134,7 @@ _Table 2. The agent kill's cases. The ask route uses the same sweep (`sweepGroup
 | STORE-10 | Is, holds or sits inside the framework folder (`SCHOOL_ROOT`), which holds the server source | Refused, naming both paths | implemented | `server/config.test.ts`: `a store that %s is refused, naming both paths` (framework cases) |
 | STORE-11 | A path that exists but is a file | Refused, naming the path | implemented | `server/config.test.ts`: `a store path that exists but is a file, not a folder, is refused, naming it` |
 
-_Table 3. The course store's cases. STORE-9 reads the Dockerfile; no test builds the image._
+_Table 4. The course store's cases. STORE-9 reads the Dockerfile; no test builds the image._
 
 ## Stopping the bridge (flyingrobots/school#286)
 
@@ -139,7 +171,7 @@ zombie, 2 s after the bridge exits.
 | REGISTRY-14 | `installed_courses()` fails after start | Configured courses served; installs last seen listed as unavailable, the reason naming the record and no path; a configured course found with no read of the record | implemented | `server/course-registry.test.ts`: `serves the configured courses and lists the installs it last saw as unavailable`, `an install's reason, with the record unreachable, names no path and says it is served again once the record answers`, `finds a configured course by name without reading the record`, `finds an installed course by name through the record` |
 | REGISTRY-15 | The record cut off by a proxy while School runs | A configured course's reference file answers 200; `/api/courses`, the course, a lesson and `/api/resume` answer a JSON 503 with no stack trace | implemented | `server/installed-courses.test.ts`: `a configured course's reference file answers 200, and every other route a JSON answer that is not a 500 (Bun.SQL)` |
 
-_Table 4. The course list's cases, on PGlite and, for REGISTRY-9 and REGISTRY-15, on Bun.SQL._
+_Table 5. The course list's cases, on PGlite and, for REGISTRY-9 and REGISTRY-15, on Bun.SQL._
 
 ## The pinned skill (flyingrobots/school#257)
 
@@ -164,7 +196,7 @@ RFC 9 §5.3 and [the pinned skill](README.md#the-pinned-skill). The manifest's o
 | SKILLPIN-15 | Configuration | Defaults to the framework's `.agents/skills/school` and `docs/topics`; relative paths resolve against the working directory; empty `SCHOOL_SKILL` is null | implemented | `server/config.test.ts`: `SCHOOL_SKILL and SCHOOL_SKILL_DOCS default to the framework checkout's skill and its docs/topics`, `SCHOOL_SKILL and SCHOOL_SKILL_DOCS name the skill and its references, relative paths resolving against the working directory`, `an empty SCHOOL_SKILL means no skill, so authoring is off` |
 | SKILLPIN-16 | Compose | The three read-only mounts under `/framework`; `SCHOOL_SKILL: ${SCHOOL_COMPOSE_SKILL-/framework/skills/school}` and `SCHOOL_SKILL_DOCS: /framework/docs`, so a host export never reaches the container | implemented | `server/docker.test.ts`: `compose mounts the checkout's school skill and its references read-only under /framework`, `compose points SCHOOL_SKILL at the mount through SCHOOL_COMPOSE_SKILL, which .env may set empty and a host export never reaches, and SCHOOL_SKILL_DOCS at the references with no variable at all` |
 
-_Table 5. The pinned skill's cases. SKILLPIN-16 reads compose.yaml; no test builds the image or runs compose._
+_Table 6. The pinned skill's cases. SKILLPIN-16 reads compose.yaml; no test builds the image or runs compose._
 
 ## Fetching one commit (flyingrobots/school#236)
 
@@ -202,7 +234,7 @@ _Table 5. The pinned skill's cases. SKILLPIN-16 reads compose.yaml; no test buil
 | FETCH-28 | A SHA-256 repository, by branch and by full hash | Fetched by its 64-digit hash | implemented | `FETCH-28: a SHA-256 repository's commit, named by %s, is fetched by its 64-digit hash` |
 | FETCH-29 | A request carrying `git`, `limits` and `network` fields, as a spread JSON body would | The fields are ignored; fetched with the test seams given as the second argument | implemented | `FETCH-29: the test seams carried on a request, as a JSON body spread into it would carry them, are ignored` |
 
-_Table 6. The fetch's cases. FETCH-2 to FETCH-29 are in `server/fetch-commit.test.ts`. FETCH-22 to FETCH-27 each fail when the protection they name is deleted. None runs the server image's git; CI runs them on the runner's git._
+_Table 7. The fetch's cases. FETCH-2 to FETCH-29 are in `server/fetch-commit.test.ts`. FETCH-22 to FETCH-27 each fail when the protection they name is deleted. None runs the server image's git; CI runs them on the runner's git._
 
 ## The authoring record (flyingrobots/school#258)
 
@@ -224,7 +256,7 @@ _Table 6. The fetch's cases. FETCH-2 to FETCH-29 are in `server/fetch-commit.tes
 | AUTH-REC-12 | READ COMMITTED | `request_authoring`, `record_draft` and `decide_draft` refuse REPEATABLE READ and store nothing | implemented | `server/adapters/bunsql.concurrency.test.ts`: `request_authoring, record_draft and decide_draft refuse to run under it, and store nothing` |
 | AUTH-REC-13 | Order and course | A course lists only its own requests, by `seq`, each with its drafts by `seq` | implemented | `authoring: each course lists only its own requests, in the record's order, each with its drafts in order` |
 
-_Table 7. The authoring record's cases. State kept outside the Postgres record is the failure mode the issue names: every case reads back through the port, never from a cache._
+_Table 8. The authoring record's cases. State kept outside the Postgres record is the failure mode the issue names: every case reads back through the port, never from a cache._
 
 Every refusal the issue names is a case here, and every case reads the record back through the port on both drivers.
 
@@ -262,7 +294,7 @@ Every refusal the issue names is a case here, and every case reads the record ba
 | PREVIEW-ROUTE-8 | A body declared `text/plain` | 415 | implemented | `PREVIEW-ROUTE-8: a body that is not declared JSON is refused` |
 | PREVIEW-PROGRESS-1 | `courseProgress` on every record adapter: a name with nothing, one with encounters, answers, explanations and views beside another name's, a view alone, a removed install's | The counts written, and none of the other name's | implemented | `server/contract/learning-record.ts`: `course progress: %s`, run on PGlite and Bun.SQL |
 
-_Table 8. The install preview's cases. PREVIEW-3, -4, -5, -8, -12, -14, -16, PREVIEW-ROUTE-1 and the `same-site` and `none` cases of PREVIEW-ROUTE-6 each fail when the behaviour they name is removed. No case previews a course from the internet._
+_Table 9. The install preview's cases. PREVIEW-3, -4, -5, -8, -12, -14, -16, PREVIEW-ROUTE-1 and the `same-site` and `none` cases of PREVIEW-ROUTE-6 each fail when the behaviour they name is removed. No case previews a course from the internet._
 
 ## Migrate jobs on one cluster (flyingrobots/school#356)
 
@@ -281,4 +313,4 @@ _Table 8. The install preview's cases. PREVIEW-3, -4, -5, -8, -12, -14, -16, PRE
 | CLUSTER-9 | An unrelated error in the role step | The shipped bootstrap, run as a role without CREATEROLE, fails with 42501 `permission denied to create role`, and no role is made | implemented | `an error in the role step that is not a concurrent create is not swallowed: without CREATEROLE the bootstrap fails with 42501` |
 | CLUSTER-10 | The role committed after the bootstrap's check | A repeatable-read bootstrap whose snapshot predates another job's committed roles meets them at CREATE ROLE (42710) and succeeds, each role once | implemented | `the role bootstrap, whose check saw no role though another job has committed it since, finds it at the CREATE (42710) and succeeds` |
 
-_Table 9. Migrate jobs on one cluster. CLUSTER-1 to -4 failed on the code before the fix: ten sessions, 53300, and 23505 on `pg_authid_rolname_index`. CLUSTER-5 to -10 passed before it and fail when the behaviour they name is removed: no retry, a retry of every error, no password set, or the locks held on the job's own database; and for CLUSTER-9 and -10, a role-step catch of every error (`WHEN OTHERS`) or one without `duplicate_object`._
+_Table 10. Migrate jobs on one cluster. CLUSTER-1 to -4 failed on the code before the fix: ten sessions, 53300, and 23505 on `pg_authid_rolname_index`. CLUSTER-5 to -10 passed before it and fail when the behaviour they name is removed: no retry, a retry of every error, no password set, or the locks held on the job's own database; and for CLUSTER-9 and -10, a role-step catch of every error (`WHEN OTHERS`) or one without `duplicate_object`._

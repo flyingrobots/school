@@ -1,6 +1,6 @@
 // School's use cases (RFC 3, §4). Each takes values already parsed at the edge, talks only to
 // ports, and returns plain data for the driving adapter to serialise.
-import type { Aid, AidTracking, Block, Contradiction, CourseProgress, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureKind, ExposureResult, Grading, GradingRecord, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, MasteryRollup, Pitch, Recorded, RecordedExposureKind, ReviewNote, ReviewReason, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
+import type { Aid, AidTracking, AskQuestion, AskResult, Block, Contradiction, Conversation, ReplyRecord, ReplyResult, CourseProgress, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureKind, ExposureResult, Grading, GradingRecord, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, MasteryRollup, Pitch, Recorded, RecordedExposureKind, ReviewNote, ReviewReason, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
 import type { Clock, Grader, LearningRecord } from "./ports.ts";
 import { choosePitch, explainScope, quizIdsIn, type ExplainScope } from "./explain-pitch.ts";
 
@@ -11,13 +11,19 @@ const squash = (s: string) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '
  * exist there; it does not prove they support the criticism, and the page does not claim so.
  */
 export function checkQuotes(contradictions: readonly Contradiction[], sources: readonly Source[], modelAnswer: string): (Contradiction & { quote_verified: boolean })[] {
-  const text = new Map(sources.map((s) => [s.id, squash(s.text)]));
-  text.set("model", squash(modelAnswer));
-  return contradictions.map((c) => {
-    const src = text.get(c.source_id);
-    const q = squash(c.quote);
-    return { ...c, quote_verified: src !== undefined && q.length > 0 && src.includes(q) };
-  });
+  const text = new Map(sources.map((s) => [s.id, s.text]));
+  text.set("model", modelAnswer);
+  return contradictions.map((c) => ({ ...c, quote_verified: quoteFound(text.get(c.source_id), c.quote) }));
+}
+
+/**
+ * Whether `quote` occurs in `source`, ignoring case, runs of whitespace and curly quotes: grading's
+ * quote check, which an answer to a question uses too (RFC 6 Table 5.7). An empty quote, or no
+ * source, is never found.
+ */
+export function quoteFound(source: string | undefined, quote: string): boolean {
+  const q = squash(quote);
+  return source !== undefined && q.length > 0 && squash(source).includes(q);
 }
 
 /**
@@ -140,6 +146,15 @@ export interface School {
    * only; null, asking the record nothing, when the page has no such block.
    */
   explainPitch(course: string, page: Block, courseQuizzes: readonly string[], blockId: string): Promise<ExplainPitch | null>;
+  /**
+   * Store a question about a passage and its `ai-help` exposure, at the clock's now, before any model
+   * is asked (RFC 6 §5.1, §5.3). The caller has checked the passage against the lesson.
+   */
+  ask(q: AskQuestion): Promise<AskResult>;
+  /** Store the one reply to a question, at the clock's now. */
+  recordReply(r: ReplyRecord): Promise<ReplyResult>;
+  /** A lesson's conversations, their questions and replies, in the record's order. */
+  lessonConversations(course: string, lesson: string): Promise<Conversation[]>;
 }
 
 /** How many of a group's quizzes are in each state of RFC 5 Table 4.5; they sum to its quizzes. */
@@ -262,6 +277,9 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
     encounterDecisionNotes: (id) => record.encounterDecisionNotes(id),
     installedNames: async () => (await record.installedCourses()).map((c) => c.course),
     courseProgress: (course) => record.courseProgress(course),
+    ask: (q) => record.ask(q, clock.now()),
+    recordReply: (r) => record.recordReply(r, clock.now()),
+    lessonConversations: (course, lesson) => record.lessonConversations(course, lesson),
   };
 }
 
