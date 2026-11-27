@@ -338,7 +338,7 @@ const APP_PASSWORD = /^[A-Za-z0-9]{20,}$/;
  * the same password again. The password reaches Postgres only as a SCRAM-SHA-256 verifier, never
  * as text, so not even a statement log holds it. `onApplied` hears of each migration as it commits.
  */
-export async function migrateRecord(url: string, appPassword: string, onApplied?: OnApplied): Promise<{ applied: number[] }> {
+export async function migrateRecord(url: string, appPassword: string, onApplied?: OnApplied, owner: string = OWNER): Promise<{ applied: number[] }> {
   if (!APP_PASSWORD.test(appPassword)) {
     throw new Error("SCHOOL_APP_PASSWORD must be at least 20 letters and digits (it goes into a URL as it is); " +
       "generate one, e.g. `openssl rand -base64 32 | tr -d '/+='`");
