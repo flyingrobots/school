@@ -485,3 +485,73 @@ test("School's own stat reads inodes as bigint, so none is rounded", async () =>
   const systemStat = config.systemStat as ((p: string) => { ino: unknown }) | undefined;
   expect(typeof systemStat?.("/").ino).toBe("bigint");
 });
+
+// The school skill an authoring agent is given (RFC 9 §5.3, flyingrobots/school#257). In a checkout
+// it is the framework's own; compose mounts it at /framework/skills/school and the references at
+// /framework/docs, and sets both. Whether the folders are there is reported, never refused at start.
+test("SCHOOL_SKILL and SCHOOL_SKILL_DOCS default to the framework checkout's skill and its docs/topics", () => {
+  const c = parseConfig({ SCHOOL_STATE: "/srv/state" }, FRAMEWORK);
+  expect(c.skill).toBe("/opt/school/.agents/skills/school");
+  expect(c.skillDocs).toBe("/opt/school/docs/topics");
+});
+
+test("SCHOOL_SKILL and SCHOOL_SKILL_DOCS name the skill and its references, relative paths resolving against the working directory", () => {
+  const c = parseConfig({ SCHOOL_STATE: "/srv/state", SCHOOL_SKILL: "skill", SCHOOL_SKILL_DOCS: "/framework/docs" }, FRAMEWORK);
+  expect(c.skill).toBe(join(process.cwd(), "skill"));
+  expect(c.skillDocs).toBe("/framework/docs");
+});
+
+test("an empty SCHOOL_SKILL means no skill, so authoring is off", () => {
+  expect(parseConfig({ SCHOOL_STATE: "/srv/state", SCHOOL_SKILL: "" }, FRAMEWORK).skill).toBe(null);
+});
+
+// A name is looked up as the maps' own key, never an inherited one (flyingrobots/school#299): `in`
+// sees Object.prototype, so "constructor" was refused as set twice, and a lookup of an unregistered
+// "constructor" found Object's constructor. Oracle: the course-name rule NAME, /^[a-z0-9][a-z0-9-]*$/,
+// decides which names are allowed; Object.prototype's own property names are the names that collide.
+test.each([
+  ["SCHOOL_COURSES", { SCHOOL_COURSES: "constructor=/courses/x" }],
+  ["SCHOOL_UNTRUSTED_COURSES", { SCHOOL_UNTRUSTED_COURSES: "constructor=/courses/x" }],
+  ["SCHOOL_COURSE", { SCHOOL_COURSE: "/courses/constructor" }],
+])("a course named constructor in %s is accepted under that name", (_, env) => {
+  const c = parseConfig({ SCHOOL_STATE: "/var/school", ...env }, FRAMEWORK);
+  expect(courseNames(c)).toEqual(["constructor"]);
+});
+
+test("a mount named constructor is accepted under that name", () => {
+  expect(parseMounts("constructor=/src/x", "/cwd")).toEqual({ constructor: "/src/x" });
+});
+
+test.each(["toString", "__proto__"])("a course named %s is refused by the course-name rule, not as set twice", (name) => {
+  expect(() => parseConfig({ SCHOOL_COURSES: `${name}=/courses/x` }, FRAMEWORK)).toThrow(`SCHOOL_COURSES name ${JSON.stringify(name)} must match`);
+});
+
+test.each([
+  ["SCHOOL_COURSES", { SCHOOL_COURSES: "aion=/courses/a, aion=/courses/b" }, 'SCHOOL_COURSES name "aion" is set twice'],
+  ["SCHOOL_UNTRUSTED_COURSES", { SCHOOL_UNTRUSTED_COURSES: "aion=/courses/a, aion=/courses/b" }, 'SCHOOL_UNTRUSTED_COURSES name "aion" is set twice'],
+  ["SCHOOL_COURSE and SCHOOL_COURSES", { SCHOOL_COURSE: "/courses/aion", SCHOOL_COURSES: "aion=/courses/b" }, 'SCHOOL_COURSE name "aion" collides with SCHOOL_COURSES'],
+  ["both trusted and untrusted lists", { SCHOOL_COURSES: "aion=/courses/a", SCHOOL_UNTRUSTED_COURSES: "aion=/courses/b" }, 'course "aion" is in both SCHOOL_COURSES and SCHOOL_UNTRUSTED_COURSES'],
+])("a real duplicate in %s is still refused", (_, env, message) => {
+  expect(() => parseConfig({ SCHOOL_STATE: "/var/school", ...env }, FRAMEWORK)).toThrow(message);
+});
+
+test("an unregistered name that Object.prototype holds finds no course and no mount", () => {
+  const c = parseConfig({ SCHOOL_COURSES: "aion=/courses/aion", SCHOOL_MOUNTS: "lib=/src/lib" }, FRAMEWORK);
+  expect([course(c, "constructor"), course(c, "__proto__"), mountTable(c)["constructor"], mountTable(c)["__proto__"]]).toEqual([null, null, undefined, undefined]);
+});
+
+// Every name Object.prototype holds: the rule accepts it as a course of its own, or refuses it for its shape.
+const PROTOTYPE_NAMES = Object.getOwnPropertyNames(Object.prototype);
+const RULE = /^[a-z0-9][a-z0-9-]*$/;
+
+test("Object.prototype holds names on both sides of the course-name rule", () => {
+  expect([PROTOTYPE_NAMES.filter((n) => RULE.test(n)), PROTOTYPE_NAMES.filter((n) => !RULE.test(n)).length > 5]).toEqual([["constructor"], true]);
+});
+
+test.each(PROTOTYPE_NAMES.filter((n) => RULE.test(n)))("a course named %s, which the name rule allows, is registered under that name", (name) => {
+  expect(course(parseConfig({ SCHOOL_COURSES: `${name}=/courses/x` }, FRAMEWORK), name)?.root).toBe("/courses/x");
+});
+
+test.each(PROTOTYPE_NAMES.filter((n) => !RULE.test(n)))("a course named %s, which the name rule forbids, is refused for its shape", (name) => {
+  expect(() => parseConfig({ SCHOOL_COURSES: `${name}=/courses/x` }, FRAMEWORK)).toThrow(`SCHOOL_COURSES name ${JSON.stringify(name)} must match ^[a-z0-9][a-z0-9-]*$`);
+});

@@ -5,7 +5,7 @@ Start here. Each page has one job; this page routes to all of them.
 | Page | Job |
 | --- | --- |
 | [Glossary](glossary.md) | The vocabulary. The authority on every term. Read it first. |
-| [Architecture](topics/architecture/README.md) | Reference: how School is built today, on the default branch; with its [test plan](topics/architecture/test-plan.md) for the bridge's output. |
+| [Architecture](topics/architecture/README.md) | Reference: how School is built today, on the default branch; with its [test plan](topics/architecture/test-plan.md) for the bridge's output, the course store and fetching a commit. |
 | [App shell](topics/app-shell/README.md) | Reference: the web app's routes, keys, theme switch and layout. |
 | [Home page](topics/home-page/README.md) | Reference: what Home shows: a question from a course still ahead, the lessons still ahead with their pictures, and what happened since the learner was last here; and the page's states. |
 | [Settings page](topics/settings-page/README.md) | Reference: what `/settings` shows and does, state by state. |
@@ -19,6 +19,7 @@ Start here. Each page has one job; this page routes to all of them.
 | [The migrate job's output](topics/migrate-job/README.md) | Reference: what `server/migrate.ts` prints, its message types and schemas, `--help`, `--schema` and `--human`, and what the contract cannot cover; with its [test plan](topics/migrate-job/test-plan.md). |
 | [The programs' output](topics/program-output/README.md) | Reference: what the backup job, the Postgres gate and the bridge print, their message types and schemas, `--help`, `--schema` and `--human`, and what the contract cannot cover; with its [test plan](topics/program-output/test-plan.md). |
 | [Due review](topics/due-review/README.md) | Reference: which quizzes come back for delayed review, why, and where they are shown; with its [test plan](topics/due-review/test-plan.md). |
+| [Mastery](topics/mastery/README.md) | Reference: how well each quiz is held at a given time, its stability and strength, and how each kind of first try moves them; with its [test plan](topics/mastery/test-plan.md). |
 | [Reading aloud](topics/reading-aloud/README.md) | Reference: how School reads a lesson or the latest feedback aloud through AI-TTS, what it never says, the playback bar and its keys; with its [test plan](topics/reading-aloud/test-plan.md). |
 | [School's voice](topics/voice/README.md) | Reference: how School speaks to the learner, in the app and in course prompts: encouraging or neutral, inviting rather than commanding. |
 | [Working notes](working-notes.md) | How-to notes for anyone changing the framework. |
@@ -28,6 +29,9 @@ Start here. Each page has one job; this page routes to all of them.
 | [RFC 4: Publishing courses](rfc/0004-publishing-courses.md) | Decided 2026-11-26 as the Library: a public index of course repositories and a static catalog built from it; School stays private. |
 | [RFC 5: Mastery that fades](rfc/0005-mastery-that-fades.md) | Decided 2026-11-26: a per-quiz mastery measure with a growing half-life, derived by a database function, and one added due-review rule for quizzes that have faded. |
 | [RFC 6: Ask about a passage](rfc/0006-ask-about-a-passage.md) | Decided 2026-11-26: select text in a lesson and ask an agent about it through the bridge; answers from the course's sources, streamed, saved to the record, and every question counted as aid for the encounter. |
+| [RFC 7: Installing courses](rfc/0007-installing-courses.md) | Decided 2026-11-26: a course store of write-once installs, added from Settings by git URL at a pinned commit or by git bundle, checked as hostile input and recorded in the database. |
+| [RFC 8: Explain mode](rfc/0008-explain-mode.md) | Decided 2026-11-26: Explain more on a section or block, pitched from the learner's recorded mastery (RFC 5) through the ask path (RFC 6), and recorded as help. |
+| [RFC 9: Authoring a course in the browser](rfc/0009-authoring-in-the-browser.md) | Decided 2026-11-26: a confined agent drafts a course change from a request; the author previews the diff and accepts it as a new write-once install. |
 | [ADRs](adr/) | The decisions, in order, with what each cost. |
 
 Living pages describe only what exists on the default branch. Proposals live in RFCs until they

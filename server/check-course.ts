@@ -15,6 +15,7 @@
 // serve the course, 1 it would refuse it (or the check failed), 2 a bad argument or no such folder.
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { z } from "zod";
 import { BlockError, loadLibrary, quizIds, type Block } from "./blocks.ts";
 import { CourseFileError, readCourseFile } from "./course-file.ts";
 import { jsonLines, loadSchemas } from "./jsonl.ts";
@@ -52,21 +53,43 @@ function manifestLines(l: Manifest): string[] {
 /** What course.json declared, held for --human, which prints it after the lessons rather than as a line of its own. */
 let declared: Manifest = { summary: null, author: null, license: null, format: null };
 
-function prose(l: Record<string, any>): string {
-  switch (l._schema.id) {
-    case ids.help:
+// The fields `prose` reads from each line, as the schemas in server/schemas/check/ publish them. A
+// line is parsed with its type's shape before it is printed, so one that does not have the shape its
+// schema promises throws (and reaches error.failed) instead of printing `undefined`.
+const Envelope = z.object({ _schema: z.object({ id: z.string() }) });
+const Help = z.object({ summary: z.string(), usage: z.string(), options: z.array(z.object({ flags: z.array(z.string()), description: z.string() })),
+  exit: z.array(z.object({ code: z.number(), meaning: z.string() })), output: z.array(z.string()) });
+const SchemaLine = z.object({ id: z.string(), version: z.string(), schema: z.unknown() });
+const Start = z.object({ folder: z.string() });
+const Done = z.object({ title: z.string().nullable(), quizzes: z.number(), explains: z.number(),
+  lessons: z.array(z.object({ file: z.string(), title: z.string(), quizzes: z.number(), explains: z.number() })) });
+const Refusal = z.object({ error: z.string(), file: z.string().nullish(), message: z.string() });
+
+function prose(line: Record<string, unknown>): string {
+  switch (Envelope.parse(line)._schema.id) {
+    case ids.help: {
+      const l = Help.parse(line);
       return [`check: ${l.summary}`, "", `usage: ${l.usage}`, "", "options:",
-        ...l.options.map((o: { flags: string[]; description: string }) => `  ${o.flags.join(", ")}  ${o.description}`), "", "exit codes:",
-        ...l.exit.map((e: { code: number; meaning: string }) => `  ${e.code}  ${e.meaning}`), "",
+        ...l.options.map((o) => `  ${o.flags.join(", ")}  ${o.description}`), "", "exit codes:",
+        ...l.exit.map((e) => `  ${e.code}  ${e.meaning}`), "",
         "output: JSON Lines unless --human is given, each line one of these message types (--schema prints their schemas):",
-        ...l.output.map((id: string) => `  ${id}`)].join("\n");
-    case ids.schema: return `schema ${l.id} ${l.version}\n${JSON.stringify(l.schema, null, 2)}`;
-    case ids.start: return `checking ${l.folder}`;
-    case ids.done:
+        ...l.output.map((id) => `  ${id}`)].join("\n");
+    }
+    case ids.schema: {
+      const l = SchemaLine.parse(line);
+      return `schema ${l.id} ${l.version}\n${JSON.stringify(l.schema, null, 2)}`;
+    }
+    case ids.start: return `checking ${Start.parse(line).folder}`;
+    case ids.done: {
+      const l = Done.parse(line);
       return [`ok: ${l.title ?? "(no title declared)"}, ${plural(l.lessons.length, "lesson")}, ${plural(l.quizzes, "quiz", "quizzes")}, ${plural(l.explains, "explain block")}`,
-        ...l.lessons.map((x: Lesson) => `  ${x.file}  ${x.title}  (${plural(x.quizzes, "quiz", "quizzes")}, ${plural(x.explains, "explain block")})`),
+        ...l.lessons.map((x) => `  ${x.file}  ${x.title}  (${plural(x.quizzes, "quiz", "quizzes")}, ${plural(x.explains, "explain block")})`),
         ...manifestLines(declared)].join("\n");
-    default: return `error (${l.error})${l.file ? ` in ${l.file}` : ""}: ${l.message}`;
+    }
+    default: {
+      const l = Refusal.parse(line);
+      return `error (${l.error})${l.file ? ` in ${l.file}` : ""}: ${l.message}`;
+    }
   }
 }
 

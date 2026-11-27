@@ -137,6 +137,7 @@ export const GRANTED_FUNCTIONS: readonly string[] = [
   "school.last_studied()",
   "school.latest_feedback()",
   "school.lesson_progress(text)",
+  "school.mastery(text,jsonb,timestamp with time zone,bigint)",
   "school.open_encounter(text,text,text,timestamp with time zone,integer)",
   "school.open_lesson_encounter(text,text,text,text,timestamp with time zone,integer,jsonb)",
   "school.record_decision_note(uuid,text,text,text,uuid,text,text,jsonb,timestamp with time zone)",
