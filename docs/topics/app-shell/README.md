@@ -85,6 +85,11 @@ declares none ([a course's folder](../course-format/README.md)), and is a link t
 the address is marked active, on its own page and on the pages under it (its reference, its
 lessons); on Home, Settings and Not found none is. The links are focus stops for `j` and `k`.
 
+An untrusted course (`trusted: false`; [trusted and untrusted courses](../course-format/README.md#trusted-and-untrusted-courses))
+carries a small **Safe mode** badge after its title, the registry's Badge in its outline variant,
+in the theme's foreground and border colours in light and dark. Its link is named
+"`<title>`, shown in safe mode", so a screen reader says so too. A trusted course has no badge.
+
 | State | The group shows |
 | --- | --- |
 | Loading | Three Skeleton rows, and no links |
@@ -114,8 +119,9 @@ under `visibility: hidden` cannot take focus and `j` pressed during the intro wo
 
 `web/test/shell.test.ts` drives the app in Chrome through playwright-core against the Vite dev
 server. It runs in `bun test` from the repository root and needs `npm ci` in `web/` and Google
-Chrome installed. The sidebar's course list is `web/test/sidebar.test.ts`, against a real School;
-its cases are in [the test plan](test-plan.md).
+Chrome installed. The sidebar's course list is `web/test/sidebar.test.ts`, against a real School,
+and its safe-mode badge is in `web/test/course.test.ts`, whose School serves an untrusted course;
+their cases are in [the test plan](test-plan.md).
 
 ## Browser titles
 

@@ -60,7 +60,7 @@ test("a fresh record starts the first lesson, and every course's progress is tol
     { name: "empty", title: "empty", trusted: true, summary: null, author: null, license: null, format: null, lessons: 0, reference: 0, quizzes: 0, answeredCorrectly: 0 },
   ]);
   expect(await get("/api/resume")).toEqual({
-    kind: "start", course: "aion", lastStudied: null, question: null,
+    kind: "start", course: "aion", trusted: true, lastStudied: null, question: null,
     lesson: { id: "l1", title: "Orbits", subtitle: "About Orbits", position: 1, of: 2, quizzes: 2, answeredCorrectly: 0 },
   });
 });
