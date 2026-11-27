@@ -176,6 +176,14 @@ Practical notes for anyone — human or agent — changing the framework.
 - A course's `license` in `course.json` is checked against the SPDX License List copied into
   `server/spdx-license-ids.ts` from `spdx-license-ids` 3.0.24 and the exceptions list copied into
   `server/spdx-exception-ids.ts` from `spdx-exceptions` 2.5.0 (both CC0-1.0), not dependencies
-  (ADR 2). A license or exception SPDX adds later is refused until its file is updated: copy
-  `index.json` and `deprecated.json` from a newer `spdx-license-ids` into the two lists of the
-  first, and `index.json` from a newer `spdx-exceptions` into the second (flyingrobots/school#209).
+  (ADR 2). A license or exception SPDX adds later is refused until the files are refreshed. Both are
+  generated and record the release they came from (`LICENSE_IDS_RELEASE`, `EXCEPTION_IDS_RELEASE`:
+  package, version and the day npm published it). To refresh, run `bun server/scripts/refresh-spdx.ts`
+  (it needs npm and the network, fetches into a scratch directory under `$TMPDIR`, and writes only those
+  two files; `--license-ids <version>` and `--exceptions <version>` pin a release, and the versions the
+  files record regenerate them byte for byte), then update the versions named here and in
+  `docs/topics/course-format/README.md`. Refresh at least once every 12 months, or when a course
+  needs a license the lists lack: a release published more than 12 months ago is due (`isStale` in the
+  script). `server/spdx-lists.test.ts` pins that rule and checks the files, their records and these docs
+  agree; it does not read the clock or the network, so it cannot go red on a day nothing changed
+  (flyingrobots/school#209, #274).
