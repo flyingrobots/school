@@ -1,6 +1,6 @@
 // School's use cases (RFC 3, §4). Each takes values already parsed at the edge, talks only to
 // ports, and returns plain data for the driving adapter to serialise.
-import type { Aid, AidTracking, Block, Contradiction, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, RecordedExposureKind, ReviewNote, ReviewReason, EvidenceRow, Exposure, ExposureResult, ExplanationState, ExplanationSubmission, Grading, GradingRecord, LastStudied, LatestFeedback, LessonProgress, Recorded, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
+import type { Aid, AidTracking, Block, Contradiction, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingRecord, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, Recorded, RecordedExposureKind, ReviewNote, ReviewReason, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
 import type { Clock, Grader, LearningRecord } from "./ports.ts";
 
 const squash = (s: string) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim().toLowerCase();
@@ -108,6 +108,8 @@ export interface School {
   timeZone(): Promise<string | null>;
   /** Choose a time zone, or null to go back to automatic; recorded at the clock's now. */
   chooseTimeZone(zone: string | null): Promise<void>;
+  /** Each name's current install (RFC 7 §7), by name: what the course list serves beside the configured courses. */
+  installedCourses(): Promise<InstalledCourse[]>;
   /** The quizzes among `blocks` due for review now, each with its reason in words. */
   /** `tz`: the zone the reason names its day in; the server's when absent. */
   dueNow(course: string, blocks: readonly string[], tz?: string): Promise<{ item: DueItem; reason: string }[]>;
@@ -172,6 +174,7 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
     lessonProgress: (course) => record.lessonProgress(course),
     lastStudied: () => record.lastStudied(),
     timeZone: () => record.timeZone(),
+    installedCourses: () => record.installedCourses(),
     chooseTimeZone: (zone) => record.chooseTimeZone(zone, clock.now()),
     async latestFeedback() {
       const f = await record.latestFeedback();

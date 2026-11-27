@@ -139,3 +139,15 @@ test("a claude-json agent whose output is not JSON fails with an error that quot
   const r = await runChain(cfg([{ name: "prose", command: prose, output: "claude-json" }]), { prompt: "p", schema });
   expect(r.attempts[0]).toMatchObject({ status: "failed", error: "claude-json output was not JSON" });
 });
+
+// flyingrobots/school#290: when no agent can be started (missing, or a file that is not executable),
+// the chain still ends with every attempt, and no error holds the prompt.
+test("when no agent can be started, the chain fails with each attempt failed and no prompt in any error", async () => {
+  const notExecutable = join(dir, "not-executable");
+  writeFileSync(notExecutable, "#!/bin/sh\necho '{\"answer\": \"yes\"}'\n");
+  const r = await runChain(cfg([{ name: "gone", command: `${join(dir, "no-such-folder", "agent")} {prompt}` }, { name: "denied", command: `${notExecutable} {prompt}` }]), { prompt: "SECRET-PROMPT", schema });
+  expect(r).toEqual({ status: "failed", error: "every agent failed", attempts: [
+    { agent: "gone", status: "failed", error: `could not start ${join(dir, "no-such-folder", "agent")} (ENOENT)`, exitCode: null, ms: expect.any(Number) },
+    { agent: "denied", status: "failed", error: `could not start ${notExecutable} (EACCES)`, exitCode: null, ms: expect.any(Number) },
+  ] });
+});
