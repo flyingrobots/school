@@ -11,7 +11,13 @@ import {
   setDefaultTimeout,
   test,
 } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -59,6 +65,38 @@ const lesson = (id: string, title: string, quizzes: string[]) =>
     subtitle: `About ${title.toLowerCase()}`,
     children: quizzes.map(quiz),
   })
+
+// The school skill's worked example (flyingrobots/school#193), and what its course.json declares.
+const example = join(web, "..", ".agents", "skills", "school", "example")
+const declared: {
+  title: string
+  summary: string
+  author: string
+  license: string
+} = JSON.parse(readFileSync(join(example, "course.json"), "utf8"))
+const torn = {
+  title: "Torn pages",
+  summary: "A course whose lessons cannot be read.",
+  author: "A tester",
+  license: "MIT OR Apache-2.0",
+}
+
+// wordy: a long author and a long SPDX OR chain, which must not widen a phone's page. markup: an
+// untrusted course whose summary and author are markup-like strings (flyingrobots/school#277).
+const wordy = {
+  title: "Wordy",
+  summary: "A course with long words.",
+  author:
+    "Dr. Wolfeschlegelsteinhausenbergerdorff-Extraordinarily-Long-Surname and the Committee of Unbroken-Hyphenated-Collaborators",
+  license:
+    "MIT OR Apache-2.0 OR BSD-2-Clause OR BSD-3-Clause OR ISC OR MPL-2.0 OR Unlicense OR CC0-1.0 OR Zlib OR 0BSD",
+}
+const markup = {
+  title: "Markup",
+  summary: "<img src=x onerror=\"window.__fired = 'summary'\">",
+  author: "<img src=x onerror=\"window.__fired = 'author'\"><b>Bold</b>",
+  license: "MIT",
+}
 
 type CourseJson = {
   name: string
@@ -118,13 +156,35 @@ beforeAll(
       lesson("g1", "Visiting", ["q1"])
     )
 
-    // The helper chooses the port (flyingrobots/school#82).
+    // torn: lessons that cannot be read, beside a course.json that declares a summary, an author
+    // and a license, which the API still gives (flyingrobots/school#277).
+    mkdirSync(join(root, "torn", "lessons"), { recursive: true })
+    writeFileSync(join(root, "torn", "course.json"), JSON.stringify(torn))
+    writeFileSync(join(root, "torn", "lessons", "0001.json"), "{ not json")
+
+    for (const [name, json] of [
+      ["wordy", wordy],
+      ["markup", markup],
+    ] as const) {
+      mkdirSync(join(root, name, "lessons"), { recursive: true })
+      writeFileSync(join(root, name, "course.json"), JSON.stringify(json))
+      writeFileSync(
+        join(root, name, "lessons", "0001.json"),
+        lesson(name[0] + "1", "Only", ["q1"])
+      )
+    }
+
+    // The helper chooses the port (flyingrobots/school#82). `example` is the school skill's
+    // worked example, which declares a summary, an author and a license (flyingrobots/school#277).
     school = await startSchool({
       ...process.env,
-      SCHOOL_COURSES: ["aion", "empty", "broken"]
-        .map((c) => `${c}=${join(root, c)}`)
-        .join(","),
-      SCHOOL_UNTRUSTED_COURSES: `guest=${join(root, "guest")}`,
+      SCHOOL_COURSES: [
+        ...["aion", "empty", "broken", "torn", "wordy"].map(
+          (c) => `${c}=${join(root, c)}`
+        ),
+        `example=${example}`,
+      ].join(","),
+      SCHOOL_UNTRUSTED_COURSES: `guest=${join(root, "guest")},markup=${join(root, "markup")}`,
       SCHOOL_STATE: join(root, "state"),
       SCHOOL_DATABASE_URL: `pglite:${join(root, "record")}`,
       SCHOOL_WEB: join(root, "no-web"),
@@ -520,6 +580,256 @@ describe("an untrusted course", () => {
       dark.background[0] === dark.background[1],
       dark.text[0] === dark.text[1],
       light.background[0] !== dark.background[0],
+    ]).toEqual([true, true, true, true, true])
+  })
+})
+
+// flyingrobots/school#277: the course page shows what a course's course.json declares about it (its
+// summary, author and license, from GET /api/courses/:c), and nothing for what it does not declare.
+// Oracle: the issue's 2b and 2d, and the example's own course.json. The author and license are the
+// registry's Badge, the summary text in the theme's muted colour, in light and in dark.
+describe("a course's declaration", () => {
+  const declaration = (p: Page) => main(p).locator("[data-manifest]")
+  const part = (p: Page, key: string) =>
+    main(p).locator(`[data-manifest=${key}]`)
+  const read = async (p: Page) => ({
+    summary: (await part(p, "summary").textContent())?.trim(),
+    author: (await part(p, "author").textContent())?.trim(),
+    license: (await part(p, "license").textContent())?.trim(),
+    badges: await main(p)
+      .locator("[data-manifest][data-slot=badge]")
+      .evaluateAll((els) => els.map((e) => e.getAttribute("data-manifest"))),
+  })
+
+  test("the example course shows its summary, author and license, as the API gives them", async () => {
+    const reply: { summary: string; author: string; license: string } =
+      await api("example")
+    expect([reply.summary, reply.author, reply.license]).toEqual([
+      declared.summary,
+      declared.author,
+      declared.license,
+    ])
+    const p = await open("/courses/example")
+    await lessons(p).first().waitFor()
+    expect(await read(p)).toEqual({
+      summary: declared.summary,
+      author: `By ${declared.author}`,
+      license: `License: ${declared.license}`,
+      badges: ["author", "license"],
+    })
+    await close(p.context())
+  })
+
+  test("a course that declares none of them shows nothing extra", async () => {
+    const reply = (await api("aion")) as unknown as Record<string, unknown>
+    expect([reply.summary, reply.author, reply.license]).toEqual([
+      null,
+      null,
+      null,
+    ])
+    const p = await open("/courses/aion")
+    await lessons(p).first().waitFor()
+    expect(await declaration(p).count()).toBe(0)
+    await close(p.context())
+  })
+
+  test("a course whose lessons cannot be read still shows its declaration", async () => {
+    const p = await open("/courses/torn")
+    await main(p).getByText("This course could not be read").waitFor()
+    expect(await read(p)).toEqual({
+      summary: torn.summary,
+      author: `By ${torn.author}`,
+      license: `License: ${torn.license}`,
+      badges: ["author", "license"],
+    })
+    await close(p.context())
+  })
+
+  test("a long author and a long license chain wrap on a phone: no sideways scroll, full text reachable", async () => {
+    const p = await open(
+      "/courses/wordy",
+      await context({ width: 375, height: 800 })
+    )
+    await lessons(p).first().waitFor()
+    const { scroll, inner } = await p.evaluate(() => ({
+      scroll: document.scrollingElement!.scrollWidth,
+      inner: innerWidth,
+    }))
+    expect(scroll).toBeLessThanOrEqual(inner)
+    const shown = await read(p)
+    expect([shown.author, shown.license]).toEqual([
+      `By ${wordy.author}`,
+      `License: ${wordy.license}`,
+    ])
+    // Reachable: each badge sits inside the viewport and shows its whole text (no clipping).
+    for (const key of ["author", "license"]) {
+      const box = await part(p, key).evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        return {
+          right: r.right,
+          clipped: el.scrollWidth > el.clientWidth,
+        }
+      })
+      expect(box.right).toBeLessThanOrEqual(375)
+      expect(box.clipped).toBe(false)
+    }
+    await close(p.context())
+  })
+
+  test("the summary and badges take the theme's colours, in light and in dark", async () => {
+    const colours = async (colorScheme: "light" | "dark") => {
+      const c = await browser.newContext({ colorScheme })
+      await c.route(/\/api\//, async (route) => {
+        const u = new URL(route.request().url())
+        await route.fulfill({
+          response: await route.fetch({
+            url: school.url + u.pathname + u.search,
+          }),
+        })
+      })
+      const p = await open("/courses/example", c)
+      await part(p, "license").waitFor()
+      const got = await main(p).evaluate((el) => {
+        // The tokens as the browser resolves them, through the same property.
+        const resolve = (prop: "color" | "borderColor", token: string) => {
+          const probe = document.createElement("div")
+          probe.style[prop] = `var(${token})`
+          document.body.append(probe)
+          const v = getComputedStyle(probe)[prop]
+          probe.remove()
+          return v
+        }
+        const style = (key: string) =>
+          getComputedStyle(el.querySelector(`[data-manifest=${key}]`)!)
+        return {
+          summary: [
+            style("summary").color,
+            resolve("color", "--muted-foreground"),
+          ],
+          badgeText: [style("license").color, resolve("color", "--foreground")],
+          badgeBorder: [
+            style("license").borderColor,
+            resolve("borderColor", "--border"),
+          ],
+        }
+      })
+      await close(c)
+      return got
+    }
+    const light = await colours("light")
+    const dark = await colours("dark")
+    expect([
+      light.summary[0] === light.summary[1],
+      light.badgeText[0] === light.badgeText[1],
+      light.badgeBorder[0] === light.badgeBorder[1],
+      dark.summary[0] === dark.summary[1],
+      dark.badgeText[0] === dark.badgeText[1],
+      dark.badgeBorder[0] === dark.badgeBorder[1],
+      light.badgeText[0] !== dark.badgeText[0],
+    ]).toEqual([true, true, true, true, true, true, true])
+  })
+})
+
+// flyingrobots/school#277: the sidebar marks an untrusted course (`trusted: false` from
+// GET /api/courses) with a neutral Safe mode badge, the registry's outline Badge, and names it in
+// the link's accessible name. Oracle: the issue's 2b and 2d.
+describe("markup in a course's declaration", () => {
+  test("an untrusted course's markup-like summary and author show as literal text and run nothing", async () => {
+    const p = await open("/courses/markup")
+    await lessons(p).first().waitFor()
+    const text = async (key: string) =>
+      (await main(p).locator(`[data-manifest=${key}]`).textContent())?.trim()
+    expect([await text("summary"), await text("author")]).toEqual([
+      markup.summary,
+      `By ${markup.author}`,
+    ])
+    expect(await main(p).locator("img, b").count()).toBe(0)
+    expect(await p.locator("img[src=x]").count()).toBe(0)
+    // Give a would-be broken image time to fail and fire its handler.
+    await p.waitForTimeout(500)
+    expect(
+      await p.evaluate(() => (window as { __fired?: string }).__fired)
+    ).toBe(undefined)
+    await close(p.context())
+  })
+})
+
+describe("the sidebar's safe-mode badge", () => {
+  const sidebar = (p: Page) => p.locator("[data-sidebar=sidebar]")
+  const badge = (p: Page, course: string) =>
+    sidebar(p).locator(`[data-course=${course}] [data-slot=badge]`)
+
+  test("an untrusted course is marked Safe mode in the sidebar, as the course list reports it", async () => {
+    const listed: { name: string; trusted: boolean }[] = await (
+      await fetch(`${school.url}/api/courses`)
+    ).json()
+    expect(listed.find((c) => c.name === "guest")?.trusted).toBe(false)
+    const p = await open("/courses/aion")
+    await badge(p, "guest").waitFor()
+    expect([
+      (await badge(p, "guest").textContent())?.trim(),
+      await badge(p, "guest").getAttribute("data-variant"),
+      await sidebar(p)
+        .getByRole("link", { name: "guest, shown in safe mode" })
+        .getAttribute("href"),
+    ]).toEqual(["Safe mode", "outline", "/courses/guest"])
+    await close(p.context())
+  })
+
+  test("a trusted course has no badge", async () => {
+    const p = await open("/courses/aion")
+    await badge(p, "guest").waitFor()
+    expect(
+      await sidebar(p)
+        .locator("[data-course] [data-slot=badge]")
+        .evaluateAll((els) =>
+          els.map((e) =>
+            e.closest("[data-course]")!.getAttribute("data-course")
+          )
+        )
+    ).toEqual(["guest", "markup"])
+    await close(p.context())
+  })
+
+  test("the badge takes the theme's colours, in light and in dark", async () => {
+    const colours = async (colorScheme: "light" | "dark") => {
+      const c = await browser.newContext({ colorScheme })
+      await c.route(/\/api\//, async (route) => {
+        const u = new URL(route.request().url())
+        await route.fulfill({
+          response: await route.fetch({
+            url: school.url + u.pathname + u.search,
+          }),
+        })
+      })
+      const p = await open("/courses/aion", c)
+      await badge(p, "guest").waitFor()
+      const got = await badge(p, "guest").evaluate((el) => {
+        const resolve = (prop: "color" | "borderColor", token: string) => {
+          const probe = document.createElement("div")
+          probe.style[prop] = `var(${token})`
+          document.body.append(probe)
+          const v = getComputedStyle(probe)[prop]
+          probe.remove()
+          return v
+        }
+        const have = getComputedStyle(el)
+        return {
+          text: [have.color, resolve("color", "--foreground")],
+          border: [have.borderColor, resolve("borderColor", "--border")],
+        }
+      })
+      await close(c)
+      return got
+    }
+    const light = await colours("light")
+    const dark = await colours("dark")
+    expect([
+      light.text[0] === light.text[1],
+      light.border[0] === light.border[1],
+      dark.text[0] === dark.text[1],
+      dark.border[0] === dark.border[1],
+      light.text[0] !== dark.text[0],
     ]).toEqual([true, true, true, true, true])
   })
 })

@@ -1,6 +1,7 @@
 // What the home page reads (flyingrobots/school#166), checked with Zod before anything is shown.
 // The server side is server/server.ts: showcaseJson (#164), and feedbackJson, reviewJson and
-// activityJson (#165); resume is GET /api/resume (#39).
+// activityJson (#165); resume is GET /api/resume (#39). Every item that carries a course's text
+// gives the course's `trusted` (flyingrobots/school#210, #272).
 import { z } from "zod"
 
 const LessonRef = z.object({ id: z.string(), title: z.string() })
@@ -31,6 +32,7 @@ export const FeedbackJson = z
   .object({
     course: z.string(),
     courseTitle: z.string(),
+    trusted: z.boolean(),
     lesson: LessonRef,
     blockId: z.string(),
     prompt: z.string().nullable(),
@@ -50,6 +52,7 @@ export type Feedback = NonNullable<z.infer<typeof FeedbackJson>>
 export const ReviewItem = z.object({
   course: z.string(),
   courseTitle: z.string(),
+  trusted: z.boolean(),
   lesson: LessonRef.nullable(),
   blockId: z.string(),
   question: z.string().nullable(),
@@ -69,6 +72,7 @@ export const ActivityJson = z.object({
     z.object({
       course: z.string(),
       courseTitle: z.string(),
+      trusted: z.boolean(),
       studied: z.array(Day),
       due: z.array(z.object({ day: Day, items: z.number().int().positive() })),
     })
@@ -89,6 +93,7 @@ export const ResumeJson = z.discriminatedUnion("kind", [
   z.object({
     kind: z.enum(["continue", "next", "start"]),
     course: z.string(),
+    trusted: z.boolean(),
     lesson: ResumeLesson,
     question: z.string().nullable(),
     lastStudied: z.string().nullable(),
@@ -96,6 +101,7 @@ export const ResumeJson = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("finished"),
     course: z.string(),
+    trusted: z.boolean(),
     lastStudied: z.string(),
   }),
   z.object({ kind: z.literal("nothing") }),
