@@ -22,8 +22,11 @@ others, and checks every reply with Zod (`web/src/lib/home-api.ts`) before showi
    of 7: Bells that can't hurry"), and links to the course's lessons. A lesson without a hook
    shows its title as the question and its subtitle as the teaser, with no figure. The figure is
    the course's SVG, kept to drawing (`web/src/lib/figure.ts`): it must be one `<svg>` element, and
-   scripts, `foreignObject`, embedded documents, styles, animation, event handlers and links are
-   removed before it is shown. Its lines draw themselves unless the viewer prefers reduced motion.
+   scripts, `foreignObject`, embedded documents, styles, raw-text elements, anything outside the
+   SVG namespace, animation, event handlers, links and `style` and `class` attributes are removed
+   before it is shown. A trusted course's figure is drawn inline and its lines draw themselves
+   unless the viewer prefers reduced motion; an untrusted course's is drawn as an image, in the
+   theme's current colours.
 2. **Still ahead in your courses**: every other lesson from `GET /api/showcase`, as a carousel of
    cards, each with its question, teaser, figure (or a book icon), course and place, linking to the
    lesson. The lesson the learner is partway through (resume's `continue`) comes first, marked
