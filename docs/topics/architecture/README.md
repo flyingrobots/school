@@ -2,9 +2,9 @@
 title: "School's architecture"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-22
-updated: 2026-11-26
-version: 1.5.1
-status: "Living reference. Describes flyingrobots/school as read at commit a959505, plus the bridge's `POST /ask` (flyingrobots/school#226), with the record on Postgres since flyingrobots/school#47 and SQLite deleted by flyingrobots/school#49; proposals are in RFCs 2 and 3."
+updated: 2026-11-27
+version: 1.6.0
+status: "Living reference. Describes flyingrobots/school as read at commit a959505, plus the bridge's `POST /ask` (flyingrobots/school#226) and `POST /author` (flyingrobots/school#259), with the record on Postgres since flyingrobots/school#47 and SQLite deleted by flyingrobots/school#49; proposals are in RFCs 2 and 3."
 ---
 
 # School's architecture
@@ -12,7 +12,7 @@ status: "Living reference. Describes flyingrobots/school as read at commit a9595
 This page is a reference for how School is built **today**. It describes nothing that is only
 proposed; for that, read [RFC 2](../../rfc/0002-lessons-written-for-each-learner.md) and
 [RFC 3](../../rfc/0003-postgres-functions-and-generated-types.md). Terms are defined in the
-[glossary](../../glossary.md). Every claim was read from the code at commit `a959505`, except the bridge's `POST /ask` paragraph, which was read from `bridge/ask.ts` on the branch of flyingrobots/school#226.
+[glossary](../../glossary.md). Every claim was read from the code at commit `a959505`, except the bridge's `POST /ask` paragraph, which was read from `bridge/ask.ts` on the branch of flyingrobots/school#226, and its `POST /author` paragraphs, read from `bridge/author.ts` on the branch of flyingrobots/school#259.
 
 ## Contents
 
@@ -575,6 +575,44 @@ unless the caller received some of that agent's words. After a kill the bridge w
 the agent's pipes to close, then stops reading them, so a child that left the process group cannot
 hold the queue. The cases are in the [test plan](test-plan.md#asking-the-bridge-a-question).
 
+The bridge also drafts a course, for the authoring route RFC 9 plans: `POST /author` takes
+`{ prompt, files, guide, deadline_ms }`, where `files` and `guide` are each a list of
+`{ path, base64 }`. Its agents are a third list in the bridge's file, `author`,
+`{ "timeout_seconds": 900, "agents": [...] }` (900 seconds by default, the most any list allows), in
+a queue of its own, so a draft never delays a grading or a question, and drafts run one at a time.
+Each attempt runs in a fresh folder that holds only the draft and the skill, and is deleted after
+the attempt, whatever its outcome:
+
+```text
+<fresh folder from mkdtemp>/
+  course/   the files sent under "files"
+  guide/    the files sent under "guide", which must include SKILL.md
+```
+
+_Listing 3. An authoring agent's working folder, its working directory. The bridge writes no
+settings file into it: confining the agent's tools is its command's job (RFC 9 Table 5.2, layers 2
+and 3)._
+
+| Layer | What the bridge does |
+| --- | --- |
+| Before anything is written | Refuses (400) a path that is absolute, empty, holds `..`, `.`, an empty part, a backslash or a NUL, names a file twice in any case, or names a file and a folder the same, and content that is not base64; and RFC 7's limits: 2,000 files, 8 MiB each, 64 MiB in all, paths of 255 bytes at most 8 folders deep |
+| What comes back | After the agent exits and its process group is killed, walks `course/` with `lstat`, never following a link, and returns only regular files under `course.json`, `lessons/`, `reference/`, `OBJECTIVES.md` and `RESOURCES.md`. A symlink, a file that is neither regular nor a folder, a `course/` that is not a folder, or a limit passed refuses the draft and names the path; anything else, in `course/` or outside it, is not returned |
+
+_Table 1. The two layers of confinement in the bridge itself (RFC 9 Table 5.2, layers 1 and 4).
+The server is to check the returned files again with RFC 7's extractor._
+
+It answers `application/x-ndjson`: a `{"type":"step","tool","path"}` line for each tool an agent with
+output `claude-stream-json` uses, naming the path relative to the folder when it is under it and
+as the agent gave it otherwise, never the content; a `{"type":"heartbeat"}` line every 30 seconds;
+on success one `{"type":"files","files":[{ path, base64 }]}` line with the paths under `course/`;
+then one `{"type":"end"}` line with `status` (`succeeded`, `refused` or `failed`), `agent`, `usage`,
+`error`, `refusal` (`reason` and `path`, or null), `guide_sha256` and every attempt. Any other output
+kind sends no steps, and its draft still comes back. `guide_sha256` is the SHA-256 of the manifest
+of the `guide/` files as written into the folder, in the form `server/skill.ts` uses, so the digest
+School records names exactly the files the agent had. As on `POST /ask`, the next agent is tried
+only before the first step, and a caller that hangs up stops the agent. The cases are in the
+[test plan](test-plan.md#drafting-a-course-in-the-bridge).
+
 The bridge also reads aloud: it hands text the server built to the AI-TTS daemon on the host's
 Unix socket, for synthesis only, and serves the audio back for the browser to play
 ([reading aloud](../reading-aloud/README.md)).
@@ -585,7 +623,7 @@ gap in handling a malformed reply.
 ### The bridge's output
 
 The bridge writes JSON Lines on stdout: one JSON object per line, each with a `kind` beginning
-`bridge.` and the time `at`. No line contains a prompt or an answer.
+`bridge.` and the time `at`. No line contains a prompt, an answer or a file.
 
 | `kind` | When |
 | --- | --- |
@@ -593,6 +631,7 @@ The bridge writes JSON Lines on stdout: one JSON object per line, each with a `k
 | `bridge.listening` | Once it listens: `host` and the `port` it got (the OS's choice for port `0`) |
 | `bridge.run.start`, `bridge.attempt`, `bridge.run.end` | Each `POST /run`, its attempts, and its outcome |
 | `bridge.ask.start`, `bridge.ask.attempt`, `bridge.ask.end` | Each `POST /ask`, its attempts with how many deltas each passed on, and its outcome with the token counts; never the question or the answer |
+| `bridge.author.start`, `bridge.author.attempt`, `bridge.author.end` | Each `POST /author` with its file counts, its attempts with how many steps each passed on, and its outcome with the files and bytes returned, the refusal's reason, the guide's digest and the token counts; never the prompt, a path or a file |
 | `bridge.test` | Each `POST /test` |
 | `bridge.config.saved` | Each accepted `PUT /config` |
 | `bridge.speak.submit`, `bridge.speak.cancel` | Each text submitted to AI-TTS, and each cancelled ([reading aloud](../reading-aloud/README.md)); never the text |
@@ -664,7 +703,7 @@ This check finds a whole folder mounted twice, not part of one. At a bind mount'
 
 ### Fetching a course repository
 
-`fetchCommit` (`server/fetch-commit.ts`, RFC 7 §6) fetches one commit of a course repository into a new bare repository, `<staging>/repo.git`, and answers the commit's full hash. No route calls it yet; the install preview (RFC 7 task 7) will, with a staging folder under the course store. The URL and the server are hostile, so School checks the commit, then the URL, then the host's addresses, then the staging folder, and only then runs git. Table 1 lists the rules in that order, and the first rule broken gives the refusal. Any refusal deletes the staging folder, or never makes it.
+`fetchCommit` (`server/fetch-commit.ts`, RFC 7 §6) fetches one commit of a course repository into a new bare repository, `<staging>/repo.git`, and answers the commit's full hash. No route calls it yet; the install preview (RFC 7 task 7) will, with a staging folder under the course store. The URL and the server are hostile, so School checks the commit, then the URL, then the host's addresses, then the staging folder, and only then runs git. Table 2 lists the rules in that order, and the first rule broken gives the refusal. Any refusal deletes the staging folder, or never makes it.
 
 | Rule | Refused with |
 | --- | --- |
@@ -681,9 +720,9 @@ This check finds a whole folder mounted twice, not part of one. At a bind mount'
 | Each git process finishes within 60 seconds. The fetched repository stays within 64 MiB on disk: School measures it every 100 ms while git runs and again when git ends (RFC 7 Table 6.2). Passing either limit kills git's whole process group | `timeout`, `too-large` |
 | git fetches the commit, and the object is a commit, not a tree or blob | `git-failed`, `not-a-commit` |
 
-_Table 1. What `fetchCommit` checks, in the order the code checks it. Every refusal carries a sentence naming what was refused._
+_Table 2. What `fetchCommit` checks, in the order the code checks it. Every refusal carries a sentence naming what was refused._
 
-git is pinned to the addresses School checked. `http.curloptResolve=HOST:443:ADDRESS[,ADDRESS]` hands them to libcurl, so git never looks the host up again, and a second answer from DNS (rebinding) is never used. Only a plain host name can be pinned this way: libcurl reads a name starting with `-` as "remove this entry", so Table 1 refuses such a name before any lookup. Redirects are not followed (`http.followRedirects=false`), because a redirect could lead to a host or port the pin does not cover. git runs with a fresh environment: no system or global configuration, `HOME` set to the staging folder (so no `.netrc`), `GIT_TERMINAL_PROMPT=0`, no askpass, an empty `credential.helper`, an empty `http.proxy` (which also overrides a proxy in the environment), `core.hooksPath=/dev/null`, `transfer.fsckObjects`, no submodules, and `git init --bare --template=`. The bare repository is made first. Every later git command, `ls-remote` included, names that repository with `--git-dir` and starts in it, and `GIT_CEILING_DIRECTORIES` stops git looking above the staging folder. So a git repository around the course store adds no configuration, such as a header, a URL rewrite or a proxy. The fetch is `git fetch --depth=1 --no-tags --no-recurse-submodules <url> <hash>`, so the repository holds that one commit and nothing is checked out. `refs/heads/course` then points at the commit, so nothing prunes it before it is read. When git exits, School kills its process group, so no helper it started outlives it. A host that will not serve a commit by its hash fails as `git-failed`, with git's own message.
+git is pinned to the addresses School checked. `http.curloptResolve=HOST:443:ADDRESS[,ADDRESS]` hands them to libcurl, so git never looks the host up again, and a second answer from DNS (rebinding) is never used. Only a plain host name can be pinned this way: libcurl reads a name starting with `-` as "remove this entry", so Table 2 refuses such a name before any lookup. Redirects are not followed (`http.followRedirects=false`), because a redirect could lead to a host or port the pin does not cover. git runs with a fresh environment: no system or global configuration, `HOME` set to the staging folder (so no `.netrc`), `GIT_TERMINAL_PROMPT=0`, no askpass, an empty `credential.helper`, an empty `http.proxy` (which also overrides a proxy in the environment), `core.hooksPath=/dev/null`, `transfer.fsckObjects`, no submodules, and `git init --bare --template=`. The bare repository is made first. Every later git command, `ls-remote` included, names that repository with `--git-dir` and starts in it, and `GIT_CEILING_DIRECTORIES` stops git looking above the staging folder. So a git repository around the course store adds no configuration, such as a header, a URL rewrite or a proxy. The fetch is `git fetch --depth=1 --no-tags --no-recurse-submodules <url> <hash>`, so the repository holds that one commit and nothing is checked out. `refs/heads/course` then points at the commit, so nothing prunes it before it is read. When git exits, School kills its process group, so no helper it started outlives it. A host that will not serve a commit by its hash fails as `git-failed`, with git's own message.
 
 The request names only the URL, the commit and the staging folder. The git program, the network (resolver, address check, ports, CA file) and the limits are a separate second argument, `FetchTesting`. Only tests pass it, to reach a local server, and no route may build it from a client's input.
 
