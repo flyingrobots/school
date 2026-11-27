@@ -135,18 +135,30 @@ test("authoring requests wait for each other in their own queue", async () => {
   expect(reached("started-1")).toBe(true);
 }, timeout(1));
 
-test("no log line holds the prompt, a file's name or a file's content", async () => {
+test("no log line holds the prompt, a file's name or a file's content, after a draft that comes back, one refused and requests refused", async () => {
+  // The same agent refuses its second draft: once the gate `refuse` is open, it links a file it names.
   await start([grader("g", "true")], [], [{ name: "claude", steps: [
     { tool: "Edit", input: { file_path: "course/lessons/SECRET-LESSON-NAME.json", old_string: "SECRET-OLD-TEXT", new_string: "SECRET-NEW-TEXT" } },
-    { sh: `printf 'SECRET-WRITTEN-TEXT\\n' > course/reference/SECRET-REFERENCE-NAME.md` }, { stderr: "SECRET-STDERR-TEXT" }, DONE,
+    { sh: `printf 'SECRET-WRITTEN-TEXT\\n' > course/reference/SECRET-REFERENCE-NAME.md` }, { stderr: "SECRET-STDERR-TEXT" },
+    { sh: `if [ -e "$1/refuse" ]; then ln -s /etc/hosts course/lessons/SECRET-LINK-NAME.json; fi` }, DONE,
   ] }]);
   const out = await all(await post("/author", request("SECRET-PROMPT-TEXT")));
   expect(out.at(-1)).toMatchObject({ status: "succeeded" });
+  open("refuse");
+  const refused = await all(await post("/author", request("SECRET-PROMPT-TEXT")));
+  expect(refused.at(-1)).toMatchObject({ status: "refused", refusal: { reason: "symlink", path: "lessons/SECRET-LINK-NAME.json" } });
+  // Paths layer 1 refuses: two that one APFS volume holds as one file, and a guide path with a line break.
+  for (const body of [{ ...request(), files: [...COURSE, { path: "lessons/SECRET-\u017f.json", base64: "" }, { path: "lessons/SECRET-s.json", base64: "" }] },
+    { ...request(), guide: [...GUIDE, { path: "docs/SECRET-\nBREAK.md", base64: "" }] }]) {
+    const r = await post("/author", body);
+    expect([await r.json(), r.status]).toEqual([expect.objectContaining({ status: "invalid" }), 400]);
+  }
   bridge!.proc.kill();
   const { stdout } = await bridge!.output();
   bridge = null;
   const kinds = stdout.trim().split("\n").map((l) => JSON.parse(l).kind as string);
-  expect(kinds.filter((k) => k.startsWith("bridge.author."))).toEqual(["bridge.author.start", "bridge.author.attempt", "bridge.author.end"]);
+  expect(kinds.filter((k) => k.startsWith("bridge.author.") || k === "bridge.error")).toEqual([
+    "bridge.author.start", "bridge.author.attempt", "bridge.author.end", "bridge.author.start", "bridge.author.attempt", "bridge.author.end"]);
   expect(stdout.match(/SECRET-[A-Z-]+/g)).toBeNull();
 }, timeout(1));
 
@@ -165,6 +177,8 @@ test("POST /author refuses a request without the token, a body that is not JSON,
     {}, { ...request(), prompt: "" }, { ...request(), prompt: "x".repeat(200_001) }, { ...request(), deadline_ms: 0 },
     { ...request(), files: [{ path: "../escape", base64: "" }] }, { ...request(), files: [{ path: "/abs", base64: "" }] },
     { ...request(), guide: [{ path: "docs/x.md", base64: "" }] }, { ...request(), files: "course" },
+    { ...request(), files: [{ path: "lessons/\u03c2.json", base64: "" }, { path: "lessons/\u03c3.json", base64: "" }] },
+    { ...request(), guide: [...GUIDE, { path: "docs/a\nb.md", base64: "" }] },
   ];
   for (const body of bad) {
     const r = await post("/author", body);

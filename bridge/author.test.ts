@@ -56,6 +56,16 @@ const job = (over: Partial<Parameters<typeof runAuthor>[1]> = {}) => ({ prompt: 
 /** The working folder the agent ran in, as it recorded it with `pwd -P` into the gate folder. */
 const RECORD_CWD: Step = { sh: `pwd -P > "$1/cwd"` };
 const cwd = () => readFileSync(join(gates, "cwd"), "utf8").trim();
+/** The message of the AuthorInputError `f` throws, or "accepted" when it throws none. */
+function refusalOf(f: () => unknown): string {
+  try {
+    f();
+  } catch (e) {
+    if (!(e instanceof AuthorInputError)) throw e;
+    return e.message;
+  }
+  return "accepted";
+}
 
 test("golden: each step reaches the caller before the agent goes on, and its edits to course files come back", async () => {
   const cfg = author([{ name: "claude", steps: [
@@ -333,6 +343,71 @@ test("layer 1: paths that are absolute, hold .. or a NUL, are empty, or name a f
   expect(() => entries([{ path: "a", base64: b64("xyz") }], "files", limits)).toThrow("2 bytes");
   expect(() => entries([{ path: "aaaaaaaaaaa", base64: "" }], "files", limits)).toThrow("10 bytes");
   expect(() => entries([{ path: "a/b/c", base64: "" }], "files", limits)).toThrow("folders deep");
+});
+
+test("layer 1 takes a file of exactly 8 MiB as base64, and refuses 8 MiB and one byte as too large, not as bad base64", () => {
+  // RFC 7 Table 6.2: 8 MiB a file. Varied bytes, so the base64 is not one repeated run.
+  const of = (n: number) => {
+    const b = new Uint8Array(n);
+    for (let i = 0; i < n; i++) b[i] = (i * 131 + (i >>> 9)) & 255;
+    return Buffer.from(b).toString("base64");
+  };
+  const at = entries([{ path: "reference/big.pdf", base64: of(DEFAULT_LIMITS.fileBytes) }], "files");
+  expect(at.map((f) => [f.path, f.bytes.length])).toEqual([["reference/big.pdf", DEFAULT_LIMITS.fileBytes]]);
+  expect(() => entries([{ path: "reference/big.pdf", base64: of(DEFAULT_LIMITS.fileBytes + 1) }], "files")).toThrow(`is larger than ${DEFAULT_LIMITS.fileBytes} bytes`);
+  for (const bad of ["QUJD=", "QQ=A", "Q===", "QQ==QUJD", "QUJ\n", "QU-D"]) {
+    expect([bad, refusalOf(() => entries([{ path: "a", base64: bad }], "files"))]).toEqual([bad, expect.stringContaining("needs its content as base64")]);
+  }
+});
+
+test("layer 1: two names an APFS volume folds together, and a guide path with a line break, are refused before anything runs", () => {
+  // The extractor's full case folding (server/extract-tree.ts): s and ſ, σ and ς, ss and ß.
+  for (const [a, b] of [["ſ", "s"], ["ς", "σ"], ["ß", "ss"], ["K", "\u212a"]]) {
+    const message = refusalOf(() => entries([{ path: `lessons/${a}.json`, base64: "" }, { path: `lessons/${b}.json`, base64: "" }], "files"));
+    expect([a, b, message]).toEqual([a, b, expect.stringContaining("is named twice")]);
+  }
+  // server/skill.ts's manifest has one line a file, so it cannot name a file whose name holds one.
+  for (const path of ["docs/a\nb.md", "docs/a\rb.md"]) {
+    expect([path, refusalOf(() => entries([{ path: "SKILL.md", base64: "" }, { path, base64: "" }], "guide"))]).toEqual([path, expect.stringContaining("line break")]);
+  }
+});
+
+test("a refused attempt's error is the refusal's reason alone, never a path the agent chose", async () => {
+  const r = await runAuthor(author([{ name: "claude", steps: [{ sh: "ln -s /etc/hosts course/lessons/SECRET-NAME.json" }, { result: "Done." }] }]), job(), { step: () => {} });
+  expect(r).toMatchObject({ status: "refused", refusal: { reason: "symlink", path: "lessons/SECRET-NAME.json" } });
+  expect(r.attempts.map((a) => [a.status, a.error])).toEqual([["refused", "symlink"]]);
+});
+
+test("an entry the walk cannot read, a folder or a file, refuses the draft as unreadable, and the folder is still deleted", async () => {
+  const cases: [string, string | null][] = [
+    ["mkdir -p course/lessons/locked/inner && printf x > course/lessons/locked/inner/a.json && chmod 000 course/lessons/locked", "lessons/locked"],
+    ["chmod 400 course/reference", "reference/notes.md"], // its names can be listed but not looked up
+    ["chmod 000 course/reference/notes.md", "reference/notes.md"],
+    ["chmod 000 course", "course.json"],
+    ["chmod 000 .", null],
+  ];
+  for (const [sh, path] of cases) {
+    rmSync(join(gates, "cwd"), { force: true });
+    let r: Awaited<ReturnType<typeof runAuthor>> | string;
+    try {
+      r = await runAuthor(author([{ name: "claude", steps: [RECORD_CWD, { sh }, { result: "Done." }] }]), job(), { step: () => {} });
+    } catch (e) {
+      r = `threw: ${e instanceof Error ? e.message : String(e)}`;
+    }
+    const refusal = typeof r === "string" ? r : r.status === "refused" ? [r.refusal.reason, r.refusal.path] : r.status;
+    expect([sh, refusal, existsSync(cwd())]).toEqual([sh, ["unreadable", path], false]);
+  }
+});
+
+test("anything the agent left running when it exited is killed before its folder is read", async () => {
+  // The child leaves the agent's stdout and stderr, so the agent's exit is seen at once, but stays
+  // in its process group. Alive a second later, it would leave its mark in the gate folder.
+  const left = { sh: `( sleep 1; : > "$1/survived" ) </dev/null >/dev/null 2>&1 &` };
+  const r = await runAuthor(author([{ name: "claude", steps: [left, { result: "Done." }] }]), job(), { step: () => {} });
+  expect(r.status).toBe("succeeded");
+  // An absence can only be watched for a while: three times as long as the child sleeps.
+  await Bun.sleep(3000);
+  expect(reached("survived")).toBe(false);
 });
 
 test("the author list is optional, its own timeout defaults to 900 s, and it is checked like the grading list", () => {
