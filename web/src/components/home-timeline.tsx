@@ -1,9 +1,36 @@
 // The home page's timeline (flyingrobots/school#166): each course's study days behind today and the
-// days questions come back ahead of it, from GET /api/activity. Every mark can be chosen.
+// days questions come back ahead of it, from GET /api/activity. Every mark can be chosen. Each lane
+// says in words how its course's quizzes are holding today (RFC 5 §4.8, flyingrobots/school#222).
 import * as d3 from "d3"
 import * as React from "react"
 
+import { Badge } from "@/components/ui/badge"
 import { daysBetween, type Activity } from "@/lib/home-api"
+
+type Lane = Activity["courses"][number]
+
+/**
+ * How a course's quizzes are holding today, in the words of RFC 5 Table 4.7, one phrase per state
+ * that has any. A course with no study day and nothing coming back, and with no quiz answered or no
+ * quizzes, is "Not started yet"; one with a study day and no quiz answered shows its counts.
+ */
+export function holdingWords(c: Lane): string[] {
+  const { notStarted, settling, holding, faded } = c.mastery
+  const fresh =
+    c.studied.length === 0 &&
+    c.due.length === 0 &&
+    (c.quizzes === 0 || notStarted === c.quizzes)
+  if (fresh) return ["Not started yet"]
+  const words: string[] = []
+  if (holding > 0)
+    words.push(
+      `${holding} of ${c.quizzes} ${c.quizzes === 1 ? "quiz" : "quizzes"} holding`
+    )
+  if (settling > 0) words.push(`${settling} still settling`)
+  if (faded > 0) words.push(`${faded} ready for another look`)
+  if (notStarted > 0) words.push(`${notStarted} not started yet`)
+  return words
+}
 
 export type Mark =
   | { kind: "today" }
@@ -41,7 +68,11 @@ export function marksOf(a: Activity): Mark[] {
   )
 }
 
-const LANE = 56
+// A lane is its heading (the course and its words, which wrap on a narrow screen and are measured),
+// then room for the marks above and below its line.
+const HEAD = 20
+const ABOVE = 14
+const BELOW = 24
 const PAD = { top: 28, left: 8, right: 8, bottom: 8 }
 
 /** "Tuesday 24 November", from a YYYY-MM-DD day. */
@@ -75,7 +106,33 @@ export function Timeline({
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
-  const H = PAD.top + LANE * a.courses.length + PAD.bottom
+  // Each lane's heading is HTML (the registry's Badge) in a foreignObject, measured as it wraps.
+  const heads = React.useRef(new Map<string, HTMLDivElement>())
+  const [headH, setHeadH] = React.useState<Record<string, number>>({})
+  React.useLayoutEffect(() => {
+    const measure = () =>
+      setHeadH((was) => {
+        const now: Record<string, number> = {}
+        heads.current.forEach((el, course) => {
+          now[course] = Math.max(HEAD, Math.ceil(el.scrollHeight))
+        })
+        const same =
+          Object.keys(now).length === Object.keys(was).length &&
+          Object.entries(now).every(([k, v]) => was[k] === v)
+        return same ? was : now
+      })
+    measure()
+    const ro = new ResizeObserver(measure)
+    heads.current.forEach((el) => ro.observe(el))
+    return () => ro.disconnect()
+  }, [a, W])
+  const tops: number[] = []
+  let bottom = PAD.top
+  for (const c of a.courses) {
+    tops.push(bottom)
+    bottom += (headH[c.course] ?? HEAD) + ABOVE + BELOW
+  }
+  const H = bottom + PAD.bottom
   const x = d3
     .scaleLinear()
     .domain([-a.days, a.days])
@@ -190,18 +247,33 @@ export function Timeline({
           </text>
         </g>
         {a.courses.map((c, i) => {
-          const y = PAD.top + LANE * i + LANE / 2 + 4
-          const fresh = c.studied.length === 0 && c.due.length === 0
+          const head = headH[c.course] ?? HEAD
+          const y = tops[i]! + head + ABOVE
           return (
             <g key={c.course} data-lane={c.course}>
-              <text
+              <foreignObject
                 x={PAD.left}
-                y={y - 18}
-                className="fill-muted-foreground text-sm"
+                y={tops[i]!}
+                width={Math.max(0, W - PAD.left - PAD.right)}
+                height={head}
               >
-                {c.courseTitle}
-                {fresh && <tspan className="italic"> · not started yet</tspan>}
-              </text>
+                <div
+                  ref={(el) => {
+                    if (el) heads.current.set(c.course, el)
+                    else heads.current.delete(c.course)
+                  }}
+                  className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground"
+                >
+                  <span>{c.courseTitle}</span>
+                  <span data-holding className="flex flex-wrap gap-1">
+                    {holdingWords(c).map((w) => (
+                      <Badge key={w} variant="secondary">
+                        {w}
+                      </Badge>
+                    ))}
+                  </span>
+                </div>
+              </foreignObject>
               <line
                 x1={PAD.left}
                 x2={W - PAD.right}
