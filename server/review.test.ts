@@ -9,6 +9,7 @@ import { openDatabase } from "./adapters/database.ts";
 import { postgresRecord } from "./adapters/postgres.ts";
 import type { Block } from "./core/model.ts";
 import { startSchool, timeout, type Started } from "./testing/processes.ts";
+import { openLesson } from "./testing/lessons.ts";
 
 let root = "";
 let server: Started | null = null;
@@ -63,10 +64,16 @@ const get = async (path: string) => {
   expect(r.status).toBe(200);
   return r.json();
 };
+/** Opens or resumes the lesson as the page does. */
+const opened200 = async (course: string, lesson: string, query: string) => {
+  const r = await openLesson(server!.url, course, lesson, query);
+  expect(r.status).toBe(200);
+  return r.json();
+};
 
 test("the next lesson opens with the item due in a Review section at its top, its reason in words, and a reload shows the same", async () => {
   const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", timeZone: "Pacific/Auckland" }).format(YESTERDAY);
-  const opened = await get("/api/courses/c/lessons/l2?aid=1");
+  const opened = await opened200("c", "l2", "?aid=1");
   expect(opened.lesson).toEqual({ ...l2, children: [{ type: "section", id: "school:review", title: "Review", children: [quiz("q1")] }, quiz("q3")] });
   expect(opened.review).toEqual([{
     blockId: "q1", rule: "due-review/wrong-first-try",
@@ -80,7 +87,7 @@ test("the next lesson opens with the item due in a Review section at its top, it
     body: JSON.stringify({ submissionId: crypto.randomUUID(), encounterId: opened.encounterId, blockId: "q1", choiceId: "right", ms: 10 }),
   });
   expect(await answered.json()).toMatchObject({ status: "stored", correct: true, firstTry: true });
-  const again = await get("/api/courses/c/lessons/l2?aid=1");
+  const again = await opened200("c", "l2", "?aid=1");
   expect(again.encounterId).toBe(opened.encounterId);
   expect(again.lesson).toEqual(opened.lesson);
   expect(again.review).toEqual(opened.review);
@@ -98,7 +105,7 @@ test("the slides view records nothing, so it carries no review", async () => {
 test("a lesson opened with the learner's zone names the day in it, and refuses a zone that is not one", async () => {
   const tz = "Pacific/Pago_Pago"; // UTC-11, a day behind Auckland at most hours
   const day = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", timeZone: tz }).format(new Date(YESTERDAY.getTime() + 1000));
-  const opened = await get(`/api/courses/d/lessons/m2?aid=1&tz=${encodeURIComponent(tz)}`);
+  const opened = await opened200("d", "m2", `?aid=1&tz=${encodeURIComponent(tz)}`);
   expect(opened.review[0].reason).toStartWith(`On ${day}, `);
-  expect((await fetch(server!.url + "/api/courses/d/lessons/m2?aid=1&tz=Not%2FAZone")).status).toBe(400);
+  expect((await openLesson(server!.url, "d", "m2", "?aid=1&tz=Not%2FAZone")).status).toBe(400);
 });

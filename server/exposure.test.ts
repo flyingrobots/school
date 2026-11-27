@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startSchool, timeout, type Started } from "./testing/processes.ts";
+import { openLesson } from "./testing/lessons.ts";
 import { ownerQuery } from "./testing/record.ts";
 
 let root = "";
@@ -32,7 +33,7 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-const lesson = (query = "") => fetch(`${base}/api/courses/demo/lessons/l1${query}`);
+const lesson = (query = "") => openLesson(base, "demo", "l1", query);
 const expose = (body: unknown, headers: Record<string, string> = { "content-type": "application/json" }) =>
   fetch(`${base}/api/exposure`, { method: "POST", headers, body: JSON.stringify(body) });
 

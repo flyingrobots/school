@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startSchool, timeout, type Started } from "./testing/processes.ts";
+import { openLesson } from "./testing/lessons.ts";
 
 let root = "";
 let server: Started | null = null;
@@ -48,7 +49,7 @@ const get = async (path: string) => {
   return r.json();
 };
 async function answer(course: string, lesson: string, blockId: string, choiceId: string) {
-  const opened = await get(`/api/courses/${course}/lessons/${lesson}`);
+  const opened = await (await openLesson(server!.url, course, lesson)).json();
   const r = await fetch(server!.url + "/api/answer", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ submissionId: crypto.randomUUID(), encounterId: opened.encounterId, blockId, choiceId, ms: 10 }),

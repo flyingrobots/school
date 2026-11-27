@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bridgeClient, effectiveBridge } from "./settings.ts";
 import { startBridge, startSchool, timeout, type Started } from "./testing/processes.ts";
+import { openLesson } from "./testing/lessons.ts";
 
 // Every test gets its own server, bridge, state and ports, and sets up what it needs: none
 // depends on another having run first.
@@ -76,7 +77,7 @@ test("with nothing configured, the status says so", async () => {
 
 test("with no bridge connected, a grading attempt is stored as failed and says why", async () => {
   // Was server/explain.test.ts on the SQLite record; the server's own grader now gives the reason.
-  const e = (await (await fetch(base + "/api/courses/c/lessons/l1")).json()).encounterId;
+  const e = (await (await openLesson(base, "c", "l1")).json()).encounterId;
   const id = crypto.randomUUID();
   expect((await post("/api/explanation", { submissionId: id, encounterId: e, blockId: "e1", text: "Because.", ms: 1 })).status).toBe(200);
   const graded = await (await post("/api/grade", { submissionId: id })).json();
@@ -178,7 +179,7 @@ test("the page reorders and toggles the declared agents, commands stay as writte
   expect(tested.status).toBe("failed"); // the fake agent answers the rubric, not {"ok": true}, and the test says so
   expect(tested.attempts[0].error).toMatch(/schema/);
 
-  const e = JSON.parse(await text(await fetch(base + "/api/courses/c/lessons/l1"))).encounterId;
+  const e = JSON.parse(await text(await openLesson(base, "c", "l1"))).encounterId;
   const id = crypto.randomUUID();
   await post("/api/explanation", { submissionId: id, encounterId: e, blockId: "e1", text: "Because.", ms: 1 });
   const graded = await (await post("/api/grade", { submissionId: id })).json();
@@ -190,7 +191,7 @@ test("the token appears in no page, no API response and no server output", async
   const everything = [await text(await post("/api/settings/bridge", { url: BRIDGE_URL, token: TOKEN }))];
   everything.push(await text(await post("/api/settings/agents", { agents: [{ name: "missing" }, { name: "fake" }] })));
   everything.push(await text(await fetch(base + "/api/settings/bridge")), JSON.stringify(await status()), await text(await fetch(base + "/api/settings/agents")));
-  const e = JSON.parse(await text(await fetch(base + "/api/courses/c/lessons/l1"))).encounterId;
+  const e = JSON.parse(await text(await openLesson(base, "c", "l1"))).encounterId;
   const id = crypto.randomUUID();
   everything.push(await text(await post("/api/explanation", { submissionId: id, encounterId: e, blockId: "e1", text: "Because.", ms: 1 })));
   everything.push(await text(await post("/api/grade", { submissionId: id })));
@@ -228,7 +229,7 @@ async function touchEverything(at: string) {
   const g = (p: string) => fetch(at + p);
   const p = (path: string, body: unknown) => fetch(at + path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   const replies = [await g("/api/settings/status"), await g("/api/settings/agents"), await p("/api/settings/agents", { agents: [{ name: "fake" }] }), await p("/api/settings/agents/test", { agent: "fake" })];
-  const e = JSON.parse(await (await g("/api/courses/c/lessons/l1")).text()).encounterId;
+  const e = JSON.parse(await (await openLesson(at, "c", "l1")).text()).encounterId;
   const id = crypto.randomUUID();
   await p("/api/explanation", { submissionId: id, encounterId: e, blockId: "e1", text: "Because.", ms: 1 });
   replies.push(await p("/api/grade", { submissionId: id }));
