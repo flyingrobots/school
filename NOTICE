@@ -1,0 +1,14 @@
+School
+Copyright 2026 the School authors. Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes data from third parties:
+
+- server/spdx-exception-ids.ts holds the SPDX License List's exception identifiers as published by
+  the npm package spdx-exceptions 2.5.0 (https://github.com/kemitchell/spdx-exceptions.json),
+  data by The Linux Foundation, packaged by Kyle E. Mitchell. Licensed under the Creative Commons
+  Attribution 3.0 license (CC-BY-3.0, https://creativecommons.org/licenses/by/3.0/). Copied
+  unmodified apart from formatting.
+
+- server/spdx-license-ids.ts holds the SPDX License List's license identifiers as published by the
+  npm package spdx-license-ids 3.0.24 (https://github.com/jslicense/spdx-license-ids), dedicated to
+  the public domain under CC0-1.0. Listed for completeness; no attribution is required.
