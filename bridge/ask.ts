@@ -9,9 +9,8 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentEnded, agentStarted, answerText, claudeStreamLine, spawnFailure, usageOf, type Agent, type AskConfig, type StreamLine, type Usage } from "./run.ts";
+import { agentEnded, agentStarted, answerText, claudeStreamLine, spawnFailure, sweepGroup, usageOf, type Agent, type AskConfig, type StreamLine, type Usage } from "./run.ts";
 import { expand, usesPlaceholder } from "./template.ts";
-import { sweepGroup } from "./run.ts";
 
 export type { Usage } from "./run.ts";
 export type AskAttempt = { agent: string; status: "succeeded" | "failed" | "skipped"; error: string | null; exitCode: number | null; ms: number; deltas: number };
