@@ -207,14 +207,18 @@ test("the limits are RFC 7 Table 6.2's: 2,000 files, 8 MiB each, 64 MiB in all, 
 test("the guide's digest is the manifest digest of exactly the files written into the folder for this request", async () => {
   // The oracle is the server's own manifest (server/skill.ts), read from a folder the test writes.
   const cfg = author([{ name: "claude", steps: [{ result: "Done." }] }]);
+  let digests = 0;
+  // The guide's layout is the server's: the skill at its root, each reference under docs/<name>/.
   const digestOf = (guide: CourseFile[]) => {
-    const skill = join(dir, `guide-${crypto.randomUUID()}`);
+    const root = join(dir, `oracle-${digests++}`);
+    const [skill, docs] = [join(root, "skill"), join(root, "docs")];
+    for (const name of ["course-format", "voice"]) mkdirSync(join(docs, name), { recursive: true });
     for (const f of guide) {
-      mkdirSync(join(skill, f.path, ".."), { recursive: true });
-      writeFileSync(join(skill, f.path), f.bytes);
+      const to = f.path.startsWith("docs/") ? join(docs, f.path.slice("docs/".length)) : join(skill, f.path);
+      mkdirSync(join(to, ".."), { recursive: true });
+      writeFileSync(to, f.bytes);
     }
-    for (const name of ["course-format", "voice"]) mkdirSync(join(skill, "docs", name), { recursive: true });
-    return manifestDigest(guideManifest(skill, join(skill, "docs")));
+    return manifestDigest(guideManifest(skill, docs));
   };
   const first = await runAuthor(cfg, job(), { step: () => {} });
   // A skill file edited between two requests: the next one reports the digest of what it sent.

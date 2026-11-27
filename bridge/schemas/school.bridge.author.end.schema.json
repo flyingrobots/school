@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "school.bridge.author.end/1.0.0",
+  "title": "Draft end",
+  "description": "On stdout: how a POST /author ended, the agent that wrote the draft (null if none got as far as a step), how many steps, files and bytes came back, the refusal's reason, the digest of the guide as written into the agent's folder, and the token counts. Never the prompt, a path or a file.",
+  "type": "object",
+  "properties": {
+    "_schema": {
+      "type": "object",
+      "description": "The schema this line follows.",
+      "properties": {
+        "id": {
+          "const": "school.bridge.author.end"
+        },
+        "version": {
+          "const": "1.0.0"
+        }
+      },
+      "required": [
+        "id",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "kind": {
+      "const": "bridge.author.end",
+      "description": "The program (or, for the bridge, the message type) that printed the line."
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "One id per invocation (for the bridge, per process), on every line it prints: a random (version 4) UUID."
+    },
+    "at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+      "description": "When the line was printed, UTC."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "status": {
+      "enum": [
+        "succeeded",
+        "refused",
+        "failed"
+      ]
+    },
+    "agent": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "steps": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "files": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "How many course files came back; null unless it succeeded."
+    },
+    "bytes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "description": "Their bytes in all; null unless it succeeded."
+    },
+    "refusal": {
+      "enum": [
+        "no-course",
+        "symlink",
+        "not-regular",
+        "too-many-files",
+        "file-too-large",
+        "total-too-large",
+        "path-too-long",
+        "too-deep",
+        null
+      ],
+      "description": "Why the draft was refused; null unless it was."
+    },
+    "guide_sha256": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "The SHA-256 of the manifest of the guide/ files as written into the deciding attempt's folder (`<sha256> <path>` per file, sorted, as server/skill.ts); null when no agent was run."
+    },
+    "usage": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "The draft's token counts as the agent's CLI reported them (output claude-json or claude-stream-json); a count it left out is null. Null for any other agent, or when it failed.",
+      "properties": {
+        "input_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cache_creation_input_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cache_read_input_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "_schema",
+    "kind",
+    "run",
+    "at",
+    "id",
+    "status",
+    "agent",
+    "steps",
+    "files",
+    "bytes",
+    "refusal",
+    "guide_sha256",
+    "usage"
+  ],
+  "additionalProperties": false
+}

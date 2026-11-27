@@ -29,17 +29,20 @@ export function loadConfig(raw: unknown): BridgeConfig {
   const o = raw as Record<string, unknown>;
   const timeoutMs = seconds(o.timeout_seconds, 180, "");
   const agents = agentList(o.agents, timeoutMs, "agents", "agent");
-  let ask: AskConfig | null = null;
-  if (o.ask !== undefined) {
-    if (typeof o.ask !== "object" || o.ask === null || Array.isArray(o.ask)) fail('"ask" must be an object, like { "timeout_seconds": 90, "agents": [...] }');
-    const a = o.ask as Record<string, unknown>;
-    const askTimeout = seconds(a.timeout_seconds, 90, "ask: ");
-    ask = { timeoutMs: askTimeout, agents: agentList(a.agents, askTimeout, "ask", "ask agent") };
-  }
-  return { timeoutMs, agents, ask, author: null };
+  return { timeoutMs, agents, ask: list(o, "ask", 90), author: list(o, "author", 900) };
 }
 
 const fail = (m: string): never => { throw new BridgeConfigError(m); };
+
+/** The `ask` or `author` list, if the file has one: its own timeout (default `fallback` seconds) and agents. */
+function list(o: Record<string, unknown>, key: "ask" | "author", fallback: number): AskConfig | null {
+  const v = o[key];
+  if (v === undefined) return null;
+  if (typeof v !== "object" || v === null || Array.isArray(v)) fail(`"${key}" must be an object, like { "timeout_seconds": ${fallback}, "agents": [...] }`);
+  const l = v as Record<string, unknown>;
+  const timeoutMs = seconds(l.timeout_seconds, fallback, `${key}: `);
+  return { timeoutMs, agents: agentList(l.agents, timeoutMs, key, `${key} agent`) };
+}
 
 /** A timeout in seconds, from 1 to 900, as milliseconds; `fallback` when it is not given. */
 function seconds(v: unknown, fallback: number, where: string): number {
@@ -48,9 +51,9 @@ function seconds(v: unknown, fallback: number, where: string): number {
   return (n as number) * 1000;
 }
 
-/** One list of agents, the grading list or the ask list, each name used once. */
-function agentList(list: unknown, timeoutMs: number, where: "agents" | "ask", what: string): Agent[] {
-  const under = where === "agents" ? '"agents"' : '"ask"';
+/** One list of agents, the grading, ask or author list, each name used once. */
+function agentList(list: unknown, timeoutMs: number, where: "agents" | "ask" | "author", what: string): Agent[] {
+  const under = `"${where}"`;
   if (!Array.isArray(list) || list.length === 0) fail(`list at least one agent under ${under}`);
   const seen = new Set<string>();
   return (list as unknown[]).map((a, i): Agent => {

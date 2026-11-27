@@ -48,8 +48,12 @@ export async function runAsk(cfg: AskConfig, job: AskJob, onDelta: (text: string
   return { status: "failed", agent: null, error: attempts.length === 0 ? "no ask agent is enabled" : "every ask agent failed", attempts };
 }
 
-/** Read `stream` line by line, calling `onLine` for each as it arrives; the whole text if `keep`. */
-async function readLines(stream: ReadableStream<Uint8Array>, onLine: (line: string) => void, keep: boolean, onOverflow: () => void, readers: ReadableStreamDefaultReader<Uint8Array>[]): Promise<string> {
+/**
+ * Read `stream` line by line, calling `onLine` for each as it arrives; the whole text if `keep`.
+ * Past `cap` bytes it calls `onOverflow` and stops. Each reader is pushed onto `readers`, so a
+ * caller can cancel them once a kill has had its grace (POST /author reads its agent's this way).
+ */
+export async function readLines(stream: ReadableStream<Uint8Array>, onLine: (line: string) => void, keep: boolean, onOverflow: () => void, readers: ReadableStreamDefaultReader<Uint8Array>[], cap = MAX_OUTPUT): Promise<string> {
   const decoder = new TextDecoder();
   let held = "";
   let all = "";
@@ -60,7 +64,7 @@ async function readLines(stream: ReadableStream<Uint8Array>, onLine: (line: stri
     const { done, value: chunk } = await reader.read();
     if (done) break;
     size += chunk.length;
-    if (size > MAX_OUTPUT) { onOverflow(); break; }
+    if (size > cap) { onOverflow(); break; }
     const text = decoder.decode(chunk, { stream: true });
     if (keep) all += text;
     held += text;
