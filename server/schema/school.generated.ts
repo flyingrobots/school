@@ -186,6 +186,11 @@ export interface LatestFeedback {
   at: string;
 }
 
+export interface LessonHelp {
+  exposureId: string;
+  encounterId: string;
+}
+
 export interface Mastery {
   blockId: string;
   strength: number | null;
@@ -198,6 +203,22 @@ export interface Mastery {
 export interface MasteryQuery {
   course: string;
   blocks: string[];
+  now: string;
+  delayMs: number;
+}
+
+export interface MasteryRollup {
+  key: string;
+  quizzes: number;
+  notStarted: number;
+  settling: number;
+  holding: number;
+  faded: number;
+  strength: number | null;
+}
+
+export interface MasteryRollupQuery {
+  course: string;
   now: string;
   delayMs: number;
 }

@@ -61,6 +61,8 @@ END $$`;
 
 /** The bound: generous for a loaded CI machine, far below what a lesson open can afford to wait. */
 const BOUND_MS = 1000;
+/** A limit no year of history can fill, so the faded rule is read in full. */
+const FADED_LIMIT = 10_000;
 
 async function aYear(name: string, history: () => Promise<{ record: LearningRecord; count: () => Promise<number> }>) {
   test(`${name}: due review: a year of synthetic history is read within ${BOUND_MS} ms, and bounded by the limit`, async () => {
@@ -77,6 +79,24 @@ async function aYear(name: string, history: () => Promise<{ record: LearningReco
     }
     expect(items).toHaveLength(REVIEW_LIMIT);
     expect(items.every((x) => x.rule === "due-review/wrong-first-try")).toBe(true);
+    expect(Math.min(...times)).toBeLessThan(BOUND_MS);
+  });
+
+  // DR-9F. At REVIEW_LIMIT the weak rules fill the list and school.mastery is never read. At a limit
+  // no year of history can fill, the faded rule runs over every settled quiz, so this guards its speed.
+  test(`${name}: due review: a year of history at limit ${FADED_LIMIT} reads mastery for every quiz within ${BOUND_MS} ms`, async () => {
+    const { record } = await history();
+    const ask = () => record.dueReview({ course: "c", blocks: BLOCKS, now: END, delayMs: REVIEW_DELAY_MS, limit: FADED_LIMIT });
+    await ask(); // the first call plans the query
+    const times: number[] = [];
+    let items: Awaited<ReturnType<typeof ask>> = [];
+    for (let i = 0; i < 3; i++) {
+      const t = performance.now();
+      items = await ask();
+      times.push(performance.now() - t);
+    }
+    expect(items.length).toBeLessThan(FADED_LIMIT);
+    expect(items.some((x) => x.rule === "due-review/faded")).toBe(true);
     expect(Math.min(...times)).toBeLessThan(BOUND_MS);
   });
 }

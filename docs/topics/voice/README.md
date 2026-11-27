@@ -24,8 +24,9 @@ point at what went wrong. Results stay in words, never scores ([RFC 2 §4.3](../
 ## In the app
 
 - **Review reasons** (`reviewReason`, `server/core/school.ts`) say what helped and that the question
-  is back to answer from memory. Every reason is listed in [due review](../due-review/README.md#the-reason-in-words).
-  A test asserts that none contains "wrong", "fail", "mistake" or "incorrect".
+  is back to answer from memory; a faded quiz's recalls the day it was found from memory and asks
+  how it feels now. Every reason is listed in [due review](../due-review/README.md#the-reason-in-words).
+  A test asserts that none contains "wrong", "fail", "mistake", "incorrect", "forgot" or "attempt".
 - **The lesson page** titles a review item's note "Ready for another look" ([lesson page](../lesson-page/README.md)).
 
 Notes already in the record keep the words they were written with: the record is append-only.
