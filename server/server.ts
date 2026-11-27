@@ -592,6 +592,9 @@ const http = Bun.serve({
   // Bun closes a request idle for 10 s by default; a grading call can take a minute or two.
   // 255 s is Bun's maximum, so the grader's own timeout is capped below it (grade.ts).
   idleTimeout: 255,
+  // Production never sets NODE_ENV, so Bun would default to its development error page, with source
+  // and paths, for any request that throws without the handler below (flyingrobots/school#346).
+  development: false,
   // A request that throws, most often because the record cannot be reached, answers a neutral 503
   // in JSON and logs what failed; never a stack trace or Bun's error page (flyingrobots/school#322).
   error(e) {
