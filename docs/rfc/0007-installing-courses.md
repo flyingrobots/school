@@ -280,7 +280,7 @@ _Table 7.1. The proposed tables. Each is append-only with the same triggers as e
 
 _Table 7.2. The proposed functions, granted to `school_app` and listed in `GRANTED_FUNCTIONS` (`server/adapters/database.ts`)._
 
-`content_sha256` is the SHA-256 of the installed files' manifest: one line per file, `<sha256 of the file> <path>`, sorted by path. At start School recomputes it for every current install; a missing folder or a different digest is listed by `/api/courses` with `lessons: null` and the reason in `lessonsError`, the shape a course with unreadable lessons already has, and is not served. Settings then offers to install it again from its recorded source.
+`content_sha256` is the SHA-256 of the installed files' manifest: one line per file, `<sha256 of the file> <path>`, sorted by path. At start School recomputes it for every current install; a missing or unreadable folder or a different digest is listed by `/api/courses` with `lessons: null` and the reason in `lessonsError` (naming the install by id, never a path of the store), the shape a course with unreadable lessons already has, and is not served. Settings then offers to install it again from its recorded source.
 
 The trust a course has is read from one place per kind of course: a configured course's from its configuration (flyingrobots/school#210), an installed course's from `installed_courses()`. `/api/courses` reports `trusted` for both.
 
