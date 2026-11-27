@@ -186,6 +186,22 @@ export function spawnFailure(program: string, e: unknown): string {
   return `could not start ${program} (${typeof code === "string" && /^E[A-Z0-9]+$/.test(code) ? code : "unknown error"})`;
 }
 
+/**
+ * SIGKILL process group `group` now, then again every 50 ms (flyingrobots/school#285). A child an
+ * agent forks just as the signal lands can miss it, still in the group, and hold the pipes open:
+ * a later sweep ends it. The sweep stops when the returned function is called (once the pipes
+ * have closed), and at the latest after 500 ms: once the group is empty its number can be given
+ * to another, so a sweep that went on would risk killing a group the agent never started.
+ */
+export function sweepGroup(group: number): () => void {
+  const hit = () => { try { process.kill(-group, "SIGKILL"); } catch {} };
+  hit();
+  const sweep = setInterval(hit, 50);
+  const stop = () => { clearInterval(sweep); clearTimeout(limit); };
+  const limit = setTimeout(stop, 500);
+  return stop;
+}
+
 async function readCapped(stream: ReadableStream<Uint8Array>, onOverflow: () => void): Promise<string> {
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -221,15 +237,17 @@ async function runAgent(agent: Agent, job: Job, timeoutMs: number): Promise<Atte
       return { agent: agent.name, status: "failed", error: spawnFailure(program, e), exitCode: null, ms: Date.now() - started };
     }
     let why: string | null = null;
+    const sweep: { stop?: () => void } = {};
     const kill = (reason: string) => {
       why ??= reason;
-      try { process.kill(-proc.pid, "SIGKILL"); } catch {}
+      sweep.stop ??= sweepGroup(proc.pid);
     };
     const timer = setTimeout(() => kill(`timed out after ${Math.round(timeoutMs / 1000)} s`), timeoutMs);
     const [stdout, stderr] = await Promise.all([
       readCapped(proc.stdout, () => kill("produced more than 1 MiB of output")),
       readCapped(proc.stderr, () => kill("produced more than 1 MiB of error output")),
     ]);
+    sweep.stop?.();
     const exitCode = await proc.exited;
     clearTimeout(timer);
     try { process.kill(-proc.pid, "SIGKILL"); } catch {} // anything it left running in the background

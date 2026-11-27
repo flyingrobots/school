@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { answerText, claudeStreamLine, spawnFailure, usageOf, type Agent, type AskConfig, type StreamLine, type Usage } from "./run.ts";
 import { expand, usesPlaceholder } from "./template.ts";
+import { sweepGroup } from "./run.ts";
 
 export type { Usage } from "./run.ts";
 export type AskAttempt = { agent: string; status: "succeeded" | "failed" | "skipped"; error: string | null; exitCode: number | null; ms: number; deltas: number };
@@ -108,14 +109,10 @@ async function askAgent(agent: Agent, job: AskJob, timeoutMs: number, onDelta: (
       return { attempt: { agent: agent.name, status: "failed", error: spawnFailure(program, e), exitCode: null, ms: Date.now() - started, deltas: 0 }, usage: null };
     }
     let why: string | null = null;
-    let sweep: ReturnType<typeof setInterval> | null = null;
-    const hit = () => { try { process.kill(-proc.pid, "SIGKILL"); } catch {} };
+    const sweep: { stop?: () => void } = {};
     const kill = (reason: string) => {
       why ??= reason;
-      hit();
-      // A child the agent forks just as the signal lands can miss it, still in the group, and hold
-      // the pipes open until the timeout: sweep the group until they close.
-      sweep ??= setInterval(hit, 50);
+      sweep.stop ??= sweepGroup(proc.pid);
       grace ??= setTimeout(() => { for (const r of readers) r.cancel().catch(() => {}); }, PIPE_GRACE_MS);
     };
     // A child that left the group holds the pipes open however often the group is killed. Once
@@ -139,7 +136,7 @@ async function askAgent(agent: Agent, job: AskJob, timeoutMs: number, onDelta: (
       readLines(proc.stdout, onLine, !streaming, () => kill("produced more than 8 MiB of output"), readers),
       readLines(proc.stderr, () => {}, false, () => kill("produced more than 8 MiB of error output"), readers),
     ]);
-    if (sweep !== null) clearInterval(sweep);
+    sweep.stop?.();
     if (grace !== null) clearTimeout(grace);
     const exitCode = await proc.exited;
     clearTimeout(timer);
