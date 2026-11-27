@@ -1,6 +1,6 @@
 // School's use cases (RFC 3, §4). Each takes values already parsed at the edge, talks only to
 // ports, and returns plain data for the driving adapter to serialise.
-import type { Aid, AidTracking, Block, Contradiction, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingRecord, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, Recorded, RecordedExposureKind, ReviewNote, ReviewReason, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
+import type { Aid, AidTracking, Block, Contradiction, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingRecord, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, MasteryRollup, Recorded, RecordedExposureKind, ReviewNote, ReviewReason, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
 import type { Clock, Grader, LearningRecord } from "./ports.ts";
 
 const squash = (s: string) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim().toLowerCase();
@@ -114,12 +114,17 @@ export interface School {
   /** `tz`: the zone the reason names its day in; the server's when absent. */
   dueNow(course: string, blocks: readonly string[], tz?: string): Promise<{ item: DueItem; reason: string }[]>;
   /**
-   * For each course, the local days in time zone `tz` it was studied in the last `days` days, and,
-   * for each of the next `days` days, how many of its quizzes become due for review that day.
+   * For each course, the local days in time zone `tz` it was studied in the last `days` days; for
+   * each of the next `days` days, how many of its quizzes become due for review that day; and how
+   * its quizzes are holding today (RFC 5 §4.8): the rollup's four counts over one group holding
+   * every quiz, at the clock's now with due review's delay. The mean strength is not passed on.
    */
   activity(courses: readonly { name: string; blocks: readonly string[] }[], days: number, tz: string):
-    Promise<{ today: string; courses: { course: string; studied: string[]; due: { day: string; items: number }[] }[] }>;
+    Promise<{ today: string; courses: { course: string; studied: string[]; due: { day: string; items: number }[]; quizzes: number; mastery: MasteryCounts }[] }>;
 }
+
+/** How many of a group's quizzes are in each state of RFC 5 Table 4.5; they sum to its quizzes. */
+export type MasteryCounts = Pick<MasteryRollup, "notStarted" | "settling" | "holding" | "faded">;
 
 export function createSchool(ports: { record: LearningRecord; grader: Grader; clock: Clock }): School {
   const { record, grader, clock } = ports;
@@ -206,7 +211,10 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
             for (const id of fresh) seen.add(id);
             if (fresh.length > 0) due.push({ day: local(now + k * DAY), items: fresh.length });
           }
-          return { course: c.name, studied: studied.filter((d) => d.course === c.name).map((d) => d.day), due };
+          const [rolled] = await record.masteryRollup({ course: c.name, groups: { [c.name]: [...c.blocks] }, now: clock.now(), delayMs: REVIEW_DELAY_MS });
+          if (rolled === undefined) throw new Error(`the mastery rollup returned no row for course ${c.name}`);
+          const { quizzes, notStarted, settling, holding, faded } = rolled;
+          return { course: c.name, studied: studied.filter((d) => d.course === c.name).map((d) => d.day), due, quizzes, mastery: { notStarted, settling, holding, faded } };
         })),
       };
     },

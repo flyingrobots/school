@@ -273,7 +273,7 @@ describe("resumeFrom", () => {
 // RFC 5 Table 5.1 step 6 (flyingrobots/school#222): each course's lane says how its quizzes are
 // holding today, from the rollup with one group for the course, at the clock's now.
 describe("activity says how each course is holding today", () => {
-  const rolled = (key: string, o: Partial<{ quizzes: number; notStarted: number; settling: number; holding: number; faded: number }> = {}) =>
+  const rolled = (key: string, o: Partial<{ quizzes: number; notStarted: number; settling: number; holding: number; faded: number; strength: number | null }> = {}) =>
     ({ key, quizzes: 0, notStarted: 0, settling: 0, holding: 0, faded: 0, strength: null, ...o });
   const recordWith = (rows: Record<string, ReturnType<typeof rolled>>, asked: unknown[]) => ({
     studyDays: async () => [],

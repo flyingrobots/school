@@ -780,18 +780,37 @@ describe("how each course is holding", () => {
     }
   })
 
+  // The app opens the answer outbox's IndexedDB database on every page (web/src/lib/outbox.ts,
+  // flyingrobots/school#28), so the database may exist; what counts is that nothing is in it.
   test("nothing is written to browser storage", async () => {
     const p = await open(await context(holding))
     await words(p, "geo").first().waitFor()
     await lane(p, "geo").locator("[data-mark^='due:']").click()
     await main(p).locator("[data-day]").waitFor()
     expect(
-      await p.evaluate(async () => ({
-        local: localStorage.length,
-        session: sessionStorage.length,
-        indexedDB: (await indexedDB.databases()).map((d) => d.name),
-      }))
-    ).toEqual({ local: 0, session: 0, indexedDB: [] })
+      await p.evaluate(async () => {
+        const kept: Record<string, number> = {}
+        for (const { name } of await indexedDB.databases()) {
+          const db = await new Promise<IDBDatabase>((ok, no) => {
+            const r = indexedDB.open(name!)
+            r.onsuccess = () => ok(r.result)
+            r.onerror = () => no(r.error)
+          })
+          for (const store of Array.from(db.objectStoreNames))
+            kept[`${name}/${store}`] = await new Promise<number>((ok, no) => {
+              const r = db.transaction(store).objectStore(store).count()
+              r.onsuccess = () => ok(r.result)
+              r.onerror = () => no(r.error)
+            })
+          db.close()
+        }
+        return {
+          local: localStorage.length,
+          session: sessionStorage.length,
+          indexedDB: Object.values(kept).reduce((n, k) => n + k, 0),
+        }
+      })
+    ).toEqual({ local: 0, session: 0, indexedDB: 0 })
     await close(p.context())
   })
 })

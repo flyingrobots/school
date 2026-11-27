@@ -95,6 +95,6 @@ test("a course not started counts every quiz as not started, with no ring ahead"
 
 test("the rollup's mean strength is not in the response", async () => {
   const all = await lanes();
-  expect(all.map((c) => c.course)).toEqual(["geo", "bot"]);
+  expect(all.map((c) => c.course).sort()).toEqual(["bot", "geo"]);
   for (const c of all) expect(Object.keys(c.mastery).sort()).toEqual(["faded", "holding", "notStarted", "settling"]);
 });
