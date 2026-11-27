@@ -5,7 +5,7 @@
 // contract checks on PGlite and Bun.SQL (server/contract/learning-record.ts); here it is a list the
 // test changes, so a refresh can be seen without a database.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, readdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, mkdtempSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseConfig, type Config } from "./config.ts";
@@ -278,5 +278,135 @@ describe("a reason for an install that is not served", () => {
     courseAt(folder, "Bells");
     writeFileSync(join(folder, "lessons", "0001.json"), LESSON.replace("Which?", "Which one?"));
     expect(summary(await registry.current())).toEqual([{ name: "bells", title: "Bells", trusted: false, kind: "unavailable" }]);
+  });
+});
+
+// Oracle: the review of #320 (F-2) and flyingrobots/school#322, 2d: a file changed in an install's
+// folder after its digest was checked is not served until the folder is checked again; the reason
+// names the install by id and never an absolute path.
+describe("an install whose files change while School runs", () => {
+  const reasonOf = (r: Awaited<ReturnType<ReturnType<typeof registryOf>["current"]>>, name: string) => {
+    const f = r.find(name);
+    return f?.kind === "unavailable" ? f.course.reason : "";
+  };
+
+  test("a trusted install whose lesson changes after start is no longer served", async () => {
+    const row = installed("bells", "Bells", { trusted: true });
+    const registry = registryOf(configWith({}), [row]);
+    await registry.start();
+    writeFileSync(join(installFolder(join(root, "store"), row.id), "lessons", "0001.json"), LESSON.replace("Which?", "Which one?"));
+    const r = await registry.current();
+    expect({ summary: summary(r), id: reasonOf(r, "bells").includes(row.id), path: reasonOf(r, "bells").includes(root) })
+      .toEqual({ summary: [{ name: "bells", title: "Bells", trusted: true, kind: "unavailable" }], id: true, path: false });
+  });
+
+  test("a trusted install with a file added after start is no longer served", async () => {
+    const row = installed("bells", "Bells", { trusted: true });
+    const registry = registryOf(configWith({}), [row]);
+    await registry.start();
+    writeFileSync(join(installFolder(join(root, "store"), row.id), "lessons", "0002.json"), LESSON.replace('"l1"', '"l2"'));
+    expect(summary(await registry.current())).toEqual([{ name: "bells", title: "Bells", trusted: true, kind: "unavailable" }]);
+  });
+
+  test("an untrusted install whose lesson changes after start is no longer served", async () => {
+    const row = installed("bells", "Bells");
+    const registry = registryOf(configWith({}), [row]);
+    await registry.start();
+    writeFileSync(join(installFolder(join(root, "store"), row.id), "lessons", "0001.json"), LESSON.replace("Which?", "Which one?"));
+    expect(summary(await registry.current())).toEqual([{ name: "bells", title: "Bells", trusted: false, kind: "unavailable" }]);
+  });
+
+  // Re-verification, not a remembered refusal: bytes put back as recorded hash to the recorded digest.
+  test("a changed file put back as it was installed is served again", async () => {
+    const row = installed("bells", "Bells", { trusted: true });
+    const file = join(installFolder(join(root, "store"), row.id), "lessons", "0001.json");
+    const registry = registryOf(configWith({}), [row]);
+    await registry.start();
+    writeFileSync(file, LESSON.replace("Which?", "Which one?"));
+    const during = summary(await registry.current())[0]?.kind;
+    writeFileSync(file, LESSON);
+    expect({ during, after: summary(await registry.current())[0]?.kind }).toEqual({ during: "unavailable", after: "served" });
+  });
+
+  // The cheap check compares size and times; a same-size rewrite with the mtime put back is caught
+  // only because the change time cannot be reset (flyingrobots/school#346, F1).
+  test("a same-size rewrite with the modification time put back is no longer served", async () => {
+    const row = installed("bells", "Bells", { trusted: true });
+    const file = join(installFolder(join(root, "store"), row.id), "lessons", "0001.json");
+    const registry = registryOf(configWith({}), [row]);
+    await registry.start();
+    const before = statSync(file);
+    const rewritten = LESSON.replace("Which?", "Whom??");
+    expect(rewritten.length).toBe(LESSON.length);
+    writeFileSync(file, rewritten);
+    utimesSync(file, before.atime, before.mtime);
+    expect(summary(await registry.current())).toEqual([{ name: "bells", title: "Bells", trusted: true, kind: "unavailable" }]);
+  });
+
+  test("a file rewritten with the same bytes after start is still served", async () => {
+    const row = installed("bells", "Bells", { trusted: true });
+    const registry = registryOf(configWith({}), [row]);
+    await registry.start();
+    writeFileSync(join(installFolder(join(root, "store"), row.id), "lessons", "0001.json"), LESSON);
+    expect(summary(await registry.current())).toEqual([{ name: "bells", title: "Bells", trusted: true, kind: "served" }]);
+  });
+});
+
+// Oracle: the review of #320 (F-4) and flyingrobots/school#322, 2b: configured courses do not
+// depend on the record; with the record unreachable, installs are listed, not served, with a reason
+// that names no path.
+describe("the course list with the record unreachable", () => {
+  /** A registry whose record answers `rows` until `down()` is called, then refuses every read; `reads` counts them. */
+  function flaky(config: Config, rows: InstalledCourse[]) {
+    let up = true;
+    const reads = { n: 0 };
+    const registry = courseRegistry({
+      config, configured: configuredCourses(config), log: (l) => logged.push(l),
+      installed: async () => {
+        reads.n++;
+        if (!up) throw new Error("connect ECONNREFUSED 127.0.0.1:5432");
+        return [...rows];
+      },
+    });
+    return { registry, reads, down: () => { up = false; } };
+  }
+
+  test("serves the configured courses and lists the installs it last saw as unavailable", async () => {
+    const { registry, down } = flaky(configWith({ SCHOOL_COURSES: `own=${courseAt(join(root, "own"), "Own")}` }), [installed("bells", "Bells", { trusted: true })]);
+    await registry.start();
+    down();
+    expect(summary(await registry.current())).toEqual([
+      { name: "bells", title: "Bells", trusted: true, kind: "unavailable" },
+      { name: "own", title: "Own", trusted: true, kind: "served" },
+    ]);
+  });
+
+  test("an install's reason, with the record unreachable, names no path and says it is served again once the record answers", async () => {
+    const row = installed("bells", "Bells");
+    const { registry, down } = flaky(configWith({}), [row]);
+    await registry.start();
+    down();
+    const f = (await registry.current()).find("bells");
+    const reason = f?.kind === "unavailable" ? f.course.reason : "";
+    expect({ record: /record/.test(reason), again: /again/.test(reason), path: reason.includes(root), refused: reason.includes("ECONNREFUSED") })
+      .toEqual({ record: true, again: true, path: false, refused: false });
+  });
+
+  // The interaction is the promise: a configured course's routes must not depend on the record.
+  test("finds a configured course by name without reading the record", async () => {
+    const { registry, reads, down } = flaky(configWith({ SCHOOL_COURSES: `own=${courseAt(join(root, "own"), "Own")}` }), []);
+    await registry.start();
+    down();
+    const before = reads.n;
+    const found = await registry.find("own");
+    expect({ found: found === null ? null : { kind: found.kind, name: found.course.name }, reads: reads.n - before })
+      .toEqual({ found: { kind: "served", name: "own" }, reads: 0 });
+  });
+
+  test("finds an installed course by name through the record", async () => {
+    const { registry } = flaky(configWith({}), [installed("bells", "Bells")]);
+    await registry.start();
+    const found = await registry.find("bells");
+    expect(found === null ? null : { kind: found.kind, name: found.course.name }).toEqual({ kind: "served", name: "bells" });
   });
 });

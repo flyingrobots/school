@@ -1,6 +1,6 @@
 // The record contract over HTTP, against the real server process (flyingrobots/school#2).
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startSchool, timeout, type Started } from "./testing/processes.ts";
@@ -137,3 +137,11 @@ test("the slides view opens no encounter and records nothing", async () => {
   expect(encounterOf(lesson)).toBeNull();
   expect(await count()).toBe(before);
 }, timeout(2));
+
+// A route that throws with no error handler would show Bun's development error page, with source and
+// paths, and production never sets NODE_ENV. A handler-less server cannot be built from outside, so
+// the option itself is asserted: removing the handler later cannot bring the page back (flyingrobots/school#346).
+test("the server turns Bun's development error page off explicitly", () => {
+  const source = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+  expect(source).toMatch(/Bun\.serve\(\{[^}]*?development:\s*false/s);
+});
