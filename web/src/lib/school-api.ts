@@ -467,6 +467,14 @@ const CourseLessons = z.array(
     subtitle: z.string().nullish(),
     quizzes: z.number().int().nonnegative(),
     answeredCorrectly: z.number().int().nonnegative(),
+    // How the lesson's quizzes are holding now, by the server's clock (RFC 5 §4.5,
+    // flyingrobots/school#220): four counts that sum to quizzes, never a strength.
+    mastery: z.object({
+      notStarted: z.number().int().nonnegative(),
+      settling: z.number().int().nonnegative(),
+      holding: z.number().int().nonnegative(),
+      faded: z.number().int().nonnegative(),
+    }),
   })
 )
 // Lessons that cannot be read are null, with the server's reason beside them; the reference

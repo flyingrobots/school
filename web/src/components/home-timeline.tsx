@@ -4,8 +4,9 @@
 import * as d3 from "d3"
 import * as React from "react"
 
-import { Badge } from "@/components/ui/badge"
+import { HoldingBadges } from "@/components/holding-badges"
 import { daysBetween, type Activity } from "@/lib/home-api"
+import { masteryWords } from "@/lib/holding"
 
 type Lane = Activity["courses"][number]
 
@@ -15,21 +16,11 @@ type Lane = Activity["courses"][number]
  * quizzes, is "Not started yet"; one with a study day and no quiz answered shows its counts.
  */
 export function holdingWords(c: Lane): string[] {
-  const { notStarted, settling, holding, faded } = c.mastery
   const fresh =
     c.studied.length === 0 &&
     c.due.length === 0 &&
-    (c.quizzes === 0 || notStarted === c.quizzes)
-  if (fresh) return ["Not started yet"]
-  const words: string[] = []
-  if (holding > 0)
-    words.push(
-      `${holding} of ${c.quizzes} ${c.quizzes === 1 ? "quiz" : "quizzes"} holding`
-    )
-  if (settling > 0) words.push(`${settling} still settling`)
-  if (faded > 0) words.push(`${faded} ready for another look`)
-  if (notStarted > 0) words.push(`${notStarted} not started yet`)
-  return words
+    (c.quizzes === 0 || c.mastery.notStarted === c.quizzes)
+  return fresh ? ["Not started yet"] : masteryWords(c.quizzes, c.mastery)
 }
 
 export type Mark =
@@ -106,7 +97,7 @@ export function Timeline({
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
-  // Each lane's heading is HTML (the registry's Badge) in a foreignObject, measured as it wraps.
+  // Each lane's heading is HTML (the registry's Badge, through HoldingBadges) in a foreignObject, measured as it wraps.
   const heads = React.useRef(new Map<string, HTMLDivElement>())
   const [headH, setHeadH] = React.useState<Record<string, number>>({})
   React.useLayoutEffect(() => {
@@ -265,13 +256,7 @@ export function Timeline({
                   className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground"
                 >
                   <span>{c.courseTitle}</span>
-                  <span data-holding className="flex flex-wrap gap-1">
-                    {holdingWords(c).map((w) => (
-                      <Badge key={w} variant="secondary">
-                        {w}
-                      </Badge>
-                    ))}
-                  </span>
+                  <HoldingBadges words={holdingWords(c)} />
                 </div>
               </foreignObject>
               <line
