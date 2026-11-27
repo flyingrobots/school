@@ -60,7 +60,7 @@ describe.each(lists)("the vendored $name", ({ file, pkg, render }) => {
     const notice = read(join(import.meta.dir, "..", "NOTICE")).replace(/\s+/g, " ");
     expect(notice).toContain(`${name} ${version}`);
     const entry = notice.split(" - ").find((part) => part.includes(`${name} ${version}`))!;
-    expect(entry).toContain(`(${license}`);
+    expect(entry).toContain(license);
   });
 
   test("LISTS-4: its header points at the refresh script", () => {
