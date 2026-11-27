@@ -9,7 +9,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { answerText, claudeStreamLine, spawnFailure, usageOf, type Agent, type AskConfig, type StreamLine, type Usage } from "./run.ts";
+import { agentEnded, agentStarted, answerText, claudeStreamLine, spawnFailure, usageOf, type Agent, type AskConfig, type StreamLine, type Usage } from "./run.ts";
 import { expand, usesPlaceholder } from "./template.ts";
 
 export type { Usage } from "./run.ts";
@@ -96,6 +96,7 @@ async function askAgent(agent: Agent, job: AskJob, timeoutMs: number, onDelta: (
   const streaming = agent.output === "claude-stream-json" && !toFile;
   const argv = expand(agent.argv, { "{prompt}": job.prompt, "{output_file}": outputFile });
   argv[0] = resolved;
+  let pid: number | null = null;
   try {
     // detached: the agent leads its own process group, so a kill ends everything it started.
     let proc: Bun.Subprocess<"ignore" | Uint8Array, "pipe", "pipe">;
@@ -107,6 +108,7 @@ async function askAgent(agent: Agent, job: AskJob, timeoutMs: number, onDelta: (
     } catch (e) {
       return { attempt: { agent: agent.name, status: "failed", error: spawnFailure(program, e), exitCode: null, ms: Date.now() - started, deltas: 0 }, usage: null };
     }
+    agentStarted(pid = proc.pid);
     let why: string | null = null;
     let sweep: ReturnType<typeof setInterval> | null = null;
     const hit = () => { try { process.kill(-proc.pid, "SIGKILL"); } catch {} };
@@ -172,6 +174,7 @@ async function askAgent(agent: Agent, job: AskJob, timeoutMs: number, onDelta: (
     pass(text);
     return succeeded(usage);
   } finally {
+    if (pid !== null) agentEnded(pid);
     rmSync(work, { recursive: true, force: true });
   }
 }
