@@ -119,7 +119,9 @@ figure takes a column of at most 22rem from `md`, below the text on a phone.
 ## Code and tests
 
 The page is `web/src/pages/home.tsx`, with `web/src/components/home-letter.tsx` (feedback and
-review) and `web/src/components/home-timeline.tsx`, composed of stock shadcn components (Card,
+review) and `web/src/components/home-timeline.tsx`, whose lanes take their holding words from
+`web/src/lib/holding.ts` and `web/src/components/holding-badges.tsx` (shared with the
+[course page](../course-page/README.md#how-each-lesson-is-holding)), composed of stock shadcn components (Card,
 Carousel, Badge, Button, Item, Popover, Alert, Empty, Skeleton, Spinner, Kbd). The server side is
 `showcaseJson`, `feedbackJson`, `reviewJson`, `activityJson` and `resumeJson` in
 `server/server.ts`, and `activity` in `server/core/school.ts`. [The test plan](test-plan.md) lists every case and its test.

@@ -1,6 +1,7 @@
 // The course page (flyingrobots/school#40): the course's lessons, each with how many of its quizzes
-// the learner has answered correctly, from GET /api/courses/:course. Progress is told in words,
-// never as a percentage or a score. Composed only of stock shadcn components.
+// the learner has answered correctly and how they are holding now (flyingrobots/school#221), from
+// GET /api/courses/:course. Progress is told in words, never as a percentage or a score. Composed
+// only of stock shadcn components.
 import * as React from "react"
 import { useGSAP } from "@gsap/react"
 import gsap from "gsap"
@@ -22,6 +23,7 @@ import {
   AlertDescription,
   AlertTitle,
 } from "@/components/ui/alert"
+import { HoldingBadges } from "@/components/holding-badges"
 import { Badge } from "@/components/ui/badge"
 import {
   Breadcrumb,
@@ -54,6 +56,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { useDocumentTitle } from "@/lib/document-title"
 import { titleOf, useCourse } from "@/lib/course"
 import { useCourseTitle } from "@/lib/courses"
+import { lessonHoldingWords } from "@/lib/holding"
 import type { Course, CourseLoad, Declaration } from "@/lib/school-api"
 
 gsap.registerPlugin(useGSAP)
@@ -353,7 +356,7 @@ function LessonItem({ course, lesson }: { course: string; lesson: Lesson }) {
             </ItemDescription>
           ) : null}
         </ItemContent>
-        <ItemFooter>
+        <ItemFooter className="flex-col items-start gap-2">
           <Badge
             variant={
               done ? "default" : lesson.quizzes === 0 ? "outline" : "secondary"
@@ -363,6 +366,7 @@ function LessonItem({ course, lesson }: { course: string; lesson: Lesson }) {
             {done && <CheckIcon data-icon="inline-start" />}
             {progressWords(lesson)}
           </Badge>
+          <HoldingBadges words={lessonHoldingWords(lesson)} />
         </ItemFooter>
       </Link>
     </Item>
