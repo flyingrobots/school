@@ -8,6 +8,8 @@ const LessonRef = z.object({ id: z.string(), title: z.string() })
 export const Ahead = z.object({
   course: z.string(),
   courseTitle: z.string(),
+  // An untrusted course's figure is drawn as an image (flyingrobots/school#210).
+  trusted: z.boolean(),
   started: z.boolean(),
   lesson: LessonRef.extend({
     subtitle: z.string(),

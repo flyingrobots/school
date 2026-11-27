@@ -368,6 +368,7 @@ describe("key hints on touch screens (flyingrobots/school#154)", () => {
           {
             course: "aion",
             courseTitle: "Orbits",
+            trusted: true,
             started: false,
             lesson: {
               id: "l1",

@@ -77,7 +77,7 @@ Entries are tagged:
 
 **Course title**, **course name** *(School)* — A course's title is what the pages call it, declared in an optional `course.json` beside `lessons/` ([a course's folder](topics/course-format/README.md)). Its name is the slug it is registered under in `SCHOOL_COURSES`, which addresses and the record use; a course that declares no title is called by its name.
 
-**Course schema**, **format version** *(School)* — The block JSON format, validated when the server loads a course (`server/blocks.ts`). A small JSON Schema will describe it when an author needs one. [ADR 7](adr/0007-course-schema-in-graphql-compiled-by-wesley.md)'s GraphQL compiler was withdrawn on 2026-11-22. **Unsettled:** how a format version is declared.
+**Course schema**, **format version** *(School)* — The block JSON format, validated when the server loads a course (`server/blocks.ts`). A small JSON Schema will describe it when an author needs one. [ADR 7](adr/0007-course-schema-in-graphql-compiled-by-wesley.md)'s GraphQL compiler was withdrawn on 2026-11-22. A course declares the format version it is written in as `format` in its `course.json` (a positive integer; `1` today), and a School that does not play that version refuses the course ([the course format](topics/course-format/README.md)).
 
 ## The learner's side
 

@@ -26,8 +26,9 @@ Start here. Each page has one job; this page routes to all of them.
 | [RFC 1: School](rfc/0001-school.md) | The original design and the learning record contract. Draft. |
 | [RFC 2: Lessons written for each learner](rfc/0002-lessons-written-for-each-learner.md) | Proposal: courses as curricula, lessons and quizzes prepared per learner, exams, completion. Draft. |
 | [RFC 3: Postgres functions and generated types](rfc/0003-postgres-functions-and-generated-types.md) | Decided, in progress: the server as a hexagon, the record in Postgres functions, PGlite in tests, types from Wesley. Draft. |
-| [RFC 4: Publishing courses](rfc/0004-publishing-courses.md) | Proposal: a public index of course repositories and a static catalog built from it; School stays private. Awaiting the maintainer's decision. |
-| [RFC 6: Ask about a passage](rfc/0006-ask-about-a-passage.md) | Proposal: select text in a lesson and ask an agent about it through the bridge; answers from the course's sources, streamed, saved to the record, and every question counted as aid for the encounter. Awaiting the maintainer's decision. |
+| [RFC 4: Publishing courses](rfc/0004-publishing-courses.md) | Decided 2026-11-26 as the Library: a public index of course repositories and a static catalog built from it; School stays private. |
+| [RFC 5: Mastery that fades](rfc/0005-mastery-that-fades.md) | Decided 2026-11-26: a per-quiz mastery measure with a growing half-life, derived by a database function, and one added due-review rule for quizzes that have faded. |
+| [RFC 6: Ask about a passage](rfc/0006-ask-about-a-passage.md) | Decided 2026-11-26: select text in a lesson and ask an agent about it through the bridge; answers from the course's sources, streamed, saved to the record, and every question counted as aid for the encounter. |
 | [ADRs](adr/) | The decisions, in order, with what each cost. |
 
 Living pages describe only what exists on the default branch. Proposals live in RFCs until they

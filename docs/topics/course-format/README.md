@@ -1,11 +1,11 @@
 # A course's folder
 
-Reference: what School reads from a course's folder, the one `SCHOOL_COURSES` (or `SCHOOL_COURSE`)
-names. School reads the folder and never writes to it ([ADR 6](../../adr/0006-separate-framework-lessons-and-learner-state.md)).
+Reference: what School reads from a course's folder, the one `SCHOOL_COURSES` (or `SCHOOL_COURSE`,
+or `SCHOOL_UNTRUSTED_COURSES` for [an untrusted course](#trusted-and-untrusted-courses)) names. School reads the folder and never writes to it ([ADR 6](../../adr/0006-separate-framework-lessons-and-learner-state.md)).
 
 | Path | Required | Holds | Read |
 | --- | --- | --- | --- |
-| `course.json` | no | The course's declaration about itself: its title | Once, when the server starts |
+| `course.json` | no | The course's declaration about itself: its title and, optionally, its summary, author, license and course format | Once, when the server starts |
 | `lessons/*.json` | no | The lessons, one block-JSON page per file, in file-name order | On every request, so an edit shows without a restart |
 | `reference/*.html` | no | Reference documents, served read-only at `/courses/:course/reference/<file>` | On every request |
 
@@ -46,12 +46,21 @@ Lines on stdout and stderr, each line naming its schema in `server/schemas/check
 | `school.check.help` | stdout | `command`, `usage`, `summary`, `options`, `exit`, `output` | First line of `--help` |
 | `school.check.schema` | stdout | `id`, `version`, `schema` | `--schema`, and `--help` after its help line |
 | `school.check.start` | stdout | `folder`, as an absolute path | First, once the arguments are accepted |
+| `school.check.manifest` | stdout | `summary`, `author`, `license` and `format`, each null when not declared | Just before `done`, on success; not printed with `--human` |
 | `school.check.done` | stdout | `ok`, `folder`, `title` (null when none is declared), `lessons` (each `file`, `id`, `title`, `quizzes`, `explains`), and the course's `quizzes` and `explains` | Last, before exit 0 |
 | `school.check.error.invalid` | stderr | `error`, `code` (1), `file` (`course.json`, a lesson file, or null for a problem across files, such as an unknown ref), `message` | School would refuse the course |
 | `school.check.error.usage` | stderr | `error`, `code` (2), `message` | A bad argument or no such folder |
 | `school.check.error.failed` | stderr | `error`, `code` (1), `message` | Anything else went wrong |
 
-A quiz or explain block reused through `ref` counts once.
+A quiz or explain block reused through `ref` counts once. `school.check.done` stays at 1.0.0, so a consumer written against it still validates every line; the manifest has a message of its own. `--human` adds the summary, then the
+author, license and format, on lines of their own after the lessons, leaving out any the course
+does not declare.
+
+The checks are also a function for code in `server/`: `checkCourse(folder)` in
+`server/check-course.ts` returns, for a passing course, `ok: true` with the `done` line's fields
+and a `manifest` holding the manifest line's four; for a refused one, `ok: false` with the
+`folder`, `file` and `message` the error line would carry. A folder that does not exist is a
+refusal with `file` null. The program prints its lines from this result.
 
 On 2026-11-25, a one-lesson course in a temporary folder shown as `$DIR`, its quiz with two
 correct choices:
@@ -66,16 +75,35 @@ checking $DIR
 error (invalid) in 0001-rounds.json: 0001-rounds.json > rounds > q1: exactly one choice must be correct
 ```
 
-The same course with the second choice made wrong:
+On 2026-11-26, the same course with the second choice made wrong, its `course.json` declaring
+only `{ "title": "Rounds" }`:
 
 ```text
 $ ./school check $DIR          # exit 0
-{"_schema":{"id":"school.check.start","version":"1.0.0"},"kind":"school.check","event":"start","folder":"$DIR","run":"866c5766-2be1-48cc-9f48-985734bafe43","at":"2026-11-25T12:50:56.018Z"}
-{"_schema":{"id":"school.check.done","version":"1.0.0"},"kind":"school.check","event":"done","ok":true,"folder":"$DIR","title":"Rounds","lessons":[{"file":"0001-rounds.json","id":"rounds","title":"Rounds","quizzes":1,"explains":0}],"quizzes":1,"explains":0,"run":"866c5766-2be1-48cc-9f48-985734bafe43","at":"2026-11-25T12:50:56.019Z"}
+{"_schema":{"id":"school.check.start","version":"1.0.0"},"kind":"school.check","event":"start","folder":"$DIR","run":"9cdab92a-44e4-4edf-a871-dfe8e02e92de","at":"2026-11-26T23:45:45.220Z"}
+{"_schema":{"id":"school.check.manifest","version":"1.0.0"},"kind":"school.check","event":"manifest","summary":null,"author":null,"license":null,"format":null,"run":"9cdab92a-44e4-4edf-a871-dfe8e02e92de","at":"2026-11-26T23:45:45.223Z"}
+{"_schema":{"id":"school.check.done","version":"1.0.0"},"kind":"school.check","event":"done","ok":true,"folder":"$DIR","title":"Rounds","lessons":[{"file":"0001-rounds.json","id":"rounds","title":"Rounds","quizzes":1,"explains":0}],"quizzes":1,"explains":0,"run":"9cdab92a-44e4-4edf-a871-dfe8e02e92de","at":"2026-11-26T23:45:45.223Z"}
 $ ./school --human check $DIR
 checking $DIR
 ok: Rounds, 1 lesson, 1 quiz, 0 explain blocks
   0001-rounds.json  Rounds  (1 quiz, 0 explain blocks)
+```
+
+The same course once its `course.json` also declares
+`"summary": "Ring the bells in order.", "license": "CC-BY-4.0", "format": 1`; only the `manifest`
+line differs, and `done` carries nothing new:
+
+```text
+$ ./school check $DIR          # exit 0
+{"_schema":{"id":"school.check.start","version":"1.0.0"},"kind":"school.check","event":"start","folder":"$DIR","run":"54ed9571-73c1-4045-9d62-abf613bd2cb6","at":"2026-11-26T23:45:45.360Z"}
+{"_schema":{"id":"school.check.manifest","version":"1.0.0"},"kind":"school.check","event":"manifest","summary":"Ring the bells in order.","author":null,"license":"CC-BY-4.0","format":1,"run":"54ed9571-73c1-4045-9d62-abf613bd2cb6","at":"2026-11-26T23:45:45.364Z"}
+{"_schema":{"id":"school.check.done","version":"1.0.0"},"kind":"school.check","event":"done","ok":true,"folder":"$DIR","title":"Rounds","lessons":[{"file":"0001-rounds.json","id":"rounds","title":"Rounds","quizzes":1,"explains":0}],"quizzes":1,"explains":0,"run":"54ed9571-73c1-4045-9d62-abf613bd2cb6","at":"2026-11-26T23:45:45.364Z"}
+$ ./school --human check $DIR
+checking $DIR
+ok: Rounds, 1 lesson, 1 quiz, 0 explain blocks
+  0001-rounds.json  Rounds  (1 quiz, 0 explain blocks)
+summary: Ring the bells in order.
+license CC-BY-4.0; format 1
 ```
 
 ## More than one course under `./school up`
@@ -93,36 +121,108 @@ For a folder holding several courses, point `SCHOOL_LIBRARY_DIR` at the folder a
 is the course folder again, and nothing reads it unless `SCHOOL_COURSES` says so. Run `./school up`
 again after changing either line.
 
+## Trusted and untrusted courses
+
+A course from someone else can be served in safe mode, so its HTML cannot act as School. Name it in `SCHOOL_UNTRUSTED_COURSES` instead of `SCHOOL_COURSES`; the syntax is the same `name=path` pairs:
+
+```sh
+SCHOOL_COURSES=bells=/library/bells
+SCHOOL_UNTRUSTED_COURSES=guest=/library/guest
+```
+
+_Listing 1. Two courses in `server/.env` (illustrative): `bells` is trusted, `guest` is in safe mode. Compose passes `SCHOOL_UNTRUSTED_COURSES` to the server as it does `SCHOOL_COURSES`._
+
+A course in `SCHOOL_COURSES` or `SCHOOL_COURSE` is trusted, as it always was. An untrusted course is read from the same folder layout and works the same way, with four differences:
+
+| What | For an untrusted course |
+| --- | --- |
+| Its reference documents and every other file under `reference/` | Served with `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`: a page opened from it runs no script and cannot use School's API. An SVG file is served as `image/svg+xml` under the same sandbox |
+| `GET /api/courses` and `GET /api/courses/:course` | `trusted: false` (a trusted course gives `trusted: true`); the course and lesson JSON carry the same two headers |
+| Its hook figures on the home page | Drawn as an image, not inline SVG, so nothing in them runs; `GET /api/showcase` gives each item `trusted` |
+| The course page | A note: "This course is shown in safe mode: its pages can’t run scripts." ([the course page](../course-page/README.md)) |
+
+Lesson blocks are unchanged: their HTML is sanitised for every course, trusted or not ([lesson blocks](blocks.md)). A name in both lists, or a folder that is, contains or sits inside a trusted course's, stops the server at start with exit code 2, since the trusted course would serve the same files unsandboxed. So does a `SCHOOL_MOUNTS` or `SCHOOL_WEB` folder that is, contains or sits inside an untrusted course's. The headers and their reasons are in [trust and known defects](../architecture/README.md#trust-and-known-defects).
+
+The choice is the operator's, never the course's: nothing in a course's folder can mark it trusted.
+
 ## `course.json`
 
 ```json
-{ "title": "AIΩN Foundations" }
+{
+  "title": "AIΩN Foundations",
+  "summary": "The ideas under AIΩN, one question at a time.",
+  "author": "The AIΩN authors",
+  "license": "Apache-2.0",
+  "format": 1
+}
 ```
 
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `title` | non-empty string | What the pages call the course: the sidebar, Home, the course page and every breadcrumb. Surrounding spaces are trimmed. |
+Only `title` is required. Every other key is optional, and a course that declares only a title, or
+has no `course.json`, loads exactly as one did before they existed.
+
+| Field | Required | Type | Meaning |
+| --- | --- | --- | --- |
+| `title` | yes | non-empty string | What the pages call the course: the sidebar, Home, the course page and every breadcrumb. Surrounding spaces are trimmed. |
+| `summary` | no | non-empty string | What the course is, in a sentence. Surrounding spaces are trimmed. |
+| `author` | no | non-empty string | Who wrote it. Surrounding spaces are trimmed. |
+| `license` | no | SPDX license expression | The terms a learner, or anyone copying the course, may use it on, such as `MIT`, `MIT OR Apache-2.0` or `GPL-2.0-or-later WITH Classpath-exception-2.0`. Surrounding spaces are trimmed. |
+| `format` | no | positive integer | The course format the course is written in. Today's, and the only one this School plays, is `1`. |
 
 The course's **name**, the `name` in `SCHOOL_COURSES=name=path`, stays its slug: it is what
 addresses carry (`/courses/aion`) and what the record stores. A course with no `course.json` is
 called by its name everywhere a title would show.
 
-`GET /api/courses` and `GET /api/courses/:course` give both: `name`, the slug, and `title`, the
-course's title or, when it declares none, its name.
+`GET /api/courses` and `GET /api/courses/:course` give `name`, the slug; `title`, the course's
+title or, when it declares none, its name; and `summary`, `author`, `license` and `format`, each
+as declared or null when the course does not declare it. `school check` reports the last four on
+its `manifest` line, and the title on `done`.
+
+### Licenses
+
+`license` is an [SPDX license expression](https://spdx.github.io/spdx-spec/v2.3/SPDX-license-expressions/)
+(SPDX 2.3, Annex D), checked by `server/spdx.ts`:
+
+- Each license is an id on the [SPDX License List](https://spdx.org/licenses/), current or
+  deprecated, matched without regard to case, optionally followed by `+` (this version or later);
+  or a `LicenseRef-<name>` for a license of your own.
+- `AND`, `OR` and `WITH` join them, in capitals. `WITH` binds tightest, then `AND`, then `OR`;
+  parentheses group. The name after `WITH` is an id on the SPDX exceptions list, matched without
+  regard to case; a `LicenseRef-` is not an exception.
+
+The lists are `server/spdx-license-ids.ts`, copied from the `spdx-license-ids` package (3.0.24,
+CC0-1.0), and `server/spdx-exception-ids.ts`, from `spdx-exceptions` (2.5.0, CC0-1.0), rather than
+added as dependencies; a license or exception published after those releases is refused until the
+lists are updated. School has no preference among licenses: any listed id is accepted.
+
+### The course format
+
+`format` says which course format the course is written in, so a School that does not play it says
+so instead of serving it wrongly. This School plays format `1`. A course that declares any other
+format is refused, naming both: `"format" is 2, but this School plays course format 1`. A course
+that declares no format is played as format `1`.
 
 ### When the file is malformed
 
-`course.json` is checked with Zod (`server/course-file.ts`) when the server starts. A file that is
-there but is not JSON, is not an object, has no `title`, has a `title` that is not a string or is
-empty, or has any other key, stops the start with exit code 2 and a line naming the course and the
-file. For a course at `/courses/aion` whose `title` is `42`, it prints:
+`course.json` is checked with Zod (`server/course-file.ts`) when the server starts, and by
+`school check`. A file that is there but is not JSON, is not an object, has no `title`, has any
+key above that is empty, only spaces, or of the wrong type, has a `license` that is not an SPDX
+expression or names a license not on the list, declares a `format` other than `1`, or has any
+other key, stops the start with exit code 2 and a line naming the course, the file and the key.
+School does not start, so no course is half-loaded; `school check` exits 1 with the same message.
+For a course at `/courses/aion` whose `title` is `42`, the server prints:
 
 ```text
 school: course "aion": /courses/aion/course.json is not a course file: "title" Invalid input: expected string, received number. It must be an object such as {"title": "My Course"}
 ```
 
-The file is read only at start, so a changed title shows after a restart. Unknown keys are refused
-rather than ignored, so a misspelt `tilte` is caught instead of silently showing the slug.
+and for one whose `license` is `Frobnicate-1.0`:
+
+```text
+school: course "aion": /courses/aion/course.json is not a course file: "license" must be an SPDX license expression, such as "MIT OR Apache-2.0": unknown license "Frobnicate-1.0"; it is not on the SPDX License List (use LicenseRef-<name> for one of your own). It must be an object such as {"title": "My Course"}
+```
+
+The file is read only at start, so a change shows after a restart. Unknown keys are refused rather
+than ignored, so a misspelt `tilte` or `licence` is caught instead of silently ignored.
 
 The cases are in the [test plan](test-plan.md).
 
@@ -155,15 +255,15 @@ optional picture. The home page shows hooks for the lessons still ahead (`GET /a
 | --- | --- | --- |
 | `question` | yes | The question the lesson answers, in [School's voice](../voice/README.md) |
 | `teaser` | yes | One line that makes the question worth answering |
-| `figure` | no | SVG markup, trusted like a prose block's HTML |
+| `figure` | no | SVG markup, kept to drawing; an untrusted course's is drawn as an image ([trusted and untrusted courses](#trusted-and-untrusted-courses)) |
 
-A figure follows the light and dark themes when it is coloured with the theme's CSS variables:
+A figure loses its `style` and `class` attributes and any `<style>` element before it is shown, so colour it with presentation attributes such as `fill="var(--primary)"` and `stroke="var(--chart-1)"`. A figure follows the light and dark themes when it is coloured with the theme's CSS variables:
 `var(--primary)`, `var(--chart-1)` to `var(--chart-5)`, `var(--foreground)`,
 `var(--muted-foreground)` and `var(--background)`. A hook missing its question or teaser, or with a
 figure that is not a string, stops the lesson set from loading, like any other malformed block.
 
 `GET /api/showcase` lists, in course order, every lesson with a quiz not yet answered correctly:
-its course, the course's title, whether the course is started (any of its quizzes answered
+its course, the course's title, whether the course is trusted (`trusted`), whether the course is started (any of its quizzes answered
 correctly), the lesson's id, title, subtitle and place, and its hook. A lesson without a hook
 offers its title as the question and its subtitle as the teaser, with no figure. A lesson with no
 quizzes is left out, as is a course whose lessons can't be read.
