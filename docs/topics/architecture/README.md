@@ -576,6 +576,26 @@ Realpath cannot see a bind mount. Compose mounts `SCHOOL_COURSE_DIR` at `/course
 
 This check finds a whole folder mounted twice, not part of one. At a bind mount's root, `..` leads into the container's tree, not the tree the folder came from, so walking ancestors cannot see that a mounted folder is a subfolder of a trusted one. For example, a trusted course's `reference/` bind-mounted at `/library`, with an untrusted course at `/library`, is not detected. Never bind-mount part of a trusted course, a mount or the web folder anywhere an untrusted course lives. A sandboxed document still loads what it links to, such as images from other sites, and still shows what it says; safe mode stops it acting as School, not showing content.
 
+### Fetching a course repository
+
+`fetchCommit` (`server/fetch-commit.ts`, RFC 7 §6) fetches one commit of a course repository into a new bare repository, `<staging>/repo.git`, and answers the commit's full hash. No route calls it yet; the install preview (RFC 7 task 7) will, with a staging folder under the course store. The URL and the server are hostile, so each rule below is checked in the order listed, and any refusal deletes the staging folder, or never makes it.
+
+| Rule | Refused with |
+| --- | --- |
+| The URL starts `https://`. `http`, `ssh`, scp-like `host:path`, `git://`, `file://`, `ext::`, a local path or an option is refused before git runs, and git's `protocol.allow=never` allows only `https` | `not-https` |
+| No whitespace, control character or backslash, no query or fragment, a host, 2,048 characters at most | `bad-url` |
+| No user or password (`https://user:token@...`): School stores no secret for a course | `credentials` |
+| Port 443 | `bad-port` |
+| The host resolves, and every address is public. `isPublicAddress` refuses the IANA special-purpose IPv4 ranges (loopback, private, CGNAT `100.64/10`, link-local with the cloud metadata address, multicast, reserved, documentation), and allows IPv6 only in global unicast `2000::/3` outside `2001::/23`, `2001:db8::/32`, `2002::/16` and `3fff::/20`, so IPv4-mapped, NAT64, loopback, unique-local and link-local IPv6 are refused. A literal address is checked as given | `unresolved`, `private-address` |
+| The commit is a full hash (40 or 64 hex digits), fetched as given, or a branch, tag or `HEAD`, resolved once with `git ls-remote` to a full hash (an annotated tag to the commit it tags). A name that is both a branch and a tag is refused | `bad-commit`, `no-such-ref`, `ambiguous-ref` |
+| The staging folder's parent exists and the folder does not | `bad-staging` |
+| Each git process finishes within 60 seconds; the fetched repository stays within 64 MiB on disk, watched every 100 ms while git runs and checked when it ends (RFC 7 Table 6.2). Passing either kills git's whole process group | `timeout`, `too-large` |
+| git fetches the commit, and it is a commit | `git-failed`, `not-a-commit` |
+
+_Table 1. What `fetchCommit` checks, in order. Every refusal carries a sentence naming what was refused._
+
+git is pinned to the addresses School checked: `http.curloptResolve=HOST:443:ADDRESS[,ADDRESS]` hands them to libcurl, so git never looks the host up again, and a second answer from DNS (rebinding) is never used. Redirects are not followed (`http.followRedirects=false`), since a redirect could lead to a host or port the pin does not cover. git runs with a fresh environment: no system or global configuration, `HOME` set to the staging folder (so no `.netrc`), `GIT_TERMINAL_PROMPT=0`, no askpass, an empty `credential.helper`, an empty `http.proxy`, `core.hooksPath=/dev/null`, `transfer.fsckObjects`, no submodules, and `git init --bare --template=`. The fetch is `git fetch --depth=1 --no-tags --no-recurse-submodules <url> <hash>`, so the repository holds that one commit and nothing is checked out. A host that will not serve a commit by its hash fails as `git-failed` with git's own message.
+
 | Defect | Effect | Issue |
 | --- | --- | --- |
 | Bridge reply shape not validated | A malformed reply throws and stores no failed grading | [#17](https://github.com/flyingrobots/school/issues/17) |

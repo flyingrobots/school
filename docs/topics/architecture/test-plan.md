@@ -30,3 +30,30 @@ The cases run the bridge as a real process.
 | STORE-11 | A path that exists but is a file | Refused, naming the path | implemented | `server/config.test.ts`: `a store path that exists but is a file, not a folder, is refused, naming it` |
 
 _Table 2. The course store's cases. STORE-9 reads the Dockerfile; no test builds the image._
+
+## Fetching one commit (flyingrobots/school#236)
+
+`fetchCommit` in `server/fetch-commit.ts`, RFC 7 §6, task 6. The oracle for every refusal is §6 and Table 6.1; the limits are Table 6.2's. Every network case runs against a local https server (`server/testing/https-git.ts`: `git http-backend` on loopback, port 0, with a certificate made for `course.test`), never the internet. `course.test` never resolves (RFC 6761), so a good fetch reaching that server shows git used the pinned address.
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| FETCH-1 | A full hash | Fetched as given into a bare `<staging>/repo.git` holding that commit alone | implemented | `server/fetch-commit.test.ts`: `FETCH-1: a full hash is fetched as given, alone, into a bare repository in staging` |
+| FETCH-2 | A hash no branch points at | Fetched by its hash | implemented | `FETCH-2: a commit no branch points at is fetched by its hash` |
+| FETCH-3 | A branch, a lightweight tag, an annotated tag, `HEAD` | Each resolves to its full hash (the annotated tag to its commit), which is fetched | implemented | `FETCH-3: %s resolves to its full hash, which is fetched` |
+| FETCH-4 | A branch force-moved between two fetches | Each fetch gets where the branch points then | implemented | `FETCH-4: a branch force-moved between two fetches resolves to where it points now` |
+| FETCH-5 | A host pinned to an IPv6 address | Fetched through `[::1]` | implemented | `FETCH-5: the pin works for an IPv6 address too` |
+| FETCH-6 | `http`, `ssh`, scp-like, `git://`, `file://`, `ext::`, a path, an option, credentials, a non-default port, a query, a fragment, whitespace, no host, an overlong URL, loopback, private and metadata literals in IPv4 and IPv6 | Each refused with its reason before git runs (git is a missing program); no staging folder | implemented | `FETCH-6: %s is refused` |
+| FETCH-7 | A host resolving to loopback, private, CGNAT, link-local, IPv6 loopback, unique-local or IPv4-mapped loopback, or to one private address among public ones | `private-address`; no staging folder | implemented | `FETCH-7: a host resolving to %s is refused` |
+| FETCH-8 | A host that does not resolve, or resolves to nothing | `unresolved` | implemented | `FETCH-8: a host that does not resolve is refused`, `FETCH-8: a host that resolves to no address is refused` |
+| FETCH-9 | A commit given as an option, a range, an empty name, a space, a trailing slash, a `.lock` name | `bad-commit`; no staging folder | implemented | `FETCH-9: a commit given as %s is refused` |
+| FETCH-10 | A branch or tag the repository lacks | `no-such-ref`; staging deleted | implemented | `FETCH-10: a branch or tag the repository lacks is refused` |
+| FETCH-11 | A name that is both a branch and a tag | `ambiguous-ref`; staging deleted | implemented | `FETCH-11: a name that is both a branch and a tag is refused as ambiguous` |
+| FETCH-12 | A hash the repository lacks | `git-failed`; staging deleted | implemented | `FETCH-12: a hash the repository lacks is refused` |
+| FETCH-13 | A commit larger than the pack limit | `too-large`; staging deleted | implemented | `FETCH-13: a fetch over the size limit is stopped and its staging folder deleted` |
+| FETCH-14 | A server that never answers | `timeout` at the time limit; staging deleted | implemented | `FETCH-14: a server that never answers is stopped at the time limit and its staging folder deleted` |
+| FETCH-15 | A redirect to the same pinned host and port | Not followed: `git-failed`; staging deleted | implemented | `FETCH-15: a redirect is not followed` |
+| FETCH-16 | A staging folder that exists | `bad-staging`; its contents left alone | implemented | `FETCH-16: a staging folder that already exists is refused and left alone` |
+| FETCH-17 | A server asking for a password, with the user's global config, `GIT_CONFIG_COUNT`, askpass and `.netrc` all offering credentials or a header | `git-failed`; no helper or askpass ran and no `Authorization` or configured header reached the server | implemented | `FETCH-17: asked for a password, git uses no credential helper, askpass, netrc or configured header` |
+| FETCH-18 | `isPublicAddress` on IANA special-purpose ranges, their boundaries, IPv4-mapped, NAT64, 6to4, Teredo and malformed input | Refused; public addresses on each side of every boundary accepted | implemented | `isPublicAddress`: `%p is not public`, `%p is public` |
+
+_Table 3. The fetch's cases. FETCH-2 to FETCH-18 are in `server/fetch-commit.test.ts`. None runs the server image's git; CI runs them on the runner's git._
