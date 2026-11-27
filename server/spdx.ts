@@ -21,6 +21,12 @@ const OPERATORS = new Set(["AND", "OR", "WITH"]);
 /** The deepest parenthesis nesting accepted. The parser recurses once per level, so a bound keeps a hostile license from exhausting the stack. */
 const MAX_NESTING = 32;
 
+/** The refusal for `token` when it is an operator spelt without its capitals, else null. */
+function lowercaseOperator(token: string): string | null {
+  const operator = token.toUpperCase();
+  return OPERATORS.has(operator) && token !== operator ? `${JSON.stringify(token)} is not an operator: operators are written in capitals, so write ${JSON.stringify(operator)}` : null;
+}
+
 /** Why `expression` is not an SPDX license expression, or null when it is one. */
 export function spdxProblem(expression: string): string | null {
   const tokens = expression.split(/\s+|([()])/).filter((t): t is string => t !== undefined && t !== "");
@@ -31,10 +37,11 @@ export function spdxProblem(expression: string): string | null {
 
   function license(): string | null {
     const t = peek();
-    if (t === undefined || OPERATORS.has(t) || t === ")") return `expected a license, found ${found()}`;
+    if (t === undefined || OPERATORS.has(t.toUpperCase()) || t === ")") return `expected a license, found ${found()}`;
     at++;
     if (REF.test(t)) return null;
     const id = t.endsWith("+") ? t.slice(0, -1) : t;
+    if (id !== t && REF.test(id)) return `${JSON.stringify(t)}: "+" cannot follow a LicenseRef, which names a license of your own, with no later versions; write ${JSON.stringify(id)}`;
     if (!ID.test(id)) return `${JSON.stringify(t)} is not a license id`;
     if (!listed.has(id.toLowerCase())) return `unknown license ${JSON.stringify(t)}; it is not on the SPDX License List (use LicenseRef-<name> for one of your own)`;
     return null;
@@ -47,19 +54,19 @@ export function spdxProblem(expression: string): string | null {
       const inner = or();
       depth--;
       if (inner !== null) return inner;
-      if (peek() !== ")") return `expected ")", found ${found()}`;
+      if (peek() !== ")") return (peek() === undefined ? null : lowercaseOperator(peek()!)) ?? `expected ")", found ${found()}`;
       at++;
-      return null;
+      return peek() === "WITH" ? "WITH takes a license id on its left, not a parenthesised group" : null;
     }
     const problem = license();
     if (problem !== null || peek() !== "WITH") return problem;
     at++;
     const t = peek();
-    if (t === undefined || OPERATORS.has(t) || t === "(" || t === ")") return `expected an exception after WITH, found ${found()}`;
+    if (t === undefined || OPERATORS.has(t.toUpperCase()) || t === "(" || t === ")") return `expected an exception after WITH, found ${found()}`;
     at++;
     if (!ID.test(t)) return `${JSON.stringify(t)} is not an exception id`;
     if (!exceptions.has(t.toLowerCase())) return `unknown exception ${JSON.stringify(t)}; it is not on the SPDX exceptions list`;
-    return null;
+    return peek() === "WITH" ? "a license takes one WITH exception; found a second WITH" : null;
   }
   function chain(operator: string, next: () => string | null): string | null {
     let problem = next();
@@ -74,5 +81,6 @@ export function spdxProblem(expression: string): string | null {
 
   const problem = or();
   if (problem !== null) return problem;
-  return peek() === undefined ? null : `expected AND, OR or WITH, found ${found()}`;
+  if (peek() === undefined) return null;
+  return lowercaseOperator(tokens[at]!) ?? `expected AND, OR or WITH, found ${found()}`;
 }

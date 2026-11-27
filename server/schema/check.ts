@@ -50,4 +50,6 @@ export type Checks = [
   Assert<Equal<W.DecisionNoteResult, z.infer<typeof M.DecisionNoteResult>>>,
   Assert<Equal<W.DueReviewQuery, z.infer<typeof M.DueReviewQuery>>>,
   Assert<Equal<W.ReviewReason, z.infer<typeof M.ReviewReason>>>,
+  Assert<Equal<W.MasteryQuery, z.infer<typeof M.MasteryQuery>>>,
+  Assert<Equal<W.Mastery, z.infer<typeof M.Mastery>>>,
 ];
