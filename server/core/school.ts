@@ -1,6 +1,6 @@
 // School's use cases (RFC 3, §4). Each takes values already parsed at the edge, talks only to
 // ports, and returns plain data for the driving adapter to serialise.
-import type { Aid, AidTracking, Block, Contradiction, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingRecord, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, MasteryRollup, Recorded, RecordedExposureKind, ReviewNote, ReviewReason, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
+import type { Aid, AidTracking, Block, Contradiction, CourseProgress, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureKind, ExposureResult, Grading, GradingRecord, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, MasteryRollup, Recorded, RecordedExposureKind, ReviewNote, ReviewReason, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
 import type { Clock, Grader, LearningRecord } from "./ports.ts";
 
 const squash = (s: string) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim().toLowerCase();
@@ -125,6 +125,10 @@ export interface School {
    * a lesson opens with. A group with no quizzes counts zero in every state.
    */
   masteryNow(course: string, groups: Readonly<Record<string, readonly string[]>>): Promise<MasteryRollup[]>;
+  /** The names of the current installs (RFC 7 §7). */
+  installedNames(): Promise<string[]>;
+  /** What the record holds under a course name, served or not (RFC 7 §5.2). */
+  courseProgress(course: string): Promise<CourseProgress>;
 }
 
 export function createSchool(ports: { record: LearningRecord; grader: Grader; clock: Clock }): School {
@@ -225,6 +229,8 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
     recordDecisionNote: (n) => record.recordDecisionNote(n, clock.now()),
     decisionNotes: (c) => record.decisionNotes(c),
     encounterDecisionNotes: (id) => record.encounterDecisionNotes(id),
+    installedNames: async () => (await record.installedCourses()).map((c) => c.course),
+    courseProgress: (course) => record.courseProgress(course),
   };
 }
 
