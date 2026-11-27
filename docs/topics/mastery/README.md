@@ -10,7 +10,7 @@ The measure reads a quiz's **episodes** exactly as [due review](../due-review/RE
 
 | Value | Definition |
 | --- | --- |
-| Stability (`stabilityMs`) | The quiz's half-life: one day × 2.5^*k*, where *k* counts the spaced clean episodes after the anchor. The **anchor** is the latest episode whose first try was wrong or aided, or the first episode if there is none. An episode is **spaced** when its first try came at least `delay_ms` after the previous episode's last answer; the first episode is spaced. *k* stops at 100 (2.5^100 days is about 10^37 years), so stability stays a finite number |
+| Stability (`stabilityMs`) | The quiz's half-life: one day × 2.5^*k*, where *k* counts the spaced clean episodes after the anchor. The **anchor** is the latest episode whose first try was wrong or aided, or the first right one after a wrong one, or the first episode if there is none. An episode is **spaced** when its first try came at least `delay_ms` after the previous episode's last answer; the first episode is spaced. *k* stops at 100 (2.5^100 days is about 10^37 years), so stability stays a finite number |
 | Refreshed at (`refreshedAt`) | The `at` of the latest right first try: clean, aided or unknown aid |
 | Strength (`strength`) | 0.5^((`at` − `refreshedAt`) / stability), from 0 to 1: how far through its half-life the quiz is. It is 1 when `at` is not after `refreshedAt`, and 0 when the latest episode's first try was wrong. Past 1000 stabilities it is 0 |
 | Settled (`settled`) | Due review's clearing rule: no weak episode, or a clean episode whose first try came at least `delay_ms` after the latest weak episode's last answer |
@@ -28,7 +28,8 @@ A first try is clean, aided, unknown aid or wrong, as due review names them. Eac
 
 | First try of the episode | Refreshed at | Stability |
 | --- | --- | --- |
-| Clean (right, nothing shown before it, aid tracked), spaced | This first try | × 2.5 |
+| Clean (right, nothing shown before it, aid tracked), spaced, and the episode before it did not start wrong | This first try | × 2.5 |
+| Any right first try right after a wrong one | This first try | One day, however long after: it starts again and is the new anchor |
 | Clean, within `delay_ms` of the previous episode's last answer | This first try | Unchanged |
 | Right in an encounter whose `aid_tracking` is NULL (unknown aid) | This first try | Unchanged, however long after the last |
 | Right after help shown for the quiz in that encounter (aided) | This first try | Back to one day |
@@ -36,13 +37,13 @@ A first try is clean, aided, unknown aid or wrong, as due review names them. Eac
 
 _Table 2. How each kind of first try moves the measure. Only a clean answer after the delay lengthens the half-life; aid withholds growth (unknown aid) or resets it (aided)._
 
-A right answer after a wrong first try in the same encounter, such as one after feedback, moves nothing: the episode's first try decides it. So a quiz answered wrong and then put right has strength 0 until a later encounter's right first try. The first answer a quiz ever has starts it at one day, whatever kind it is.
+A right answer after a wrong first try in the same encounter, such as one after feedback, moves nothing: the episode's first try decides it. So a quiz answered wrong and then put right has strength 0 until a later encounter's right first try. That right first try starts the chain again: its stability is one day, not 2.5 times anything, however long after the wrong one it comes, and it becomes the anchor the next clean, spaced answer grows from. The first answer a quiz ever has starts it at one day, whatever kind it is.
 
 In short: every right first try restarts the clock, only a clean and spaced one grows stability, and a wrong one holds strength at 0.
 
 ## A worked example
 
-A learner answers a quiz cleanly at 10:00 on day 0, then again each time its strength reaches one half. The contract asserts each row of Table 3 at fixed clocks, with `delay_ms` of twenty hours.
+A learner answers a quiz cleanly at 10:00 on day 0 (the contract's clock, 2026-11-21T10:00:00Z), then again each time its strength reaches one half. The contract asserts each row of Table 3 at fixed clocks, with `delay_ms` of twenty hours.
 
 | Day | Strength just before | Stability after |
 | --- | --- | --- |
