@@ -153,7 +153,7 @@ _Listing 5.1. The course store's layout. Only `courses/` is served, and each fol
 
 _Table 5.1. Where installed courses could live. A separate store keeps courses, state and configured mounts apart._
 
-Under compose, the store is a named volume, `course-store`, mounted at `/store`, and the server's environment sets `SCHOOL_COURSE_STORE=/store`. Start refuses (exit 2, naming both paths, as `server/config.ts` does for state) a store inside a configured course, inside `SCHOOL_STATE`, holding `SCHOOL_STATE` or a PGlite record, or the same as a configured course.
+Under compose, the store is a named volume, `course-store`, mounted at `/store`, and the server's environment sets `SCHOOL_COURSE_STORE=/store` from a compose-only `SCHOOL_COMPOSE_COURSE_STORE` (default `/store`, empty for no store), so a host export never reaches the container. Start refuses (exit 2, naming both paths, as `server/config.ts` does for state) a store inside a configured course, inside `SCHOOL_STATE`, holding `SCHOOL_STATE` or a PGlite record, or the same as a configured course, and likewise a store that is, holds or sits inside the framework folder, or that exists but is not a folder.
 
 **Folders are named by install id, not by course name.** The record maps a name to its current install id (§7), so `--rename-course` changes only rows, and an update writes a new folder while the old one keeps serving until the record switches. School marks each installed file read-only. At start it deletes `staging/` and every folder in `courses/` that is not some name's current install, which is the only deletion School does, and only inside the store.
 
