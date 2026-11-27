@@ -98,7 +98,8 @@ describe("the scope of each kind of block (RFC 8 Table 4.1)", () => {
   });
 
   test("a quiz block's scope is itself", () => {
-    expect(explainScope(lesson, "q2")).toEqual({ quizzes: ["q2"], from: "block" });
+    // q1 shares its section with q2, so a scope taken from the section would differ.
+    expect(explainScope(lesson, "q1")).toEqual({ quizzes: ["q1"], from: "block" });
   });
 
   test("an explain block's scope is the quizzes of the section that holds it", () => {

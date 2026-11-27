@@ -2,7 +2,7 @@
 // ports, and returns plain data for the driving adapter to serialise.
 import type { Aid, AidTracking, Block, Contradiction, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingRecord, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, MasteryRollup, Pitch, Recorded, RecordedExposureKind, ReviewNote, ReviewReason, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
 import type { Clock, Grader, LearningRecord } from "./ports.ts";
-import { choosePitch, explainScope, type ExplainScope } from "./explain-pitch.ts";
+import { choosePitch, explainScope, quizIdsIn, type ExplainScope } from "./explain-pitch.ts";
 
 const squash = (s: string) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim().toLowerCase();
 
@@ -67,14 +67,6 @@ export function reviewReason(item: DueItem, tz?: string): string {
       // RFC 5 §4.7: recall the clean answer, and ask; never say what was lost.
       return `On ${day}, you found this one from memory. Some time has passed: how does it feel now?`;
   }
-}
-
-const childrenOf = (b: Block): Block[] => (b.type === "page" || b.type === "section" ? b.children : []);
-/** Every quiz id in a block and everything under it. */
-function quizIdsIn(b: Block, into = new Set<string>()): Set<string> {
-  if (b.type === "quiz") into.add(b.id);
-  for (const c of childrenOf(b)) quizIdsIn(c, into);
-  return into;
 }
 
 /**
@@ -145,7 +137,7 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
     async openLesson(course, page, aidTracking, reviewable = [], tz) {
       if (page.type !== "page") throw new TypeError("a lesson is a page block");
       const now = clock.now();
-      const own = quizIdsIn(page);
+      const own = new Set(quizIdsIn(page));
       const candidates = new Map(reviewable.flatMap((b) => (b.type === "quiz" && !own.has(b.id) ? [[b.id, b] as const] : [])));
       const due = candidates.size > 0
         ? await record.dueReview({ course, blocks: [...candidates.keys()], now, delayMs: REVIEW_DELAY_MS, limit: REVIEW_LIMIT })
@@ -228,8 +220,18 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
       };
     },
     async explainPitch(course, page, courseQuizzes, blockId) {
-      void course; void page; void courseQuizzes; void blockId; void choosePitch; void explainScope;
-      throw new Error("not implemented");
+      const scope = explainScope(page, blockId);
+      if (scope === null) return null;
+      const at = clock.now();
+      const groups = { scope: scope.quizzes, lesson: quizIdsIn(page), course: [...courseQuizzes] };
+      const rows = await record.masteryRollup({ course, groups, now: at, delayMs: REVIEW_DELAY_MS });
+      const row = (key: keyof typeof groups) => {
+        const r = rows.find((x) => x.key === key);
+        if (r === undefined) throw new Error(`the rollup answered no row for group ${key}`);
+        return r;
+      };
+      const mastery = { scope: row("scope"), lesson: row("lesson"), course: row("course") };
+      return { pitch: choosePitch(mastery.scope), at, scope, mastery };
     },
     recordView: (v) => record.recordView(v, clock.now()),
     recordExposure: (e) => record.recordExposure(e, clock.now()),
