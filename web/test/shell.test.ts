@@ -390,6 +390,11 @@ describe("key hints on touch screens (flyingrobots/school#154)", () => {
           {
             name: "aion",
             title: "Orbits",
+            trusted: true,
+            summary: null,
+            author: null,
+            license: null,
+            format: 1,
             lessons: 2,
             reference: 1,
             quizzes: 4,
@@ -425,6 +430,11 @@ describe("key hints on touch screens (flyingrobots/school#154)", () => {
     )
     expect(await visibleHints(p)).toBeGreaterThan(0)
     expect(await p.locator("[data-key-hint]").first().isVisible()).toBe(true)
+    // The course list parsed (CoursesReply), so the sidebar lists the course.
+    await p
+      .locator("[data-nav-region=sidebar]")
+      .getByRole("link", { name: "Orbits" })
+      .waitFor()
     await p.context().close()
   })
 })
