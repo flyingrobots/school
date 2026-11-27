@@ -26,7 +26,8 @@ describe("spdxProblem: nesting depth", () => {
   test("SPDX-DEPTH-2: the limit holds for a WITH inside the nesting, and with operators beside it", () => {
     expect(spdxProblem(nest(LIMIT, WITH))).toBeNull();
     expect(spdxProblem(nest(LIMIT + 1, WITH))).toMatch(/nest/i);
-    expect(spdxProblem(`${nest(LIMIT)} AND (MIT OR ${nest(LIMIT)})`)).toBeNull();
+    expect(spdxProblem(`${nest(LIMIT)} AND (MIT OR ${nest(LIMIT - 1)})`)).toBeNull();
+    expect(spdxProblem(`${nest(LIMIT)} AND (MIT OR ${nest(LIMIT)})`)).toMatch(/nest/i);
     expect(spdxProblem(`MIT OR ${nest(LIMIT + 1)}`)).toMatch(/nest/i);
   });
 
