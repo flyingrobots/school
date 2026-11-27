@@ -639,6 +639,31 @@ Realpath cannot see a bind mount. Compose mounts `SCHOOL_COURSE_DIR` at `/course
 
 This check finds a whole folder mounted twice, not part of one. At a bind mount's root, `..` leads into the container's tree, not the tree the folder came from, so walking ancestors cannot see that a mounted folder is a subfolder of a trusted one. For example, a trusted course's `reference/` bind-mounted at `/library`, with an untrusted course at `/library`, is not detected. Never bind-mount part of a trusted course, a mount or the web folder anywhere an untrusted course lives. A sandboxed document still shows what it says, and a link in it still opens where it points when the learner follows it; safe mode stops it acting as School and loading from other sites, not showing content.
 
+### Fetching a course repository
+
+`fetchCommit` (`server/fetch-commit.ts`, RFC 7 §6) fetches one commit of a course repository into a new bare repository, `<staging>/repo.git`, and answers the commit's full hash. No route calls it yet; the install preview (RFC 7 task 7) will, with a staging folder under the course store. The URL and the server are hostile, so School checks the commit, then the URL, then the host's addresses, then the staging folder, and only then runs git. Table 1 lists the rules in that order, and the first rule broken gives the refusal. Any refusal deletes the staging folder, or never makes it.
+
+| Rule | Refused with |
+| --- | --- |
+| The commit is a full hash (40 or 64 hex digits), or a branch, tag or `HEAD` that is safe to hand to git (no option, range, space, trailing slash or `.lock` name) | `bad-commit` |
+| The URL is 2,048 characters at most | `bad-url` |
+| The URL starts `https://`. `http`, `ssh`, scp-like `host:path`, `git://`, `file://`, `ext::`, a local path or an option is refused before git runs, and git's `protocol.allow=never` allows only `https`, even if something rewrites the URL later | `not-https` |
+| No whitespace, control character or backslash, no query or fragment, and a host | `bad-url` |
+| No user or password (`https://user:token@...`): School stores no secret for a course | `credentials` |
+| Port 443 | `bad-port` |
+| The host is an IP address or a plain host name: letters, digits and hyphens in dot-separated labels of 1 to 63 characters, none starting or ending with a hyphen, 253 characters in all. One trailing dot names the same host and is dropped from the URL, the lookup and the pin alike | `bad-url` |
+| The host resolves, and every address is public. `isPublicAddress` refuses the IANA special-purpose IPv4 ranges (loopback, private, CGNAT `100.64/10`, link-local with the cloud metadata address, multicast, reserved, documentation), and allows IPv6 only in global unicast `2000::/3` outside `2001::/23`, `2001:db8::/32`, `2002::/16` and `3fff::/20`, so IPv4-mapped, NAT64, loopback, unique-local and link-local IPv6 are refused. A literal address is checked as given | `unresolved`, `private-address` |
+| The staging folder is an absolute path, its parent exists, and the folder does not | `bad-staging` |
+| A branch, tag or `HEAD` is resolved once, with `git ls-remote`, to a full hash (an annotated tag to the commit it tags). A name that is both a branch and a tag is refused. A full hash is fetched as given | `no-such-ref`, `ambiguous-ref` |
+| Each git process finishes within 60 seconds. The fetched repository stays within 64 MiB on disk: School measures it every 100 ms while git runs and again when git ends (RFC 7 Table 6.2). Passing either limit kills git's whole process group | `timeout`, `too-large` |
+| git fetches the commit, and the object is a commit, not a tree or blob | `git-failed`, `not-a-commit` |
+
+_Table 1. What `fetchCommit` checks, in the order the code checks it. Every refusal carries a sentence naming what was refused._
+
+git is pinned to the addresses School checked. `http.curloptResolve=HOST:443:ADDRESS[,ADDRESS]` hands them to libcurl, so git never looks the host up again, and a second answer from DNS (rebinding) is never used. Only a plain host name can be pinned this way: libcurl reads a name starting with `-` as "remove this entry", so Table 1 refuses such a name before any lookup. Redirects are not followed (`http.followRedirects=false`), because a redirect could lead to a host or port the pin does not cover. git runs with a fresh environment: no system or global configuration, `HOME` set to the staging folder (so no `.netrc`), `GIT_TERMINAL_PROMPT=0`, no askpass, an empty `credential.helper`, an empty `http.proxy` (which also overrides a proxy in the environment), `core.hooksPath=/dev/null`, `transfer.fsckObjects`, no submodules, and `git init --bare --template=`. The bare repository is made first. Every later git command, `ls-remote` included, names that repository with `--git-dir` and starts in it, and `GIT_CEILING_DIRECTORIES` stops git looking above the staging folder. So a git repository around the course store adds no configuration, such as a header, a URL rewrite or a proxy. The fetch is `git fetch --depth=1 --no-tags --no-recurse-submodules <url> <hash>`, so the repository holds that one commit and nothing is checked out. `refs/heads/course` then points at the commit, so nothing prunes it before it is read. When git exits, School kills its process group, so no helper it started outlives it. A host that will not serve a commit by its hash fails as `git-failed`, with git's own message.
+
+The request names only the URL, the commit and the staging folder. The git program, the network (resolver, address check, ports, CA file) and the limits are a separate second argument, `FetchTesting`. Only tests pass it, to reach a local server, and no route may build it from a client's input.
+
 | Defect | Effect | Issue |
 | --- | --- | --- |
 | Bridge reply shape not validated | A malformed reply throws and stores no failed grading | [#17](https://github.com/flyingrobots/school/issues/17) |

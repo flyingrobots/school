@@ -5,7 +5,7 @@ Start here. Each page has one job; this page routes to all of them.
 | Page | Job |
 | --- | --- |
 | [Glossary](glossary.md) | The vocabulary. The authority on every term. Read it first. |
-| [Architecture](topics/architecture/README.md) | Reference: how School is built today, on the default branch; with its [test plan](topics/architecture/test-plan.md) for the bridge's output. |
+| [Architecture](topics/architecture/README.md) | Reference: how School is built today, on the default branch; with its [test plan](topics/architecture/test-plan.md) for the bridge's output, the course store and fetching a commit. |
 | [App shell](topics/app-shell/README.md) | Reference: the web app's routes, keys, theme switch and layout. |
 | [Home page](topics/home-page/README.md) | Reference: what Home shows: a question from a course still ahead, the lessons still ahead with their pictures, and what happened since the learner was last here; and the page's states. |
 | [Settings page](topics/settings-page/README.md) | Reference: what `/settings` shows and does, state by state. |
