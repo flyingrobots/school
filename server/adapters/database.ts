@@ -343,7 +343,9 @@ export async function migrateRecord(url: string, appPassword: string, onApplied?
     throw new Error("SCHOOL_APP_PASSWORD must be at least 20 letters and digits (it goes into a URL as it is); " +
       "generate one, e.g. `openssl rand -base64 32 | tr -d '/+='`");
   }
-  const pool = new Bun.SQL(url);
+  // One connection: the job runs on it alone. Bun.SQL's default pool opens ten and keeps them for
+  // the whole job, so a few jobs at once used up a server's max_connections (flyingrobots/school#356).
+  const pool = new Bun.SQL(url, { max: 1 });
   try {
     const conn = await reservedConnection(pool);
     try {
