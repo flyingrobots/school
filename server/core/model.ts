@@ -369,6 +369,14 @@ export const MasteryRollup = z.object({
 });
 export type MasteryRollup = z.infer<typeof MasteryRollup>;
 
+/**
+ * How an explanation is pitched (RFC 8 Table 4.2), from the weakest state its scope holds to the
+ * strongest: `deeper` when any quiz is still settling, `first` when any is not started yet,
+ * `refresh` when any is ready for another look, `onward` when every one is holding.
+ */
+export const Pitch = z.enum(["deeper", "first", "refresh", "onward"]);
+export type Pitch = z.infer<typeof Pitch>;
+
 // ---- Installed courses (RFC 7 §7; flyingrobots/school#232) -------------------------------------
 
 /**

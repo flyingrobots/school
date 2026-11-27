@@ -1,7 +1,8 @@
 // School's use cases (RFC 3, §4). Each takes values already parsed at the edge, talks only to
 // ports, and returns plain data for the driving adapter to serialise.
-import type { Aid, AidTracking, Block, Contradiction, CourseProgress, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureKind, ExposureResult, Grading, GradingRecord, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, MasteryRollup, Recorded, RecordedExposureKind, ReviewNote, ReviewReason, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
+import type { Aid, AidTracking, Block, Contradiction, CourseProgress, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureKind, ExposureResult, Grading, GradingRecord, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, MasteryRollup, Pitch, Recorded, RecordedExposureKind, ReviewNote, ReviewReason, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
 import type { Clock, Grader, LearningRecord } from "./ports.ts";
+import { choosePitch, explainScope, quizIdsIn, type ExplainScope } from "./explain-pitch.ts";
 
 const squash = (s: string) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim().toLowerCase();
 
@@ -68,13 +69,14 @@ export function reviewReason(item: DueItem, tz?: string): string {
   }
 }
 
-const childrenOf = (b: Block): Block[] => (b.type === "page" || b.type === "section" ? b.children : []);
-/** Every quiz id in a block and everything under it. */
-function quizIdsIn(b: Block, into = new Set<string>()): Set<string> {
-  if (b.type === "quiz") into.add(b.id);
-  for (const c of childrenOf(b)) quizIdsIn(c, into);
-  return into;
-}
+/**
+ * What an Explain more request on one block is pitched to (RFC 8 §4.1, §4.2): the pitch, the block's
+ * scope, and the rollup of the scope, the lesson and the course at `at`, the clock's now when asked.
+ */
+export type ExplainPitch = {
+  pitch: Pitch; at: string; scope: ExplainScope;
+  mastery: { scope: MasteryRollup; lesson: MasteryRollup; course: MasteryRollup };
+};
 
 export interface School {
   /**
@@ -131,6 +133,13 @@ export interface School {
   installedNames(): Promise<string[]>;
   /** What the record holds under a course name, served or not (RFC 7 §5.2). */
   courseProgress(course: string): Promise<CourseProgress>;
+  /**
+   * The pitch for more about the block `blockId` of `page`, the lesson as served in the encounter's
+   * snapshot (RFC 8 §4.1, §4.2), from one rollup of three groups at the clock's now: the block's
+   * scope, the lesson's quizzes, and `courseQuizzes`, every quiz in the course as served. Reads
+   * only; null, asking the record nothing, when the page has no such block.
+   */
+  explainPitch(course: string, page: Block, courseQuizzes: readonly string[], blockId: string): Promise<ExplainPitch | null>;
 }
 
 /** How many of a group's quizzes are in each state of RFC 5 Table 4.5; they sum to its quizzes. */
@@ -143,7 +152,7 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
     async openLesson(course, page, aidTracking, reviewable = [], tz) {
       if (page.type !== "page") throw new TypeError("a lesson is a page block");
       const now = clock.now();
-      const own = quizIdsIn(page);
+      const own = new Set(quizIdsIn(page));
       const candidates = new Map(reviewable.flatMap((b) => (b.type === "quiz" && !own.has(b.id) ? [[b.id, b] as const] : [])));
       const due = candidates.size > 0
         ? await record.dueReview({ course, blocks: [...candidates.keys()], now, delayMs: REVIEW_DELAY_MS, limit: REVIEW_LIMIT })
@@ -227,6 +236,20 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
           return { course: c.name, studied: studied.filter((d) => d.course === c.name).map((d) => d.day), due, quizzes, mastery: { notStarted, settling, holding, faded } };
         })),
       };
+    },
+    async explainPitch(course, page, courseQuizzes, blockId) {
+      const scope = explainScope(page, blockId);
+      if (scope === null) return null;
+      const at = clock.now();
+      const groups = { scope: scope.quizzes, lesson: quizIdsIn(page), course: [...courseQuizzes] };
+      const rows = await record.masteryRollup({ course, groups, now: at, delayMs: REVIEW_DELAY_MS });
+      const row = (key: keyof typeof groups) => {
+        const r = rows.find((x) => x.key === key);
+        if (r === undefined) throw new Error(`the rollup answered no row for group ${key}`);
+        return r;
+      };
+      const mastery = { scope: row("scope"), lesson: row("lesson"), course: row("course") };
+      return { pitch: choosePitch(mastery.scope), at, scope, mastery };
     },
     masteryNow: (course, groups) =>
       record.masteryRollup({ course, groups: Object.fromEntries(Object.entries(groups).map(([k, b]) => [k, [...b]])), now: clock.now(), delayMs: REVIEW_DELAY_MS }),
