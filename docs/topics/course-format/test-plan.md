@@ -99,6 +99,9 @@ CHECK-1 to CHECK-10 run the program as a process, and every line it prints is va
 | SKILL-2 | Example served | `school check` on `example/` exits 0 with a title, at least two lessons, and a manifest line with a summary, an author, a license and format 1 | implemented | `SKILL-2: its worked example is a course School would serve` |
 | SKILL-3 | Example covers the format | The example shows all nine block types and a `ref` | implemented | `SKILL-3: the example shows every block type and a ref` |
 | SKILL-4 | Example's voice | Every explain prompt in the example is a question | implemented | `SKILL-4: every explain prompt in the example is a question` |
+| SKILL-5 | Found in a clone | `.claude/skills/school` is a symlink to the skill | implemented | `SKILL-5: .claude/skills/school links to it, so agents in a clone find it` |
+| SKILL-6 | When School runs it (RFC 9 §5.3, flyingrobots/school#257) | A "When School runs you" section names `course/` and `guide/`, says there is no shell, and that School runs `school check` and sends back the first problem | implemented | `SKILL-6: a section for when School runs it says the course is under course/, there is no shell, and School runs the check and sends back the first problem` |
+| SKILL-7 | Terminal use kept | Step 9 still says to run `./school check <course-folder>` | implemented | `SKILL-7: step 9 still tells an agent in a terminal to run ./school check` |
 
 ## Untrusted courses (flyingrobots/school#210)
 

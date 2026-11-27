@@ -20,6 +20,7 @@ proposed; for that, read [RFC 2](../../rfc/0002-lessons-written-for-each-learner
 | --- | --- |
 | [The three parts](#the-three-parts) | Framework, course, learner state, and the trust between them |
 | [The server](#the-server) | Routes, the write guard, file serving |
+| [The pinned skill](#the-pinned-skill) | The `school` skill an authoring agent is given, its manifest digest, and when authoring is off |
 | [The hexagon](#the-hexagon) | The core, its ports and the adapters that implement them |
 | [The learning record](#the-learning-record) | Tables, rules, encounters, what the rules do and do not guarantee |
 | [The bridge](#the-bridge) | How explanations are graded |
@@ -93,6 +94,7 @@ JSON API.
 | POST | `/api/exposure` | Records help shown for a block: `{ exposureId, encounterId, blockId, kind }`, kind `hint`, `model-answer`, `feedback` or `reference`. A stored or resent id answers 200 (`stored`, `duplicate`); the id naming something else is a conflict (409); no such encounter, an untracked one, or a block that is not a quiz or explain block in its snapshot is rejected (400) |
 | GET | `/api/aid/:submissionId` | One answer's or explanation's derived aid: `{ submissionId, aid }`, aid `aided`, `no-recorded-aid` or `unknown`. No such submission is 404; an id that is not a UUID is refused (400) |
 | GET | `/api/settings/status` | Whether the bridge answers |
+| GET | `/api/settings/authoring` | Whether authoring is on: `{ authoring: "on", skill: { digest, files } }`, the [pinned skill](#the-pinned-skill)'s manifest digest and file count, or `{ authoring: "off", reason }`. Nothing authors a course yet |
 | GET, POST | `/api/settings/bridge` | The bridge address and token; the token is never returned except once when generated. A new address clears a saved token, and is refused (409) while the token comes from the environment |
 | GET, POST | `/api/settings/agents` | The bridge's agents as its file declares them; a POST only reorders them and switches them on or off |
 | POST | `/api/settings/agents/test` | Runs one declared agent for real |
@@ -122,6 +124,27 @@ its file already declares; commands are written by editing that file on the host
 
 In short: the server is thin. It answers only to its own names, serves files safely, guards
 writes against ordinary cross-site requests, and hands learning-record work to Postgres functions.
+
+## The pinned skill
+
+An authoring agent will be given the `school` skill from this checkout, `.agents/skills/school/`, with the two references it links, `docs/topics/course-format/` and `docs/topics/voice/`, never a copy installed on the host, so the skill that writes a draft and the check that judges it are one version (RFC 9 §5.3, flyingrobots/school#257). The image is built from `server/` alone, so compose mounts the three folders read-only at `/framework/skills/school`, `/framework/docs/course-format` and `/framework/docs/voice`. `SCHOOL_SKILL` and `SCHOOL_SKILL_DOCS` name them; outside compose they default to the checkout's own. Nothing authors a course yet: this is the first step of RFC 9.
+
+At start the server hashes them into one **manifest digest** (`server/skill.ts`), laid out as the agent's `guide/` folder will be: the skill's files at its root and each reference under `docs/<name>/`.
+
+```text
+<sha256 of SKILL.md's bytes> SKILL.md
+<sha256 of README.md's bytes> docs/course-format/README.md
+...
+<sha256 of glossary.html's bytes> example/reference/glossary.html
+```
+
+_Listing 1. The manifest. One line per regular file: the file's SHA-256 in lowercase hex, one space, its path under `guide/` with `/` between parts, and a line feed. Lines are sorted by path as UTF-8 bytes, so `Z` sorts before `a`. The digest is the SHA-256 of the whole text, in lowercase hex._
+
+The server logs `school: authoring on: the school skill's manifest digest is <digest> (<n> files)` and reports the same at `GET /api/settings/authoring`. The digest is computed, not stored: the record will carry it with each authoring request when those exist (RFC 9 §5.5).
+
+Authoring is **off**, and School still serves, when `SCHOOL_SKILL` is empty, the skill folder is missing or is not a folder, it has no `SKILL.md`, a reference folder is missing, or any folder holds a symlink, a special file or a name with a line break. The server then logs `school: authoring off: <reason>`, and the API gives the same reason, naming the path and the checkout folder to mount there.
+
+In short: one skill, from the checkout, mounted read-only and hashed at start; without it, authoring says it is off and why.
 
 ## The hexagon
 
@@ -422,7 +445,7 @@ lesson's latest encounter, its aid tracking is unchanged, and its **opening, lat
 latest explanation** is within six hours. A grading is not the learner's activity and does not
 count.
 
-**Listing 1. The resume rule**
+**Listing 2. The resume rule**
 
 ```sql
   SELECT l.id INTO v_id
@@ -435,7 +458,7 @@ count.
                  (SELECT max(x.at) FROM school.explanations x WHERE x.encounter_id = l.id)) >= p_at - interval '6 hours';
 ```
 
-*Listing 1. The resume rule, inside `school.open_encounter`. Real source code from
+*Listing 2. The resume rule, inside `school.open_encounter`. Real source code from
 flyingrobots/school, `<server/db/migrations/0001_init.sql#L213-L220@eb70a31>`.*
 
 There is no SQLite record. Its code was deleted with
@@ -591,6 +614,8 @@ This check finds a whole folder mounted twice, not part of one. At a bind mount'
 | `SCHOOL_COURSE` | Server | One unnamed course, named after its folder | none; `/course` under compose, set there by `SCHOOL_COMPOSE_COURSE`, which may be empty |
 | `SCHOOL_STATE` | Server | Learner state; must not be inside a course | `state/` |
 | `SCHOOL_COURSE_STORE` | Server | The course store (RFC 7 §5.1): the folder installed courses will live in, and nothing else. Nothing installs into it yet. Empty means no store, so installing is off. Refused at start (exit 2, naming both paths) when it is, holds or sits inside a course, `SCHOOL_STATE`, `DB_PATH`, a PGlite record, a mount, `SCHOOL_WEB` or the framework folder (`SCHOOL_ROOT`, which holds the server source), and when the path exists but is not a folder, compared on real paths and by device and inode, as for [untrusted courses](#trust-and-known-defects) | none; `/store` under compose, the named volume `course-store`; compose reads it from `SCHOOL_COMPOSE_COURSE_STORE`, so a host export of `SCHOOL_COURSE_STORE` never reaches the container |
+| `SCHOOL_SKILL` | Server | The `school` skill an authoring agent is given ([the pinned skill](#the-pinned-skill)). Empty means none, so authoring is off. Never a refusal to start: a missing or unfit folder turns authoring off with the reason | `<SCHOOL_ROOT>/.agents/skills/school`; `/framework/skills/school` under compose, the checkout's skill mounted read-only; compose reads it from `SCHOOL_COMPOSE_SKILL`, so a host export of `SCHOOL_SKILL` never reaches the container |
+| `SCHOOL_SKILL_DOCS` | Server | The folder holding the references the skill links, `course-format/` and `voice/` | `<SCHOOL_ROOT>/docs/topics`; `/framework/docs` under compose, set there with no variable |
 | `SCHOOL_DATABASE_URL` | Server | The record: `postgres://school_app:password@host:port/db` (`Bun.SQL`; `school_app`'s own login, refused if it fails [the login check](#the-login-check)) or `pglite:<dir>` (PGlite on disk, not inside a course) | none: required |
 | `SCHOOL_DATABASE_PASSWORD`, `SCHOOL_DATABASE_PASSWORD_FILE` | Server | `school_app`'s password, for a `SCHOOL_DATABASE_URL` that names none; the file wins. Compose gives the file | none |
 | `SCHOOL_MIGRATE_URL` | Migrate job | The owner's URL: a role that can create roles, in practice the superuser | none: required |
