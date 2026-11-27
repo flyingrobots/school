@@ -2,7 +2,7 @@
 
 Reference: how well School holds each quiz to be known at a given time, as a stability and a strength (RFC 5 §4.1, §4.2; flyingrobots/school#217), and how a lesson's or a course's quizzes roll up into four states (RFC 5 §4.5; flyingrobots/school#218).
 
-A quiz answered cleanly last month is not held as surely as one answered cleanly this morning, and each clean answer given after a delay makes it last longer. `school.mastery` measures that for each quiz, from the append-only record, every time it is asked; nothing it returns is stored. It exists as the database function and the `LearningRecord.mastery` port method, and `school.mastery_rollup` counts it per lesson or per course ([Rolling up to lessons and courses](#rolling-up-to-lessons-and-courses)); no page or API reads either yet.
+A quiz answered cleanly last month is not held as surely as one answered cleanly this morning, and each clean answer given after a delay makes it last longer. `school.mastery` measures that for each quiz, from the append-only record, every time it is asked; nothing it returns is stored. It exists as the database function and the `LearningRecord.mastery` port method, and `school.mastery_rollup` counts it per lesson or per course ([Rolling up to lessons and courses](#rolling-up-to-lessons-and-courses)). Due review reads it to bring back a settled quiz whose strength is below one half ([faded quizzes](../due-review/README.md#faded-quizzes), migration 0014); no page or API reads either function directly yet.
 
 ## The measure
 

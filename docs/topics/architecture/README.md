@@ -234,7 +234,8 @@ contract suite holds every driver under it to the same behaviour.
 The record is Postgres, built by the numbered migrations in `server/db/migrations/` (`0001_init.sql`,
 `0002_exposures.sql`, `0003_last_studied.sql`, `0004_decision_notes.sql`, `0005_read_committed.sql`,
 `0006_due_review.sql`, `0007_since_last_here.sql`, `0008_study_days.sql`, `0009_time_zone_choices.sql`,
-`0010_course_installs.sql`, `0011_mastery.sql`, `0012_ai_help.sql`, `0013_mastery_rollup.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
+`0010_course_installs.sql`, `0011_mastery.sql`, `0012_ai_help.sql`, `0013_mastery_rollup.sql`,
+`0014_faded_review.sql`) and reached only through the functions they define[^rfc3]. Its rules are SQL so
 that server code does not have to be trusted to keep them[^adr9]. This section states what those
 rules guarantee, and what they do not.
 
@@ -388,6 +389,10 @@ Migration 0013 (RFC 5 §4.5, flyingrobots/school#218) adds
 `school.mastery_rollup(course, groups, at, delay_ms)`, the port's `masteryRollup`: per group of quiz
 blocks (a lesson, or a whole course), how many are not started, settling, holding and faded, and
 their mean strength, from `school.mastery`. It is in [mastery](../mastery/README.md#rolling-up-to-lessons-and-courses).
+Migration 0014 (RFC 5 §4.6, flyingrobots/school#219) replaces `due_review`, with its signature and
+its three rules unchanged, to add `due-review/faded`: a settled quiz whose strength from
+`school.mastery` is below one half, ranked after the weak rules and filling only what they leave of
+the limit ([due review](../due-review/README.md#faded-quizzes)).
 `school.latest_feedback()` is the succeeded grading with the highest `seq` and where its explanation
 was written; the port's `latestFeedback`. A failed attempt is never feedback.
 

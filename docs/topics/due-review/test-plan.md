@@ -24,6 +24,30 @@ counterpart.
 | DR-11 | Privileges | `school_app` may execute `due_review` and `open_lesson_encounter`, and may not read `encounters` | implemented | `server/db/due-review.test.ts`: `school_app reaches the selector and the review open only as functions, never the tables behind them` |
 | DR-12 | Flagged items excluded | A flagged item's answers drive no review (RFC 2 §2) | planned: not applicable until flags exist, because the record has no flag rows before generated quizzes (RFC 2 step 3) | none |
 
+## Faded quizzes
+
+RFC 5 §4.6 and §4.7 (flyingrobots/school#219). The oracle is RFC 5 Table 4.6 and the worked
+example of §4.3: a clean answer's stability is one day and grows by 2.5 with each clean answer a
+delay later, so strength is exactly one half one stability after the refresh, and below it a
+millisecond later. Contract cases are titled `<adapter>: due review: faded...`, on both drivers.
+
+DR-5, DR-6 and DR-H1 used to ask about a clean quiz more than one stability after its answer. With
+this rule, that quiz comes back, so their queries now sit inside one stability. Their expected
+outputs and what each tests are unchanged ([RFC 5 Table 4.6a](../../rfc/0005-mastery-that-fades.md#46-due-review-one-added-rule)).
+
+| ID | Case | Oracle | Status | Test |
+| --- | --- | --- | --- | --- |
+| DR-F-G1 | Golden: RFC 5 §4.3 | A quiz answered cleanly is not due one day on, at exactly one half; 1 ms later it is `due-review/faded`, with `answeredAt` and `lastSeen` its answer, `corrected: false`, `shown: []` and `school.mastery`'s evidence. Answered cleanly then, it returns 2.5 days on, citing both first tries | implemented | `faded, golden (RFC 5 §4.3): a quiz answered cleanly comes back once a whole stability has passed, citing mastery's evidence` |
+| DR-F-1 | Within one stability | A settled quiz at strength 0.5^0.8, past the delay, does not come back | implemented | `faded: a settled quiz still within one stability of its refresh does not come back, though the delay has passed` |
+| DR-F-2 | Ranking and the limit (edge) | Wrong, aided, unknown aid, then faded, lowest strength first, then by `seq`; limits 10, 5, 4, 3 (already filled by the weak rules), 2 and 0 | implemented | `faded: items rank after the three weak rules, lowest strength first, then by seq, and fill only what the weak ones leave of the limit` |
+| DR-F-3 | Weak and faded (edge) | An aided and an unknown-aid quiz at strength 0.5^10 each come back once, under their weak rule | implemented | `faded: a quiz both weak and below one half in strength comes back once, under its weak rule` |
+| DR-F-4 | Seen within the delay | A faded quiz answered again in its own episode waits `delay_ms` from that answer, and then cites the first try that refreshed it | implemented | `faded: a faded quiz answered again within the delay, after its first try, waits for the delay from that answer` |
+| DR-F-5 | The three rules did not move (known failure mode, differential) | Seeded (`SCHOOL_TEST_SEED`), on PGlite: on random histories, at random times and limits, the weak items are exactly 0012's `due_review`'s, at the head of the list; the faded items are, by an independent reading of `school.mastery`, every eligible quiz in order, cut to the room left; with no faded quiz the two functions agree exactly. The seed reaches each kind of case | implemented | `server/db/faded-review.test.ts`: `on random histories the three weak rules return exactly what 0012's due_review does, and faded items only fill what they leave` |
+| DR-F-6 | The function kept its shape | After 0014, `due_review` has 0012's signature, result, volatility, `SECURITY DEFINER`, `search_path` and grant | implemented | `server/db/faded-review.test.ts`: `0014 replaces due_review keeping its signature, result, volatility, security, search_path and grant` |
+| DR-F-7 | A year of history (stress) | DR-9, unchanged: the weak rules fill the limit, so `school.mastery` is not read | implemented | DR-9 |
+| DR-F-8 | A year of history, faded read in full (stress) | A year of synthetic history at limit 10,000 reads `school.mastery` for every settled quiz, returns fewer than the limit including `due-review/faded` items, and is read within 1000 ms | implemented | `server/db/due-review.test.ts`: `postgres (PGlite): due review: a year of history at limit 10000 reads mastery for every quiz within 1000 ms`, and its `postgres (Bun.SQL)` counterpart. Bound is the best of three calls after a warm-up, as in DR-9 |
+| DR-F-C1 | The reason | RFC 5 §4.7's sentence; no score and no measure; the voice test refuses "forgot" and "attempt" too | implemented | `server/core/school.test.ts`: `due review on opening a lesson > a faded quiz's reason recalls the day it was found from memory and asks how it feels now`, and `... > each reason says in words why the item came back, ...` |
+
 ## Placing the items
 
 | ID | Case | Oracle | Status | Test |

@@ -62,6 +62,9 @@ export function reviewReason(item: DueItem, tz?: string): string {
       return `On ${day}, ${help} helped you find this one. ${back}`;
     case "due-review/unknown-aid":
       return `On ${day}, you found this one while School wasn't noting the help it showed. ${back}`;
+    case "due-review/faded":
+      // RFC 5 §4.7: recall the clean answer, and ask; never say what was lost.
+      return `On ${day}, you found this one from memory. Some time has passed: how does it feel now?`;
   }
 }
 

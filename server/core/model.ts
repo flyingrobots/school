@@ -263,9 +263,10 @@ export type DecisionNoteResult = z.infer<typeof DecisionNoteResult>;
 
 /**
  * Why a block came back: its latest weak first try was wrong; right, but after help shown for it in
- * that encounter; or right while School was not recording help, so its aid is unknown.
+ * that encounter; or right while School was not recording help, so its aid is unknown. Or, ranked
+ * after those three, it had settled and its mastery has faded below one half (RFC 5 §4.6).
  */
-export const ReviewRule = z.enum(["due-review/wrong-first-try", "due-review/aided-first-try", "due-review/unknown-aid"]);
+export const ReviewRule = z.enum(["due-review/wrong-first-try", "due-review/aided-first-try", "due-review/unknown-aid", "due-review/faded"]);
 export type ReviewRule = z.infer<typeof ReviewRule>;
 
 /**
