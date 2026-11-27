@@ -66,6 +66,30 @@ describe.skipIf(URL_ === undefined)("Bun.SQL on a real Postgres (SCHOOL_TEST_POS
     expect(FUNCTION_CALL.test("SELECT * FROM school.record_view($1, $2, $3)")).toBe(true);
   }, SLOW);
 
+  // RFC 7 §7 (flyingrobots/school#232): the install tables are record tables, on a real server too.
+  test("the install tables refuse school_app's direct writes, and the owner's UPDATE, DELETE and TRUNCATE", async () => {
+    const { url, sql: record } = await fresh();
+    const r = postgresRecord(record);
+    const id = crypto.randomUUID();
+    const at = "2026-11-21T10:00:00.000Z";
+    expect(await r.installCourse({ id, course: "bells", source: "git", url: "https://example.com/bells.git", bundleSha256: null,
+      commit: "a".repeat(40), contentSha256: "c".repeat(64), title: "Bells", format: 1 }, at)).toEqual({ status: "installed" });
+    expect(await r.chooseCourseTrust(id, true, at)).toEqual({ status: "stored" });
+    expect(await r.removeInstalledCourse("bells", at)).toEqual({ status: "removed" });
+    const pool = track(new Bun.SQL(url));
+    const app = bunSql(pool, APP);
+    const owner = bunSql(pool, "school_owner");
+    for (const t of ["course_installs", "course_removals", "course_trust_choices"]) {
+      for (const text of [`INSERT INTO school.${t} DEFAULT VALUES`, `UPDATE school.${t} SET at = at`, `DELETE FROM school.${t}`, `SELECT * FROM school.${t}`]) {
+        await expect(app.query(text, []), `${APP}: ${text}`).rejects.toThrow(`permission denied for table ${t}`);
+      }
+      for (const text of [`UPDATE school.${t} SET at = at`, `DELETE FROM school.${t}`, `TRUNCATE school.${t} CASCADE`]) {
+        await expect(owner.query(text, []), `school_owner: ${text}`).rejects.toThrow(`${t} are append-only`);
+      }
+      expect(await owner.query<{ n: number }>(`SELECT count(*)::int AS n FROM school.${t}`, [])).toEqual([{ n: 1 }]);
+    }
+  }, SLOW);
+
   test("a statement that fails rolls back its own transaction and leaves the pool usable", async () => {
     const { url } = await fresh();
     const pool = track(new Bun.SQL(url));
