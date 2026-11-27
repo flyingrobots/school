@@ -1,7 +1,8 @@
 // School's use cases (RFC 3, §4). Each takes values already parsed at the edge, talks only to
 // ports, and returns plain data for the driving adapter to serialise.
-import type { Aid, AidTracking, Block, Contradiction, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingRecord, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, Recorded, RecordedExposureKind, ReviewNote, ReviewReason, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
+import type { Aid, AidTracking, Block, Contradiction, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingRecord, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, MasteryRollup, Pitch, Recorded, RecordedExposureKind, ReviewNote, ReviewReason, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
 import type { Clock, Grader, LearningRecord } from "./ports.ts";
+import { choosePitch, explainScope, type ExplainScope } from "./explain-pitch.ts";
 
 const squash = (s: string) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim().toLowerCase();
 
@@ -76,6 +77,15 @@ function quizIdsIn(b: Block, into = new Set<string>()): Set<string> {
   return into;
 }
 
+/**
+ * What an Explain more request on one block is pitched to (RFC 8 §4.1, §4.2): the pitch, the block's
+ * scope, and the rollup of the scope, the lesson and the course at `at`, the clock's now when asked.
+ */
+export type ExplainPitch = {
+  pitch: Pitch; at: string; scope: ExplainScope;
+  mastery: { scope: MasteryRollup; lesson: MasteryRollup; course: MasteryRollup };
+};
+
 export interface School {
   /**
    * Open or resume the learner's encounter with this page, with what is already answered in it.
@@ -119,6 +129,13 @@ export interface School {
    */
   activity(courses: readonly { name: string; blocks: readonly string[] }[], days: number, tz: string):
     Promise<{ today: string; courses: { course: string; studied: string[]; due: { day: string; items: number }[] }[] }>;
+  /**
+   * The pitch for more about the block `blockId` of `page`, the lesson as served in the encounter's
+   * snapshot (RFC 8 §4.1, §4.2), from one rollup of three groups at the clock's now: the block's
+   * scope, the lesson's quizzes, and `courseQuizzes`, every quiz in the course as served. Reads
+   * only; null, asking the record nothing, when the page has no such block.
+   */
+  explainPitch(course: string, page: Block, courseQuizzes: readonly string[], blockId: string): Promise<ExplainPitch | null>;
 }
 
 export function createSchool(ports: { record: LearningRecord; grader: Grader; clock: Clock }): School {
@@ -209,6 +226,10 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
           return { course: c.name, studied: studied.filter((d) => d.course === c.name).map((d) => d.day), due };
         })),
       };
+    },
+    async explainPitch(course, page, courseQuizzes, blockId) {
+      void course; void page; void courseQuizzes; void blockId; void choosePitch; void explainScope;
+      throw new Error("not implemented");
     },
     recordView: (v) => record.recordView(v, clock.now()),
     recordExposure: (e) => record.recordExposure(e, clock.now()),
