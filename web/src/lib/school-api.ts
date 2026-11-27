@@ -456,12 +456,14 @@ export const CourseReply = z.union([
   z.object({
     name: z.string(),
     title: z.string(),
+    trusted: z.boolean(),
     reference: z.array(z.string()),
     lessons: CourseLessons,
   }),
   z.object({
     name: z.string(),
     title: z.string(),
+    trusted: z.boolean(),
     reference: z.array(z.string()),
     lessons: z.null(),
     lessonsError: z.string(),
@@ -471,6 +473,8 @@ export const CourseReply = z.union([
 export type Course = {
   name: string
   title: string
+  /** False for a course School serves sandboxed: its pages can't run scripts (flyingrobots/school#210). */
+  trusted: boolean
   reference: string[]
   lessons: z.infer<typeof CourseLessons>
 }
@@ -480,7 +484,13 @@ export type CourseLoad =
   | { kind: "ready"; course: Course }
   | { kind: "missing" }
   // The course's lessons cannot be read, with the server's reason; its reference documents can be.
-  | { kind: "unreadable"; title: string; reason: string; reference: string[] }
+  | {
+      kind: "unreadable"
+      title: string
+      trusted: boolean
+      reason: string
+      reference: string[]
+    }
   // No usable answer at all: the server is unreachable or answered something else.
   | { kind: "unloaded" }
 
@@ -502,6 +512,7 @@ export async function loadCourse(
       return {
         kind: "unreadable",
         title: c.title,
+        trusted: c.trusted,
         reason: c.lessonsError,
         reference: c.reference,
       }
@@ -510,6 +521,7 @@ export async function loadCourse(
       course: {
         name: c.name,
         title: c.title,
+        trusted: c.trusted,
         reference: c.reference,
         lessons: c.lessons,
       },

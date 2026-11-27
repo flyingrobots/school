@@ -57,17 +57,17 @@ async function answer(course: string, lesson: string, blockId: string, choiceId:
 }
 
 const orbits = {
-  course: "astro", courseTitle: "Astronomy", started: false,
+  course: "astro", courseTitle: "Astronomy", trusted: true, started: false,
   lesson: { id: "orbits", title: "Orbits", subtitle: "About Orbits", position: 1, of: 3 },
   question: ORBITS.question, teaser: ORBITS.teaser, figure: ORBITS.figure,
 };
 const tides = {
-  course: "astro", courseTitle: "Astronomy", started: false,
+  course: "astro", courseTitle: "Astronomy", trusted: true, started: false,
   lesson: { id: "tides", title: "Tides", subtitle: "About Tides", position: 2, of: 3 },
   question: "Tides", teaser: "About Tides", figure: null,
 };
 const hurry = {
-  course: "bells", courseTitle: "bells", started: false,
+  course: "bells", courseTitle: "bells", trusted: true, started: false,
   lesson: { id: "hurry", title: "Bells that can't hurry", subtitle: "About Bells that can't hurry", position: 1, of: 1 },
   question: "Bells that can't hurry", teaser: "About Bells that can't hurry", figure: null,
 };
