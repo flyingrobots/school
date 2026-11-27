@@ -70,7 +70,7 @@ Fuzz and stress cases are not applicable: the inputs are four short fields with 
 
 ## `school check` (flyingrobots/school#197)
 
-CHECK-1 to CHECK-10 run the program as a process, and every line it prints is validated against its schema in `server/schemas/check/`. CHECK-11 to CHECK-16 call `checkCourse(folder)` (flyingrobots/school#231), the function the program prints from.
+CHECK-1 to CHECK-10 and CHECK-17 run the program as a process, and every line it prints is validated against its schema in `server/schemas/check/`. CHECK-11 to CHECK-16 call `checkCourse(folder)` (flyingrobots/school#231), the function the program prints from.
 
 | ID | Case | Oracle | Status | Test |
 | --- | --- | --- | --- | --- |
@@ -90,6 +90,7 @@ CHECK-1 to CHECK-10 run the program as a process, and every line it prints is va
 | CHECK-14 | Across files | An unknown ref returns `ok: false` with `file` null | implemented | `CHECK-14: a refusal that spans files names no file` |
 | CHECK-15 | Missing folder | A folder that does not exist returns `ok: false`, `file` null, `<folder> is not a folder` | implemented | `CHECK-15: a folder that does not exist is refused, naming no file` |
 | CHECK-16 | No drift | On the example, the program's `done` line carries `checkCourse`'s result without `manifest`, and its `manifest` line carries `manifest` | implemented | `CHECK-16: school check prints checkCourse's result: done is it without the manifest, manifest is the manifest` |
+| CHECK-17 | Partial manifest in prose | `--human` prints exactly the manifest lines a course declares when it declares only some keys (a license, a summary, an author, a format, a pair), with no `null` and no empty line | implemented | `CHECK-17: --human prints exactly the manifest lines a course with %s declares, and no null` |
 
 ## The `school` skill (flyingrobots/school#193)
 

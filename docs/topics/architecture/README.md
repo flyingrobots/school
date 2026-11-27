@@ -2,9 +2,9 @@
 title: "School's architecture"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-22
-updated: 2026-11-23
-version: 1.4.0
-status: "Living reference. Describes flyingrobots/school at commit a959505, with the record on Postgres since flyingrobots/school#47 and SQLite deleted by flyingrobots/school#49; proposals are in RFCs 2 and 3."
+updated: 2026-11-26
+version: 1.5.1
+status: "Living reference. Describes flyingrobots/school as read at commit a959505, plus the bridge's `POST /ask` (flyingrobots/school#226), with the record on Postgres since flyingrobots/school#47 and SQLite deleted by flyingrobots/school#49; proposals are in RFCs 2 and 3."
 ---
 
 # School's architecture
@@ -12,7 +12,7 @@ status: "Living reference. Describes flyingrobots/school at commit a959505, with
 This page is a reference for how School is built **today**. It describes nothing that is only
 proposed; for that, read [RFC 2](../../rfc/0002-lessons-written-for-each-learner.md) and
 [RFC 3](../../rfc/0003-postgres-functions-and-generated-types.md). Terms are defined in the
-[glossary](../../glossary.md). Every claim was read from the code at commit `a959505`.
+[glossary](../../glossary.md). Every claim was read from the code at commit `a959505`, except the bridge's `POST /ask` paragraph, which was read from `bridge/ask.ts` on the branch of flyingrobots/school#226.
 
 ## Contents
 
@@ -562,6 +562,23 @@ throws before the failure is stored ([flyingrobots/school#17](https://github.com
 | Local or hosted | Agents are launched locally; whether inference is local depends on the agent. A hosted CLI sends the prompt and the explanation over the network. |
 | Grading | Fidelity, completeness, accessibility, each `meets`, `partly` or `misses`, or insufficient evidence; quoted contradictions are checked to exist in the source, not to support the criticism |
 
+The bridge also answers a learner's question about a passage, for the server route RFC 6 plans
+(flyingrobots/school#227): `POST /ask` takes `{ prompt, deadline_ms }` and answers
+`application/x-ndjson`, one `{"type":"delta","text"}` line for each piece of the answer as the
+agent writes it, then one `{"type":"end"}` line with `status`, `agent`, `usage` (the token
+counts), `error` and every attempt. Its agents are a separate `ask` list in the bridge's file,
+`{ "timeout_seconds": 90, "agents": [...] }`, in a queue of their own, so a question never waits
+behind a grading. An agent with output `claude-stream-json` (Claude Code's
+`--output-format stream-json --include-partial-messages --verbose`) streams; any other answers as
+one delta when it exits. The next agent is tried only before the first delta; after it, a failure
+ends the reply as failed, so an answer never changes voice partway through. That includes Claude
+Code retrying its request after the first delta (an `api_retry` line or a second `message_start`),
+which would stream the answer again: the agent is killed and the reply fails; a retry before any
+delta is ignored. A caller that hangs up stops the agent, and `agent` in the end line is null
+unless the caller received some of that agent's words. After a kill the bridge waits 500 ms for
+the agent's pipes to close, then stops reading them, so a child that left the process group cannot
+hold the queue. The cases are in the [test plan](test-plan.md#asking-the-bridge-a-question).
+
 The bridge also reads aloud: it hands text the server built to the AI-TTS daemon on the host's
 Unix socket, for synthesis only, and serves the audio back for the browser to play
 ([reading aloud](../reading-aloud/README.md)).
@@ -579,6 +596,7 @@ The bridge writes JSON Lines on stdout: one JSON object per line, each with a `k
 | `bridge.start` | Once at start-up: `host`, `port`, `config`, and the declared agents (null with no file yet) |
 | `bridge.listening` | Once it listens: `host` and the `port` it got (the OS's choice for port `0`) |
 | `bridge.run.start`, `bridge.attempt`, `bridge.run.end` | Each `POST /run`, its attempts, and its outcome |
+| `bridge.ask.start`, `bridge.ask.attempt`, `bridge.ask.end` | Each `POST /ask`, its attempts with how many deltas each passed on, and its outcome with the token counts; never the question or the answer |
 | `bridge.test` | Each `POST /test` |
 | `bridge.config.saved` | Each accepted `PUT /config` |
 | `bridge.speak.submit`, `bridge.speak.cancel` | Each text submitted to AI-TTS, and each cancelled ([reading aloud](../reading-aloud/README.md)); never the text |

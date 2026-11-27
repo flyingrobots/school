@@ -9,8 +9,10 @@ import {
   CheckIcon,
   FileQuestionIcon,
   LibraryIcon,
+  ScaleIcon,
   ShieldCheckIcon,
   TriangleAlertIcon,
+  UserIcon,
 } from "lucide-react"
 import { Link, useParams } from "react-router"
 
@@ -52,7 +54,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { useDocumentTitle } from "@/lib/document-title"
 import { titleOf, useCourse } from "@/lib/course"
 import { useCourseTitle } from "@/lib/courses"
-import type { Course, CourseLoad } from "@/lib/school-api"
+import type { Course, CourseLoad, Declaration } from "@/lib/school-api"
 
 gsap.registerPlugin(useGSAP)
 
@@ -75,6 +77,14 @@ const referenceOf = (state: State): string[] =>
     : state.kind === "unreadable"
       ? state.reference
       : []
+
+/** What the course declares about itself, which is shown even when its lessons cannot be read. */
+const declarationOf = (state: State): Declaration | null =>
+  state.kind === "ready"
+    ? state.course.declaration
+    : state.kind === "unreadable"
+      ? state.declaration
+      : null
 
 /** Whether School serves the course sandboxed; false until it answers. */
 const untrusted = (state: State): boolean =>
@@ -131,6 +141,7 @@ export function CoursePage() {
         <h1 className="font-heading text-4xl font-semibold tracking-tight sm:text-5xl 2xl:text-6xl">
           {title}
         </h1>
+        <AboutCourse declaration={declarationOf(state)} />
         {referenceOf(state).length > 0 && (
           <Button asChild size="lg" variant="outline" className="self-start">
             <Link to={`/courses/${name}/reference`} data-nav>
@@ -143,6 +154,48 @@ export function CoursePage() {
       </div>
       <Body state={state} name={name!} retry={retry} />
     </div>
+  )
+}
+
+/**
+ * What the course's course.json says about it (flyingrobots/school#277): its summary, and its author
+ * and license as Badges. Only what it declares is shown; a course that declares none shows nothing.
+ */
+function AboutCourse({ declaration }: { declaration: Declaration | null }) {
+  if (declaration === null) return null
+  const { summary, author, license } = declaration
+  return (
+    <>
+      {summary !== null && (
+        <p data-manifest="summary" className="text-xl text-muted-foreground">
+          {summary}
+        </p>
+      )}
+      {(author !== null || license !== null) && (
+        <div className="flex min-w-0 flex-wrap gap-2">
+          {author !== null && (
+            <Badge
+              data-manifest="author"
+              variant="outline"
+              className="h-auto max-w-full text-sm break-words whitespace-normal"
+            >
+              <UserIcon data-icon="inline-start" />
+              <span className="min-w-0">By {author}</span>
+            </Badge>
+          )}
+          {license !== null && (
+            <Badge
+              data-manifest="license"
+              variant="outline"
+              className="h-auto max-w-full text-sm break-words whitespace-normal"
+            >
+              <ScaleIcon data-icon="inline-start" />
+              <span className="min-w-0">License: {license}</span>
+            </Badge>
+          )}
+        </div>
+      )}
+    </>
   )
 }
 
