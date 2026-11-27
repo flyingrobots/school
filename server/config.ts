@@ -238,8 +238,10 @@ function sameTree(a: string, b: string, stat: Stat): boolean {
   return (x.self !== null && y.all.has(x.self)) || (y.self !== null && x.all.has(y.self));
 }
 
-/** `stat` is the filesystem's identity; tests give a fake one, since aliases need a bind mount. */
-/** `list` names a folder's subfolders; tests give a fake one beside the fake stat (flyingrobots/school#298). */
+/**
+ * `stat` is the filesystem's identity and `list` names a folder's subfolders (flyingrobots/school#298);
+ * tests give fake ones, since aliases need a bind mount.
+ */
 export function parseConfig(env: Record<string, string | undefined>, frameworkDefault: string, stat: Stat = systemStat, list: List = systemList): Config {
   const cwd = process.cwd();
   const framework = abs(env.SCHOOL_ROOT ?? frameworkDefault, cwd);
