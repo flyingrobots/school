@@ -1,7 +1,7 @@
 // The authoring record's storage rules (RFC 9 §5.5; flyingrobots/school#258), on PGlite. What the
 // functions answer is the LearningRecord contract's (server/contract/learning-record.ts), where the
 // adapter parses every input with the model first; this file calls the functions directly, as
-// school_app, to show the tables refuse on their own what the model refuses.
+// school_app, to show the record refuses on its own, storing nothing, what the model refuses.
 import { describe, expect, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
 import { AuthoringDecision, AuthoringDraft, AuthoringRequest } from "../core/model.ts";
@@ -16,7 +16,10 @@ async function as<T>(db: PGlite, role: string, fn: () => Promise<T>): Promise<T>
   try { return await fn(); } finally { await db.exec("RESET ROLE"); }
 }
 
-const verdict = (p: Promise<unknown>) => p.then(() => "stored", (e: Error) => `raised: ${e.message}`);
+/** "stored" when the function stored the row, else how it refused: an answer, or what it raised. */
+const verdict = (p: Promise<{ rows: { s: string }[] }>) =>
+  p.then((r) => (r.rows[0]?.s === "stored" ? "stored" : `answered ${r.rows[0]?.s}`), (e: Error) => `raised: ${e.message}`);
+const stores = async (p: Promise<{ rows: { s: string }[] }>) => (await verdict(p)) === "stored";
 
 const install = (db: PGlite, i: Record<string, unknown>) =>
   db.query<{ s: string }>("SELECT school.install_course($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) AS s",
@@ -60,9 +63,9 @@ describe("the authoring record", () => {
     const verdicts: string[] = [];
     for (const [why, o] of cases) {
       const q = { ...good, ...o, id: uuid() };
-      verdicts.push(`${why}: model ${AuthoringRequest.safeParse(q).success}, record ${(await as(db, "school_app", () => verdict(request(db, q)))).startsWith("raised")}`);
+      verdicts.push(`${why}: model ${AuthoringRequest.safeParse(q).success}, record stores ${await as(db, "school_app", () => stores(request(db, q)))}`);
     }
-    expect(verdicts).toEqual(cases.map(([why]) => `${why}: model false, record true`));
+    expect(verdicts).toEqual(cases.map(([why]) => `${why}: model false, record stores false`));
   }, SLOW);
 
   test("the record refuses, on its own, each malformed draft the model refuses", async () => {
@@ -84,24 +87,29 @@ describe("the authoring record", () => {
     const verdicts: string[] = [];
     for (const [why, o] of cases) {
       const d = { ...good, ...o, id: uuid() };
-      verdicts.push(`${why}: model ${AuthoringDraft.safeParse(d).success}, record ${(await as(db, "school_app", () => verdict(draft(db, d)))).startsWith("raised")}`);
+      verdicts.push(`${why}: model ${AuthoringDraft.safeParse(d).success}, record stores ${await as(db, "school_app", () => stores(draft(db, d)))}`);
     }
-    expect(verdicts).toEqual(cases.map(([why]) => `${why}: model false, record true`));
+    expect(verdicts).toEqual(cases.map(([why]) => `${why}: model false, record stores false`));
   }, SLOW);
 
   test("the record refuses, on its own, each malformed decision the model refuses", async () => {
-    const { db, ready } = await drafted();
+    const { db, base, ready } = await drafted();
+    // The draft's own authored install, so an accept is refused for its shape alone.
+    const authored = { ...base, id: uuid(), source: "authored", url: null, commit: ready.commit, contentSha256: ready.contentSha256,
+      parentInstallId: base.id, draftId: ready.id };
+    expect(await as(db, "school_app", () => verdict(install(db, authored)))).toBe("answered updated");
     const cases: [string, Record<string, unknown>][] = [
-      ["an unknown decision", { decision: "kept" }], ["a discard naming an install", { installId: uuid() }],
+      ["an unknown decision", { decision: "kept" }], ["a discard naming an install", { installId: authored.id }],
       ["a discard keeping a patch", { patch: "From x" }], ["an accept with no install", { decision: "accepted", patch: "From x" }],
-      ["an accept with no patch", { decision: "accepted", installId: uuid() }], ["an accept with an empty patch", { decision: "accepted", installId: uuid(), patch: "" }],
+      ["an accept with no patch", { decision: "accepted", installId: authored.id }],
+      ["an accept with an empty patch", { decision: "accepted", installId: authored.id, patch: "" }],
     ];
     const verdicts: string[] = [];
     for (const [why, o] of cases) {
       const x = { id: uuid(), draftId: ready.id, decision: "discarded", installId: null, patch: null, ...o };
-      verdicts.push(`${why}: model ${AuthoringDecision.safeParse(x).success}, record ${(await as(db, "school_app", () => verdict(decide(db, x)))).startsWith("raised")}`);
+      verdicts.push(`${why}: model ${AuthoringDecision.safeParse(x).success}, record stores ${await as(db, "school_app", () => stores(decide(db, x)))}`);
     }
-    expect(verdicts).toEqual(cases.map(([why]) => `${why}: model false, record true`));
+    expect(verdicts).toEqual(cases.map(([why]) => `${why}: model false, record stores false`));
   }, SLOW);
 
   // RFC 9 §5.5: an `authored` row has neither url nor bundle_sha256, and gains parent_install_id
@@ -119,7 +127,7 @@ describe("the authoring record", () => {
     const verdicts: string[] = [];
     for (const [why, o] of cases) verdicts.push(`${why}: ${(await as(db, "school_app", () => verdict(install(db, { ...o, id: uuid() })))).startsWith("raised")}`);
     expect(verdicts).toEqual(cases.map(([why]) => `${why}: true`));
-    expect(await as(db, "school_app", () => verdict(install(db, { ...authored, id: uuid() })))).toBe("stored");
+    expect(await as(db, "school_app", () => verdict(install(db, { ...authored, id: uuid() })))).toBe("answered updated");
   }, SLOW);
 
   // RFC 9 Table 5.5: "at most 20,000 characters", which Postgres counts in code points.
@@ -131,7 +139,8 @@ describe("the authoring record", () => {
       ["20,000 letters", "x".repeat(20_000)]] as const) {
       verdicts.push(`${why}: model ${AuthoringRequest.safeParse(q(text)).success}, record ${await as(db, "school_app", () => verdict(request(db, q(text))))}`);
     }
-    expect(verdicts.map((v) => v.replace(/raised: .*/, "raised"))).toEqual([
-      "20,000 bells: model true, record stored", "20,001 bells: model false, record raised", "20,000 letters: model true, record stored"]);
+    expect(verdicts).toEqual(["20,000 bells: model true, record stored",
+      '20,001 bells: model false, record raised: new row for relation "authoring_requests" violates check constraint "authoring_requests_text"',
+      "20,000 letters: model true, record stored"]);
   }, SLOW);
 });
