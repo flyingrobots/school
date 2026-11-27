@@ -54,4 +54,7 @@ export type Checks = [
   Assert<Equal<W.ReviewReason, z.infer<typeof M.ReviewReason>>>,
   Assert<Equal<W.MasteryQuery, z.infer<typeof M.MasteryQuery>>>,
   Assert<Equal<W.Mastery, z.infer<typeof M.Mastery>>>,
+  // MasteryRollupQuery's groups, a record, has no GraphQL form (school.graphql), so the rest is compared.
+  Assert<Equal<W.MasteryRollupQuery, Omit<z.infer<typeof M.MasteryRollupQuery>, "groups">>>,
+  Assert<Equal<W.MasteryRollup, z.infer<typeof M.MasteryRollup>>>,
 ];

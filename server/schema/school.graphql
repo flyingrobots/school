@@ -329,3 +329,21 @@ type Mastery {
   settled: Boolean!
   evidence: [Int!]!
 }
+
+# MasteryRollupQuery's groups, an object from a group key to quiz block ids, has no GraphQL form
+# (GraphQL has no map type), so server/schema/check.ts compares the rest.
+type MasteryRollupQuery {
+  course: String!
+  now: String!
+  delayMs: Int!
+}
+
+type MasteryRollup {
+  key: String!
+  quizzes: Int!
+  notStarted: Int!
+  settling: Int!
+  holding: Int!
+  faded: Int!
+  strength: Float
+}

@@ -2,7 +2,7 @@
 // Adapters implement them; the core never imports an adapter.
 import type {
   Aid, AidTracking, Block, CourseInstall, DecisionChoice, DueItem, DueReviewQuery, ReviewNote, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingInput,
-  GradingRecord, InstallResult, InstalledCourse, LastStudied, LatestFeedback, LessonHelp, LessonProgress, Mastery, MasteryQuery, Outcome, Recorded, RemovalResult, SaveResult, SavedExplanation, StudyDay, Submission, SubmitResult, TrustResult, ViewEvent,
+  GradingRecord, InstallResult, InstalledCourse, LastStudied, LatestFeedback, LessonHelp, LessonProgress, Mastery, MasteryQuery, MasteryRollup, MasteryRollupQuery, Outcome, Recorded, RemovalResult, SaveResult, SavedExplanation, StudyDay, Submission, SubmitResult, TrustResult, ViewEvent,
 } from "./model.ts";
 
 /**
@@ -98,6 +98,12 @@ export interface LearningRecord {
    * mastery, and is the record's.
    */
   mastery(q: MasteryQuery): Promise<Mastery[]>;
+  /**
+   * How each group in `q.groups` is held at `q.now`, one row per group key, in byte order of the key
+   * (RFC 5 §4.5): reads only. The rollup is in server/db/migrations/0013_mastery_rollup.sql,
+   * mastery_rollup, and is the record's.
+   */
+  masteryRollup(q: MasteryRollupQuery): Promise<MasteryRollup[]>;
 }
 
 /** Turns an explanation into findings, or an honest failure. Never throws for a grading failure. */

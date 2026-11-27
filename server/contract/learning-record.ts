@@ -3,7 +3,7 @@
 // It speaks only through the port; storage-level rules (append-only triggers, privileges) are
 // tested beside each adapter, since how they are enforced is the adapter's business.
 import { expect, test } from "bun:test";
-import { ExposureKind, type Block, type CourseInstall, type DecisionNoteInput, type GradingRecord, type InstalledCourse, type LessonHelp } from "../core/model.ts";
+import { ExposureKind, type Block, type CourseInstall, type DecisionNoteInput, type GradingRecord, type InstalledCourse, type LessonHelp, type Mastery } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
 
 /**
@@ -983,6 +983,104 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     }
     // Witnesses: the fixed seed reaches every kind of first try.
     for (const [kind, n] of Object.entries(seen)) expect(`${kind}: ${n > 0}`, replay).toBe(`${kind}: true`);
+  });
+
+  // ---- Mastery rollup (RFC 5 §4.5; flyingrobots/school#218) -----------------------------------
+  // Per group of quizzes, the four counts of Table 4.5 and the mean strength. Oracle: RFC 5 Table
+  // 4.5 and §4.7 for the states, with the strengths of Table 4.1 at the fixed clocks below.
+
+  /** A case of the mastery rollup. */
+  const mr = (title: string, fn: (r: LearningRecord) => Promise<void>) =>
+    test(`${name}: mastery rollup: ${title}`, async () => fn(await make()));
+  const rollup = (r: LearningRecord, groups: Record<string, string[]>, now: string) =>
+    r.masteryRollup({ course: "c", groups, now, delayMs: DELAY });
+  const group = (key: string, quizzes: number, notStarted: number, settling: number, holding: number, faded: number, strength: number | null) =>
+    ({ key, quizzes, notStarted, settling, holding, faded, strength });
+
+  mr("golden: one lesson with a quiz in each state counts one of each, and the mean counts the quiz not started as 0", async (r) => {
+    await episode(r, "clean", 0, "holding");
+    await episode(r, "clean", DAY, "holding"); // spaced: stability 2.5 days, refreshed at one day
+    await episode(r, "clean", 0, "faded"); // stability one day, refreshed at 0
+    await episode(r, "wrong", 0, "settling"); // weak, not cleared: strength 0
+    // At two days: holding is 0.5^(1/2.5), faded 0.5^2; settling and the quiz not started are 0.
+    expect(await rollup(r, { l1: ["holding", "faded", "settling", "new"] }, at(2 * DAY))).toEqual([
+      group("l1", 4, 1, 1, 1, 1, expect.closeTo((0.5 ** (1 / 2.5) + 0.25) / 4, 4)),
+    ]);
+  });
+
+  mr("a quiz still settling counts its strength in the mean, not 0", async (r) => {
+    await episode(r, "unknown", 0); // right, aid unknown: strength like any right answer, but not settled
+    expect(await rollup(r, { l1: ["q1"] }, at(DAY))).toEqual([group("l1", 1, 0, 1, 0, 0, expect.closeTo(0.5, 4))]);
+  });
+
+  mr("strength exactly one half is holding; 1 ms later it is ready for another look", async (r) => {
+    await episode(r, "clean", 0); // stability one day: strength 0.5 at exactly one day
+    expect(await rollup(r, { l1: ["q1"] }, at(DAY))).toEqual([group("l1", 1, 0, 0, 1, 0, 0.5)]);
+    expect(await rollup(r, { l1: ["q1"] }, at(DAY + 1))).toEqual([group("l1", 1, 0, 0, 0, 1, expect.closeTo(0.5, 4))]);
+  });
+
+  mr("an empty group has no quizzes and a null strength; no groups gives no rows", async (r) => {
+    await episode(r, "clean", 0);
+    expect(await rollup(r, { empty: [], l1: ["q1"] }, at(0))).toEqual([group("empty", 0, 0, 0, 0, 0, null), group("l1", 1, 0, 0, 1, 0, 1)]);
+    expect(await rollup(r, {}, at(0))).toEqual([]);
+  });
+
+  mr("a block in two groups counts in both, a block twice in one group counts once, and rows are in byte order of the key", async (r) => {
+    await episode(r, "clean", 0, "q1"); // holding at twelve hours: 0.5^(1/2)
+    await episode(r, "wrong", 0, "q2"); // settling
+    // jsonb keeps shorter keys first (l1, l2, course): the rows must still come in byte order.
+    expect(await rollup(r, { l1: ["q1", "q2"], l2: ["q2", "q3"], course: ["q1", "q2", "q3", "q2"] }, at(12 * HOUR))).toEqual([
+      group("course", 3, 1, 1, 1, 0, expect.closeTo(Math.SQRT1_2 / 3, 4)),
+      group("l1", 2, 0, 1, 1, 0, expect.closeTo(Math.SQRT1_2 / 2, 4)),
+      group("l2", 2, 1, 1, 0, 0, 0),
+    ]);
+  });
+
+  mr("another course's answers are not this one's", async (r) => {
+    await episode(r, "clean", 0, "q1", "other");
+    expect(await rollup(r, { l1: ["q1"] }, at(0))).toEqual([group("l1", 1, 1, 0, 0, 0, 0)]);
+  });
+
+  // Generated: random histories for a pool of quizzes, then random groups (empty ones, shared
+  // blocks, repeats) probed at random times. Oracle: relational, against school.mastery for the
+  // same blocks, with each quiz placed in its state by Table 4.5's definitions.
+  mr("under random groups, the four counts always sum to the group's distinct quizzes, and each count and the mean agree with mastery", async (r) => {
+    const seed = FUZZ_SEED;
+    const random = seeded(seed);
+    const replay = `replay: SCHOOL_TEST_SEED=${seed} bun test server/adapters/postgres.test.ts -t "mastery rollup: under random groups"`;
+    const pick = <T>(xs: readonly T[]) => xs[Math.floor(random() * xs.length)]!;
+    const pool = ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8"];
+    const kinds = ["clean", "clean", "clean", "clean", "aided", "unknown", "wrong"] as const;
+    for (let t = 0; t < 20 * DAY; t += Math.floor(random() * DAY)) await episode(r, pick(kinds), t, pick(pool.slice(0, 7))); // q8 is never answered
+    const state = (m: Mastery) => m.strength === null ? "notStarted" : !m.settled ? "settling" : m.strength >= 0.5 ? "holding" : "faded";
+    const seen = { notStarted: 0, settling: 0, holding: 0, faded: 0, empty: 0, shared: 0 };
+    for (let round = 0; round < 40; round++) {
+      const groups: Record<string, string[]> = {};
+      const n = 1 + Math.floor(random() * 4);
+      for (let g = 0; g < n; g++) groups[`g${g}`] = Array.from({ length: Math.floor(random() * 6) }, () => pick(pool));
+      const now = at(Math.floor(random() * 30 * DAY)); // during the history, and up to ten days after it
+      const rows = await rollup(r, groups, now);
+      expect({ round, keys: rows.map((row) => row.key) }, replay).toEqual({ round, keys: Object.keys(groups).sort() });
+      const members = Object.values(groups).flat();
+      if (new Set(members).size < members.length) seen.shared++;
+      for (const row of rows) {
+        const blocks = [...new Set(groups[row.key]!)];
+        const held = await measure(r, blocks, now);
+        const expected = { notStarted: 0, settling: 0, holding: 0, faded: 0 };
+        for (const m of held) expected[state(m)]++;
+        for (const [s, k] of Object.entries(expected)) seen[s as keyof typeof expected] += k;
+        if (blocks.length === 0) seen.empty++;
+        const sum = row.notStarted + row.settling + row.holding + row.faded;
+        expect({ round, key: row.key, quizzes: row.quizzes, sum }, replay).toEqual({ round, key: row.key, quizzes: blocks.length, sum: blocks.length });
+        expect({ round, key: row.key, counts: { notStarted: row.notStarted, settling: row.settling, holding: row.holding, faded: row.faded } }, replay)
+          .toEqual({ round, key: row.key, counts: expected });
+        const mean = blocks.length === 0 ? null : held.reduce((a, m) => a + (m.strength ?? 0), 0) / blocks.length;
+        expect({ round, key: row.key, strength: row.strength }, replay)
+          .toEqual({ round, key: row.key, strength: mean === null ? null : expect.closeTo(mean, 10) });
+      }
+    }
+    // Witnesses: the fixed seed reaches every state, an empty group and a block in more than one place.
+    for (const [what, k] of Object.entries(seen)) expect(`${what}: ${k > 0}`, replay).toBe(`${what}: true`);
   });
 
   // ---- Help for a whole encounter (RFC 6 §5.1, Table 5.2; flyingrobots/school#224) -------------
