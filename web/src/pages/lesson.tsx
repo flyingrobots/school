@@ -318,6 +318,7 @@ function BlockView({
             saved={play.explanations.get(b.id) ?? null}
             pending={play.pending.explanations.get(b.id) ?? null}
             onModelShown={() => show(play.encounterId, b.id, "model-answer")}
+            onFeedbackShown={() => show(play.encounterId, b.id, "feedback")}
             onSourceOpened={() => show(play.encounterId, b.id, "reference")}
             onSave={(text, progress) => {
               const body = {

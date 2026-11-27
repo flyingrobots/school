@@ -15,10 +15,12 @@
 // stdout; they never contain a prompt or an answer, which are the learner's private work. Every
 // failure is a `bridge.error` line too: a refusal to start (a bad setting, a taken port) exits 2,
 // and any other uncaught throw or rejection exits 1 (flyingrobots/school#134).
+import type { Server } from "bun";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { BridgeConfigError, loadConfig, runChain, type BridgeConfig } from "./run.ts";
+import { runAsk, type AskResult } from "./ask.ts";
 import { keychainStore } from "../host/keychain.ts";
 import { accountFrom, resolveSecret } from "../host/secrets.ts";
 import { lineWriter, loadSchemas } from "../server/jsonl.ts";
@@ -57,6 +59,9 @@ function prose(l: Record<string, any>): string {
     case "bridge.run.start": return `run ${l.id} started`;
     case "bridge.attempt": return `run ${l.id}: ${l.agent} ${l.status} in ${l.ms} ms${l.error === null ? "" : ` (${l.error})`}`;
     case "bridge.run.end": return `run ${l.id} ${l.status}${l.agent === null ? "" : ` (${l.agent})`}`;
+    case "bridge.ask.start": return `question ${l.id} started`;
+    case "bridge.ask.attempt": return `question ${l.id}: ${l.agent} ${l.status} in ${l.ms} ms, ${l.deltas} deltas${l.error === null ? "" : ` (${l.error})`}`;
+    case "bridge.ask.end": return `question ${l.id} ${l.status}${l.agent === null ? "" : ` (${l.agent})`}${l.usage === null ? "" : `, ${l.usage.input_tokens ?? "?"} tokens in, ${l.usage.output_tokens ?? "?"} out`}`;
     case "bridge.speak.submit": return `speech ${l.id} submitted to AI-TTS: ${l.segments ?? "an unknown number of"} segments`;
     case "bridge.speak.cancel": return `speech ${l.id} cancelled (${l.state ?? "no state"})`;
     case "bridge.speak.failed": return `speech ${l.op} ${l.status}: ${l.message}`;
@@ -212,13 +217,81 @@ const authorised = (req: Request) => {
   return got.length === want.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(want));
 };
 
-// One chain at a time: agents are heavy, and a single learner never needs two at once.
-let queue: Promise<unknown> = Promise.resolve();
-const serially = <T>(work: () => Promise<T>): Promise<T> => {
-  const next = queue.then(work, work);
-  queue = next.catch(() => {});
-  return next;
+// One chain at a time: agents are heavy, and a single learner never needs two at once. Questions
+// have a queue of their own (RFC 6 §5.4), so a question never waits behind a three-minute grading.
+const queue = () => {
+  let tail: Promise<unknown> = Promise.resolve();
+  return <T>(work: () => Promise<T>): Promise<T> => {
+    const next = tail.then(work, work);
+    tail = next.catch(() => {});
+    return next;
+  };
 };
+const serially = queue();
+const askSerially = queue();
+
+const MAX_PROMPT = 200_000;
+
+/**
+ * POST /ask (RFC 6 Table 5.4): `{ prompt, deadline_ms }` in; NDJSON out, a `delta` line for each
+ * piece of the answer as the agent writes it, then one `end` line with the status, the agent, its
+ * token counts and every attempt. A refusal before anything runs is a JSON status, as on /run.
+ */
+async function askRoute(req: Request, server: Server<unknown>): Promise<Response> {
+  if (req.method !== "POST") return json({ status: "method not allowed" }, 405);
+  if (!isJsonRequest(req)) return json({ status: "expected application/json" }, 415);
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return json({ status: "invalid", error: "body is not JSON" }, 400);
+  }
+  const { prompt, deadline_ms } = isObject(body) ? body : {};
+  if (typeof prompt !== "string" || prompt.length === 0 || prompt.length > MAX_PROMPT) return json({ status: "invalid", error: `prompt must be 1 to ${MAX_PROMPT} characters` }, 400);
+  if (deadline_ms !== undefined && (typeof deadline_ms !== "number" || !Number.isInteger(deadline_ms) || deadline_ms <= 0)) return json({ status: "invalid", error: "deadline_ms must be a positive integer" }, 400);
+
+  let failure: string | null = null;
+  let c: BridgeConfig | null = null;
+  try {
+    c = config();
+  } catch (e) {
+    failure = messageOf(e);
+  }
+  if (failure === null && (c === null || c.ask === null)) failure = `the bridge has no ask agents configured yet; declare an "ask" list in ${configPath}`;
+  // The answer takes as long as its agents' timeouts allow; Bun's idle timeout must not end it first.
+  server.timeout(req, 0);
+  const id = crypto.randomUUID();
+  const caller = new AbortController();
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(out) {
+      const send = (line: Record<string, unknown>) => {
+        try { out.enqueue(encoder.encode(JSON.stringify(line) + "\n")); } catch {} // the caller has gone
+      };
+      const finish = (r: AskResult) => {
+        for (const a of r.attempts) log("ask.attempt", { id, agent: a.agent, status: a.status, ms: a.ms, exit_code: a.exitCode, error: a.error, deltas: a.deltas });
+        const deltas = r.attempts.reduce((n, a) => n + a.deltas, 0);
+        const usage = r.status === "succeeded" ? r.usage : null;
+        log("ask.end", { id, status: r.status, agent: r.agent, deltas, usage });
+        send({ type: "end", status: r.status, agent: r.agent, usage, error: r.status === "failed" ? r.error : null,
+          attempts: r.attempts.map((a) => ({ agent: a.agent, status: a.status, ms: a.ms, exit_code: a.exitCode, error: a.error, deltas: a.deltas })) });
+        try { out.close(); } catch {}
+      };
+      log("ask.start", { id });
+      if (failure !== null) return finish({ status: "failed", agent: null, error: failure, attempts: [] });
+      const ask = c!.ask!;
+      askSerially(() => runAsk(ask, { prompt, deadlineMs: deadline_ms, signal: caller.signal }, (text) => send({ type: "delta", text })))
+        .then(finish, (e: unknown) => {
+          log("error", { message: messageOf(e) });
+          finish({ status: "failed", agent: null, error: "the bridge failed on this question; its log has the reason", attempts: [] });
+        });
+    },
+    cancel() {
+      caller.abort();
+    },
+  });
+  return new Response(stream, { headers: { "content-type": "application/x-ndjson" } });
+}
 
 // Reading aloud (flyingrobots/school#175): the AI-TTS daemon synthesizes, School's page plays. The
 // socket is resolved at each request, so starting AI-TTS after the bridge needs no restart.
@@ -290,9 +363,10 @@ const server = listen({
     log("error", { message: messageOf(e) });
     return json({ status: "failed", error: "the bridge failed on this request; its log has the reason" }, 500);
   },
-  async fetch(req) {
+  async fetch(req, server) {
     const { pathname } = new URL(req.url);
     if (!authorised(req)) return json({ status: "unauthorised" }, 401);
+    if (pathname === "/ask") return askRoute(req, server);
     if (req.method === "GET" && pathname === "/health") {
       try {
         const c = config();
