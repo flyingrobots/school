@@ -62,3 +62,6 @@ coverage/
 
 # Claude Code session transcripts (captured /teach logs; keep local, never commit)
 *command-message*.txt
+
+# Obsidian vault settings and themes (the checkout opened as a vault)
+.obsidian/
