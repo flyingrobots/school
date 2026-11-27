@@ -3,7 +3,7 @@
 // It speaks only through the port; storage-level rules (append-only triggers, privileges) are
 // tested beside each adapter, since how they are enforced is the adapter's business.
 import { expect, test } from "bun:test";
-import { ExposureKind, type Block, type CourseInstall, type DecisionNoteInput, type GradingRecord, type InstalledCourse } from "../core/model.ts";
+import { ExposureKind, type Block, type CourseInstall, type DecisionNoteInput, type DueItem, type GradingRecord, type InstalledCourse, type LessonHelp, type Mastery } from "../core/model.ts";
 import type { LearningRecord } from "../core/ports.ts";
 
 /**
@@ -658,7 +658,7 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     await answer(r, e.id, "q1", "right", at(1));
     await answer(r, e.id, "q2", "wrong", at(2));
     expect(await due(r, ["q1", "q2"], at(1 + DELAY))).toEqual([]); // q2 was seen 1 ms less than the delay ago
-    expect(await due(r, ["q1", "q3"], at(10 * DELAY))).toEqual([]); // q2 is due, but was not asked about
+    expect(await due(r, ["q1", "q3"], at(2 + DELAY))).toEqual([]); // q2 is due, but was not asked about; q1 is within its stability (RFC 5 §4.6)
     // Another course's record is not this course's.
     expect(await r.dueReview({ course: "other", blocks: ["q2"], now: at(10 * DELAY), delayMs: DELAY, limit: 10 })).toEqual([]);
   });
@@ -674,7 +674,7 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     // A delay after it was last wrong, right first try with nothing shown: cleared.
     const later = await tracked(r, page, at(1 + DELAY + 60_000));
     await answer(r, later.id, "q1", "right", at(1 + DELAY + 60_001));
-    expect(await due(r, ["q1"], at(10 * DELAY))).toEqual([]);
+    expect(await due(r, ["q1"], at(1 + 2 * DELAY + 60_001))).toEqual([]); // a delay on, within its stability (RFC 5 §4.6)
     // Wrong again in a later encounter: due again.
     const again = await tracked(r, page, at(20 * DELAY));
     await answer(r, again.id, "q1", "wrong", at(20 * DELAY + 1));
@@ -985,6 +985,384 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     for (const [kind, n] of Object.entries(seen)) expect(`${kind}: ${n > 0}`, replay).toBe(`${kind}: true`);
   });
 
+  // ---- Mastery rollup (RFC 5 §4.5; flyingrobots/school#218) -----------------------------------
+  // Per group of quizzes, the four counts of Table 4.5 and the mean strength. Oracle: RFC 5 Table
+  // 4.5 and §4.7 for the states, with the strengths of Table 4.1 at the fixed clocks below.
+
+  /** A case of the mastery rollup. */
+  const mr = (title: string, fn: (r: LearningRecord) => Promise<void>) =>
+    test(`${name}: mastery rollup: ${title}`, async () => fn(await make()));
+  const rollup = (r: LearningRecord, groups: Record<string, string[]>, now: string) =>
+    r.masteryRollup({ course: "c", groups, now, delayMs: DELAY });
+  const group = (key: string, quizzes: number, notStarted: number, settling: number, holding: number, faded: number, strength: number | null) =>
+    ({ key, quizzes, notStarted, settling, holding, faded, strength });
+
+  mr("golden: one lesson with a quiz in each state counts one of each, and the mean counts the quiz not started as 0", async (r) => {
+    await episode(r, "clean", 0, "holding");
+    await episode(r, "clean", DAY, "holding"); // spaced: stability 2.5 days, refreshed at one day
+    await episode(r, "clean", 0, "faded"); // stability one day, refreshed at 0
+    await episode(r, "wrong", 0, "settling"); // weak, not cleared: strength 0
+    // At two days: holding is 0.5^(1/2.5), faded 0.5^2; settling and the quiz not started are 0.
+    expect(await rollup(r, { l1: ["holding", "faded", "settling", "new"] }, at(2 * DAY))).toEqual([
+      group("l1", 4, 1, 1, 1, 1, expect.closeTo((0.5 ** (1 / 2.5) + 0.25) / 4, 4)),
+    ]);
+  });
+
+  mr("a quiz still settling counts its strength in the mean, not 0", async (r) => {
+    await episode(r, "unknown", 0); // right, aid unknown: strength like any right answer, but not settled
+    expect(await rollup(r, { l1: ["q1"] }, at(DAY))).toEqual([group("l1", 1, 0, 1, 0, 0, expect.closeTo(0.5, 4))]);
+  });
+
+  mr("strength exactly one half is holding; 1 ms later it is ready for another look", async (r) => {
+    await episode(r, "clean", 0); // stability one day: strength 0.5 at exactly one day
+    expect(await rollup(r, { l1: ["q1"] }, at(DAY))).toEqual([group("l1", 1, 0, 0, 1, 0, 0.5)]);
+    expect(await rollup(r, { l1: ["q1"] }, at(DAY + 1))).toEqual([group("l1", 1, 0, 0, 0, 1, expect.closeTo(0.5, 4))]);
+  });
+
+  mr("an empty group has no quizzes and a null strength; no groups gives no rows", async (r) => {
+    await episode(r, "clean", 0);
+    expect(await rollup(r, { empty: [], l1: ["q1"] }, at(0))).toEqual([group("empty", 0, 0, 0, 0, 0, null), group("l1", 1, 0, 0, 1, 0, 1)]);
+    expect(await rollup(r, {}, at(0))).toEqual([]);
+  });
+
+  mr("a block in two groups counts in both, a block twice in one group counts once, and rows are in byte order of the key", async (r) => {
+    await episode(r, "clean", 0, "q1"); // holding at twelve hours: 0.5^(1/2)
+    await episode(r, "wrong", 0, "q2"); // settling
+    // jsonb keeps shorter keys first (l1, l2, course): the rows must still come in byte order.
+    expect(await rollup(r, { l1: ["q1", "q2"], l2: ["q2", "q3"], course: ["q1", "q2", "q3", "q2"] }, at(12 * HOUR))).toEqual([
+      group("course", 3, 1, 1, 1, 0, expect.closeTo(Math.SQRT1_2 / 3, 4)),
+      group("l1", 2, 0, 1, 1, 0, expect.closeTo(Math.SQRT1_2 / 2, 4)),
+      group("l2", 2, 1, 1, 0, 0, 0),
+    ]);
+  });
+
+  mr("another course's answers are not this one's", async (r) => {
+    await episode(r, "clean", 0, "q1", "other");
+    expect(await rollup(r, { l1: ["q1"] }, at(0))).toEqual([group("l1", 1, 1, 0, 0, 0, 0)]);
+  });
+
+  // Generated: random histories for a pool of quizzes, then random groups (empty ones, shared
+  // blocks, repeats) probed at random times. Oracle: relational, against school.mastery for the
+  // same blocks, with each quiz placed in its state by Table 4.5's definitions.
+  mr("under random groups, the four counts always sum to the group's distinct quizzes, and each count and the mean agree with mastery", async (r) => {
+    const seed = FUZZ_SEED;
+    const random = seeded(seed);
+    const replay = `replay: SCHOOL_TEST_SEED=${seed} bun test server/adapters/postgres.test.ts -t "mastery rollup: under random groups"`;
+    const pick = <T>(xs: readonly T[]) => xs[Math.floor(random() * xs.length)]!;
+    const pool = ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8"];
+    const kinds = ["clean", "clean", "clean", "clean", "aided", "unknown", "wrong"] as const;
+    for (let t = 0; t < 20 * DAY; t += Math.floor(random() * DAY)) await episode(r, pick(kinds), t, pick(pool.slice(0, 7))); // q8 is never answered
+    const state = (m: Mastery) => m.strength === null ? "notStarted" : !m.settled ? "settling" : m.strength >= 0.5 ? "holding" : "faded";
+    const seen = { notStarted: 0, settling: 0, holding: 0, faded: 0, empty: 0, shared: 0 };
+    for (let round = 0; round < 40; round++) {
+      const groups: Record<string, string[]> = {};
+      const n = 1 + Math.floor(random() * 4);
+      for (let g = 0; g < n; g++) groups[`g${g}`] = Array.from({ length: Math.floor(random() * 6) }, () => pick(pool));
+      const now = at(Math.floor(random() * 30 * DAY)); // during the history, and up to ten days after it
+      const rows = await rollup(r, groups, now);
+      expect({ round, keys: rows.map((row) => row.key) }, replay).toEqual({ round, keys: Object.keys(groups).sort() });
+      const members = Object.values(groups).flat();
+      if (new Set(members).size < members.length) seen.shared++;
+      for (const row of rows) {
+        const blocks = [...new Set(groups[row.key]!)];
+        const held = await measure(r, blocks, now);
+        const expected = { notStarted: 0, settling: 0, holding: 0, faded: 0 };
+        for (const m of held) expected[state(m)]++;
+        for (const [s, k] of Object.entries(expected)) seen[s as keyof typeof expected] += k;
+        if (blocks.length === 0) seen.empty++;
+        const sum = row.notStarted + row.settling + row.holding + row.faded;
+        expect({ round, key: row.key, quizzes: row.quizzes, sum }, replay).toEqual({ round, key: row.key, quizzes: blocks.length, sum: blocks.length });
+        expect({ round, key: row.key, counts: { notStarted: row.notStarted, settling: row.settling, holding: row.holding, faded: row.faded } }, replay)
+          .toEqual({ round, key: row.key, counts: expected });
+        const mean = blocks.length === 0 ? null : held.reduce((a, m) => a + (m.strength ?? 0), 0) / blocks.length;
+        expect({ round, key: row.key, strength: row.strength }, replay)
+          .toEqual({ round, key: row.key, strength: mean === null ? null : expect.closeTo(mean, 10) });
+      }
+    }
+    // Witnesses: the fixed seed reaches every state, an empty group and a block in more than one place.
+    for (const [what, k] of Object.entries(seen)) expect(`${what}: ${k > 0}`, replay).toBe(`${what}: true`);
+  });
+
+  // ---- Faded review (RFC 5 §4.6; flyingrobots/school#219) -------------------------------------
+  // Due review's fourth rule: a quiz none of the three weak rules chose, settled, whose mastery
+  // strength at `at` is below one half, and last answered at least the delay before `at`. Oracle:
+  // RFC 5 Table 4.6 and the worked example of §4.3: a clean answer's stability is one day, and each
+  // clean answer a delay later multiplies it by 2.5, so strength is exactly one half one stability
+  // after the refresh, and below it a millisecond later.
+
+  dr("faded, golden (RFC 5 §4.3): a quiz answered cleanly comes back once a whole stability has passed, citing mastery's evidence", async (r) => {
+    const first = await episode(r, "clean", 0);
+    expect(await due(r, ["q1"], at(DAY))).toEqual([]); // strength exactly one half: not below it
+    const back: DueItem = {
+      blockId: "q1", rule: "due-review/faded", answeredAt: at(0), corrected: false, shown: [], lastSeen: at(0), evidence: [first.first],
+    };
+    expect(await due(r, ["q1"], at(DAY + 1))).toEqual([back]);
+    expect((await held(r, at(DAY + 1))).evidence).toEqual(back.evidence);
+    // Answered cleanly when it comes back: stability is now 2.5 days, so it returns 2.5 days on.
+    const second = await episode(r, "clean", DAY + 1);
+    expect(await due(r, ["q1"], at(DAY + 1 + 2.5 * DAY))).toEqual([]);
+    const again = { ...back, answeredAt: at(DAY + 1), lastSeen: at(DAY + 1), evidence: [first.first, second.first] };
+    expect(await due(r, ["q1"], at(DAY + 2 + 2.5 * DAY))).toEqual([again]);
+    expect((await held(r, at(DAY + 2 + 2.5 * DAY))).evidence).toEqual(again.evidence);
+  });
+
+  dr("faded: a settled quiz still within one stability of its refresh does not come back, though the delay has passed", async (r) => {
+    await episode(r, "clean", 0);
+    await episode(r, "clean", DAY); // spaced: stability 2.5 days from here
+    const now = at(3 * DAY);
+    expect(await held(r, now)).toMatchObject({ settled: true, stabilityMs: 2.5 * DAY, strength: expect.closeTo(0.5 ** 0.8, 4) });
+    expect(await due(r, ["q1"], now)).toEqual([]);
+  });
+
+  dr("faded: items rank after the three weak rules, lowest strength first, then by seq, and fill only what the weak ones leave of the limit", async (r) => {
+    const untracked = await r.openEncounter({ course: "c", lesson: "l0", page: lesson("l0", [quiz("u1")]), now: at(0), aidTracking: null });
+    await answer(r, untracked.id, "u1", "right", at(1));
+    const e = await tracked(r, lesson("l1", [quiz("a1"), quiz("w1"), quiz("f1"), quiz("f2")]), at(2));
+    await r.recordExposure(exposure(e.id, "a1", "hint"), at(3));
+    await answer(r, e.id, "a1", "right", at(4));
+    await answer(r, e.id, "w1", "wrong", at(5));
+    await answer(r, e.id, "f2", "right", at(6)); // f2 and f1 are equally faded at any later time; f2's seq is the smaller
+    await answer(r, e.id, "f1", "right", at(6));
+    await episode(r, "clean", 5 * DAY, "f3"); // refreshed later: less faded than f1 and f2
+    const all = ["u1", "a1", "w1", "f1", "f2", "f3"];
+    const now = at(10 * DAY);
+    const ranked = async (limit: number) => (await due(r, all, now, limit)).map((x) => [x.blockId, x.rule]);
+    const weak = [["w1", "due-review/wrong-first-try"], ["a1", "due-review/aided-first-try"], ["u1", "due-review/unknown-aid"]];
+    const faded = [["f2", "due-review/faded"], ["f1", "due-review/faded"], ["f3", "due-review/faded"]];
+    expect(await ranked(10)).toEqual([...weak, ...faded]);
+    expect(await ranked(5)).toEqual([...weak, ...faded.slice(0, 2)]);
+    expect(await ranked(4)).toEqual([...weak, ...faded.slice(0, 1)]);
+    expect(await ranked(3)).toEqual(weak); // the limit already filled by the weak rules
+    expect(await ranked(2)).toEqual(weak.slice(0, 2));
+    expect(await ranked(0)).toEqual([]);
+  });
+
+  dr("faded: a quiz both weak and below one half in strength comes back once, under its weak rule", async (r) => {
+    await episode(r, "aided", 0, "a1");
+    await episode(r, "unknown", 0, "u1");
+    const now = at(10 * DAY);
+    expect(await measure(r, ["a1", "u1"], now)).toMatchObject([
+      { blockId: "a1", settled: false, strength: expect.closeTo(0.5 ** 10, 6) },
+      { blockId: "u1", settled: false, strength: expect.closeTo(0.5 ** 10, 6) },
+    ]);
+    expect((await due(r, ["a1", "u1"], now)).map((x) => [x.blockId, x.rule])).toEqual([
+      ["a1", "due-review/aided-first-try"], ["u1", "due-review/unknown-aid"],
+    ]);
+  });
+
+  dr("faded: a faded quiz answered again within the delay, after its first try, waits for the delay from that answer", async (r) => {
+    const { encounterId, first } = await episode(r, "clean", 0);
+    await answer(r, encounterId, "q1", "right", at(3 * DAY)); // the same episode: it refreshes nothing, but the quiz was seen
+    expect((await held(r, at(3 * DAY + HOUR))).strength).toBeCloseTo(0.5 ** (3 + 1 / 24), 6);
+    expect(await due(r, ["q1"], at(3 * DAY + DELAY - 1))).toEqual([]);
+    expect(await due(r, ["q1"], at(3 * DAY + DELAY))).toEqual([{
+      blockId: "q1", rule: "due-review/faded", answeredAt: at(0), corrected: false, shown: [], lastSeen: at(3 * DAY), evidence: [first],
+    }]);
+  });
+
+  // ---- Help for a whole encounter (RFC 6 §5.1, Table 5.2; flyingrobots/school#224) -------------
+  // When a model shows the learner more about a lesson, the server records one `ai-help` exposure
+  // for the whole encounter. Oracle: RFC 6 §5.1's rule: a quiz answer or explanation in that
+  // encounter with a larger seq is aided, whichever block it belongs to; every reader of aid
+  // (submission_aid, due_review, mastery) reads it so.
+
+  const help = (encounterId: string): LessonHelp => ({ exposureId: uuid(), encounterId, kind: "ai-help" });
+
+  tx("ai-help, golden: help for the whole encounter before a first try makes every quiz and explain block in it aided", async (r) => {
+    const e = await tracked(r, lesson("l1", [quiz("q1"), quiz("q2"), explain]));
+    expect(await r.recordLessonHelp(help(e.id), at(1))).toEqual({ status: "stored" });
+    const right = uuid();
+    const wrong = uuid();
+    const said = uuid();
+    await r.submit({ submissionId: right, encounterId: e.id, blockId: "q1", choiceId: "right", ms: 1 }, at(2));
+    await r.submit({ submissionId: wrong, encounterId: e.id, blockId: "q2", choiceId: "wrong", ms: 1 }, at(3));
+    await r.saveExplanation({ submissionId: said, encounterId: e.id, blockId: "e1", text: "Because.", ms: 1 }, at(4));
+    expect([await r.aid(right), await r.aid(wrong), await r.aid(said)]).toEqual(["aided", "aided", "aided"]);
+  });
+
+  tx("ai-help: help after a first try leaves it unaided, and aids the answers after it", async (r) => {
+    const e = await tracked(r, lesson("l1", [quiz("q1"), explain]));
+    const before = uuid();
+    const saidBefore = uuid();
+    const after = uuid();
+    await r.submit({ submissionId: before, encounterId: e.id, blockId: "q1", choiceId: "wrong", ms: 1 }, at(1));
+    await r.saveExplanation({ submissionId: saidBefore, encounterId: e.id, blockId: "e1", text: "First go.", ms: 1 }, at(2));
+    expect(await r.recordLessonHelp(help(e.id), at(3))).toEqual({ status: "stored" });
+    await r.submit({ submissionId: after, encounterId: e.id, blockId: "q1", choiceId: "right", ms: 1 }, at(4));
+    expect([await r.aid(before), await r.aid(saidBefore), await r.aid(after)]).toEqual(["no-recorded-aid", "no-recorded-aid", "aided"]);
+  });
+
+  tx("ai-help: help in one encounter aids nothing in another", async (r) => {
+    const page = lesson("l1", [quiz("q1")]);
+    const e1 = await tracked(r, page);
+    await r.recordLessonHelp(help(e1.id), at(1));
+    const e2 = await tracked(r, page, at(10 * RESUME_WINDOW_MS));
+    expect(e2.id).not.toBe(e1.id);
+    const later = uuid();
+    await r.submit({ submissionId: later, encounterId: e2.id, blockId: "q1", choiceId: "right", ms: 1 }, at(10 * RESUME_WINDOW_MS + 1));
+    expect(await r.aid(later)).toBe("no-recorded-aid");
+  });
+
+  tx("ai-help: an untracked or unknown encounter is rejected, and nothing is stored", async (r) => {
+    const untracked = await r.openEncounter({ course: "c", lesson: "l1", page: lesson("l1", [quiz("q1")]), now: at(0), aidTracking: null });
+    expect(await r.recordLessonHelp(help(untracked.id), at(1))).toEqual({ status: "rejected" });
+    expect(await r.recordLessonHelp(help(uuid()), at(1))).toEqual({ status: "rejected" });
+    expect((await r.encounterEvidence(untracked.id)).map((x) => x.kind)).toEqual(["encounter"]);
+  });
+
+  tx("ai-help: help is stored once: a resend is a duplicate, and its id naming something else a conflict", async (r) => {
+    const page = lesson("l1", [quiz("q1")]);
+    const e = await tracked(r, page);
+    const other = await r.openEncounter({ course: "c", lesson: "l2", page: lesson("l2", [quiz("q1")]), now: at(0), aidTracking: 1 });
+    const h = help(e.id);
+    expect(await r.recordLessonHelp(h, at(1))).toEqual({ status: "stored" });
+    for (let i = 0; i < 3; i++) expect(await r.recordLessonHelp(h, at(2 + i))).toEqual({ status: "duplicate" });
+    expect(await r.recordLessonHelp({ ...h, encounterId: other.id }, at(8))).toEqual({ status: "conflict" });
+    // An id a block's exposure holds is not free for help, nor the reverse.
+    const shown = exposure(e.id, "q1", "hint");
+    expect(await r.recordExposure(shown, at(9))).toEqual({ status: "stored" });
+    expect(await r.recordLessonHelp({ ...h, exposureId: shown.exposureId }, at(10))).toEqual({ status: "conflict" });
+    expect(await r.recordExposure({ ...shown, exposureId: h.exposureId }, at(11))).toEqual({ status: "conflict" });
+    // The conflicts stored nothing: the other encounter has only itself.
+    expect((await r.encounterEvidence(other.id)).map((x) => x.kind)).toEqual(["encounter"]);
+  });
+
+  tx("ai-help: help is evidence of its encounter with no block, and two helps are two rows", async (r) => {
+    const e = await tracked(r, lesson("l1", [quiz("q1")]));
+    await r.recordLessonHelp(help(e.id), at(1));
+    await r.recordLessonHelp(help(e.id), at(2));
+    expect((await r.encounterEvidence(e.id)).map((x) => [x.kind, x.blockId])).toEqual([["encounter", null], ["exposure", null], ["exposure", null]]);
+  });
+
+  dr("ai-help: every quiz answered right after help returns as aided, citing the help and its first try", async (r) => {
+    const e = await tracked(r, lesson("l1", [quiz("q1"), quiz("q2")]));
+    await r.recordLessonHelp(help(e.id), at(1));
+    await answer(r, e.id, "q1", "right", at(2));
+    await answer(r, e.id, "q2", "right", at(3));
+    const [helped] = await rowsOf(r, e.id, "exposure", null);
+    const [q1] = await rowsOf(r, e.id, "answer", "q1");
+    const [q2] = await rowsOf(r, e.id, "answer", "q2");
+    expect(await due(r, ["q1", "q2"], at(3 + DELAY))).toEqual([
+      { blockId: "q1", rule: "due-review/aided-first-try", answeredAt: at(2), corrected: false, shown: ["ai-help"], lastSeen: at(2), evidence: [helped!, q1!] },
+      { blockId: "q2", rule: "due-review/aided-first-try", answeredAt: at(3), corrected: false, shown: ["ai-help"], lastSeen: at(3), evidence: [helped!, q2!] },
+    ]);
+  });
+
+  dr("ai-help: help after a right first try does not bring it back; a quiz first tried after it does come back", async (r) => {
+    const e = await tracked(r, lesson("l1", [quiz("q1"), quiz("q2")]));
+    await answer(r, e.id, "q1", "right", at(1));
+    await r.recordLessonHelp(help(e.id), at(2));
+    await answer(r, e.id, "q1", "right", at(3)); // a second answer, after the help: the first try stands
+    await answer(r, e.id, "q2", "right", at(4));
+    expect((await due(r, ["q1", "q2"], at(4 + DELAY))).map((x) => [x.blockId, x.rule])).toEqual([["q2", "due-review/aided-first-try"]]);
+  });
+
+  dr("ai-help: help in one encounter does not make a clean first try in another due as aided", async (r) => {
+    const page = lesson("l1", [quiz("q1")]);
+    const a = await tracked(r, page);
+    await r.recordLessonHelp(help(a.id), at(1));
+    const b = await tracked(r, page, at(10 * RESUME_WINDOW_MS));
+    expect(b.id).not.toBe(a.id);
+    await answer(r, b.id, "q1", "right", at(10 * RESUME_WINDOW_MS + 1));
+    expect(await due(r, ["q1"], at(10 * RESUME_WINDOW_MS + 1 + DELAY))).toEqual([]);
+  });
+
+  dr("ai-help: two helps before a first try are both cited, and named once", async (r) => {
+    const e = await tracked(r, lesson("l1", [quiz("q1")]));
+    await r.recordLessonHelp(help(e.id), at(1));
+    await r.recordExposure(exposure(e.id, "q1", "hint"), at(2));
+    await r.recordLessonHelp(help(e.id), at(3));
+    await answer(r, e.id, "q1", "right", at(4));
+    const helps = await rowsOf(r, e.id, "exposure", null);
+    const [hint] = await rowsOf(r, e.id, "exposure", "q1");
+    const [first] = await rowsOf(r, e.id, "answer", "q1");
+    expect(await due(r, ["q1"], at(4 + DELAY))).toEqual([{
+      blockId: "q1", rule: "due-review/aided-first-try", answeredAt: at(4), corrected: false, shown: ["ai-help", "hint"],
+      lastSeen: at(4), evidence: [helps[0]!, hint!, helps[1]!, first!],
+    }]);
+  });
+
+  dr("ai-help: a wrong first try cites the help shown before its correction", async (r) => {
+    const e = await tracked(r, lesson("l1", [quiz("q1")]));
+    await answer(r, e.id, "q1", "wrong", at(1));
+    await r.recordLessonHelp(help(e.id), at(2));
+    await answer(r, e.id, "q1", "right", at(3));
+    const [wrong, right] = await rowsOf(r, e.id, "answer", "q1");
+    const [helped] = await rowsOf(r, e.id, "exposure", null);
+    expect(await due(r, ["q1"], at(3 + DELAY))).toEqual([{
+      blockId: "q1", rule: "due-review/wrong-first-try", answeredAt: at(1), corrected: true, shown: ["ai-help"],
+      lastSeen: at(3), evidence: [wrong!, helped!, right!],
+    }]);
+  });
+
+  dr("ai-help: a wrong first try in one encounter does not cite help from another", async (r) => {
+    const page = lesson("l1", [quiz("q1")]);
+    const a = await tracked(r, page);
+    await r.recordLessonHelp(help(a.id), at(1));
+    const b = await tracked(r, page, at(10 * RESUME_WINDOW_MS));
+    await answer(r, b.id, "q1", "wrong", at(10 * RESUME_WINDOW_MS + 1));
+    await answer(r, b.id, "q1", "right", at(10 * RESUME_WINDOW_MS + 2));
+    const [wrong, right] = await rowsOf(r, b.id, "answer", "q1");
+    expect(await due(r, ["q1"], at(10 * RESUME_WINDOW_MS + 2 + DELAY))).toEqual([{
+      blockId: "q1", rule: "due-review/wrong-first-try", answeredAt: at(10 * RESUME_WINDOW_MS + 1), corrected: true, shown: [],
+      lastSeen: at(10 * RESUME_WINDOW_MS + 2), evidence: [wrong!, right!],
+    }]);
+  });
+
+  mm("ai-help: a first try after help for the whole encounter is aided there too: stability returns to one day", async (r) => {
+    await episode(r, "clean", 0);
+    await episode(r, "clean", DAY);
+    const e = await r.openEncounter({ course: "c", lesson: "l-help", page: lesson("l-help", [quiz("q1")]), now: at(2 * DAY), aidTracking: 1 });
+    await r.recordLessonHelp(help(e.id), at(2 * DAY));
+    await answer(r, e.id, "q1", "right", at(2 * DAY));
+    const [first] = await rowsOf(r, e.id, "answer", "q1");
+    expect(await held(r, at(2 * DAY))).toEqual({ blockId: "q1", strength: 1, stabilityMs: DAY, refreshedAt: at(2 * DAY), settled: false, evidence: [first!] });
+  });
+
+  mm("ai-help: help in one encounter does not make a first try in another aided", async (r) => {
+    const page = lesson("l-help", [quiz("q1")]);
+    const a = await r.openEncounter({ course: "c", lesson: "l-help", page, now: at(0), aidTracking: 1 });
+    await r.recordLessonHelp(help(a.id), at(0));
+    const b = await r.openEncounter({ course: "c", lesson: "l-help", page, now: at(10 * RESUME_WINDOW_MS), aidTracking: 1 });
+    expect(b.id).not.toBe(a.id);
+    await answer(r, b.id, "q1", "right", at(10 * RESUME_WINDOW_MS));
+    const [first] = await rowsOf(r, b.id, "answer", "q1");
+    expect(await held(r, at(10 * RESUME_WINDOW_MS))).toEqual({
+      blockId: "q1", strength: 1, stabilityMs: DAY, refreshedAt: at(10 * RESUME_WINDOW_MS), settled: true, evidence: [first!],
+    });
+  });
+
+  // Generated: random interleavings of help and answers in one encounter. Oracle: RFC 6 §5.1, as a
+  // model that remembers only whether a help has been recorded yet.
+  tx("ai-help: under random interleavings of help and answers, a submission is aided exactly when a help precedes it", async (r) => {
+    const seed = FUZZ_SEED;
+    const random = seeded(seed);
+    const replay = `replay: SCHOOL_TEST_SEED=${seed} bun test server/adapters/postgres.test.ts -t "ai-help: under random"`;
+    const seen = { help: 0, aided: 0, unaided: 0 };
+    for (let round = 0; round < 6; round++) {
+      const e = await tracked(r, lesson(`l${round}`, [quiz("q1"), quiz("q2"), explain]), at(round * 10 * RESUME_WINDOW_MS));
+      let helped = false;
+      for (let step = 0; step < 8; step++) {
+        const t = at(round * 10 * RESUME_WINDOW_MS + step + 1);
+        const move = Math.floor(random() * 4);
+        if (move === 0) {
+          expect(await r.recordLessonHelp(help(e.id), t), replay).toEqual({ status: "stored" });
+          helped = true;
+          seen.help++;
+          continue;
+        }
+        const id = uuid();
+        if (move === 3) await r.saveExplanation({ submissionId: id, encounterId: e.id, blockId: "e1", text: `Go ${step}.`, ms: 1 }, t);
+        else await r.submit({ submissionId: id, encounterId: e.id, blockId: move === 1 ? "q1" : "q2", choiceId: random() < 0.5 ? "right" : "wrong", ms: 1 }, t);
+        const expected = helped ? "aided" : "no-recorded-aid";
+        expect({ round, step, move, aid: await r.aid(id) }, replay).toEqual({ round, step, move, aid: expected });
+        seen[helped ? "aided" : "unaided"]++;
+      }
+    }
+    // Witnesses: the fixed seed reaches helps, aided answers and unaided ones.
+    for (const [kind, n] of Object.entries(seen)) expect(`${kind}: ${n > 0}`, replay).toBe(`${kind}: true`);
+  });
+
   // ---- Installed courses (RFC 7 §7; flyingrobots/school#232) ----------------------------------
 
   t("installs: nothing is installed at first", async (r) => {
@@ -1058,6 +1436,40 @@ export function learningRecordContract(name: string, make: () => Promise<Learnin
     expect(await r.removeInstalledCourse("bells", at(3000))).toEqual({ status: "removed" });
     expect(await r.installedCourses()).toEqual([]);
     expect(await r.lessonProgress("bells")).toEqual({ l1: ["q1"] });
+  });
+
+  // ---- What the record holds under a name (RFC 7 §5.2; flyingrobots/school#237) -----------------
+
+  t("course progress: a name nothing was ever filed under has none", async (r) => {
+    expect(await r.courseProgress("bells")).toEqual({ encounters: 0, answers: 0, explanations: 0, views: 0 });
+  });
+
+  t("course progress: counts the encounters, answers, explanations and views filed under the name, and none of another name's", async (r) => {
+    const e1 = await r.openEncounter({ course: "bells", lesson: "l1", aidTracking: null, page: lesson("l1", [quiz("q1"), explain]), now: at(0) });
+    const e2 = await r.openEncounter({ course: "bells", lesson: "l2", aidTracking: null, page: lesson("l2", [quiz("q2")]), now: at(1000) });
+    await r.submit({ submissionId: uuid(), encounterId: e1.id, blockId: "q1", choiceId: "wrong", ms: 1 }, at(2000));
+    await r.submit({ submissionId: uuid(), encounterId: e1.id, blockId: "q1", choiceId: "right", ms: 1 }, at(3000));
+    await r.submit({ submissionId: uuid(), encounterId: e2.id, blockId: "q2", choiceId: "right", ms: 1 }, at(4000));
+    await r.saveExplanation({ submissionId: uuid(), encounterId: e1.id, blockId: "e1", text: "Because.", ms: 1 }, at(5000));
+    await r.recordView({ course: "bells", lesson: "l1" }, at(6000));
+    const other = await r.openEncounter({ course: "aion", lesson: "l1", aidTracking: null, page: lesson("l1", [quiz("q1")]), now: at(7000) });
+    await r.submit({ submissionId: uuid(), encounterId: other.id, blockId: "q1", choiceId: "right", ms: 1 }, at(8000));
+    await r.recordView({ course: "aion", lesson: "l1" }, at(9000));
+    // Oracle: the writes above, counted by hand: two encounters, three answers, one explanation, one view under bells.
+    expect(await r.courseProgress("bells")).toEqual({ encounters: 2, answers: 3, explanations: 1, views: 1 });
+  });
+
+  t("course progress: a view alone is progress under its name", async (r) => {
+    await r.recordView({ course: "bells", lesson: "l1" }, at(0));
+    expect(await r.courseProgress("bells")).toEqual({ encounters: 0, answers: 0, explanations: 0, views: 1 });
+  });
+
+  t("course progress: a removed install's progress stays under its name", async (r) => {
+    await r.installCourse(gitInstall(), at(0));
+    const e = await r.openEncounter({ course: "bells", lesson: "l1", aidTracking: null, page: lesson("l1", [quiz("q1")]), now: at(1000) });
+    await r.submit({ submissionId: uuid(), encounterId: e.id, blockId: "q1", choiceId: "right", ms: 1 }, at(2000));
+    await r.removeInstalledCourse("bells", at(3000));
+    expect(await r.courseProgress("bells")).toEqual({ encounters: 1, answers: 1, explanations: 0, views: 0 });
   });
 
   t("installs: removing a name with no current install is refused, never installed or already removed", async (r) => {

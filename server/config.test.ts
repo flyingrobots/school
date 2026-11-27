@@ -1025,3 +1025,19 @@ test.each(PROTOTYPE_NAMES.filter((n) => RULE.test(n)))("a course named %s, which
 test.each(PROTOTYPE_NAMES.filter((n) => !RULE.test(n)))("a course named %s, which the name rule forbids, is refused for its shape", (name) => {
   expect(() => parseConfig({ SCHOOL_COURSES: `${name}=/courses/x` }, FRAMEWORK)).toThrow(`SCHOOL_COURSES name ${JSON.stringify(name)} must match ^[a-z0-9][a-z0-9-]*$`);
 });
+
+// The test seam for a fixed clock (flyingrobots/school#220): an HTTP test reads mastery at a known
+// time, and a learner's record never runs on it.
+test("SCHOOL_TEST_CLOCK fixes the server's now to an instant, and is unset by default", () => {
+  expect(parseConfig({ SCHOOL_DATABASE_URL: "pglite:/srv/record" }, FRAMEWORK).clock).toBeNull();
+  expect(parseConfig({ SCHOOL_DATABASE_URL: "pglite:/srv/record", SCHOOL_TEST_CLOCK: "" }, FRAMEWORK).clock).toBeNull();
+  expect(parseConfig({ SCHOOL_DATABASE_URL: "pglite:/srv/record", SCHOOL_TEST_CLOCK: "2026-01-03T10:00:00Z" }, FRAMEWORK).clock)
+    .toBe("2026-01-03T10:00:00.000Z");
+});
+
+test("SCHOOL_TEST_CLOCK is refused on a postgres:// record, and when it is not an instant", () => {
+  expect(() => parseConfig({ SCHOOL_TEST_CLOCK: "2026-01-03T10:00:00Z" }, FRAMEWORK)).toThrow(/SCHOOL_TEST_CLOCK.*pglite:/);
+  for (const value of ["tomorrow", "2026-01-03", "2026-13-40T10:00:00Z"]) {
+    expect(() => parseConfig({ SCHOOL_DATABASE_URL: "pglite:/srv/record", SCHOOL_TEST_CLOCK: value }, FRAMEWORK)).toThrow(/SCHOOL_TEST_CLOCK.*instant/);
+  }
+});

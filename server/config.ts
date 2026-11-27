@@ -46,6 +46,11 @@ export type Config = {
   mounts: Record<string, string>;
   host: string;
   port: number;
+  /**
+   * A fixed instant the server reads as now, from SCHOOL_TEST_CLOCK; null, the default, for the
+   * system clock. Only for tests over HTTP that need a time-dependent answer at a known time.
+   */
+  clock: string | null;
 };
 
 /** Which Postgres driver holds the record, and where. */
@@ -437,6 +442,19 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     }
   }
 
+  // A fixed clock for tests over HTTP (flyingrobots/school#220). Refused on a postgres:// record, so
+  // a learner's record is never written at a time that is not now.
+  const clockValue = env.SCHOOL_TEST_CLOCK === undefined || env.SCHOOL_TEST_CLOCK === "" ? null : env.SCHOOL_TEST_CLOCK;
+  let clock: string | null = null;
+  if (clockValue !== null) {
+    if (database.driver !== "pglite") throw new ConfigError("SCHOOL_TEST_CLOCK is for tests: it fixes the server's clock, so it is refused unless SCHOOL_DATABASE_URL is pglite:<directory>");
+    const instant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(clockValue) ? Date.parse(clockValue) : NaN;
+    if (Number.isNaN(instant)) {
+      throw new ConfigError(`SCHOOL_TEST_CLOCK ${JSON.stringify(clockValue)} is not an instant: give a date, a time and a zone, as 2026-01-03T10:00:00Z`);
+    }
+    clock = new Date(instant).toISOString();
+  }
+
   // The school skill an authoring agent is given, and the references it links (RFC 9 §5.3,
   // flyingrobots/school#257): this checkout's by default; compose mounts them under /framework.
   // Whether they are there is reported at start (server/skill.ts), never a refusal to start.
@@ -460,6 +478,7 @@ export function parseConfig(env: Record<string, string | undefined>, frameworkDe
     mounts,
     host: env.HOST ?? "127.0.0.1",
     port,
+    clock,
   };
 }
 

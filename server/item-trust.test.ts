@@ -127,8 +127,9 @@ describe("one trusted and one untrusted course", () => {
     });
     const resume = (await get(guestLast, "/api/resume")) as Record<string, unknown>;
     expect(Object.keys(resume).sort()).toEqual(["course", "kind", "lastStudied", "lesson", "question", "trusted"]);
+    // flyingrobots/school#222 added quizzes and mastery, how the course is holding today.
     const lane = ((await get(guestLast, "/api/activity")) as { courses: Record<string, unknown>[] }).courses[0]!;
-    expect(Object.keys(lane).sort()).toEqual(["course", "courseTitle", "due", "studied", "trusted"]);
+    expect(Object.keys(lane).sort()).toEqual(["course", "courseTitle", "due", "mastery", "quizzes", "studied", "trusted"]);
   });
 });
 

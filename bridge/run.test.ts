@@ -1,10 +1,10 @@
 // The agent chain: each configured command is tried in order until one returns output that
 // matches the schema. Fake agents are small shell scripts written per test; none contacts a model.
-import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, runChain, type BridgeConfig } from "./run.ts";
+import { loadConfig, runChain, sweepGroup, sweeps, type BridgeConfig } from "./run.ts";
 
 // Bun's own 5 s per-test limit would race process start-up on a loaded machine; every test here
 // either finishes on its own or is bounded by the agent timeouts below, so the limit is generous.
@@ -138,4 +138,123 @@ test("a claude-json agent whose output is not JSON fails with an error that quot
   const prose = agent("prose", "echo 'SECRETWORD is what I would say'");
   const r = await runChain(cfg([{ name: "prose", command: prose, output: "claude-json" }]), { prompt: "p", schema });
   expect(r.attempts[0]).toMatchObject({ status: "failed", error: "claude-json output was not JSON" });
+});
+
+// flyingrobots/school#290: when no agent can be started (missing, or a file that is not executable),
+// the chain still ends with every attempt, and no error holds the prompt.
+test("when no agent can be started, the chain fails with each attempt failed and no prompt in any error", async () => {
+  const notExecutable = join(dir, "not-executable");
+  writeFileSync(notExecutable, "#!/bin/sh\necho '{\"answer\": \"yes\"}'\n");
+  const r = await runChain(cfg([{ name: "gone", command: `${join(dir, "no-such-folder", "agent")} {prompt}` }, { name: "denied", command: `${notExecutable} {prompt}` }]), { prompt: "SECRET-PROMPT", schema });
+  expect(r).toEqual({ status: "failed", error: "every agent failed", attempts: [
+    { agent: "gone", status: "failed", error: `could not start ${join(dir, "no-such-folder", "agent")} (ENOENT)`, exitCode: null, ms: expect.any(Number) },
+    { agent: "denied", status: "failed", error: `could not start ${notExecutable} (EACCES)`, exitCode: null, ms: expect.any(Number) },
+  ] });
+});
+
+// flyingrobots/school#285. A child an agent forks just as the group kill lands can miss the signal,
+// still in the agent's process group, and hold the pipes open, so the chain (and the bridge's one
+// grading slot) waits for it. This agent forks without pause in four loops, so a kill nearly always
+// lands mid-fork: on this test's machine one kill of its group left a child running in 15 of 20
+// tries. Every child sleeps 600 s, longer than any test here, so only a kill ends one in time.
+const forks = agent("forks", 'for i in 1 2 3 4; do (while :; do sleep 600 & kill $! 2>/dev/null; done) & done\necho $$ > "$1.tmp" && mv "$1.tmp" "$1"\nwait');
+const groups: number[] = [];
+afterEach(() => {
+  // Whatever a failed test left running is killed here, so none outlives the test.
+  for (const g of groups.splice(0)) try { process.kill(-g, "SIGKILL"); } catch {}
+});
+
+/**
+ * The processes still running in process group `group` (a zombie has ended, and waits only to be
+ * reaped). A SIGKILL takes effect when the kernel next schedules its target, so the group is read
+ * until it is empty or `withinMs` has passed; a child no kill reached is still there then.
+ */
+async function inGroup(group: number, withinMs = 2000): Promise<number[]> {
+  const until = Date.now() + withinMs;
+  for (;;) {
+    const ps = Bun.spawnSync(["ps", "-A", "-o", "pid=,pgid=,stat="], { stdout: "pipe" });
+    const running = ps.stdout.toString().split("\n").map((l) => l.trim().split(/\s+/))
+      .filter(([pid, pgid, stat]) => pid !== "" && Number(pgid) === group && !stat!.startsWith("Z")).map(([pid]) => Number(pid));
+    if (running.length === 0 || Date.now() >= until) return running;
+    await Bun.sleep(20);
+  }
+}
+
+/**
+ * One chain of the forking agent, then a good one, timed out after `seconds`. Its result, or
+ * "still waiting" if it has not returned 10 s after the timeout (a missed child sleeps 600 s), and
+ * the forking agent's process group, or null when the agent was killed before it was ready.
+ */
+async function forkingRun(tag: string, seconds: number) {
+  const pidFile = join(dir, `forks-${tag}-${seconds}s.pid`);
+  const chain = runChain(cfg([{ name: "forks", command: `${forks} ${pidFile}` }, { name: "good", command: `${fromArg} x {prompt}` }], seconds), { prompt: "p", schema });
+  const r = await Promise.race([chain, Bun.sleep(seconds * 1000 + 10_000).then(() => "still waiting" as const)]);
+  const group = existsSync(pidFile) ? Number(readFileSync(pidFile, "utf8")) : null;
+  if (group !== null) groups.push(group);
+  return { r, group };
+}
+
+test("a grading agent that forks as its kill lands leaves no child running, and the next agent runs", async () => {
+  // Three conclusive runs: one kill alone misses a child in about three runs of four.
+  let conclusive = 0;
+  for (const seconds of [1, 1, 1, 2, 2, 4, 8]) {
+    const { r, group } = await forkingRun(`golden-${conclusive}`, seconds);
+    expect(r).not.toBe("still waiting");
+    if (r === "still waiting") return;
+    expect(r.attempts[0]).toMatchObject({ agent: "forks", status: "failed", error: `timed out after ${seconds} s` });
+    expect(r).toMatchObject({ status: "succeeded", agent: "good" });
+    if (group === null) continue; // killed before it was ready: inconclusive, not a pass
+    expect(await inGroup(group)).toEqual([]);
+    if (++conclusive === 3) return;
+  }
+  throw new Error(`the forking agent was ready in only ${conclusive} of its runs`);
+}, 120_000);
+
+test("an agent that answers and exits is not timed out: its answer stands", async () => {
+  const r = await runChain(cfg([{ name: "good", command: `${fromArg} x {prompt}` }], 1), { prompt: "p", schema });
+  expect(r).toMatchObject({ status: "succeeded", agent: "good", output: { answer: "no" } });
+  expect(r.attempts).toEqual([expect.objectContaining({ agent: "good", status: "succeeded" })]);
+});
+
+test("the kill reaches only the agent's own process group: another group running beside it survives", async () => {
+  const other = Bun.spawn(["sleep", "600"], { detached: true, stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+  groups.push(other.pid);
+  const { r, group } = await forkingRun("beside", 1);
+  expect(r).not.toBe("still waiting");
+  if (group !== null) expect(await inGroup(group)).toEqual([]);
+  expect(() => process.kill(other.pid, 0)).not.toThrow();
+}, 60_000);
+
+test("five forking agents killed at once, three rounds over: every chain returns and no child is left", async () => {
+  for (let round = 0; round < 3; round++) {
+    const runs = await Promise.all(Array.from({ length: 5 }, (_, i) => forkingRun(`load-${round}-${i}`, 1)));
+    expect(runs.filter(({ r }) => r === "still waiting")).toHaveLength(0);
+    for (const { group } of runs) if (group !== null) expect(await inGroup(group)).toEqual([]);
+  }
+}, 120_000);
+
+// Review findings on flyingrobots/school#348. sweepGroup(0) would signal the bridge's own group and
+// sweepGroup(1) every process the user can signal, so neither number is a group it may sweep. The
+// signal function is injected, so these tests send no signal to any group.
+test("sweepGroup signals no group that is not a real one, and a real one once", async () => {
+  const sent: number[] = [];
+  for (const bad of [0, 1, -5, 1.5, Number.NaN, Infinity]) {
+    const stop = sweepGroup(bad, (g) => { sent.push(g); });
+    expect(typeof stop).toBe("function");
+    stop();
+  }
+  expect(sent).toEqual([]);
+  const stop = sweepGroup(4_000_000, (g) => { sent.push(g); });
+  stop();
+  expect(sent).toEqual([4_000_000]);
+});
+
+test("a kill after the agent's pipes closed starts no sweep", async () => {
+  // The agent closes both pipes at once and then lives 3 s; the 1 s timeout lands after the pipes
+  // closed and before the agent exits, so the kill comes when the sweep has already been stopped.
+  const quiet = agent("closes-pipes", "exec >&- 2>&-; sleep 3");
+  const before = sweeps.started;
+  const r = await runChain(cfg([{ name: "quiet", command: quiet }], 1), { prompt: "p", schema });
+  expect(r.attempts[0]).toMatchObject({ status: "failed", error: "timed out after 1 s" });
+  expect(sweeps.started - before).toBe(0);
 });

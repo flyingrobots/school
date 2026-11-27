@@ -1,6 +1,6 @@
 // School's use cases (RFC 3, §4). Each takes values already parsed at the edge, talks only to
 // ports, and returns plain data for the driving adapter to serialise.
-import type { Aid, AidTracking, Block, Contradiction, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, ExposureKind, ReviewNote, ReviewReason, EvidenceRow, Exposure, ExposureResult, ExplanationState, ExplanationSubmission, Grading, GradingRecord, LastStudied, LatestFeedback, LessonProgress, Recorded, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
+import type { Aid, AidTracking, Block, Contradiction, CourseProgress, DecisionChoice, DecisionNote, DecisionNoteInput, DecisionNoteResult, DueItem, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureKind, ExposureResult, Grading, GradingRecord, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, MasteryRollup, Recorded, RecordedExposureKind, ReviewNote, ReviewReason, SaveResult, Source, Submission, SubmitResult, ViewEvent } from "./model.ts";
 import type { Clock, Grader, LearningRecord } from "./ports.ts";
 
 const squash = (s: string) => s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim().toLowerCase();
@@ -37,8 +37,9 @@ export const REVIEW_LIMIT = 3;
 /** The id of the section School adds at the top of a lesson for its review items. Authored ids may not start `school:` (server/blocks.ts). */
 export const REVIEW_SECTION_ID = "school:review";
 
-const helpWords: Record<ExposureKind, string> = {
+const helpWords: Record<RecordedExposureKind, string> = {
   feedback: "the explanation", "model-answer": "the model answer", hint: "a hint", reference: "a reference",
+  "ai-help": "asking about the lesson",
 };
 const listed = (words: string[]) => words.length <= 1 ? words.join("") : `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
 
@@ -61,6 +62,9 @@ export function reviewReason(item: DueItem, tz?: string): string {
       return `On ${day}, ${help} helped you find this one. ${back}`;
     case "due-review/unknown-aid":
       return `On ${day}, you found this one while School wasn't noting the help it showed. ${back}`;
+    case "due-review/faded":
+      // RFC 5 §4.7: recall the clean answer, and ask; never say what was lost.
+      return `On ${day}, you found this one from memory. Some time has passed: how does it feel now?`;
   }
 }
 
@@ -104,16 +108,33 @@ export interface School {
   timeZone(): Promise<string | null>;
   /** Choose a time zone, or null to go back to automatic; recorded at the clock's now. */
   chooseTimeZone(zone: string | null): Promise<void>;
+  /** Each name's current install (RFC 7 §7), by name: what the course list serves beside the configured courses. */
+  installedCourses(): Promise<InstalledCourse[]>;
   /** The quizzes among `blocks` due for review now, each with its reason in words. */
   /** `tz`: the zone the reason names its day in; the server's when absent. */
   dueNow(course: string, blocks: readonly string[], tz?: string): Promise<{ item: DueItem; reason: string }[]>;
   /**
-   * For each course, the local days in time zone `tz` it was studied in the last `days` days, and,
-   * for each of the next `days` days, how many of its quizzes become due for review that day.
+   * For each course, the local days in time zone `tz` it was studied in the last `days` days; for
+   * each of the next `days` days, how many of its quizzes become due for review that day; and how
+   * its quizzes are holding today (RFC 5 §4.8): the rollup's four counts over one group holding
+   * every quiz, at the clock's now with due review's delay. The mean strength is not passed on.
    */
   activity(courses: readonly { name: string; blocks: readonly string[] }[], days: number, tz: string):
-    Promise<{ today: string; courses: { course: string; studied: string[]; due: { day: string; items: number }[] }[] }>;
+    Promise<{ today: string; courses: { course: string; studied: string[]; due: { day: string; items: number }[]; quizzes: number; mastery: MasteryCounts }[] }>;
+  /**
+   * How each group of the course's quizzes is holding now (RFC 5 §4.5): one row per key of
+   * `groups`, read at the clock's now with the delay due review uses, so it agrees with the review
+   * a lesson opens with. A group with no quizzes counts zero in every state.
+   */
+  masteryNow(course: string, groups: Readonly<Record<string, readonly string[]>>): Promise<MasteryRollup[]>;
+  /** The names of the current installs (RFC 7 §7). */
+  installedNames(): Promise<string[]>;
+  /** What the record holds under a course name, served or not (RFC 7 §5.2). */
+  courseProgress(course: string): Promise<CourseProgress>;
 }
+
+/** How many of a group's quizzes are in each state of RFC 5 Table 4.5; they sum to its quizzes. */
+export type MasteryCounts = Pick<MasteryRollup, "notStarted" | "settling" | "holding" | "faded">;
 
 export function createSchool(ports: { record: LearningRecord; grader: Grader; clock: Clock }): School {
   const { record, grader, clock } = ports;
@@ -168,6 +189,7 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
     lessonProgress: (course) => record.lessonProgress(course),
     lastStudied: () => record.lastStudied(),
     timeZone: () => record.timeZone(),
+    installedCourses: () => record.installedCourses(),
     chooseTimeZone: (zone) => record.chooseTimeZone(zone, clock.now()),
     async latestFeedback() {
       const f = await record.latestFeedback();
@@ -199,10 +221,15 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
             for (const id of fresh) seen.add(id);
             if (fresh.length > 0) due.push({ day: local(now + k * DAY), items: fresh.length });
           }
-          return { course: c.name, studied: studied.filter((d) => d.course === c.name).map((d) => d.day), due };
+          const [rolled] = await record.masteryRollup({ course: c.name, groups: { [c.name]: [...c.blocks] }, now: new Date(now).toISOString(), delayMs: REVIEW_DELAY_MS });
+          if (rolled === undefined) throw new Error(`the mastery rollup returned no row for course ${c.name}`);
+          const { quizzes, notStarted, settling, holding, faded } = rolled;
+          return { course: c.name, studied: studied.filter((d) => d.course === c.name).map((d) => d.day), due, quizzes, mastery: { notStarted, settling, holding, faded } };
         })),
       };
     },
+    masteryNow: (course, groups) =>
+      record.masteryRollup({ course, groups: Object.fromEntries(Object.entries(groups).map(([k, b]) => [k, [...b]])), now: clock.now(), delayMs: REVIEW_DELAY_MS }),
     recordView: (v) => record.recordView(v, clock.now()),
     recordExposure: (e) => record.recordExposure(e, clock.now()),
     submissionAid: (id) => record.aid(id),
@@ -210,6 +237,8 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
     recordDecisionNote: (n) => record.recordDecisionNote(n, clock.now()),
     decisionNotes: (c) => record.decisionNotes(c),
     encounterDecisionNotes: (id) => record.encounterDecisionNotes(id),
+    installedNames: async () => (await record.installedCourses()).map((c) => c.course),
+    courseProgress: (course) => record.courseProgress(course),
   };
 }
 
