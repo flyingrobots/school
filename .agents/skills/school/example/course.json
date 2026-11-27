@@ -1,1 +1,7 @@
-{ "title": "Counting in Binary" }
+{
+  "title": "Counting in Binary",
+  "summary": "How two symbols are enough to count anything, and how to read a binary number.",
+  "author": "The School maintainers",
+  "license": "Apache-2.0",
+  "format": 1
+}

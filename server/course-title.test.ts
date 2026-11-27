@@ -37,11 +37,11 @@ describe("readCourseFile", () => {
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
   test("a course.json with a title gives that title", () => {
-    expect(readCourseFile(courseDir(root, "titled", JSON.stringify({ title: "AIΩN Foundations" })))).toEqual({ title: "AIΩN Foundations" });
+    expect(readCourseFile(courseDir(root, "titled", JSON.stringify({ title: "AIΩN Foundations" })))).toEqual({ title: "AIΩN Foundations", summary: null, author: null, license: null, format: null });
   });
 
   test("a course with no course.json declares no title", () => {
-    expect(readCourseFile(courseDir(root, "untitled"))).toEqual({ title: null });
+    expect(readCourseFile(courseDir(root, "untitled"))).toEqual({ title: null, summary: null, author: null, license: null, format: null });
   });
 
   test("a course.json that is not JSON is refused, naming the file", () => {
