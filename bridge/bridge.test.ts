@@ -170,3 +170,22 @@ test("a bridge whose port is taken writes one bridge.error line naming it, nothi
     holder.stop(true);
   }
 }, timeout(1));
+
+// flyingrobots/school#290: an agent that cannot be started (Bun.spawn throws: ENOENT here, E2BIG for
+// a long prompt on Linux) is that agent's failed attempt, and the next agent is tried.
+test("a grading whose first agent cannot be started falls back to the next and logs that attempt as failed", async () => {
+  writeFileSync(join(dir, "bridge.json"), JSON.stringify({ timeout_seconds: 5, agents: [
+    { name: "unstartable", command: `${join(dir, "no-such-folder", "agent")} {prompt}` },
+    { name: "good", command: `${join(dir, "good")} {prompt}` },
+  ] }));
+  const r = await (await run({ prompt: "SECRET-LEARNER-TEXT", schema })).json();
+  expect(r).toMatchObject({ status: "succeeded", agent: "good", output: { ok: true } });
+  expect(r.attempts.map((a: { agent: string; status: string }) => [a.agent, a.status])).toEqual([["unstartable", "failed"], ["good", "succeeded"]]);
+  bridge!.proc.kill();
+  const out = (await bridge!.output()).stdout;
+  bridge = null;
+  const attempts = out.trim().split("\n").map((l) => JSON.parse(l)).filter((l) => l.kind === "bridge.attempt");
+  expect(attempts.map((a) => [a.agent, a.status, a.error])).toEqual([
+    ["unstartable", "failed", `could not start ${join(dir, "no-such-folder", "agent")} (ENOENT)`], ["good", "succeeded", null]]);
+  expect(out).not.toContain("SECRET-LEARNER-TEXT");
+});
