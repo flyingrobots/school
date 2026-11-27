@@ -418,6 +418,6 @@ Every recommendation in Table 0.1 and §8 is accepted as written: a growing half
 | 6, the home timeline | flyingrobots/school#222 |
 | 7, the learner gate | flyingrobots/school#223, blocked on real study |
 
-Corrected 2026-11-27 (0.2.1), during step 3: this RFC had said every existing due-review test would pass unchanged. That cannot hold, because §4.3 brings back a clean quiz once a stability has passed, and three cases asked about one later than that. They were moved inside one stability (Table 4.6a), and a differential shows the three rules' output unchanged. A decision record is being written by the coordinator who decided it under delegated authority.
+Corrected 2026-11-27 (0.2.1), during step 3: this RFC had said every existing due-review test would pass unchanged. That cannot hold, because §4.3 brings back a clean quiz once a stability has passed, and three cases asked about one later than that. They were moved inside one stability (Table 4.6a), and a differential shows the three rules' output unchanged. The decision record is Reader receipt 4d063706-c100-4ad9-a88f-b94ac207bf21, written by the coordinator who decided it under delegated authority.
 
 In short: RFC 5 is decided as written, and its seven steps are filed.

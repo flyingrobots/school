@@ -35,7 +35,7 @@ beforeAll(async () => {
   mkdirSync(join(root, "d", "lessons"), { recursive: true });
   writeFileSync(join(root, "d", "lessons", "0001.json"), JSON.stringify(page("m1", "Bells", ["b1"])));
   writeFileSync(join(root, "d", "lessons", "0002.json"), JSON.stringify(page("m2", "Changes", ["b2"])));
-  // Two days ago, as the server's own record would hold it: q1 wrong then right, q2 right first try.
+  // 22 hours ago, as the server's own record would hold it: q1 wrong then right, q2 right first try.
   const dir = join(root, "record");
   const db = await openDatabase({ driver: "pglite", dir });
   const r = postgresRecord(db.sql);
