@@ -45,7 +45,7 @@ others, and checks every reply with Zod (`web/src/lib/home-api.ts`) before showi
      **Write a new draft**, linking to the explanation in its lesson, and **Read aloud** (`R`),
      which reads the feedback aloud ([reading aloud](../reading-aloud/README.md)). Then **Ready for another
      look** (`GET /api/review`): each question with its course and lesson, the day it was
-     answered, an ⓘ button that answers "Why am I being asked this?" on hover or tap, and
+     answered, an ⓘ button that answers "Why am I being asked this?" on hover or tap (questions that took a second go or a little help, and ones found from memory a while ago, to see how they feel now), and
      **Answer**, which opens the next lesson ahead in its course, where the question comes back.
      When there is neither, it says "Nothing new since you were last here".
 
@@ -62,10 +62,12 @@ grows to fit it.
 | `settling` | "1 still settling" |
 | `faded` | "1 ready for another look" |
 | `notStarted`, some quizzes answered | "1 not started yet" |
-| `notStarted`, no quiz answered | "Not started yet", alone |
+| `notStarted`, no quiz answered, no study day and nothing coming back | "Not started yet", alone |
 
-_Table 1. The words for each count. A course with no quizzes says "Not started yet" while it has no
-study day and nothing coming back, and nothing otherwise._
+_Table 1. The words for each count. "Not started yet" alone is for a course with no study day and
+nothing coming back, and with no quiz answered or no quizzes at all. A course with a study day and
+no quiz answered (a lesson with only an explanation, say) says "3 not started yet" like any other
+state; a course with no quizzes and a study day or a return says nothing._
 
 The counts come from `GET /api/activity`: for each course, `quizzes` and `mastery`, read from
 `school.mastery_rollup` with one group holding every quiz the course serves, at the server's clock
