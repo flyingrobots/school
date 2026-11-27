@@ -38,6 +38,7 @@ import { lookup } from "node:dns/promises";
 import { lstatSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { isIP } from "node:net";
 import { dirname, isAbsolute, join } from "node:path";
+import { GitRunError, runGit } from "./git-run.ts";
 
 export type FetchLimits = {
   /** Bytes the fetched repository may hold on disk, pack and all. */
@@ -261,80 +262,26 @@ async function checkAddresses(target: Target, net: Network): Promise<string[]> {
  * How git runs: `home` is its HOME, the staging folder; `cwd` the folder it starts in; `ceiling`
  * the folder above which git never looks for a repository of its own.
  */
-type Git = { bin: string; home: string; cwd: string; ceiling: string; ms: number; config: string[] };
+type Git = { bin: string; home: string; cwd: string; ceiling: string; ms: number; config: string[]; repository?: string };
 
 /**
- * Reads a stream to its end, keeping at most `max` bytes. Past that, a `truncate` stream keeps
- * draining; any other is a refusal at once, which stops git.
- */
-async function capped(stream: ReadableStream<Uint8Array>, max: number, truncate: boolean, what: string): Promise<Uint8Array> {
-  const chunks: Uint8Array[] = [];
-  let kept = 0;
-  for await (const chunk of stream) {
-    if (kept + chunk.length > max && !truncate) refuse("git-failed", `git ${what} wrote more than ${max} bytes`);
-    const room = Math.max(0, max - kept);
-    if (room > 0) chunks.push(chunk.subarray(0, room));
-    kept += Math.min(room, chunk.length);
-  }
-  return Buffer.concat(chunks);
-}
-
-/**
- * Runs one git command under a clean environment, in its own process group, with a time limit.
- * `watch` is called every 100 ms while it runs; a refusal from it stops git. Stopping kills the
- * whole group, so no remote helper or index-pack outlives it.
+ * Runs one git command through the shared hardened runner (git-run.ts): a clean environment, its
+ * own process group, a time limit. `watch` is called every 100 ms while it runs; a refusal from it
+ * stops git. Stopping kills the whole group, so no remote helper or index-pack outlives it.
  */
 async function run(g: Git, args: string[], o: { maxStdout: number; watch?: () => void }): Promise<{ code: number; stdout: string; stderr: string }> {
-  const what = (args[0] === "--git-dir" ? args[2] : args[0]) ?? "";
-  const env = {
-    PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: g.home, LC_ALL: "C",
-    GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0", GIT_NO_REPLACE_OBJECTS: "1",
-    GIT_ATTR_NOSYSTEM: "1", GIT_OPTIONAL_LOCKS: "0", GIT_CEILING_DIRECTORIES: g.ceiling,
-  };
-  let proc;
   try {
-    proc = Bun.spawn([g.bin, ...g.config, ...args], { env, cwd: g.cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true });
+    const r = await runGit(
+      { bin: g.bin, home: g.home, cwd: g.cwd, ceiling: g.ceiling, ms: g.ms, config: g.config, repository: g.repository },
+      args,
+      { maxStdout: o.maxStdout, maxStderr: 4096, watch: o.watch },
+    );
+    return { code: r.code, stdout: new TextDecoder().decode(r.stdout), stderr: r.stderr };
   } catch (e) {
-    return refuse("git-failed", `git could not be started: ${e instanceof Error ? e.message : String(e)}`);
+    if (e instanceof Refused) throw e;
+    if (e instanceof GitRunError) return refuse(e.kind === "timeout" ? "timeout" : "git-failed", e.message);
+    return refuse("git-failed", String(e));
   }
-  const p = proc;
-  let stopped: Refused | null = null;
-  const stop = (why: Refused) => {
-    stopped ??= why;
-    try {
-      process.kill(-p.pid, "SIGKILL");
-    } catch {
-      p.kill("SIGKILL");
-    }
-  };
-  const timer = setTimeout(() => stop(new Refused({ reason: "timeout", message: `git ${what} ran longer than ${g.ms} ms and was stopped` })), g.ms);
-  const watcher = o.watch
-    ? setInterval(() => {
-        try {
-          o.watch?.();
-        } catch (e) {
-          stop(e instanceof Refused ? e : new Refused({ reason: "git-failed", message: String(e) }));
-        }
-      }, 100)
-    : null;
-  let out: Uint8Array = new Uint8Array(0);
-  let err: Uint8Array = new Uint8Array(0);
-  try {
-    [out, err] = await Promise.all([capped(p.stdout, o.maxStdout, false, what), capped(p.stderr, 4096, true, what)]);
-  } catch (e) {
-    stop(e instanceof Refused ? e : new Refused({ reason: "git-failed", message: String(e) }));
-  }
-  const code = await p.exited;
-  clearTimeout(timer);
-  if (watcher) clearInterval(watcher);
-  // Anything git started that is still running goes with it.
-  try {
-    process.kill(-p.pid, "SIGKILL");
-  } catch {
-    // The group is already gone.
-  }
-  if (stopped) throw stopped;
-  return { code, stdout: new TextDecoder().decode(out), stderr: new TextDecoder().decode(err).trim() };
 }
 
 const failed = (what: string, r: { code: number; stderr: string }): never =>
@@ -362,9 +309,9 @@ function bytesUnder(dir: string): number {
 }
 
 /** The full hash a branch, tag or HEAD names on the remote, by one `git ls-remote` from `repository`. */
-async function resolveRef(g: Git, repository: string, href: string, name: string): Promise<string> {
+async function resolveRef(g: Git, href: string, name: string): Promise<string> {
   const wanted = name === "HEAD" ? ["HEAD"] : [`refs/heads/${name}`, `refs/tags/${name}`, `refs/tags/${name}^{}`];
-  const r = await run(g, ["--git-dir", repository, "ls-remote", href, ...wanted], { maxStdout: MiB });
+  const r = await run(g, ["ls-remote", href, ...wanted], { maxStdout: MiB });
   if (r.code !== 0) failed("ls-remote", r);
   const refs = new Map<string, string>();
   for (const line of r.stdout.split("\n")) {
@@ -400,26 +347,27 @@ export async function fetchCommit(request: FetchRequest, testing: FetchTesting =
     }
     made = true;
     const pin = pinned.map((a) => (a.includes(":") ? `[${a}]` : a)).join(",");
+    // The runner adds `core.hooksPath=/dev/null`, `core.fsmonitor=false` and `submodule.recurse=false` itself.
     const config = [
-      "protocol.allow=never", "protocol.https.allow=always", "core.hooksPath=/dev/null", "core.fsmonitor=false",
-      "transfer.fsckObjects=true", "fetch.fsckObjects=true", "submodule.recurse=false", "fetch.recurseSubmodules=false",
+      "protocol.allow=never", "protocol.https.allow=always",
+      "transfer.fsckObjects=true", "fetch.fsckObjects=true", "fetch.recurseSubmodules=false",
       "credential.helper=", "core.askPass=", "http.followRedirects=false", "http.proxy=", "http.sslVerify=true",
       "gc.auto=0", "maintenance.auto=false",
       ...(pin ? [`http.curloptResolve=${target.host}:${target.port}:${pin}`] : []),
       ...(net.caFile ? [`http.sslCAInfo=${net.caFile}`] : []),
-    ].flatMap((c) => ["-c", c]);
+    ];
     // Every git command names the repository it uses (`--git-dir`), starts in it, and may not look
     // above the staging folder for another, so no enclosing repository's configuration applies.
     const repository = join(staging, "repo.git");
     const atStaging: Git = { bin: testing.git ?? "git", home: staging, cwd: staging, ceiling: dirname(staging), ms: limits.gitMs, config };
-    const g: Git = { ...atStaging, cwd: repository };
+    const g: Git = { ...atStaging, cwd: repository, repository };
     const init = async (format: "sha1" | "sha256") => {
       const r = await run(atStaging, ["init", "--quiet", "--bare", "--template=", `--object-format=${format}`, repository], { maxStdout: 4096 });
       if (r.code !== 0) failed("init", r);
     };
     const format = (hash: string) => (hash.length === 64 ? "sha256" : "sha1");
     await init("hash" in wanted ? format(wanted.hash) : "sha1");
-    const commit = "hash" in wanted ? wanted.hash : await resolveRef(g, repository, target.href, wanted.ref);
+    const commit = "hash" in wanted ? wanted.hash : await resolveRef(g, target.href, wanted.ref);
     if (format(commit) === "sha256" && !("hash" in wanted)) {
       // The remote's ref is a SHA-256 hash: the repository was made for SHA-1, so make it again.
       rmSync(repository, { recursive: true, force: true });
@@ -428,13 +376,13 @@ export async function fetchCommit(request: FetchRequest, testing: FetchTesting =
     const tooLarge = () => {
       if (bytesUnder(staging) > limits.packBytes) refuse("too-large", `the repository is larger than ${limits.packBytes} bytes at this commit`);
     };
-    const fetch = await run(g, ["--git-dir", repository, "fetch", "--quiet", "--depth=1", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", target.href, commit], { maxStdout: 64 * 1024, watch: tooLarge });
+    const fetch = await run(g, ["fetch", "--quiet", "--depth=1", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head", target.href, commit], { maxStdout: 64 * 1024, watch: tooLarge });
     tooLarge();
     if (fetch.code !== 0) failed("fetch", fetch);
-    const type = await run(g, ["--git-dir", repository, "cat-file", "-t", commit], { maxStdout: 64 });
+    const type = await run(g, ["cat-file", "-t", commit], { maxStdout: 64 });
     if (type.code !== 0 || type.stdout.trim() !== "commit") refuse("not-a-commit", `${commit} is not a commit in the repository`);
     // A ref keeps the commit from being pruned before it is read.
-    const ref = await run(g, ["--git-dir", repository, "update-ref", "refs/heads/course", commit], { maxStdout: 64 });
+    const ref = await run(g, ["update-ref", "refs/heads/course", commit], { maxStdout: 64 });
     if (ref.code !== 0) failed("update-ref", ref);
     return { ok: true, repository, commit };
   } catch (e) {

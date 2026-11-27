@@ -108,7 +108,7 @@ license CC-BY-4.0; format 1
 
 ## Extracting a course from a git commit
 
-`extractCommit` in `server/extract-tree.ts` copies a course out of one commit of a bare git repository into a new folder, writing only what School reads and refusing anything that could escape the folder, run code or exhaust the disk. It is the extraction step of installing a course (RFC 7, "Installing courses", §4 and §6, which answers flyingrobots/school#188; this module is flyingrobots/school#235); nothing in School calls it yet, and fetching the commit is a separate step.
+`extractCommit` in `server/extract-tree.ts` copies a course out of one commit of a bare git repository into a new folder, writing only what School reads and refusing anything that could escape the folder, run code or exhaust the disk. It is the extraction step of installing a course (RFC 7, "Installing courses", §4 and §6, which answers flyingrobots/school#188; this module is flyingrobots/school#235); nothing in School calls it yet, and fetching the commit is a separate step. Its git runs through the same hardened runner as fetching, `server/git-run.ts` (flyingrobots/school#314).
 
 ```ts
 const result = await extractCommit({ repository: "/staging/abc/repo.git", commit: "<40 or 64 hex digits>", into: "/staging/abc/course" });
