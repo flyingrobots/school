@@ -221,7 +221,7 @@ export function createSchool(ports: { record: LearningRecord; grader: Grader; cl
             for (const id of fresh) seen.add(id);
             if (fresh.length > 0) due.push({ day: local(now + k * DAY), items: fresh.length });
           }
-          const [rolled] = await record.masteryRollup({ course: c.name, groups: { [c.name]: [...c.blocks] }, now: clock.now(), delayMs: REVIEW_DELAY_MS });
+          const [rolled] = await record.masteryRollup({ course: c.name, groups: { [c.name]: [...c.blocks] }, now: new Date(now).toISOString(), delayMs: REVIEW_DELAY_MS });
           if (rolled === undefined) throw new Error(`the mastery rollup returned no row for course ${c.name}`);
           const { quizzes, notStarted, settling, holding, faded } = rolled;
           return { course: c.name, studied: studied.filter((d) => d.course === c.name).map((d) => d.day), due, quizzes, mastery: { notStarted, settling, holding, faded } };
