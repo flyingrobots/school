@@ -2,7 +2,7 @@
 // Adapters implement them; the core never imports an adapter.
 import type {
   Aid, AidTracking, Block, CourseInstall, DecisionChoice, DueItem, DueReviewQuery, ReviewNote, DecisionNote, DecisionNoteInput, DecisionNoteResult, Encounter, EvidenceRow, ExplanationState, ExplanationSubmission, Exposure, ExposureResult, Grading, GradingInput,
-  GradingRecord, InstallResult, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, Outcome, Recorded, RemovalResult, SaveResult, SavedExplanation, StudyDay, Submission, SubmitResult, TrustResult, ViewEvent,
+  GradingRecord, InstallResult, InstalledCourse, LastStudied, LatestFeedback, LessonProgress, Mastery, MasteryQuery, Outcome, Recorded, RemovalResult, SaveResult, SavedExplanation, StudyDay, Submission, SubmitResult, TrustResult, ViewEvent,
 } from "./model.ts";
 
 /**
@@ -86,6 +86,12 @@ export interface LearningRecord {
    * The rule is in server/db/migrations/0006_due_review.sql, due_review, and is the record's.
    */
   dueReview(q: DueReviewQuery): Promise<DueItem[]>;
+  /**
+   * How well each of `q.blocks` is held at `q.now`, one row per block in the order first asked
+   * (RFC 5 §4.1, §4.2): reads only. The measure is in server/db/migrations/0011_mastery.sql,
+   * mastery, and is the record's.
+   */
+  mastery(q: MasteryQuery): Promise<Mastery[]>;
 }
 
 /** Turns an explanation into findings, or an honest failure. Never throws for a grading failure. */

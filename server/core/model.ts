@@ -290,6 +290,38 @@ export type ReviewNote = { blockId: string; rule: string; reason: string; eviden
 export const ReviewReason = z.object({ blockId: z.string(), rule: z.string(), reason: z.string() });
 export type ReviewReason = z.infer<typeof ReviewReason>;
 
+// ---- Mastery (RFC 5 §4.1, §4.2; flyingrobots/school#217) ---------------------------------------
+
+/**
+ * What to ask the measure: which of the course's quiz blocks, at what time, and how long after a
+ * block was last answered a clean first try must come to count as a review that lengthens it.
+ */
+export const MasteryQuery = z.object({
+  course: z.string().min(1).max(200),
+  blocks: z.array(blockId).max(10_000),
+  now: timestamp,
+  delayMs: ms,
+});
+export type MasteryQuery = z.infer<typeof MasteryQuery>;
+
+/**
+ * How well one quiz is held at the query's time (RFC 5 Table 4.1). `stabilityMs` is its half-life;
+ * `strength`, from 0 to 1, is how far through that half-life it is since `refreshedAt`, the time of
+ * its latest right first try, and 0 while its latest first try is wrong. Strength is not a
+ * probability of recall. `settled` is due review's clearing rule; `evidence` the first tries the
+ * value rests on, by seq. A quiz never answered has null strength, stability and refresh time, has
+ * not settled, and cites nothing.
+ */
+export const Mastery = z.object({
+  blockId: z.string(),
+  strength: z.number().min(0).max(1).nullable(),
+  stabilityMs: z.number().positive().nullable(),
+  refreshedAt: timestamp.nullable(),
+  settled: z.boolean(),
+  evidence: z.array(Seq).max(100),
+});
+export type Mastery = z.infer<typeof Mastery>;
+
 // ---- Installed courses (RFC 7 §7; flyingrobots/school#232) -------------------------------------
 
 /**

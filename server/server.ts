@@ -17,6 +17,7 @@ import { CourseFileError, readCourseFile, type CourseFile } from "./course-file.
 import { allowedHosts, hostAllowed } from "./hosts.ts";
 import { withSecretFiles } from "./secrets.ts";
 import { agentOrder, agentTest } from "./agents.ts";
+import { authoringStatus } from "./skill.ts";
 import { feedbackSpeech, lessonSpeech, SEGMENT, SpeakRequest, toSpeech, UTTERANCE } from "./speak.ts";
 
 let config;
@@ -114,6 +115,12 @@ const grader: Grader = {
     : unpaired(b) ? `school: not grading: ${UNPAIRED}`
     : `school: grading through the bridge at ${b.url} (from ${b.urlFrom})`);
 }
+
+// Authoring (RFC 9 §5.3, flyingrobots/school#257): the school skill an authoring agent would be
+// given, hashed once here. Without it authoring is off and says why; everything else still serves.
+const authoring = authoringStatus(config.skill, config.skillDocs);
+console.log(authoring.authoring === "on" ? `school: authoring on: the school skill's manifest digest is ${authoring.skill.digest} (${authoring.skill.files} files)`
+  : `school: authoring off: ${authoring.reason}`);
 
 // The hexagon (RFC 3, §4): this file is the composition root and the HTTP adapter. It parses
 // every request with the core's Zod schemas and reaches the record only through the use cases.
@@ -238,15 +245,26 @@ async function serveMount(pathname: string): Promise<Response> {
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(body, { status, headers });
 
 /**
- * An untrusted course's response, sandboxed (flyingrobots/school#210). `sandbox` with no allow-*
- * token gives a document an opaque origin and no script, so a course's HTML or SVG opened in a tab
- * cannot read School's API or act as School; `nosniff` stops the browser reading the bytes as a
- * type that would run. Applied to every response that carries the course's bytes: its reference
- * files and its course and lesson JSON. A trusted course's responses are left exactly as they were.
+ * The policy on an untrusted course's responses. `sandbox` (flyingrobots/school#210), with no
+ * allow-* token, gives a document an opaque origin and no script. The fetch directives
+ * (flyingrobots/school#271) let it load only School's own images and stylesheets, inline styles
+ * and `data:` images, so a reference page cannot tell another site when the learner opens it:
+ * everything else, frames, media and fonts included, falls back to `default-src 'none'`. No
+ * `font-src 'self'`: from the sandbox's opaque origin a font request is cross-origin and School
+ * sends no CORS header, so a course's own font would not load even if the policy allowed it.
+ */
+const UNTRUSTED_POLICY = "sandbox; default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'";
+
+/**
+ * An untrusted course's response, contained. `UNTRUSTED_POLICY` stops a course's HTML or SVG
+ * opened in a tab running script, reading School's API, acting as School or loading anything from
+ * another site; `nosniff` stops the browser reading the bytes as a type that would run. Applied to
+ * every response that carries the course's bytes: its reference files and its course and lesson
+ * JSON. A trusted course's responses are left exactly as they were.
  */
 function contained(c: Course, res: Response): Response {
   if (c.trusted) return res;
-  res.headers.set("content-security-policy", "sandbox");
+  res.headers.set("content-security-policy", UNTRUSTED_POLICY);
   res.headers.set("x-content-type-options", "nosniff");
   return res;
 }
@@ -351,14 +369,17 @@ const lessonOf = (pages: Extract<Block, { type: "page" }>[], blockId: string) =>
   return p === undefined ? null : { id: p.id, title: p.title };
 };
 
-/** The newest succeeded grading, where its explanation was written, and the prompt it answered. */
+/**
+ * The newest succeeded grading, where its explanation was written, and the prompt it answered, with
+ * its course's `trusted` (flyingrobots/school#272). A course no longer served is not trusted.
+ */
 async function feedbackJson(): Promise<Response> {
   const f = await school.latestFeedback();
   if (f === null) return json(null, 200, { "cache-control": "no-store" });
   const c = served.find((x) => x.name === f.course);
   const page = c === undefined ? undefined : readablePages(c).find((p) => p.id === f.lesson);
   return json({
-    course: f.course, courseTitle: c === undefined ? f.course : titleOf(c), lesson: { id: f.lesson, title: page?.title ?? f.lesson },
+    course: f.course, courseTitle: c === undefined ? f.course : titleOf(c), trusted: c?.trusted ?? false, lesson: { id: f.lesson, title: page?.title ?? f.lesson },
     blockId: f.blockId, prompt: f.prompt, model: f.model, findings: f.findings, at: f.at,
   }, 200, { "cache-control": "no-store" });
 }
@@ -390,7 +411,10 @@ async function speakJson(body: unknown): Promise<Response> {
   return toSpeech(currentBridge(), noSpeech(), "POST", "/speak", { body: { text } });
 }
 
-/** The questions due for review now, across served courses, each with where it lives and why it's back. */
+/**
+ * The questions due for review now, across served courses, each with where it lives, why it's back
+ * and its course's `trusted` (flyingrobots/school#272).
+ */
 async function reviewJson(params: URLSearchParams): Promise<Response> {
   const tz = await zoneParam(params);
   if (tz === null) return json(BAD_ZONE, 400);
@@ -398,14 +422,17 @@ async function reviewJson(params: URLSearchParams): Promise<Response> {
     const pages = readablePages(c);
     const quizzesById = new Map(pages.flatMap((p) => quizzes(p).map((q) => [q.id, q] as const)));
     return (await school.dueNow(c.name, [...quizzesById.keys()], tz)).map(({ item, reason }) => ({
-      course: c.name, courseTitle: titleOf(c), lesson: lessonOf(pages, item.blockId), blockId: item.blockId,
+      course: c.name, courseTitle: titleOf(c), trusted: c.trusted, lesson: lessonOf(pages, item.blockId), blockId: item.blockId,
       question: quizzesById.get(item.blockId)?.q ?? null, answeredAt: item.answeredAt, rule: item.rule, reason,
     }));
   }));
   return json(due.flat(), 200, { "cache-control": "no-store" });
 }
 
-/** Each course's study days in the last `days`, and how many questions come back on each day ahead. */
+/**
+ * Each course's study days in the last `days`, and how many questions come back on each day ahead,
+ * with the course's `trusted` (flyingrobots/school#272).
+ */
 async function activityJson(params: URLSearchParams): Promise<Response> {
   const given = params.get("days");
   const days = given === null ? 14 : /^[0-9]+$/.test(given) ? Number(given) : NaN;
@@ -416,7 +443,10 @@ async function activityJson(params: URLSearchParams): Promise<Response> {
   const a = await school.activity(courses, days, tz);
   return json({
     today: a.today, tz, days,
-    courses: a.courses.map((x) => ({ course: x.course, courseTitle: titleOf(served.find((c) => c.name === x.course)!), studied: x.studied, due: x.due })),
+    courses: a.courses.map((x) => {
+      const c = served.find((s) => s.name === x.course)!;
+      return { course: x.course, courseTitle: titleOf(c), trusted: c.trusted, studied: x.studied, due: x.due };
+    }),
   }, 200, { "cache-control": "no-store" });
 }
 
@@ -453,11 +483,16 @@ async function showcaseJson(): Promise<Response> {
   return json(ahead.flat(), 200, { "cache-control": "no-store" });
 }
 
-/** What to study now: where the learner left off and the next step from it (core/school.ts, resumeFrom). */
+/**
+ * What to study now: where the learner left off and the next step from it (core/school.ts,
+ * resumeFrom), with its course's `trusted` when it names one (flyingrobots/school#272).
+ */
 async function resumeJson(): Promise<Response> {
   const outlines = await Promise.all(served.map(outline));
   const readable = outlines.filter((o): o is CourseOutline => o !== null);
-  return json(resumeFrom(await school.lastStudied(), readable), 200, { "cache-control": "no-store" });
+  const r = resumeFrom(await school.lastStudied(), readable);
+  const body = r.kind === "nothing" ? r : { ...r, trusted: served.find((c) => c.name === r.course)?.trusted ?? false };
+  return json(body, 200, { "cache-control": "no-store" });
 }
 
 /**
@@ -654,6 +689,7 @@ const http = Bun.serve({
       const b = bridgeNow();
       return json({ url: b.url, urlFrom: b.urlFrom, tokenSet: b.token !== null, tokenFrom: b.tokenFrom }, 200, { "cache-control": "no-store" });
     }
+    if (pathname === "/api/settings/authoring") return json(authoring);
     if (pathname === "/api/settings/agents") {
       const r = await toBridge(currentBridge(), "GET", "/config");
       return json(r.body, r.status);
