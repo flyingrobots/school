@@ -3,8 +3,8 @@ title: "RFC 10: Bridge controls in Settings"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-27
 updated: 2026-11-27
-version: 1.1.0
-status: "Decided, 2026-11-27, by the maintainer: the bridge is launched by macOS LaunchAgents through a small control agent the server only talks to; Settings gains the bridge's state and output, School's AI-TTS voice, every agent list, and four agents by default; phones get a playback chip and drawer. Absorbs flyingrobots/school#328. Builds on flyingrobots/school at commit 502304a. v1.1.0 applies the maintainer's review of 2026-11-27."
+version: 1.2.0
+status: "Decided, 2026-11-27, by the maintainer: the bridge is launched by macOS LaunchAgents through a small control agent the server only talks to; Settings gains the bridge's state and output, School's AI-TTS voice, every agent list, and four agents by default; phones get a playback chip and drawer. Absorbs flyingrobots/school#328. Builds on flyingrobots/school at commit 502304a. v1.1.0 and v1.2.0 apply two rounds of an external review of 2026-11-27."
 ---
 
 # RFC 10: Bridge controls in Settings
@@ -259,7 +259,7 @@ The server gains one secret, one address and four routes. Compose mounts `bridge
 
 | Route | Guard | Does |
 | --- | --- | --- |
-| `GET /api/settings/bridge/status` | `hostAllowed` | `{ bridge: "live" \| "needs attention" \| "offline", connection, job, silent_seconds, control: "ok" \| "none" \| "unreachable" \| "unauthorised" }`, where `connection` is `bridgeStatus`'s value. **Live** means `/health` answered `ok`. **Needs attention** means the bridge answered but is `unauthorised`, `unconfigured` or `misconfigured`. **Offline** means `none` or `unreachable`. `job` and `silent_seconds` are the control agent's, or `null` |
+| `GET /api/settings/bridge/status` | `hostAllowed` | `{ bridge: "live" \| "needs attention" \| "offline", connection, job, silent_seconds, control: "ok" \| "none" \| "unreachable" \| "unauthorised" }`, where `connection` is `bridgeStatus`'s value. **Live** means `/health` answered `ok`. **Needs attention** means the bridge answered but is `unauthorised`, `unconfigured` or `misconfigured`, each with its own detail line (§5.5). **Offline** means `none` or `unreachable`. `job` and `silent_seconds` are the control agent's, or `null` |
 | `POST /api/settings/bridge/launch` | `hostAllowed`, `guardApi` (JSON body, not cross-site), and `Sec-Fetch-Site: same-origin` when the header is present (RFC 7 §8) | Relays to `POST /launch`; `503` with a neutral reason when there is no control agent |
 | `POST /api/settings/bridge/restart` | The same as `launch` | Relays to `POST /restart`, whose own probe decides; the server adds no condition and cannot widen one |
 | `GET /api/settings/bridge/log` | `hostAllowed`, and when fetch metadata is present, `Sec-Fetch-Site: same-origin` and `Sec-Fetch-Dest: empty`, as `guardLessonOpen` does | Relays the event stream unchanged; the browser opens it with `EventSource` |
@@ -290,7 +290,8 @@ stateDiagram-v2
         [*] --> CanLaunch: job stopped, control agent ok
         [*] --> Silent: job running, silent 30 s or less
         Silent --> CanRestart: silent over 30 s
-        [*] --> NoHelper: control agent none, unreachable or unauthorised, or job unknown
+        [*] --> NoHelper: control agent none or unreachable, or job unknown
+        [*] --> ControlRefused: control agent unauthorised
     }
 ```
 
@@ -299,12 +300,14 @@ _Figure 5.2. The bridge card's states. **Live** means the bridge can work; **Lau
 | State | The card shows |
 | --- | --- |
 | **Live** | A `Badge` "Live" and today's connection details; a `Collapsible` **Bridge output** holding the panel, closed |
-| **Needs attention** | A `Badge` "Needs attention" and today's detail line for that connection (`connectionText` in `web/src/pages/settings.tsx`, such as "The bridge refused the token. Enter the token the bridge was started with, or generate one and restart the bridge with it."); the token and address fields as today; the `Collapsible` **Bridge output**, open. No **Launch**, because the bridge is already running |
+| **Needs attention**, token refused | A `Badge` "Needs attention" and "The bridge and School have different tokens. Would you like to run `./school up` on the Mac, so School picks up the token in the Keychain?" Under launchd the bridge reads its token from the Keychain, so a mismatch means the server's compose secret is out of date, which the card cannot fix. The `Collapsible` **Bridge output**, open. No **Launch**, because the bridge is already running |
+| **Needs attention**, no agents or file unreadable | A `Badge` "Needs attention" and today's detail line for that connection (`connectionText` in `web/src/pages/settings.tsx`); the `Collapsible` **Bridge output**, open. No **Launch** |
 | **Offline**, job stopped, control agent ok | A `Badge` "Offline", "The bridge isn't running right now. Would you like to launch it?", **Launch**, and the panel open |
 | **Offline**, job running, silent 30 s or less | A `Badge` "Offline", "The bridge is running and hasn't answered yet. School will check again in a moment." No button; the panel open |
 | **Offline**, job running, silent over 30 s | A `Badge` "Offline", "The bridge is running but hasn't answered for a while. Would you like to restart it? Anything it is working on stops, and you can ask again after.", **Restart** in place of **Launch**, and the panel open |
 | **Launching** | **Launch** or **Restart** disabled with a `Spinner`, "Starting the bridge…", the panel following new lines |
 | **Offline**, no control agent | "School can start the bridge for you once its helper is installed. Would you like to run `./school bridge install` on the Mac?" No **Launch**; no panel |
+| **Offline**, control agent `unauthorised` | "School's helper on the Mac didn't accept School's token. Would you like to run `./school up` on the Mac, so School picks up the helper's new token?" No **Launch**; no panel. This is the state right after `./school bridge install` makes the control token and before the next `up`, and it is also what a process squatting on port 4749 produces |
 | **Offline**, job `unknown` | "School can't read the bridge's state on this Mac right now, so it won't start or restart it. Would you like to check it from a terminal on the Mac?" No button; the panel open |
 | **Offline** after 30 s | "The bridge hasn't answered yet. Its output below may say why." The panel stays open |
 
@@ -409,7 +412,7 @@ In short: two separate tokens, loopback only, Host and fetch-metadata checks on 
 
 ## 7. Order of work
 
-Each row is one task issue with one observable outcome, independently mergeable. None is filed by this RFC. Each task updates the living references it changes in the same pull request: the [Settings page](../topics/settings-page/README.md), [Reading aloud](../topics/reading-aloud/README.md), [School's secrets](../topics/secrets/README.md), [the programs' output](../topics/program-output/README.md) and the architecture's bridge and configuration sections.
+Each row is one task issue with one observable outcome, independently mergeable. They are filed as flyingrobots/school#372 to flyingrobots/school#383 (§11). Each task updates the living references it changes in the same pull request: the [Settings page](../topics/settings-page/README.md), [Reading aloud](../topics/reading-aloud/README.md), [School's secrets](../topics/secrets/README.md), [the programs' output](../topics/program-output/README.md) and the architecture's bridge and configuration sections.
 
 | # | Task | Depends on | Done when |
 | --- | --- | --- | --- |
@@ -460,7 +463,7 @@ The worst risk would be a browser request that runs something on the host; the d
 | The log file grows without bound | Open (Q4), with a recommendation |
 | AI-TTS 0.2.0 is not on AI-TTS's `main` yet | The card says so neutrally; task 5 tests against a fake socket; reading aloud already requires 0.2.0 |
 | agy or LM Studio behave differently than declared | Q5 and Q6; task 9's recorded run on `mac-desk`; fallback moves on to the next agent meanwhile |
-| A local process squats on port 1234 or 4749 | Port 4749: the server's token check fails and Settings shows `unauthorised`. Port 1234: Table 6.1, the same trust as `PATH` |
+| A local process squats on port 1234 or 4749 | Port 4749: the server's token check fails and Settings shows the control agent `unauthorised` state of §5.5. Port 1234: Table 6.1, the same trust as `PATH` |
 | bijou-web is never published | The `ScrollArea` panel is complete on its own; task 12 is a replacement, not a dependency |
 
 _Table 9.1. Risks and their mitigations. Most are about the host environment under launchd, which task 1's recorded run checks._
