@@ -3,8 +3,8 @@ title: "RFC 12: Adapting to the learner"
 author: "Claude (Opus 5.5), agent-written at the maintainer's request. Not yet reviewed by a human."
 created: 2026-11-27
 updated: 2026-11-27
-version: 0.2.0
-status: "Proposed, draft 2; decisions 1-7 made by the maintainer 2026-11-27, open questions listed. Extends RFC 5 (mastery) and RFC 11 v0.3.0 (the teacher). Builds on flyingrobots/school at commit 502304a. v0.2.0 applies round 1 of an external review of 2026-11-27, which did not approve v0.1.0."
+version: 0.3.0
+status: "Proposed, draft 3; approved by an external review on three edits, which v0.3.0 makes; decisions 1-7 made by the maintainer 2026-11-27, open questions listed. Extends RFC 5 (mastery) and RFC 11 v0.3.0 (the teacher). Builds on flyingrobots/school at commit 502304a. v0.2.0 applies round 1 of an external review of 2026-11-27, which did not approve v0.1.0; v0.3.0 makes the three edits round 2 approved it on."
 ---
 
 # RFC 12: Adapting to the learner
@@ -78,7 +78,7 @@ Each part of the design is held to these constraints. They come from earlier dec
 | C9 | Copy is encouraging or neutral, invites with questions, and never says "wrong", "attempt" or "forgot" | [School's voice](../topics/voice/README.md) |
 | C10 | Every teacher tool is a thin RPC onto a `school.teacher_*` Postgres function, scoped by the conversation key inside the database | RFC 13 §5.3 (the maintainer's decision, 2026-11-27) |
 | C11 | Model gradings are not part of the measure: an explanation's grade is different evidence from a quiz answer | RFC 5 C5 and §4.5 |
-| C12 | The learner's own work (answers, typed responses, explanations, notes) never reaches a log or a search query | RFC 11 C7 and its query check (§6 there) |
+| C12 | The learner's own work (answers, typed responses, explanations, notes) never reaches a log. It is kept out of search queries as far as a mechanical check can tell: a run of 6 or more of its words is refused, so long responses are caught, but a short one (most recall answers are 1 to 3 words) cannot be told apart from ordinary words in a query | RFC 11 C7 and its query check (§6 there) |
 
 _Table 2.1. The constraints every part of this RFC keeps. C2, C3 and C11 shape the design most: a level only rises on honest quiz evidence, and only the learner switches anything._
 
@@ -232,7 +232,7 @@ Each idea can be asked at four levels. A level says what the learner has to prod
 
 _Table 5.3. The four levels. Levels 1 and 3 are the blocks School already has; level 2 is one new form of quiz; level 4 is a declaration on either. Only quiz blocks are measured (C11)._
 
-A recall answer is matched against `accept` after trimming, folding case and collapsing spaces. A match records that entry's id as the choice and counts as right; anything else records the id `unmatched` and the typed text, and the page shows the accepted answer with the quiz's `why`. The typed text is stored in a new column, `answers.response`, at most 200 characters. It is the learner's private work (C12): it is never written to a log, and RFC 11's search-query check, which refuses a run of `QUERY_RECORD_RUN` (6) words from the learner's answers and explanations, also checks every `answers.response`. A block with no `level` is level 1 if it is a quiz and level 3 if it is an explain block, so every course in use keeps its meaning.
+A recall answer is matched against `accept` after trimming, folding case and collapsing spaces. A match records that entry's id as the choice and counts as right; anything else records the id `unmatched` and the typed text, and the page shows the accepted answer with the quiz's `why`. The typed text is stored in a new column, `answers.response`, at most 200 characters. It is the learner's private work (C12): it is never written to a log, and RFC 11's search-query check, which refuses a run of `QUERY_RECORD_RUN` (6) words from the learner's answers and explanations, also checks every `answers.response`. That catches a long response; a recall answer of 1 to 3 words cannot be told apart from ordinary words in a query, so for short answers the check guards nothing, and the RFC says so rather than claim it. A block with no `level` is level 1 if it is a quiz and level 3 if it is an explain block, so every course in use keeps its meaning.
 
 **Aiming at effort that usually succeeds.** The target is about 80 to 85% right first time across the ideas a learner is working on. This is a target for the rules, never a number on a page (C5). Below it, questions are too hard to learn from; above it, too easy to move anything. The per-idea rules below do most of the work. The target is used once more in stage 2: when the learner's last 20 unaided first tries in a course come out right more than 17 times, the next suggestion is to step up, and fewer than 16 times, to step back.
 
@@ -269,7 +269,7 @@ _Figure 5.2. How a level changes. The only edge into a new level passes through 
 | Holding, from a clean quiz first try at this level | One level up: "Shall we try applying it?" |
 | Holding only from aided answers | Nothing: an aided right answer refreshes the clock but never prompts a step up (C2) |
 | Faded | One level down: "Shall we start from recognising it and climb back up?" |
-| An explain level | Read from gradings in words (§5.6), never from the measure: when every criterion of the newest grading Meets, one level up; otherwise nothing |
+| An explain level | Read from gradings in words (§5.6), never from the measure: when every criterion of the newest grading Meets, and that explanation was unaided (no `ai-help` before it in its encounter and no disclosure of its idea used up by it, as the quiz rows require), one level up; otherwise nothing |
 
 _Table 5.5. The suggestion rules. They read RFC 5's states for quiz levels and gradings for explain levels, and they only ever ask._
 
@@ -330,7 +330,7 @@ Aid is recorded per block (RFC 6, RFC 11 R1 to R5), but mastery is now per idea.
 
 | Rule | Proposed |
 | --- | --- |
-| Disclosures expand to the idea | When any rule records a disclosure for a block (RFC 11 R2 `prompt`, `history`, `read_course`, `read_progress`, `read_notes`; R4 `note-shown`; R5 `reopened`), `school.record_disclosures` records one for every block of the same idea: the original and each variant in the course, and each variant in the learner's versions (RFC 11 §5.9) |
+| Disclosures expand to the idea | Every disclosure, from any rule and any writer, goes through one internal, ungranted function, `school.write_disclosure(course, block, via, turn, conversation)`, which records one for every block of the same idea: the original and each variant in the course, and each variant in the learner's versions (RFC 11 §5.9). Its callers are RFC 11's `record_disclosures` (`prompt`, `history`), `record_notes_shown` (`note-shown`) and `record_reopened` (`reopened`), every `teacher_*` read function that writes its own disclosures under RFC 13 §5.3 (`read_course`, `read_progress`, `read_notes`), and RFC 13's `guide-shown` writer. No function inserts into `teacher_disclosures` directly |
 | Used up per block | Each expanded disclosure is used up by its own block's next episode, exactly as R2 says. So the learner's next try of each block of the idea is aided, whichever they meet first |
 | Coverage never launders aid | An aided first try never counts as a clean episode at any other level (Table 5.7, row 3). A clean first try that comes after another block's disclosure was used up can count downward as usual |
 | Where the idea comes from | The idea of a block is read from the snapshot of the course as installed, and from `variantOf` in the learner's versions, never from the teacher's arguments |
@@ -410,7 +410,7 @@ _Table 5.13. The proposed tables and changes. Every inference is a row with its 
 | Levels in the record | `answers.idea`, `answers.level`, `answers.response`, `explanations.idea`, `explanations.level`; `school.submit` and `school.save_explanation` replaced with the same signatures; recall answers matched in `school.submit` | 3 |
 | Choices | `style_choices`, `level_choices`, `school.choose_style`, `school.choose_level`, `school.current_levels(course)` | 4 |
 | Mastery by idea and level | `school.idea_mastery`, and `school.mastery_rollup` and `school.due_review` replaced with the same signatures to read ideas and levels | 5 |
-| Disclosures across an idea | `teacher_disclosures.idea` and `expanded_from`; `school.record_disclosures`, `school.record_notes_shown` and `school.record_reopened` replaced with the same signatures to expand to the idea | 16 |
+| Disclosures across an idea | `teacher_disclosures.idea` and `expanded_from`; the internal `school.write_disclosure`; `school.record_disclosures`, `school.record_notes_shown`, `school.record_reopened` and RFC 13's `teacher_*` read functions replaced with the same signatures to write through it | 16 |
 | Inferences | `learner_inferences`, `inference_responses`, `school.record_inference`, `school.respond_to_inference`, `school.course_inferences(course)` | 9 |
 
 _Table 5.14. The migrations, each with its task in §7. Each takes the next free number when it is built; none rewrites an earlier migration._
@@ -442,7 +442,7 @@ Adapting adds little new surface: two read and suggest tools, one new answer for
 | Levels gamed by a course | A course declares a trivial block as `apply` | The course is untrusted until the learner trusts it (RFC 7); `checkCourse` checks form against level; a level is only words, never a grade or completion |
 | A model-written key moving mastery | A teacher variant's answer key is wrong | Teacher variants never count in mastery (§5.5); RFC 11's source-quote check of at least 8 words (Table 5.11 check 5 there) |
 | Recall input | A typed answer carries markup or is very long | Stored as text of at most 200 characters, matched as text, rendered inert |
-| The learner's typed answers leaving the record | A steered teacher puts an `answers.response` into a search query, or a log line carries one | RFC 11's query check covers `answers.response` (C12); `response` is on the never-logged list with prompts, arguments and results (RFC 11 C7) |
+| The learner's typed answers leaving the record | A steered teacher puts an `answers.response` into a search query, or a log line carries one | `response` is on the never-logged list with prompts, arguments and results (RFC 11 C7). RFC 11's query check covers `answers.response`, which catches a long response; a 1-to-3-word recall answer cannot be told from ordinary words, so that residue is accepted and stated (C12) |
 | Model grades read as mastery | A grading of a model-graded explanation is shown as "holding" | Explain levels are described from gradings in words and never enter `idea_mastery` or the rollup (C11, §5.6) |
 | Aid laundered through a variant | The teacher reads one block's answer and the learner answers another block of the same idea | Every disclosure expands to the whole idea (§5.7); an aided answer never covers another level |
 | Inferences leaving the record | An inference ("finds ring three hard") reaches a search query | RFC 11's query check refuses runs from the learner's answers, explanations and notes; it is extended to inference words |
@@ -473,7 +473,7 @@ Each row is one task issue with one observable outcome, mergeable on its own. No
 | 13 | 2 | **Feynman sends the learner to the explain block.** The Feynman text invites the lesson's explain block on the idea; the panel links to it | 6 | A test: a Feynman turn on an idea with an explain block offers it; the explanation is saved and graded through the existing path |
 | 14 | 2 | **The teacher proposes a variant at a level.** `level` and `variantOf` through `propose_lesson_change` | 1, flyingrobots/school#395 | Tests: a proposed recall variant gets a derived id and `variantOf`; its answers never move mastery |
 | 15 | 3 | **Evidence-backed suggestions.** Counts of delayed mastery by style and level, in words, behind the stage-2 rules | 10, 11, flyingrobots/school#52, flyingrobots/school#223 | With both learner gates closed: a fixture record yields a suggestion citing the counts it read; with fewer than 6 delayed reviews per style none is made |
-| 16 | 1 | **Aid covers every block of an idea.** The disclosures-across-an-idea migration (Table 5.14) | 3, flyingrobots/school#386 | Contract cases: a disclosure of the Recognise quiz makes the next first try of its Recall variant aided; each expanded disclosure is used up by its own block's next episode; R4's and R5's disclosures expand the same way; a course with no levels records exactly RFC 11's rows; the R2 differential still holds |
+| 16 | 1 | **Aid covers every block of an idea.** The disclosures-across-an-idea migration (Table 5.14) | 3, flyingrobots/school#386, RFC 13 task 2 | Contract cases: a disclosure of the Recognise quiz makes the next first try of its Recall variant aided; each expanded disclosure is used up by its own block's next episode; R4's, R5's, the `teacher_*` reads' and `guide-shown` disclosures expand the same way; a test asserts no function but `write_disclosure` inserts into `teacher_disclosures`; a course with no levels records exactly RFC 11's rows; the R2 differential still holds |
 
 _Table 7.1. The build, as task issues. Task 1 can start at once; tasks 3 to 5 and 16 follow it; task 8 completes stage 1; stage 2 follows; task 15 waits for the learner gates. Task 16 is listed last because it was added in draft 2; it belongs to stage 1._
 
@@ -535,6 +535,6 @@ In short: the author bounds the styles, produced answers cover lower levels, gra
 
 ## 11. Decision
 
-The maintainer decided the seven points of Table 0.1 on 2026-11-27. Draft 2 (v0.2.0) answers round 1 of an external review: gradings stay outside the measure (C11), aid covers every block of an idea (§5.7), the level served is the learner's newest choice with rules only suggesting (§5.4), the coverage rule separates production from recognition (Table 5.7), and typed answers join RFC 11's query check and never-logged list (C12). The rest of this RFC is Proposed, and the questions in §10 are Open. The tasks of §7 are drafted as issue specifications and not yet filed; this section will list their issue numbers once they are.
+The maintainer decided the seven points of Table 0.1 on 2026-11-27. Round 2 of the review approved this RFC once three edits were made, which v0.3.0 makes: every disclosure goes through one expanding writer (§5.7, task 16 now after RFC 13 task 2), the explain-level suggestion needs an unaided explanation (Table 5.5), and C12 says what the query check cannot catch. Draft 2 (v0.2.0) answered round 1: gradings stay outside the measure (C11), aid covers every block of an idea (§5.7), the level served is the learner's newest choice with rules only suggesting (§5.4), the coverage rule separates production from recognition (Table 5.7), and typed answers join RFC 11's query check and never-logged list (C12). The rest of this RFC is Proposed, and the questions in §10 are Open. The tasks of §7 are drafted as issue specifications and not yet filed; this section will list their issue numbers once they are.
 
 In short: how the teacher teaches and how hard it asks are decided in shape; the details, and the evidence for stage 3, are still to settle.
