@@ -32,6 +32,7 @@ Start here. Each page has one job; this page routes to all of them.
 | [RFC 7: Installing courses](rfc/0007-installing-courses.md) | Decided 2026-11-26: a course store of write-once installs, added from Settings by git URL at a pinned commit or by git bundle, checked as hostile input and recorded in the database. |
 | [RFC 8: Explain mode](rfc/0008-explain-mode.md) | Decided 2026-11-26: Explain more on a section or block, pitched from the learner's recorded mastery (RFC 5) through the ask path (RFC 6), and recorded as help. |
 | [RFC 9: Authoring a course in the browser](rfc/0009-authoring-in-the-browser.md) | Decided 2026-11-26: a confined agent drafts a course change from a request; the author previews the diff and accepts it as a new write-once install. |
+| [RFC 10: Bridge controls in Settings](rfc/0010-bridge-controls-in-settings.md) | Decided 2026-11-27: LaunchAgents and a token-guarded control agent start the bridge from Settings, which also shows its output, School's AI-TTS voice, every agent list and four default agents, with a playback chip and drawer on phones. |
 | [RFC 13: Homeroom](rfc/0013-homeroom.md) | Proposed 2026-11-27: a chat on the home page with the same teacher as RFC 11, on a learner-wide key checked in Postgres by `school.teacher_*` functions under a `school_teacher` role, with ten jobs from answering about the learner's learning to starting a course from a conversation. |
 | [ADRs](adr/) | The decisions, in order, with what each cost. |
 
