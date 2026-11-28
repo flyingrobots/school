@@ -9,7 +9,7 @@ status: "Decided, 2026-11-27, by the maintainer: the bridge is launched by macOS
 
 # RFC 10: Bridge controls in Settings
 
-> **How to read this.** **Built** means it exists at commit `502304a`, with the file that shows it. **Proposed** means this RFC asks for it. **Open** means it still needs checking or a decision; §10 lists those. Every design choice here was decided by the maintainer on 2026-11-27; what remains Open is what could not be verified from this machine, chiefly the commands of two agents installed only on the Mac that will host School (`mac-desk`) and Linux support. It builds on [RFC 6](0006-ask-about-a-passage.md) (the Ask bar and the ask list) and [RFC 9](0009-authoring-in-the-browser.md) (the author list, flyingrobots/school#259). How School works today is in the [architecture reference](../topics/architecture/README.md); this RFC describes only what would change.
+> **How to read this.** **Built** means it exists at commit `502304a`, with the file that shows it. **Proposed** means this RFC asks for it. **Open** means it still needs checking or a decision; §10 lists those. Every design choice here was decided by the maintainer on 2026-11-27; what remains Open is what could not be verified from this machine, chiefly the commands of two agents installed only on the Mac that will host School and Linux support. It builds on [RFC 6](0006-ask-about-a-passage.md) (the Ask bar and the ask list) and [RFC 9](0009-authoring-in-the-browser.md) (the author list, flyingrobots/school#259). How School works today is in the [architecture reference](../topics/architecture/README.md); this RFC describes only what would change.
 
 ## Executive summary
 
@@ -92,7 +92,7 @@ The bridge, its token, the AI-TTS client and the Settings agents card all exist;
 | Agent kinds | Every agent is a command; its `output` is `text`, `claude-json` or `claude-stream-json` (`OUTPUTS`, `bridge/run.ts`). The prompt goes in argv only where a command names `{prompt}`, otherwise on stdin (`usesPlaceholder`); a long argv can fail with `E2BIG` (`spawnFailure`) | An HTTP kind beside the command kind, for a local OpenAI-compatible server |
 | The example configuration | claude and codex in the grading and ask lists (`bridge/bridge.example.json`) | Four agents in every list, in the maintainer's order |
 | The AI-TTS client | One JSON line each way on the daemon's Unix socket; `status` checked for 0.2.0 or later before each submission; submissions use `source: "School"` (`bridge/speech.ts`) | Three more ops: `voices`, `voice_assignments`, `assign_voice` |
-| The AI-TTS daemon | Ops `status`, `voices`, `engines`, `voice_assignments` and `assign_voice {source, voice, release}`; `assign_voice` refuses a voice not in the engine's list, and releasing a source with no voice is `not_found` (`~/git/AI-TTS/src/aitts/daemon.py`, `voice_registry.py`). `status` reports `version` from 0.2.0, which is on AI-TTS's `feat/synthesis-only-submit` branch (commit `7ac7935`) and not on its `main` (`c081d50`, 0.1.0) as checked on 2026-11-27 | Read-only use, except `assign_voice` for source `School` |
+| The AI-TTS daemon | Ops `status`, `voices`, `engines`, `voice_assignments` and `assign_voice {source, voice, release}`; `assign_voice` refuses a voice not in the engine's list, and releasing a source with no voice is `not_found` (AI-TTS's `src/aitts/daemon.py` and `voice_registry.py`). `status` reports `version` from 0.2.0, which is on AI-TTS's `feat/synthesis-only-submit` branch (commit `7ac7935`) and not on its `main` (`c081d50`, 0.1.0) as checked on 2026-11-27 | Read-only use, except `assign_voice` for source `School` |
 | The read-aloud bar | A `Card` fixed to the bottom with the **AI voice** badge, previous, pause or resume, next and stop; keys `R`, `,`, `/`, `.`, `Esc` (`web/src/components/read-aloud.tsx`) | Unchanged on desktop; on a phone, a chip and a drawer instead |
 | The Ask bar on a phone | Decided in RFC 6 Table 5.8: fixed to the bottom, "above the read-aloud bar when that is showing" | Alone at the bottom: this RFC amends that row |
 | Components | `Card`, `Badge`, `Button`, `Combobox`, `Drawer`, `ScrollArea`, `Progress`, `Item`, `Kbd`, `Alert`, `Spinner`, `Collapsible` in `web/src/components/ui/`; the `@flyingrobots/sortable-list` block | All of the UI here; nothing new in the registry |
@@ -313,7 +313,7 @@ _Figure 5.2. The bridge card's states. **Live** means the bridge can work; **Lau
 
 _Table 5.4. What the bridge card shows in each state. Every line is neutral and invites rather than instructs (C8)._
 
-The panel is a shadcn `ScrollArea` holding a `<pre>` in the theme's monospace font, read-only, scrolled to the newest line unless the learner has scrolled up. Each JSON line is shown as it was written; nothing is parsed, coloured by meaning or stored. Closing the page closes the `EventSource`. Task 12 replaces the panel with `@flyingrobots/bijou-web`'s DOM host once that package is published; today it is a private workspace package tested only with in-memory fakes (`~/git/bijou/packages/bijou-web/package.json`).
+The panel is a shadcn `ScrollArea` holding a `<pre>` in the theme's monospace font, read-only, scrolled to the newest line unless the learner has scrolled up. Each JSON line is shown as it was written; nothing is parsed, coloured by meaning or stored. Closing the page closes the `EventSource`. Task 12 replaces the panel with `@flyingrobots/bijou-web`'s DOM host once that package is published; today it is a private workspace package tested only with in-memory fakes (bijou's `packages/bijou-web/package.json`).
 
 In short: a badge that says **Live** only when the bridge can work, a button that appears only when it can work, and a plain read-only view of the log.
 
@@ -344,7 +344,7 @@ In short: three sections built from the one list component, each saved on its ow
 
 ### 5.8 Four agents by default
 
-Every list in `bridge/bridge.example.json` declares, in this order, `claude`, `codex`, `agy` and `lms-qwen`. `claude` and `codex` keep today's commands. The other two are installed only on `mac-desk`, so their exact invocation is declared here and verified there (Q5, Q6).
+Every list in `bridge/bridge.example.json` declares, in this order, `claude`, `codex`, `agy` and `lms-qwen`. `claude` and `codex` keep today's commands. The other two are installed only on the host Mac, so their exact invocation is declared here and verified there (Q5, Q6).
 
 | Agent | Kind | Declared as | Verified |
 | --- | --- | --- | --- |
@@ -372,7 +372,7 @@ _Table 5.7. The rules of the `openai` agent kind. It is a command agent's rules 
 
 Settings shows each agent's kind ("Command" or "Local HTTP") and, in place of "program found", "Endpoint answers" or "Endpoint not answering" for an HTTP agent.
 
-In short: four agents in every list, two of them declarations to check on `mac-desk`, and one new agent kind that only talks to loopback.
+In short: four agents in every list, two of them declarations to check on the host Mac, and one new agent kind that only talks to loopback.
 
 ### 5.9 Phone playback controls
 
@@ -419,12 +419,12 @@ Each row is one task issue with one observable outcome, independently mergeable.
 | 1 | **Run the bridge as a LaunchAgent.** `./school bridge run`, `install` and `uninstall` for `com.flyingrobots.school.bridge` (Table 5.1), with schemas (§5.2) | none | Launcher tests with a fake `launchctl` and fake Keychain: the plist holds no token, the child gets it in its environment only, `install` twice is one job; with no bridge token in the Keychain, `install` generates and stores one before `bootstrap` runs; a recorded run on macOS shows `launchctl print` running after `kickstart` and the log at `~/Library/Logs/School/bridge.log`, and commits that run's `launchctl print` output for a running, a stopped and a never-run job, with the macOS version, as the fixture §5.3's parser accepts |
 | 2 | **The control agent.** `host/bridge-control.ts` with its probe, `./school bridge control`, the fourth secret, its plist added to `install` and `uninstall` (§5.2, §5.3) | 1 | Tests with a fake `launchctl` and a fake bridge: each route's answers; `/restart` runs `kickstart -k` only for a running job silent over 30 seconds, and answers `answering` without running anything for a bridge that answered, even with a 401, within 30 seconds; any `print` output unlike task 1's fixture is `unknown`, and then `/launch` and `/restart` run nothing; with no control token in the Keychain, `install` generates and stores it before it bootstraps the control plist; a wrong token, a foreign `Host`, an `Origin` or a `Sec-Fetch-Site` is 403; no argv part comes from a request; the backlog is bounded; a truncated log restarts; both tokens are scrubbed |
 | 3 | **The server relays bridge control.** The compose secret, `SCHOOL_BRIDGE_CONTROL_URL`, and the four routes of Table 5.3 | 2 | HTTP tests with a fake control agent: Live, Needs attention and Offline as defined, with `unauthorised`, `unconfigured` and `misconfigured` each Needs attention; a cross-site or non-JSON launch or restart is refused; a cross-site log read is refused; the token is sent only to an environment URL and never appears in a response |
-| 4 | **Live, Needs attention, Offline, Launch and Restart in Settings.** The bridge card of §5.5 with the `ScrollArea` panel, and the not-found line of §5.7 | 3 | A browser test, light and dark: Offline shows **Launch** and the panel; Launch reaches Live against a fake control agent that starts a real bridge; a refused token shows Needs attention with today's detail line and no **Launch**; a running job silent over 30 seconds shows **Restart** in place of **Launch**, and one silent for less shows neither; a job `unknown` shows neither; no helper shows the install line; an agent whose program is not found suggests running `./school bridge install` again; every string passes the voice test; nothing in browser storage |
+| 4 | **Live, Needs attention, Offline, Launch and Restart in Settings.** The bridge card of §5.5 with the `ScrollArea` panel, and the not-found line of §5.7 | 3 | A browser test, light and dark: Offline shows **Launch** and the panel; Launch reaches Live against a fake control agent that starts a real bridge; a refused token shows Needs attention with the `./school up` line of Table 5.4 and no **Launch**; a control agent that refuses School's token shows its `./school up` line, not the install line; a running job silent over 30 seconds shows **Restart** in place of **Launch**, and one silent for less shows neither; a job `unknown` shows neither; no helper shows the install line; an agent whose program is not found suggests running `./school bridge install` again; every string passes the voice test; nothing in browser storage |
 | 5 | **The bridge reports and sets School's voice.** `GET /speech/info` and `PUT /speech/voice` (Table 5.5) | none | Bridge tests with a fake daemon socket: an unknown voice is refused without `assign_voice` being sent; `null` releases, and `not_found` counts as done; source is always `School`; an older daemon is `outdated` |
 | 6 | **The server relays the voice.** `GET` and `PUT /api/settings/speech` | 5 | HTTP tests with a fake bridge: guarded like other writes; a bad name is 400 before the bridge is asked |
 | 7 | **The Reading aloud card.** Version, engine, the voice `Combobox` with **Default**, the neutral lines (§5.6) | 6 | A browser test, light and dark: choosing a voice sends it and shows it after a reload; **Default** releases it; unreachable and older states show their lines |
 | 8 | **The `openai` agent kind.** `bridge/openai.ts` under the rules of Table 5.7, for `/run`, `/test` and `/ask`, and `kind` in `/health` | none | Bridge tests against a fake loopback server: a schema answer passes; `structured: false` sends no `response_format`; a stream yields deltas; a non-loopback URL is refused at start; a timeout and a 500 fall through to the next agent; no log line holds a prompt or a body |
-| 9 | **Four agents in every list.** `bridge.example.json` with claude, codex, agy and lms-qwen in grading, ask and author (Table 5.6), and the configuration reference | 8, flyingrobots/school#259 | `loadConfig` accepts the example; a recorded run on `mac-desk` shows agy and lms-qwen grading and answering, or records which of Q5 and Q6 failed and the fix |
+| 9 | **Four agents in every list.** `bridge.example.json` with claude, codex, agy and lms-qwen in grading, ask and author (Table 5.6), and the configuration reference | 8, flyingrobots/school#259 | `loadConfig` accepts the example; a recorded run on the host Mac shows agy and lms-qwen grading and answering, or records which of Q5 and Q6 failed and the fix |
 | 10 | **Every agent list in Settings.** Grading, asking and authoring sections, the `author` key in `reorder`, kinds and "Endpoint answers" (§5.7, §5.8) | 8, flyingrobots/school#259 | A browser test, light and dark, reorders and switches an ask agent and an author agent and the bridge's `/health` shows it; saving one list leaves the others as written; an HTTP agent shows its kind and whether it answers. Absorbs flyingrobots/school#328 |
 | 11 | **Phone playback chip and drawer.** §5.9 | none | A browser test at 390 px: the chip shows "Reading 2/5" and no bottom bar; tapping opens the drawer with `aria-expanded` true; targets measure at least 56 px and 72 px; reduced motion stills the bars; the keys still act; at 1280 px today's bar is unchanged |
 | 12 | **The output panel in bijou-web.** Replace the `ScrollArea` panel with `@flyingrobots/bijou-web`'s DOM host. Waits on bijou-web being published | none in School | The panel renders the same stream through bijou-web in light and dark, read-only, with the same browser test passing |
@@ -462,7 +462,7 @@ The worst risk would be a browser request that runs something on the host; the d
 | The Keychain asks for permission when a launchd job first reads it | The read goes through `security`, the same tool `./school up` uses; task 1's recorded run checks no prompt appears in a fresh login session |
 | The log file grows without bound | Open (Q4), with a recommendation |
 | AI-TTS 0.2.0 is not on AI-TTS's `main` yet | The card says so neutrally; task 5 tests against a fake socket; reading aloud already requires 0.2.0 |
-| agy or LM Studio behave differently than declared | Q5 and Q6; task 9's recorded run on `mac-desk`; fallback moves on to the next agent meanwhile |
+| agy or LM Studio behave differently than declared | Q5 and Q6; task 9's recorded run on the host Mac; fallback moves on to the next agent meanwhile |
 | A local process squats on port 1234 or 4749 | Port 4749: the server's token check fails and Settings shows the control agent `unauthorised` state of §5.5. Port 1234: Table 6.1, the same trust as `PATH` |
 | bijou-web is never published | The `ScrollArea` panel is complete on its own; task 12 is a replacement, not a dependency |
 
@@ -472,7 +472,7 @@ The risks left are ones a recorded run on the real Mac settles, which is why tas
 
 ## 10. Open questions
 
-These are the questions a maintainer decision or a run on `mac-desk` still has to settle. Each has a recommendation that holds until then.
+These are the questions a maintainer decision or a run on the host Mac still has to settle. Each has a recommendation that holds until then.
 
 | # | Question | Recommendation |
 | --- | --- | --- |
@@ -480,8 +480,8 @@ These are the questions a maintainer decision or a run on `mac-desk` still has t
 | Q2 | Should the bridge plist set `KeepAlive` on crash? | No: a crash loop would hide its own output; **Launch** restarts it |
 | Q3 | Should the bridge start at login (`RunAtLoad`)? | No at first, so a fresh login never runs agents unasked; one key to change later |
 | Q4 | How is `bridge.log` kept small? | `./school bridge run` truncates it in place when over 10 MiB before starting the bridge; this relies on launchd opening the file for appending, which task 1 must verify |
-| Q5 | agy: does `--print` read the prompt from stdin, and is its output plain text that matches the response schema, or JSON of its own? | Prompt on stdin, output `text`; if agy prints a JSON envelope, add an `agy-json` output kind as `claude-json` was added. Verify on `mac-desk` |
-| Q6 | lms-qwen: the model id, whether LM Studio's server honours `response_format` with `json_schema` for that model, and whether it streams | Read the id from `/v1/models` on `mac-desk`; keep `structured` on if the schema is honoured, else `false` and rely on the schema check |
+| Q5 | agy: does `--print` read the prompt from stdin, and is its output plain text that matches the response schema, or JSON of its own? | Prompt on stdin, output `text`; if agy prints a JSON envelope, add an `agy-json` output kind as `claude-json` was added. Verify on the host Mac |
+| Q6 | lms-qwen: the model id, whether LM Studio's server honours `response_format` with `json_schema` for that model, and whether it streams | Read the id from `/v1/models` on the host Mac; keep `structured` on if the schema is honoured, else `false` and rely on the schema check |
 
 _Table 10.1. Open questions and recommendations. Q5 and Q6 are facts about one machine; Q1 to Q4 are choices that can change without redesign._
 
@@ -491,4 +491,4 @@ In short: Linux waits, the bridge job stays manual, and two agents are checked w
 
 Decided by the maintainer on 2026-11-27: the six decisions of Table 0.1, as §5 describes them. The tasks of §7 are filed as flyingrobots/school#372 to flyingrobots/school#383, task 1 as #372 through task 12 as #383, in order. flyingrobots/school#328 is absorbed by task 10 (flyingrobots/school#381).
 
-In short: the design is decided, and its open points are facts to check on `mac-desk` and Linux, which waits.
+In short: the design is decided, and its open points are facts to check on the host Mac and Linux, which waits.
