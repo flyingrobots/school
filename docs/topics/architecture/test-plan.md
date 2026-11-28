@@ -73,6 +73,13 @@ left a child running in 15 of 20 tries. Each child sleeps 600 s, so only a kill 
 A child counts as left if `ps` shows it in the agent's group, running and not a zombie, 2 s after
 the chain returns.
 
+After a kill the agent's pipes are read for 500 ms, then the readers are cancelled
+(flyingrobots/school#349). The escaping agents in `bridge/run.test.ts` start a perl child that
+calls `setsid` (perl is on macOS and on CI's Ubuntu; `setsid(1)` is not on macOS) and writes a
+ready file only after it, so a run with the file had a child outside the group when the kill
+landed. Each child carries a marker on its command line; the test ends it and checks `ps` shows
+none left.
+
 | ID | Case | Oracle | Status | Test |
 | --- | --- | --- | --- | --- |
 | KILL-1 | Golden | A grading agent that forks as its timeout kill lands: the chain returns, the next agent answers, and no process is left in the agent's group; three conclusive runs | implemented | `bridge/run.test.ts`: `a grading agent that forks as its kill lands leaves no child running, and the next agent runs` |
@@ -82,7 +89,13 @@ the chain returns.
 | KILL-5 | Kill after the pipes closed | A timeout, or a hang-up, landing after the agent's pipes closed and before it exits starts no sweep (the sweep counter is unchanged), for `POST /run` and `POST /ask` | implemented | `bridge/run.test.ts`: `a kill after the agent's pipes closed starts no sweep`; `bridge/ask.test.ts`: `a hang-up after the ask agent's pipes closed starts no sweep` |
 | KILL-6 | Not a group | `sweepGroup` with 0, 1, a negative, fractional or non-finite number sends no signal (the signal function is injected) | implemented | `bridge/run.test.ts`: `sweepGroup signals no group that is not a real one, and a real one once` |
 
-_Table 2. The agent kill's cases. The ask route uses the same sweep (`sweepGroup` in `bridge/run.ts`)._
+| KILL-7 | Escaped child holds the pipes | A grading agent whose setsid child holds stdout and stderr and sleeps 30 s: the chain returns within 1.5 s of the timeout, the next agent answers, and the child was still running (it escaped) | implemented | `bridge/run.test.ts`: `a grading agent whose setsid child holds the pipes is cut off about 1 s after its timeout, and the next agent answers` |
+| KILL-8 | Escaped child closes the pipes | The chain returns within 1.5 s of the timeout and the next agent answers | implemented | `bridge/run.test.ts`: `a setsid child that closes the pipes does not hold the chain, ...` |
+| KILL-9 | Escaped child exits in the cut-off | The child exits 200 ms after the kill: the chain returns within 1.5 s and the next agent answers | implemented | `bridge/run.test.ts`: `a setsid child that exits during the cut-off does not hold the chain, ...` |
+| KILL-10 | Still answering | An agent writing its answer over 1.2 s, never killed, is not cut off: its answer stands | implemented | `bridge/run.test.ts`: `an agent still writing its answer when 500 ms have passed is not cut off: its answer stands` |
+| KILL-11 | Escaped, under load | Five such agents at once: every chain returns within 1.5 s of its timeout and the next agent answers | implemented | `bridge/run.test.ts`: `five grading agents whose setsid children hold the pipes, all at once: ...` |
+
+_Table 2. The agent kill's cases. The ask route uses the same sweep (`sweepGroup` in `bridge/run.ts`) and the same cut-off (`PIPE_GRACE_MS`)._
 
 ## The course store (flyingrobots/school#233)
 

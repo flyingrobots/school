@@ -9,7 +9,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentEnded, agentStarted, answerText, claudeStreamLine, spawnFailure, sweepGroup, usageOf, type Agent, type AskConfig, type StreamLine, type Usage } from "./run.ts";
+import { agentEnded, agentStarted, answerText, claudeStreamLine, PIPE_GRACE_MS, spawnFailure, sweepGroup, usageOf, type Agent, type AskConfig, type StreamLine, type Usage } from "./run.ts";
 import { expand, usesPlaceholder } from "./template.ts";
 
 export type { Usage } from "./run.ts";
@@ -23,7 +23,6 @@ export type AskJob = { prompt: string; deadlineMs?: number; signal?: AbortSignal
 // A streamed answer repeats its text in the stream's framing, the final message and the result
 // line, so the cap is larger than a grading's 1 MiB.
 const MAX_OUTPUT = 8 * 1024 * 1024;
-const PIPE_GRACE_MS = 500;
 const GONE = "the caller went away";
 
 /** Try each enabled ask agent in order, passing its answer on through `onDelta` as it is written. */

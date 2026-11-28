@@ -258,3 +258,110 @@ test("a kill after the agent's pipes closed starts no sweep", async () => {
   expect(r.attempts[0]).toMatchObject({ status: "failed", error: "timed out after 1 s" });
   expect(sweeps.started - before).toBe(0);
 });
+
+// flyingrobots/school#349. A child that leaves the agent's process group (setsid) is outside every
+// kill of that group, and while it holds the agent's stdout and stderr the pipes never close. The
+// chain must stop reading 500 ms after the kill, as the ask route does, so the next agent runs.
+// The child is a perl one-liner (perl is on macOS and on CI's Ubuntu; `setsid(1)` is not on
+// macOS). It writes its ready file only after setsid, so a run whose ready file exists had a child
+// outside the group when the kill landed. Its command line carries `marker`, unique to this test
+// file's run, so the test finds and ends every such child itself, and `ps` can show none is left.
+const marker = `school-escaped-${dir.split("/").at(-1)}`;
+/**
+ * A fake agent: a setsid child that runs perl `before`, writes its ready file, runs `after`, and
+ * ends; the agent itself sleeps 600 s. In the perl, `$p` is the agent's pid.
+ */
+const escapes = (name: string, before: string, after: string) => agent(name, [
+  `perl -MPOSIX -e 'my $p = getppid(); POSIX::setsid() > 0 or die "setsid"; ${before}`,
+  `open(my $f, ">", "$ARGV[0].tmp") or die; print $f $$; close $f; rename("$ARGV[0].tmp", $ARGV[0]) or die; ${after}' "$1" ${marker} &`,
+  "sleep 600",
+].join(" "));
+// Holds the pipes and sleeps 30 s: only a bridge that stops reading returns sooner.
+const holds = escapes("escapes-holding", "", "sleep 30");
+// Closes both pipes first: the agent's pipes close with the kill, cut-off or not.
+const closes = escapes("escapes-closing", 'open(STDOUT, ">", "/dev/null"); open(STDERR, ">", "/dev/null");', "sleep 30");
+// Holds the pipes until the agent is killed (the child is then re-parented), then exits 200 ms
+// later, inside the cut-off. It waits 30 s at most, so none outlives a test that failed.
+const exitsLate = escapes("escapes-exits-late", "", "my $until = time + 30; select(undef, undef, undef, 0.02) while getppid() == $p && time < $until; select(undef, undef, undef, 0.2)");
+
+/** The pids of every escaped child this file started that is still running, by `marker`. */
+function escaped(): number[] {
+  const ps = Bun.spawnSync(["ps", "-A", "-o", "pid=,stat=,args="], { stdout: "pipe" });
+  return ps.stdout.toString().split("\n").map((l) => l.trim().split(/\s+/))
+    .filter(([pid, stat, ...args]) => pid !== "" && !stat!.startsWith("Z") && args.includes(marker)).map(([pid]) => Number(pid));
+}
+afterEach(() => { for (const pid of escaped()) try { process.kill(pid, "SIGKILL"); } catch {} });
+
+/**
+ * One chain of `escaper`, then a good agent, timed out after `seconds`: its result, or "still
+ * waiting" if it has not returned 5 s after the timeout (the held pipes close only in 30 s), how
+ * long it took, and whether the setsid child was ready (false: killed before setsid, inconclusive).
+ */
+async function escapingRun(escaper: string, tag: string, seconds: number) {
+  const ready = join(dir, `escapes-${tag}-${seconds}s.ready`);
+  const t0 = Date.now();
+  const chain = runChain(cfg([{ name: "escapes", command: `${escaper} ${ready}` }, { name: "good", command: `${fromArg} x {prompt}` }], seconds), { prompt: "p", schema });
+  const r = await Promise.race([chain, Bun.sleep(seconds * 1000 + 5_000).then(() => "still waiting" as const)]);
+  return { r, ms: Date.now() - t0, ready: existsSync(ready) };
+}
+
+/** Run `escaper` with timeouts of 1, 2, 4 and 8 s until its child was ready; that run's result. */
+async function conclusiveEscapingRun(escaper: string, tag: string) {
+  for (const seconds of [1, 2, 4, 8]) {
+    const run = await escapingRun(escaper, tag, seconds);
+    if (run.ready || run.r === "still waiting") return { ...run, seconds };
+  }
+  throw new Error(`the ${tag} agent's child was never ready, even with an 8 s timeout`);
+}
+
+/** Every escaped child is ended by the test, and `ps` then shows none running. */
+async function noEscapedChildLeft() {
+  for (const pid of escaped()) try { process.kill(pid, "SIGKILL"); } catch {}
+  const until = Date.now() + 2000;
+  while (escaped().length > 0 && Date.now() < until) await Bun.sleep(20);
+  expect(escaped()).toEqual([]);
+}
+
+test("a grading agent whose setsid child holds the pipes is cut off about 1 s after its timeout, and the next agent answers", async () => {
+  const { r, ms, seconds } = await conclusiveEscapingRun(holds, "golden");
+  expect(r).not.toBe("still waiting");
+  if (r === "still waiting") return;
+  expect(r.attempts[0]).toMatchObject({ agent: "escapes", status: "failed", error: `timed out after ${seconds} s` });
+  expect(r).toMatchObject({ status: "succeeded", agent: "good", output: { answer: "no" } });
+  // About 1 s (#349): the 500 ms cut-off, with slack for starting the next agent on a loaded machine.
+  expect(ms - seconds * 1000).toBeLessThan(1_500);
+  expect(escaped()).toHaveLength(1); // the child did escape: no kill of the group reached it
+  await noEscapedChildLeft();
+}, 60_000);
+
+test("a setsid child that closes the pipes does not hold the chain, and the next agent answers", async () => {
+  const { r, ms, seconds } = await conclusiveEscapingRun(closes, "closes");
+  expect(r).toMatchObject({ status: "succeeded", agent: "good" });
+  expect(ms - seconds * 1000).toBeLessThan(1_500);
+  await noEscapedChildLeft();
+}, 60_000);
+
+test("a setsid child that exits during the cut-off does not hold the chain, and the next agent answers", async () => {
+  const { r, ms, seconds } = await conclusiveEscapingRun(exitsLate, "exits-late");
+  expect(r).toMatchObject({ status: "succeeded", agent: "good" });
+  expect(ms - seconds * 1000).toBeLessThan(1_500);
+  await noEscapedChildLeft();
+}, 60_000);
+
+test("an agent still writing its answer when 500 ms have passed is not cut off: its answer stands", async () => {
+  // Without a kill there is no cut-off: an answer written over 1.2 s, in three parts, is read whole.
+  const slow = agent("writes-slowly", `printf '{"answer":'; sleep 0.6; printf ' "y'; sleep 0.6; echo 'es"}'`);
+  const r = await runChain(cfg([{ name: "slow", command: slow }]), { prompt: "p", schema });
+  expect(r).toMatchObject({ status: "succeeded", agent: "slow", output: { answer: "yes" } });
+});
+
+test("five grading agents whose setsid children hold the pipes, all at once: every chain is cut off and the next agent answers", async () => {
+  const runs = await Promise.all(Array.from({ length: 5 }, (_, i) => escapingRun(holds, `load-${i}`, 2)));
+  expect(runs.filter(({ r }) => r === "still waiting")).toHaveLength(0);
+  for (const { r, ms } of runs) {
+    expect(r).toMatchObject({ status: "succeeded", agent: "good" });
+    expect(ms - 2000).toBeLessThan(1_500);
+  }
+  expect(runs.filter(({ ready }) => ready).length).toBeGreaterThan(0); // at least one child escaped
+  await noEscapedChildLeft();
+}, 60_000);
